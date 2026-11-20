@@ -101,7 +101,10 @@ class ScheduleV2Spec extends CatsEffectSuite:
       reminders <- SystemReminders.collectAllIO(true, taskStore, Some("s1"), isRootAgent = true)
     yield
       // 时钟简化批（2eb988a4f）：time 提醒退役——无任务会话的提醒面 = 空。
-      assert(reminders.isEmpty, s"no schedule for this session and no other deltas ⇒ zero reminders, got ${reminders.map(_.category)}")
+      assert(
+        reminders.isEmpty,
+        s"no schedule for this session and no other deltas ⇒ zero reminders, got ${reminders.map(_.category)}"
+      )
       assert(!reminders.exists(_.category == "schedule"), "schedule must be empty for session without tasks")
 
   test("time-context removed entirely (no time-context reminder ever)"):

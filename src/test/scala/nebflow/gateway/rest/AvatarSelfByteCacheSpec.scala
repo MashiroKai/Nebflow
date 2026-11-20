@@ -85,6 +85,8 @@ class AvatarSelfByteCacheSpec extends CatsEffectSuite:
     server.start()
     (server, s"http://127.0.0.1:${server.getAddress.getPort}", okHits, brokenHits)
 
+  end startMockOrigin
+
   private def mkResources: SharedResources =
     SharedResources(
       llm = null,

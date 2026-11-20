@@ -81,10 +81,11 @@ object PresenceCandidateProbe:
           val a = o(0)
           val b = o(1)
           (a == 0 && b == 0 && o(2) == 0 && o(3) == 0) || // 0.0.0.0
-            (a == 169 && b == 254) || // 链路本地 APIPA
-            (a == 127) || // 回环
-            (a >= 224 && a <= 239) || // 组播
-            (a == 255 && b == 255 && o(2) == 255 && o(3) == 255) // 广播
+          (a == 169 && b == 254) || // 链路本地 APIPA
+          (a == 127) || // 回环
+          (a >= 224 && a <= 239) || // 组播
+          (a == 255 && b == 255 && o(2) == 255 && o(3) == 255) // 广播
+  end isUnreportableAddress
 
   /**
    * IPv6 侧的「结构性不可达」（IPv6 优先批 2026-11-04）——与 v4 判据**同一语义**：
@@ -100,14 +101,14 @@ object PresenceCandidateProbe:
     val h = host.stripPrefix("[").stripSuffix("]").toLowerCase
     val noScope = h.indexOf('%') match
       case -1 => h
-      case i  => h.substring(0, i)
+      case i => h.substring(0, i)
     if noScope == "::" || noScope == "::1" || noScope == "0:0:0:0:0:0:0:0" || noScope == "0:0:0:0:0:0:0:1" then true
     else
       firstHextet(noScope) match
         case None => false
         case Some(h0) =>
           (h0 >= 0xfe80 && h0 <= 0xfebf) || // 链路本地 fe80::/10
-            (h0 >= 0xff00 && h0 <= 0xffff) // 组播 ff00::/8
+          (h0 >= 0xff00 && h0 <= 0xffff) // 组播 ff00::/8
 
   /** v6 字面量的首个 hextet（压缩形态以 `::` 开头 ⇒ 0）；非法 ⇒ None（放行，不在此判据内）。 */
   private def firstHextet(h: String): Option[Int] =
@@ -226,3 +227,4 @@ object PresenceCandidateProbe:
     else
       val nums = parts.toVector.map(_.toIntOption.filter(n => n >= 0 && n <= 255))
       if nums.forall(_.isDefined) then Some(nums.map(_.get)) else None
+end PresenceCandidateProbe

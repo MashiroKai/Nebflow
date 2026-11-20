@@ -34,8 +34,10 @@ class CacheWarmingSpec extends FunSuite:
 
   // ── 确定性经济夹具（价格/TTL 全部显式注入，不猜）────────────────────
 
-  /** 已知价格域：in=$3/M，read=$0.1/M，write=$1/M，out=$15/M，TTL=300s。
-    * tokens=200K ⇒ 冷读可避免 = 0.2×(3−0.1) = $0.58；保温全成本 = 0.2×1 + 64/1M×15 ≈ $0.20096。 */
+  /**
+   * 已知价格域：in=$3/M，read=$0.1/M，write=$1/M，out=$15/M，TTL=300s。
+   * tokens=200K ⇒ 冷读可避免 = 0.2×(3−0.1) = $0.58；保温全成本 = 0.2×1 + 64/1M×15 ≈ $0.20096。
+   */
   private val knownPositive = Economics(
     inputPerMTok = Some(BigDecimal("3")),
     cacheReadPerMTok = Some(BigDecimal("0.1")),
@@ -105,7 +107,7 @@ class CacheWarmingSpec extends FunSuite:
   test("⑩ negative expected value (saving ≤ cost×(1+margin)) → no warming"):
     // 冷读差价压到 0.05：saving=0.2×(3−2.95)=0.01 << cost×1.5
     val bad = knownPositive.copy(cacheReadPerMTok = Some(BigDecimal("2.95")))
-    val d   = evaluate(cand(), bad, new Ledger(), nowMs = 1_000L)
+    val d = evaluate(cand(), bad, new Ledger(), nowMs = 1_000L)
     assertEquals(d, NoWarm("negative-expected-value"))
 
   test("⑩ unknown price or unknown TTL → shadow (never claims savings, never sends)"):
@@ -135,26 +137,39 @@ class CacheWarmingSpec extends FunSuite:
 
   test("⑩ cumulative warming costlier than one cold read → reject"):
     val ledger = new Ledger()
-    val econ   = knownPositive.copy(maxWarmsPerSession = 8)
+    val econ = knownPositive.copy(maxWarmsPerSession = 8)
     // 两次正判据后的第 3 次：cost×(2+1) = 0.60288 ≥ 0.58 ⇒ 拒绝
     ledger.recordWarm("warm-spec-session", atMs = 1_000L, costUsd = BigDecimal("0.20096"))
-    assertEquals(evaluate(cand(), econ, ledger, nowMs = 2_000L).getClass.getSimpleName, "WarmShadow",
-      "2nd warm still cumulative-cheap: 0.40192 < 0.58")
+    assertEquals(
+      evaluate(cand(), econ, ledger, nowMs = 2_000L).getClass.getSimpleName,
+      "WarmShadow",
+      "2nd warm still cumulative-cheap: 0.40192 < 0.58"
+    )
     ledger.recordWarm("warm-spec-session", atMs = 2_000L, costUsd = BigDecimal("0.20096"))
     assertEquals(evaluate(cand(), econ, ledger, nowMs = 3_000L), NoWarm("cumulative-warming-costlier-than-cold"))
 
   // ── C-WARM-3：结构性 shadow ──────────────────────────────────────────
 
   test("⑨ evaluate NEVER returns WarmSend for any role×state×economics (no sender exists in this batch)"):
-    val roles: List[Role]           = List(MainOrKernel, Dispatcher, ParentAwaitingChild, SubagentOrNode)
-    val states: List[SessionState]  = List(ActiveToolRoundTrip, IdleUser, WaitingChildReturn, BlockedOrFrozen, Terminal, FreshShortLeaf, LongWaitExpectedResume)
-    val econs: List[Economics]      = List(knownPositive, unknownAll, unknownTtl, knownPositive.copy(safetyMargin = 0))
+    val roles: List[Role] = List(MainOrKernel, Dispatcher, ParentAwaitingChild, SubagentOrNode)
+    val states: List[SessionState] = List(
+      ActiveToolRoundTrip,
+      IdleUser,
+      WaitingChildReturn,
+      BlockedOrFrozen,
+      Terminal,
+      FreshShortLeaf,
+      LongWaitExpectedResume
+    )
+    val econs: List[Economics] = List(knownPositive, unknownAll, unknownTtl, knownPositive.copy(safetyMargin = 0))
     roles.foreach { role =>
       states.foreach { state =>
         econs.foreach { econ =>
           val d = evaluate(cand(role, state), econ, new Ledger(), nowMs = 42L)
-          assert(d.isInstanceOf[NoWarm] || d.isInstanceOf[WarmShadow],
-            s"structural shadow violated: role=$role state=$state econ=$econ produced ${d.getClass.getSimpleName}")
+          assert(
+            d.isInstanceOf[NoWarm] || d.isInstanceOf[WarmShadow],
+            s"structural shadow violated: role=$role state=$state econ=$econ produced ${d.getClass.getSimpleName}"
+          )
         }
       }
     }
@@ -163,16 +178,43 @@ class CacheWarmingSpec extends FunSuite:
 
   test("⑩ builder skips when no safe small output cap / incompatible thinking budget; plan preserves prefix config"):
     assertEquals(
-      buildWarmingPlan("s", "Zai", "glm", "tools-fp", "sys-fp", thinkingBudgetTokens = 32000, supportsSmallOutputCap = false),
+      buildWarmingPlan(
+        "s",
+        "Zai",
+        "glm",
+        "tools-fp",
+        "sys-fp",
+        thinkingBudgetTokens = 32000,
+        supportsSmallOutputCap = false
+      ),
       Left("no-safe-small-output-cap-skip")
     )
     assertEquals(
-      buildWarmingPlan("s", "Zai", "glm", "tools-fp", "sys-fp", thinkingBudgetTokens = 512, supportsSmallOutputCap = true),
+      buildWarmingPlan(
+        "s",
+        "Zai",
+        "glm",
+        "tools-fp",
+        "sys-fp",
+        thinkingBudgetTokens = 512,
+        supportsSmallOutputCap = true
+      ),
       Left("thinking-budget-incompatible-skip")
     )
-    val plan = buildWarmingPlan("s", "Zai", "glm", "tools-fp", "sys-fp", thinkingBudgetTokens = 32000, supportsSmallOutputCap = true)
-    assertEquals(plan, Right(WarmingPlan("s", "Zai", "glm", "tools-fp", "sys-fp", 32000)),
-      "plan must preserve tools/system/thinking verbatim (no tool_choice:none, no thinking-off)")
+    val plan = buildWarmingPlan(
+      "s",
+      "Zai",
+      "glm",
+      "tools-fp",
+      "sys-fp",
+      thinkingBudgetTokens = 32000,
+      supportsSmallOutputCap = true
+    )
+    assertEquals(
+      plan,
+      Right(WarmingPlan("s", "Zai", "glm", "tools-fp", "sys-fp", 32000)),
+      "plan must preserve tools/system/thinking verbatim (no tool_choice:none, no thinking-off)"
+    )
 
   // ── C-WARM-5：账本分列 ───────────────────────────────────────────────
 

@@ -46,10 +46,13 @@ class InjectionIntakeContractSpec extends FunSuite:
   private lazy val mailTool: String = read("src/main/scala/nebflow/core/tools/MailTool.scala")
   private lazy val projectActor: String = read("src/main/scala/nebflow/core/project/ProjectActor.scala")
   private lazy val agentActor: String = read("src/main/scala/nebflow/agent/AgentActor.scala")
-  /** 注入帧组装单点（外部注入统一通道批 2026-11-05）：`intake` / `header` /
+
+  /**
+   * 注入帧组装单点（外部注入统一通道批 2026-11-05）：`intake` / `header` /
    *  `fileChanges` 等可选帧键的 deepMerge 面从 `AgentActor#emitInjectedUserEvent`
    *  **整体迁入**本件（`InjectionChannel.frame`）。判据不变（同一批名字、缺席即不落键），
-   *  只是 pin 跟着单点走——先例 = 2026-09-28 FE 拆分时 pin 随迁注入行族。 */
+   *  只是 pin 跟着单点走——先例 = 2026-09-28 FE 拆分时 pin 随迁注入行族。
+   */
   private lazy val injectionChannel: String = read("src/main/scala/nebflow/core/InjectionChannel.scala")
   private lazy val sharedProtocol: String = read("src/main/scala/nebflow/shared/protocol.scala")
   // 2026-09-28 FE 组件化批次三拆分：注入行族（含 injectedSourceLabel）迁到

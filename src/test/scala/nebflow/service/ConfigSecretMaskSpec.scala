@@ -49,18 +49,20 @@ class ConfigSecretMaskSpec extends FunSuite:
 
   /** 带两类密钥 + keyRef 指针 + 普通字段的样本配置（磁盘上的真值形态）。 */
   private def seedConfig(): String =
-    Json.obj(
-      "llm" -> Json.obj(
-        "providers" -> Json.obj(
-          "kimi" -> providerJson("sk-real-kimi-1"),
-          "deepseek" -> providerJson("sk-real-ds-2")
-        )
-      ),
-      "search" -> Json.obj("provider" -> Json.fromString("zhipu"), "apiKey" -> Json.fromString("zhipu-real-3")),
-      "jev" -> Json.obj("enabled" -> Json.fromBoolean(true), "keyRef" -> Json.fromString("jev-key")),
-      "embedding" -> Json.obj("keyRef" -> Json.fromString("embed-key"), "model" -> Json.fromString("emb-1")),
-      "ui" -> Json.obj("theme" -> Json.fromString("dark"))
-    ).spaces2
+    Json
+      .obj(
+        "llm" -> Json.obj(
+          "providers" -> Json.obj(
+            "kimi" -> providerJson("sk-real-kimi-1"),
+            "deepseek" -> providerJson("sk-real-ds-2")
+          )
+        ),
+        "search" -> Json.obj("provider" -> Json.fromString("zhipu"), "apiKey" -> Json.fromString("zhipu-real-3")),
+        "jev" -> Json.obj("enabled" -> Json.fromBoolean(true), "keyRef" -> Json.fromString("jev-key")),
+        "embedding" -> Json.obj("keyRef" -> Json.fromString("embed-key"), "model" -> Json.fromString("emb-1")),
+        "ui" -> Json.obj("theme" -> Json.fromString("dark"))
+      )
+      .spaces2
 
   private def readDisk(): Json = parse(os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)).toOption.get
 
@@ -72,7 +74,10 @@ class ConfigSecretMaskSpec extends FunSuite:
   test("maskSecretsJson masks llm.providers.*.apiKey and search.apiKey to ***") {
     val masked = ConfigService.maskSecretsJson(parse(seedConfig()).toOption.get)
     val hc = masked.hcursor
-    assertEquals(hc.downField("llm").downField("providers").downField("kimi").downField("apiKey").as[String], Right("***"))
+    assertEquals(
+      hc.downField("llm").downField("providers").downField("kimi").downField("apiKey").as[String],
+      Right("***")
+    )
     assertEquals(
       hc.downField("llm").downField("providers").downField("deepseek").downField("apiKey").as[String],
       Right("***")
@@ -90,8 +95,13 @@ class ConfigSecretMaskSpec extends FunSuite:
       Right("https://prov.example.com/v1")
     )
     assertEquals(
-      hc.downField("llm").downField("providers").downField("kimi").downField("models").downArray
-        .downField("id").as[String],
+      hc.downField("llm")
+        .downField("providers")
+        .downField("kimi")
+        .downField("models")
+        .downArray
+        .downField("id")
+        .as[String],
       Right("m1")
     )
     // keyRef 指针（jev/embedding）不是值——不打码
@@ -121,7 +131,10 @@ class ConfigSecretMaskSpec extends FunSuite:
     val served = ConfigService.getConfig.unsafeRunSync()
     val servedJson = parse(served).toOption.get
     val hc = servedJson.hcursor
-    assertEquals(hc.downField("llm").downField("providers").downField("kimi").downField("apiKey").as[String], Right("***"))
+    assertEquals(
+      hc.downField("llm").downField("providers").downField("kimi").downField("apiKey").as[String],
+      Right("***")
+    )
     assertEquals(hc.downField("search").downField("apiKey").as[String], Right("***"))
 
     // 盘上真相不变：打码只发生在读出投影
@@ -151,7 +164,9 @@ class ConfigSecretMaskSpec extends FunSuite:
       val kimiEdited = kimi.add("baseUrl", Json.fromString("https://kimi.example.com/v2"))
       root.add(
         "llm",
-        Json.fromJsonObject(llm.add("providers", Json.fromJsonObject(provs.add("kimi", Json.fromJsonObject(kimiEdited)))))
+        Json.fromJsonObject(
+          llm.add("providers", Json.fromJsonObject(provs.add("kimi", Json.fromJsonObject(kimiEdited))))
+        )
       )
     }
 
@@ -160,8 +175,7 @@ class ConfigSecretMaskSpec extends FunSuite:
 
     val disk = readDisk()
     // 真 key 存活（*** = 保留旧值）；被编辑字段落盘
-    for id <- List("kimi", "deepseek") do
-      assert(apiKeyOf(disk, id).exists(_.startsWith("secret:config-")))
+    for id <- List("kimi", "deepseek") do assert(apiKeyOf(disk, id).exists(_.startsWith("secret:config-")))
     val revealed = ConfigService.revealProviderApiKeys.unsafeRunSync()
     assert(revealed.hcursor.downField("providers").downField("kimi").as[String].toOption.contains("sk-real-kimi-1"))
     assert(revealed.hcursor.downField("providers").downField("deepseek").as[String].toOption.contains("sk-real-ds-2"))
@@ -178,7 +192,10 @@ class ConfigSecretMaskSpec extends FunSuite:
       assertEquals(ConfigService.updateConfig(input.noSpaces).unsafeRunSync(), Right(()))
       val reference = apiKeyOf(readDisk(), "cycle").get
       assert(reference.startsWith("secret:config-"))
-      assert(nebflow.core.secrets.ConfigCredentialStore.resolve(PathUtil.dataRoot, reference, "cycle-test", (_, _) => ()) == key)
+      assert(
+        nebflow.core.secrets.ConfigCredentialStore
+          .resolve(PathUtil.dataRoot, reference, "cycle-test", (_, _) => ()) == key
+      )
       val visible = ConfigService.revealProviderApiKeys.unsafeRunSync()
       assert(visible.hcursor.downField("providers").downField("cycle").as[String].toOption.contains(key))
       val agent = parse(ConfigService.getConfig.unsafeRunSync()).toOption.get
@@ -190,7 +207,10 @@ class ConfigSecretMaskSpec extends FunSuite:
     assertEquals(ConfigService.updateConfig(input.noSpaces).unsafeRunSync(), Right(()))
     val key = readDisk().hcursor.downField("search").downField("apiKey").as[String].toOption.get
     assert(key.startsWith("secret:config-"))
-    assert(nebflow.core.secrets.ConfigCredentialStore.resolve(PathUtil.dataRoot, key, "test", (_, _) => ()) == "fixture-search-secret")
+    assert(
+      nebflow.core.secrets.ConfigCredentialStore
+        .resolve(PathUtil.dataRoot, key, "test", (_, _) => ()) == "fixture-search-secret"
+    )
     assert(!os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName).contains("fixture-search-secret"))
   }
 
@@ -207,7 +227,9 @@ class ConfigSecretMaskSpec extends FunSuite:
     assert(!saved.contains("zhipu-real-3"))
     val parsed = parse(saved).toOption.get
     assert(apiKeyOf(parsed, "kimi").exists(_.startsWith("secret:config-")))
-    assert(parsed.hcursor.downField("search").downField("apiKey").as[String].toOption.exists(_.startsWith("secret:config-")))
+    assert(
+      parsed.hcursor.downField("search").downField("apiKey").as[String].toOption.exists(_.startsWith("secret:config-"))
+    )
   }
 
   test("save through the masked surface lands nebflow.json owner-only (quickfix ① cross-check)") {

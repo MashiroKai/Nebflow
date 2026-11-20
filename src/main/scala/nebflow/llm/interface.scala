@@ -94,7 +94,7 @@ object LlmInterface extends LlmRuntime:
   ): java.net.http.HttpClient.Builder =
     providerProxySelector match
       case Some(sel) => b.proxy(sel)
-      case None      => b
+      case None => b
 
   /**
    * 模型不可用时段闸（model-schedule-unavailable 批，2026-10-29 作者令 17:44）：
@@ -1238,7 +1238,8 @@ object LlmInterface extends LlmRuntime:
                                             )
                                             adapter
                                               .sendMessageStream(LlmKernel.assemble(kernelCall, candidate))
-                                              .onFinalize(transportOpt.fold(IO.unit)(_.release)))
+                                              .onFinalize(transportOpt.fold(IO.unit)(_.release))
+                                          )
                                         )
                                         .handleErrorWith { err =>
                                           fs2.Stream.eval(abortedRef.get).flatMap { aborted =>

@@ -46,8 +46,10 @@ trait AgentRuntimePort extends AgentRegistryPort:
   def delegateRecoveryMode: Option[String] = None
   def isProtectedExecution(sessionId: String): Boolean = false
   def executionProtection(sessionId: String): IO[ExecutionProtection] = executionCommitPort.protection(sessionId)
+
   def cancelProtectedExecution(sessionId: String, reason: String): IO[Either[String, String]] =
     IO.pure(Left("Protected runner unavailable; cancellation not committed"))
+
   /** Bind an exact observed commit, install a new attempt and continue the real Agent. */
   def resumeProtectedExecution(request: ProtectedRecoveryRequest): IO[Either[String, ProtectedRecoveryResult]] =
     IO.pure(Left("protected-recovery-unsupported"))
@@ -492,7 +494,6 @@ object AskHandoffPort:
       else s"（涉及 ${paths.length} 个路径：${paths.take(3).mkString(", ")}${if paths.length > 3 then ", …" else ""}）"
     val tail = Option(expected).map(_.trim).filter(_.nonEmpty).map(e => s" 期望产出：$e").getOrElse("")
     (head + pathNote + tail).trim
-
 
   /** Face：投递进主会话（injected 呈现 + 限频已在工具侧收敛）。 */
   trait Face:

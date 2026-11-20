@@ -91,10 +91,13 @@ private[agent] object AgentIdle:
     val recipient = event.metadata("parentSessionId").flatMap(_.asString).getOrElse("")
     val debtAck =
       if event.source == "delegate" && Set("completed", "failed", "cancelled").contains(event.eventType)
-        && owner.nonEmpty && recipient.nonEmpty then
+        && owner.nonEmpty && recipient.nonEmpty
+      then
         nebflow.core.mail.CompletionDebtStore.checkAcceptance(owner, recipient, event).flatMap {
           case nebflow.core.mail.CompletionDebtStore.Acceptance.Conflict =>
-            NebflowLogger.forName("nebflow.agent.idle").error(s"conflicting/untrusted terminal '$owner' withheld; completion debt retained")
+            NebflowLogger
+              .forName("nebflow.agent.idle")
+              .error(s"conflicting/untrusted terminal '$owner' withheld; completion debt retained")
           case nebflow.core.mail.CompletionDebtStore.Acceptance.Duplicate =>
             // 跨代结算验收批（#2178）：验收账已有同 (owner, generation) 同内容行 =
             // 「验收已持久（acceptOnce 落账）而最终 ACK 未落」的崩溃窗口重放形——
@@ -107,29 +110,48 @@ private[agent] object AgentIdle:
                 nebflow.core.mail.CompletionDebtStore
                   .acknowledge(owner, recipient, messages, nebflow.core.mail.CompletionDebtStore.generationOf(event))
                   .flatMap { settled =>
-                    IO.whenA(!settled)(NebflowLogger.forName("nebflow.agent.idle")
-                      .info(s"duplicate terminal '$owner' replayed against non-matching debt; debt retained"))
+                    IO.whenA(!settled)(
+                      NebflowLogger
+                        .forName("nebflow.agent.idle")
+                        .info(s"duplicate terminal '$owner' replayed against non-matching debt; debt retained")
+                    )
                   }
               case None => IO.unit
           case nebflow.core.mail.CompletionDebtStore.Acceptance.New =>
-            val acceptedMessages = event.metadata("completionMessages").flatMap(_.as[List[nebflow.shared.Message]].toOption)
+            val acceptedMessages =
+              event.metadata("completionMessages").flatMap(_.as[List[nebflow.shared.Message]].toOption)
             acceptedMessages match
               case Some(messages) =>
                 nebflow.core.mail.CompletionDebtStore.pending(owner).flatMap {
-                  case Right(Some(debt)) if debt.recipientSessionId == recipient && debt.messages == messages &&
-                    debt.generation == nebflow.core.mail.CompletionDebtStore.generationOf(event) =>
+                  case Right(Some(debt))
+                      if debt.recipientSessionId == recipient && debt.messages == messages &&
+                        debt.generation == nebflow.core.mail.CompletionDebtStore.generationOf(event) =>
                     nebflow.core.mail.CompletionDebtStore.acceptOnce(owner, recipient, event).flatMap {
                       case nebflow.core.mail.CompletionDebtStore.Acceptance.Conflict => IO.unit
-                      case _ => nebflow.core.mail.CompletionDebtStore.acknowledge(owner, recipient, messages, nebflow.core.mail.CompletionDebtStore.generationOf(event)).flatMap { accepted =>
-                        IO.whenA(!accepted)(NebflowLogger.forName("nebflow.agent.idle")
-                          .error(s"completion debt ack mismatch for '$owner'; debt retained"))
-                      }
+                      case _ =>
+                        nebflow.core.mail.CompletionDebtStore
+                          .acknowledge(
+                            owner,
+                            recipient,
+                            messages,
+                            nebflow.core.mail.CompletionDebtStore.generationOf(event)
+                          )
+                          .flatMap { accepted =>
+                            IO.whenA(!accepted)(
+                              NebflowLogger
+                                .forName("nebflow.agent.idle")
+                                .error(s"completion debt ack mismatch for '$owner'; debt retained")
+                            )
+                          }
                     }
                   case Right(None) => IO.unit
-                  case _ => NebflowLogger.forName("nebflow.agent.idle")
-                    .error(s"completion debt for '$owner' is missing, corrupt, or conflicts; receipt remains unacked")
+                  case _ =>
+                    NebflowLogger
+                      .forName("nebflow.agent.idle")
+                      .error(s"completion debt for '$owner' is missing, corrupt, or conflicts; receipt remains unacked")
                 }
               case None => IO.unit
+            end match
         }
       else IO.unit
     debtAck *> nebflow.core.delegate.DelegateDeliveryReceipts
@@ -137,6 +159,7 @@ private[agent] object AgentIdle:
       .handleErrorWith(e =>
         NebflowLogger.forName("nebflow.agent.idle").warn(s"delegate delivery ack failed: ${e.getMessage}")
       )
+  end ackDelegateDelivery
 
   // ============================================================
   // Idle state
@@ -161,9 +184,17 @@ private[agent] object AgentIdle:
         val handle = resources.protectedExecutions(state.sessionId.get)
         InputLanding.protectedUserReceipt(handle, msg).flatMap {
           case Right(receipt) if receipt.accepted =>
-            val content = msg.blocks.filter(_.nonEmpty).fold[Either[String, List[ContentBlock]]](Left(msg.text))(Right(_))
+            val content =
+              msg.blocks.filter(_.nonEmpty).fold[Either[String, List[ContentBlock]]](Left(msg.text))(Right(_))
             val message = Message(MessageRole.User, content, source = msg.source, messageId = Some(receipt.identity))
-            pipeLlmCall(agentDef, resources, depth, parentRef, state.withMessages(state.messages :+ message), msg.replyTo)
+            pipeLlmCall(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              state.withMessages(state.messages :+ message),
+              msg.replyTo
+            )
           case Right(_) =>
             emitDuplicateReceipt(state.wsSend, state.sessionId, msg.clientMessageId) *>
               IO.pure(idle(agentDef, resources, depth, parentRef, state))
@@ -176,7 +207,8 @@ private[agent] object AgentIdle:
         val handle = resources.protectedExecutions(state.sessionId.get)
         InputLanding.protectedImmediateReceipt(handle, msg).flatMap {
           case Right(receipt) if receipt.accepted =>
-            val content = msg.blocks.filter(_.nonEmpty).fold[Either[String, List[ContentBlock]]](Left(msg.text))(Right(_))
+            val content =
+              msg.blocks.filter(_.nonEmpty).fold[Either[String, List[ContentBlock]]](Left(msg.text))(Right(_))
             val message = Message(MessageRole.User, content, source = msg.source, messageId = Some(receipt.identity))
             pipeLlmCall(agentDef, resources, depth, parentRef, state.withMessages(state.messages :+ message), None)
           case Right(_) => IO.pure(idle(agentDef, resources, depth, parentRef, state))
@@ -319,10 +351,16 @@ private[agent] object AgentIdle:
               case _ => IO.unit
             // Resume results must be committed before the next LLM call; the
             // ledger is closed only after this transcript write succeeds.
-            _ <- if source.contains(nebflow.core.ResumeHandoff.Source) && blocks.exists(_.exists(_.isInstanceOf[ContentBlock.ToolResult])) then
-              state.sessionId.traverse_(sid => resources.sessionStore.saveMessagesForSession(sid, newMessages) *>
-                nebflow.core.tools.AskHostLedger.closeCommittedResults(sid, newMessages))
-            else IO.unit
+            _ <-
+              if source.contains(nebflow.core.ResumeHandoff.Source) && blocks.exists(
+                  _.exists(_.isInstanceOf[ContentBlock.ToolResult])
+                )
+              then
+                state.sessionId.traverse_(sid =>
+                  resources.sessionStore.saveMessagesForSession(sid, newMessages) *>
+                    nebflow.core.tools.AskHostLedger.closeCommittedResults(sid, newMessages)
+                )
+              else IO.unit
             _ <-
               if ledgerFlush.consumedJobIds.nonEmpty then
                 IO(
@@ -351,10 +389,19 @@ private[agent] object AgentIdle:
                 InputLanding
                   .duplicateReason(stateWithFlush.sessionId, clientMessageId.getOrElse("(no-cid)"))
                   .map { reason =>
-                    logAgentEvent(agentDef, depth, stateWithFlush.sessionId, stateWithFlush.sessionName, InputLanding.DuplicateEvent, reason)
-                    NebflowLogger.forName("nebflow.agent.idle").warn(
-                      s"${InputLanding.DuplicateEvent} session=${stateWithFlush.sessionId.getOrElse("-")} $reason"
+                    logAgentEvent(
+                      agentDef,
+                      depth,
+                      stateWithFlush.sessionId,
+                      stateWithFlush.sessionName,
+                      InputLanding.DuplicateEvent,
+                      reason
                     )
+                    NebflowLogger
+                      .forName("nebflow.agent.idle")
+                      .warn(
+                        s"${InputLanding.DuplicateEvent} session=${stateWithFlush.sessionId.getOrElse("-")} $reason"
+                      )
                     idle(agentDef, resources, depth, parentRef, state)
                   }
               case _ =>
@@ -628,7 +675,7 @@ private[agent] object AgentIdle:
                   // 成员同一状态的重试提示只留一条蓝泡，状态变化才追加）。
                   dedup = true,
                   // ask-mail 批（2026-11-16）：ask handoff 载荷的续聊地址透传
-                  //（缺席 = 非 ask 腿，旧行为逐字）。
+                  // （缺席 = 非 ask 腿，旧行为逐字）。
                   askAddress = metadata("askMailAddress").flatMap(_.asString)
                 )
               case None => IO.unit)
@@ -1173,10 +1220,19 @@ private[agent] object AgentIdle:
                   InputLanding
                     .duplicateReason(state.sessionId, imm.clientMessageId.getOrElse("(no-cid)"))
                     .map { reason =>
-                      logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, InputLanding.DuplicateEvent, reason)
-                      NebflowLogger.forName("nebflow.agent.idle").warn(
-                        s"${InputLanding.DuplicateEvent} session=${state.sessionId.getOrElse("-")} $reason"
+                      logAgentEvent(
+                        agentDef,
+                        depth,
+                        state.sessionId,
+                        state.sessionName,
+                        InputLanding.DuplicateEvent,
+                        reason
                       )
+                      NebflowLogger
+                        .forName("nebflow.agent.idle")
+                        .warn(
+                          s"${InputLanding.DuplicateEvent} session=${state.sessionId.getOrElse("-")} $reason"
+                        )
                       idle(agentDef, resources, depth, parentRef, state)
                     }
                 case _ =>

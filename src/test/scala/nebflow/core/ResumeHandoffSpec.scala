@@ -198,3 +198,4 @@ class ResumeHandoffSpec extends FunSuite:
     assertEquals(p.pending, Nil)
     assert(!p.atToolBoundary)
   }
+end ResumeHandoffSpec

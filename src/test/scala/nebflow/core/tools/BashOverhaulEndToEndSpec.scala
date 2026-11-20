@@ -94,23 +94,27 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
 
   /** 真实查询腿（模型用的同一个面：`Bash(background_job_id=…)`）。 */
   private def bashQuery(jobId: String, sid: String): IO[String] =
-    BashTool.call(
-      JsonObject("background_job_id" -> jobId.asJson, "timeout" -> 1.asJson),
-      ctxOf(sid, 2000)
-    ).map {
-      case Right(out) => out
-      case Left(e) => fail(s"background query failed: ${e.message}")
-    }
+    BashTool
+      .call(
+        JsonObject("background_job_id" -> jobId.asJson, "timeout" -> 1.asJson),
+        ctxOf(sid, 2000)
+      )
+      .map {
+        case Right(out) => out
+        case Left(e) => fail(s"background query failed: ${e.message}")
+      }
 
   /** Bounded wait leg through the unified Bash job-id mode. */
   private def bgWait(jobId: String, sid: String, timeoutMs: Long): IO[String] =
-    BashTool.call(
-      JsonObject("background_job_id" -> jobId.asJson, "timeout" -> timeoutMs.asJson),
-      ctxOf(sid, timeoutMs)
-    ).map {
-      case Right(out) => out
-      case Left(e) => fail(s"Bash bounded wait must be a normal receipt (isError=false), got: ${e.message}")
-    }
+    BashTool
+      .call(
+        JsonObject("background_job_id" -> jobId.asJson, "timeout" -> timeoutMs.asJson),
+        ctxOf(sid, timeoutMs)
+      )
+      .map {
+        case Right(out) => out
+        case Left(e) => fail(s"Bash bounded wait must be a normal receipt (isError=false), got: ${e.message}")
+      }
 
   // ══ E2E-1 ═══════════════════════════════════════════════════════════
 
@@ -141,7 +145,10 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
           assert(receipt.contains("[Background job started]"), s"receipt head: $receipt")
           assert(receipt.contains("Job ID:"), s"receipt must carry the job id: $receipt")
           assert(receipt.contains("NOT killed"), s"receipt must state no-kill: $receipt")
-          assert(receipt.contains("background_job_id") && receipt.contains("timeout"), s"receipt must point at the bounded Bash wait: $receipt")
+          assert(
+            receipt.contains("background_job_id") && receipt.contains("timeout"),
+            s"receipt must point at the bounded Bash wait: $receipt"
+          )
           assert(receiptMs < 8000, s"the tool must return AT the budget (~2000ms), took ${receiptMs}ms")
           assert(receiptMs >= 1200, s"it must return AT the budget, not before (took ${receiptMs}ms)")
         }
@@ -150,7 +157,10 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
         alive <- bashQuery(jobId, sid)
         aliveMs <- IO(System.currentTimeMillis() - aliveStart)
         _ <- IO {
-          assert(alive.contains("[Background job running]"), s"the process must still be alive right after conversion: $alive")
+          assert(
+            alive.contains("[Background job running]"),
+            s"the process must still be alive right after conversion: $alive"
+          )
           assert(alive.contains("alive: true"), s"process liveness reading: $alive")
         }
         // ③ 一次有界等待拿到真结果。
@@ -197,7 +207,8 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
         receipt <- IO {
           res match
             case Right(out) => out
-            case Left(e) => fail(s"a 90s command under the 2s budget must auto-background (isError=false), got: ${e.message}")
+            case Left(e) =>
+              fail(s"a 90s command under the 2s budget must auto-background (isError=false), got: ${e.message}")
         }
         jobId = jobIdOf(receipt)
         receiptMs = tReceipt - t0
@@ -215,7 +226,10 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
         _ <- IO {
           assert(out.contains("[Background job completed]"), s"must end in a terminal block: $out")
           assert(out.contains(marker), s"the real 90s output must be delivered: $out")
-          assert(!out.contains("[still running]"), s"the wait must be satisfied by the real completion, not by a deadline: $out")
+          assert(
+            !out.contains("[still running]"),
+            s"the wait must be satisfied by the real completion, not by a deadline: $out"
+          )
           assert(totalMs >= 85000, s"it must really have waited the 90s command (sleep 90), total=${totalMs}ms")
           assert(totalMs < 140000, s"the 90s command must be delivered on completion, total=${totalMs}ms")
         }
@@ -223,7 +237,10 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
         verdicts <- IO {
           val bashEvent = LoopGuard.RoundEvent(
             "Bash",
-            JsonObject("command" -> s"sleep 90; echo $marker".asJson, "description" -> "e2e2-author-90s-command".asJson).asJson,
+            JsonObject(
+              "command" -> s"sleep 90; echo $marker".asJson,
+              "description" -> "e2e2-author-90s-command".asJson
+            ).asJson,
             isError = false,
             errorText = "",
             permissionDenied = false
@@ -236,10 +253,12 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
             permissionDenied = false
           )
           // 真实调用序列 = 1 Work + 1 Wait，反复不止一轮也不得 Terminate——这里只喂真实序列。
-          List(bashEvent, waitEvent).foldLeft((Counters.Empty, List.empty[LoopGuard.Verdict])) { case ((cnt, acc), e) =>
-            val (c2, v) = LoopGuard.evaluate(List(e), "e2e2-turn", cnt, LoopGuard.Config.Default)
-            (c2, acc :+ v)
-          }._2
+          List(bashEvent, waitEvent)
+            .foldLeft((Counters.Empty, List.empty[LoopGuard.Verdict])) { case ((cnt, acc), e) =>
+              val (c2, v) = LoopGuard.evaluate(List(e), "e2e2-turn", cnt, LoopGuard.Config.Default)
+              (c2, acc :+ v)
+            }
+            ._2
         }
         _ <- IO {
           assert(
@@ -285,7 +304,7 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
         // 查询腿的真实参数形态（与 BashTool 查询调用逐字同形）。
         queryArgs = JsonObject("background_job_id" -> start.asJson).asJson
         // 20 次**真实**同参查询，每次成功结果都喂真实 LoopGuard.evaluate。
-        verdicts <- {
+        verdicts <-
           def step(
             cnt: Counters,
             i: Int,
@@ -297,22 +316,32 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
                 // 真实查询必须是成功面（isError=false）——失败查询走 S1 另有一条对照臂。
                 if q.contains("[Background job not found]") then fail(s"query #$i must not be a not-found: $q")
                 else
-                  val e = LoopGuard.RoundEvent("Bash", queryArgs, isError = false, errorText = "", permissionDenied = false)
+                  val e =
+                    LoopGuard.RoundEvent("Bash", queryArgs, isError = false, errorText = "", permissionDenied = false)
                   val (c2, v) = LoopGuard.evaluate(List(e), "e2e3-turn", cnt, LoopGuard.Config.Default)
                   step(c2, i + 1, acc :+ (i, v))
               }
           step(Counters.Empty, 1, Nil)
-        }
         vs = verdicts._2
         _ <- IO {
           val terminal = vs.collect {
             case (i, t: LoopGuard.Verdict.Terminate) => s"#$i Terminate: ${t.msg}"
             case (i, f: LoopGuard.Verdict.Freeze) => s"#$i Freeze: ${f.msg}"
           }
-          assert(terminal.isEmpty, s"20 identical QUERY calls must never terminate/freeze the session — got: ${terminal.mkString(" | ")}")
+          assert(
+            terminal.isEmpty,
+            s"20 identical QUERY calls must never terminate/freeze the session — got: ${terminal.mkString(" | ")}"
+          )
           val nudges = vs.collect { case (i, w: LoopGuard.Verdict.Warn) => (i, w.msg) }
-          assertEquals(nudges.map(_._1), List(5), s"exactly one L0 nudge, at the 5th identical query — got: ${nudges.map(_._1)}")
-          assert(nudges.head._2.contains("background_job_id"), s"the nudge must point at the bounded wait: ${nudges.head._2}")
+          assertEquals(
+            nudges.map(_._1),
+            List(5),
+            s"exactly one L0 nudge, at the 5th identical query — got: ${nudges.map(_._1)}"
+          )
+          assert(
+            nudges.head._2.contains("background_job_id"),
+            s"the nudge must point at the bounded wait: ${nudges.head._2}"
+          )
         }
         // 会话仍活 + 结果仍可拿到（这才是「会话存活」的可观测判据）。
         tWait0 <- IO(System.currentTimeMillis())
@@ -331,10 +360,12 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
             errorText = "",
             permissionDenied = false
           )
-          (1 to 10).foldLeft((Counters.Empty, List.empty[LoopGuard.Verdict])) { case ((cnt, acc), _) =>
-            val (c2, v) = LoopGuard.evaluate(List(workEvent), "e2e3-old-face", cnt, LoopGuard.Config.Default)
-            (c2, acc :+ v)
-          }._2
+          (1 to 10)
+            .foldLeft((Counters.Empty, List.empty[LoopGuard.Verdict])) { case ((cnt, acc), _) =>
+              val (c2, v) = LoopGuard.evaluate(List(workEvent), "e2e3-old-face", cnt, LoopGuard.Config.Default)
+              (c2, acc :+ v)
+            }
+            ._2
         }
         _ <- IO {
           val oldTerminate = oldFaceVerdicts.collectFirst { case t: LoopGuard.Verdict.Terminate => t }
@@ -385,6 +416,8 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
         case _ => IO.pure(loop)
       }
     system.spawn(loop, name)
+
+  end recordingTarget
 
   private def eventFor(
     rec: Ref[IO, List[(Long, AgentCommand.ExternalEvent)]],

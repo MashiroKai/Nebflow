@@ -292,6 +292,8 @@ object BgTaskLedger:
           .toList
     }.handleErrorWith(e => logger.warn(s"BgTaskLedger.allEscalations failed: ${e.getMessage}").as(Nil))
 
+  end allEscalations
+
   /** 未消费条目（补投腿的数据源；空 sessionId = Nil）。 */
   def pending(sessionId: String): IO[List[Entry]] =
     load(sessionId).map(_.entries.filterNot(_.consumed))

@@ -101,8 +101,7 @@ class FileOpenCacheSpec extends CatsEffectSuite:
   }
 
   test("T5 缓存 blob 权限 0600（POSIX；Windows 跳过）") {
-    if System.getProperty("os.name", "").toLowerCase.contains("win") then
-      assert(true, "windows: posix perms N/A")
+    if System.getProperty("os.name", "").toLowerCase.contains("win") then assert(true, "windows: posix perms N/A")
     else
       val f = tempRoot / "t5-perms.txt"
       os.write.over(f, "perm-check")
@@ -140,9 +139,9 @@ class FileOpenCacheSpec extends CatsEffectSuite:
         Vector(
           io.circe.Json.obj("name" -> io.circe.Json.fromString("a.txt"), "size" -> io.circe.Json.fromLong(5L)),
           io.circe.Json.obj(
-            "name"   -> io.circe.Json.fromString("b.txt"),
-            "size"   -> io.circe.Json.fromLong(7L),
-            "mtime"  -> io.circe.Json.fromLong(1730000000000L)
+            "name" -> io.circe.Json.fromString("b.txt"),
+            "size" -> io.circe.Json.fromLong(7L),
+            "mtime" -> io.circe.Json.fromLong(1730000000000L)
           )
         )
       )

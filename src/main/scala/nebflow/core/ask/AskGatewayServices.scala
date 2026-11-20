@@ -51,8 +51,9 @@ final case class AskServices(
         // 提示词 = 只问答 + 交办口径单源（AskGitVizPrompt）；工具面由
         // buildAllowedToolSet 的 askGitViz 早退集固定（GitVizAllowedTools）。
         if !new java.io.File(binding.file).isDirectory then
-          IO.raiseError(new RuntimeException(
-            s"ask session $sessionId: gitviz scope is not a directory: ${binding.file}"))
+          IO.raiseError(
+            new RuntimeException(s"ask session $sessionId: gitviz scope is not a directory: ${binding.file}")
+          )
         else
           IO.pure(
             nebflow.actor.AgentDef(
@@ -65,9 +66,11 @@ final case class AskServices(
           )
       case Some(binding) =>
         if !AskSessions.isAskable(binding.file) then
-          IO.raiseError(new RuntimeException(
-            s"ask session $sessionId: file type not askable (md/html only): ${binding.fileName}"
-          ))
+          IO.raiseError(
+            new RuntimeException(
+              s"ask session $sessionId: file type not askable (md/html only): ${binding.fileName}"
+            )
+          )
         else
           cachedPrompt(sessionId, binding).map { prompt =>
             nebflow.actor.AgentDef(
@@ -93,9 +96,11 @@ final case class AskServices(
    */
   private def assembleNow(sessionId: String, binding: AskBinding): IO[String] =
     if !AskSessions.isAskable(binding.file) then
-      IO.raiseError(new RuntimeException(
-        s"ask session $sessionId: file type not askable (md/html only): ${binding.fileName}"
-      ))
+      IO.raiseError(
+        new RuntimeException(
+          s"ask session $sessionId: file type not askable (md/html only): ${binding.fileName}"
+        )
+      )
     else
       val now = System.currentTimeMillis()
       AskContextAssembler.assemble(sources, binding.file, binding.fileName, now).flatMap { ctx =>
@@ -181,7 +186,8 @@ object AskLiveSources:
               if os.isFile(p) then
                 Some((s"（PDF 文档《${p.last}》——按懒解析契约不整篇载入；问答按页取用 PdfPage 工具，见 PDF 模式补章。）", os.mtime(p), os.size(p)))
               else None
-            else if os.isFile(p) then Some((os.read(p), os.mtime(p), os.size(p))) else None
+            else if os.isFile(p) then Some((os.read(p), os.mtime(p), os.size(p)))
+            else None
           catch case NonFatal(e) => logger.warn(s"ask file read failed: ${e.getMessage}"); None
         }
 

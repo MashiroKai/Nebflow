@@ -23,22 +23,24 @@ object SessionStartLease:
 
   def exclusive[A](id: String)(action: IO[A]): IO[A] =
     Resource
-      .make(IO.blocking { probeGate.synchronized {
-        require(id.matches("[A-Za-z0-9._-]+"), "Invalid session identity")
-        val directory = PathUtil.dataRoot / "workspaces"
-        os.makeDir.all(directory)
-        val channel =
-          FileChannel.open((directory / s"start-$id.lock").toNIO, StandardOpenOption.CREATE, StandardOpenOption.WRITE)
-        try
-          val lock = channel.tryLock()
-          if lock == null then throw new SessionBusy
-          (channel, lock)
-        catch
-          case error: OverlappingFileLockException =>
-            channel.close()
-            throw new SessionBusy
-          case error: Throwable => channel.close(); throw error
-      }}) { case (channel, lock) =>
+      .make(IO.blocking {
+        probeGate.synchronized {
+          require(id.matches("[A-Za-z0-9._-]+"), "Invalid session identity")
+          val directory = PathUtil.dataRoot / "workspaces"
+          os.makeDir.all(directory)
+          val channel =
+            FileChannel.open((directory / s"start-$id.lock").toNIO, StandardOpenOption.CREATE, StandardOpenOption.WRITE)
+          try
+            val lock = channel.tryLock()
+            if lock == null then throw new SessionBusy
+            (channel, lock)
+          catch
+            case error: OverlappingFileLockException =>
+              channel.close()
+              throw new SessionBusy
+            case error: Throwable => channel.close(); throw error
+        }
+      }) { case (channel, lock) =>
         IO.blocking {
           try lock.release()
           finally channel.close()

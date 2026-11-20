@@ -27,8 +27,13 @@ class DbKill9ChaosSpec extends CatsEffectSuite:
   // ── 子进程基建 ────────────────────────────────────────────────────────────
 
   private def javaBin: String =
-    Path.of(sys.props("java.home"), "bin",
-      if sys.props("os.name").toLowerCase.contains("win") then "java.exe" else "java").toString
+    Path
+      .of(
+        sys.props("java.home"),
+        "bin",
+        if sys.props("os.name").toLowerCase.contains("win") then "java.exe" else "java"
+      )
+      .toString
 
   private def childCp: String = sys.props("java.class.path")
 
@@ -38,8 +43,9 @@ class DbKill9ChaosSpec extends CatsEffectSuite:
   private def spawn(mode: String, root: Path, tag: String, count: Option[Int] = None): Child =
     val markers = Files.createTempDirectory(s"chaos-marker-$tag")
     val logFile = Files.createTempFile(s"chaos-$tag-", ".log")
-    val args = List(javaBin, "-cp", childCp, "nebflow.db.chaos.DbChaosChild", mode,
-      root.toString, markers.toString) ++ count.map(_.toString)
+    val args =
+      List(javaBin, "-cp", childCp, "nebflow.db.chaos.DbChaosChild", mode, root.toString, markers.toString) ++ count
+        .map(_.toString)
     val process = new java.lang.ProcessBuilder(args*)
       .redirectErrorStream(true)
       .redirectOutput(logFile.toFile)
@@ -54,8 +60,11 @@ class DbKill9ChaosSpec extends CatsEffectSuite:
       if !child.process.isAlive && !Files.exists(f) then
         fail(s"child died before marker $name (log: ${Files.readString(child.logFile)})")
       Thread.sleep(100L)
-    assert(Files.exists(f), s"marker $name not produced within ${deadlineMs}ms " +
-      s"(log: ${if Files.exists(child.logFile) then Files.readString(child.logFile) else "-"})")
+    assert(
+      Files.exists(f),
+      s"marker $name not produced within ${deadlineMs}ms " +
+        s"(log: ${if Files.exists(child.logFile) then Files.readString(child.logFile) else "-"})"
+    )
     var text = ""
     var tries = 0
     while text.isBlank && tries < 50 do
@@ -64,25 +73,33 @@ class DbKill9ChaosSpec extends CatsEffectSuite:
       tries += 1
     text
 
+  end awaitMarker
+
   /** 已达成进度的最大 w<idx> marker（0 = 尚无进度 marker）。 */
   private def maxProgress(child: Child): Int =
     Option(child.markerDir.toFile.listFiles).toList.flatten
-      .map(_.getName).flatMap(n => n.stripPrefix("w").toIntOption).maxOption.getOrElse(0)
+      .map(_.getName)
+      .flatMap(n => n.stripPrefix("w").toIntOption)
+      .maxOption
+      .getOrElse(0)
 
   /** 真杀（OS 级 SIGKILL）：Windows = taskkill /F /PID（任务面指定形）；POSIX = kill -9。 */
   private def kill9(child: Child): Unit =
     val isWindows = sys.props("os.name").toLowerCase.contains("win")
     if isWindows then
       val out = Seq("taskkill", "/F", "/PID", child.pid.toString).!!
-      assert(out.toLowerCase.contains("成功") || out.toLowerCase.contains("success")
-        || out.toLowerCase.contains("已终止") || out.contains(child.pid.toString),
-        s"taskkill output unexpected: $out")
+      assert(
+        out.toLowerCase.contains("成功") || out.toLowerCase.contains("success")
+          || out.toLowerCase.contains("已终止") || out.contains(child.pid.toString),
+        s"taskkill output unexpected: $out"
+      )
       child.process.waitFor()
     else
       // POSIX：kill -9 成功 = 零退出（`.!` 返回退出码，非零由 assert 拦下）；
       // 被 SIGKILL 的 JVM 退出码不限（137/1/…），waitFor 仅作收割。
       assert(Seq("kill", "-9", child.pid.toString).! == 0, s"kill -9 ${child.pid} failed")
       child.process.waitFor()
+  end kill9
 
   // ── 场景 A：kill 撕裂窗 ───────────────────────────────────────────────────
 
@@ -92,8 +109,7 @@ class DbKill9ChaosSpec extends CatsEffectSuite:
     val gen1 = awaitMarker(writer, "ready").toLong
     // 等 ≥100 条已 ack（marker = append 返回后落 ⇒ 读回数下界）。
     val t0 = System.currentTimeMillis()
-    while maxProgress(writer) < 100 && System.currentTimeMillis() - t0 < 60_000L do
-      Thread.sleep(100L)
+    while maxProgress(writer) < 100 && System.currentTimeMillis() - t0 < 60_000L do Thread.sleep(100L)
     val acked = maxProgress(writer)
     assert(acked >= 100, s"writer made no progress (acked=$acked, log=${Files.readString(writer.logFile)})")
     kill9(writer)
@@ -104,20 +120,21 @@ class DbKill9ChaosSpec extends CatsEffectSuite:
     try
       assertEquals(h.instanceLockGeneration, gen1 + 1L, "世代感知：新世代 = 旧世代 + 1")
       // 无 tmp 残留（open 已清扫；复扫为 0）。
-      val tmpLeft = Files.walk(root.resolve("db")).iterator().asScala
+      val tmpLeft = Files
+        .walk(root.resolve("db"))
+        .iterator()
+        .asScala
         .count(p => Files.isRegularFile(p) && p.getFileName.toString.contains(".tmp-"))
       assertEquals(tmpLeft, 0, "无 tmp 残留")
       // 无半行入库：全帧合法 + 读回 ≥ 已 ack 数（V9：ack 即耐久）。
       h.readEvents(0L, Int.MaxValue, logical = false).unsafeRunSync() match
         case ReadResult.Present(sr) =>
-          assert(sr.records.size >= acked,
-            s"已 ack 行不丢：read=${sr.records.size} acked=$acked")
-          assertEquals(sr.records.size,
-            sr.records.map(_.seq).distinct.size, "无重号（半行/重复帧皆非法）")
+          assert(sr.records.size >= acked, s"已 ack 行不丢：read=${sr.records.size} acked=$acked")
+          assertEquals(sr.records.size, sr.records.map(_.seq).distinct.size, "无重号（半行/重复帧皆非法）")
         case other => fail(s"events 应 Present，got $other")
       // 崩溃后追加不拒（撕裂尾若在已被 open 修复；V3 拒写仅对坏尾帧）。
-      h.appendEvent(io.circe.Json.obj("type" -> io.circe.Json.fromString("post-crash")),
-        Some("post-crash")).unsafeRunSync()
+      h.appendEvent(io.circe.Json.obj("type" -> io.circe.Json.fromString("post-crash")), Some("post-crash"))
+        .unsafeRunSync()
       // 事实面不丢（V8/V6 进程级）：guard 档 + 两类待审单。
       h.readAvoidGuard(Db.AvoidGuardSource).unsafeRunSync() match
         case ReadResult.Present(doc) =>
@@ -132,6 +149,7 @@ class DbKill9ChaosSpec extends CatsEffectSuite:
           assert(sr.records.exists(_.requestId == "chaos-ask-1"), "ask 单跨 kill 不丢")
         case other => fail(s"ask 应 Present，got $other")
     finally h.close()
+    end try
 
   // ── 场景 B：跨进程双开（D-7）+ 真杀后世代接续 ────────────────────────────
 
@@ -143,8 +161,7 @@ class DbKill9ChaosSpec extends CatsEffectSuite:
     val second = spawn("tryopen", root, "second")
     val refused = awaitMarker(second, "result")
     assert(refused.startsWith("REFUSED"), s"第二进程应拒启，got $refused")
-    assert(refused.contains(classOf[DbError.InstanceLockHeld].getSimpleName),
-      s"拒启类型 = InstanceLockHeld，got $refused")
+    assert(refused.contains(classOf[DbError.InstanceLockHeld].getSimpleName), s"拒启类型 = InstanceLockHeld，got $refused")
     kill9(holder)
     // 真杀后：新进程开库成功，世代 = 旧 + 1。
     val third = spawn("tryopen", root, "third")
@@ -177,10 +194,15 @@ class DbKill9ChaosSpec extends CatsEffectSuite:
     // 🔴 确定性选**真 shard**（events.<digits>）：Files.list 目录序无保证，旧形
     // `startsWith("events.")` 会命中 events.idx——idx 坏 = 删了重建（读面照旧
     // Present），坏帧就注不进事件流了（本测首修前在 darwin 上即此形态）。
-    val shardName = Files.list(eventsDir).iterator().asScala
+    val shardName = Files
+      .list(eventsDir)
+      .iterator()
+      .asScala
       .map(_.getFileName.toString)
       .filter(_.matches("events\\.\\d+\\.jsonl"))
-      .toList.sorted.headOption
+      .toList
+      .sorted
+      .headOption
       .getOrElse(fail("events shard missing"))
     val shard = eventsDir.resolve(shardName)
     Files.writeString(shard, Files.readString(shard) + "{\"broken\"\n")

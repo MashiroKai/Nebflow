@@ -357,7 +357,10 @@ class LoopGuardSpec extends FunSuite:
     assert(!LoopGuard.isTransientError("File does not exist: /x", p))
     assert(!LoopGuard.isTransientError("compilation failed: syntax error at line 3", p))
     assert(!LoopGuard.isTransientError("Tool Read is not allowed by the permission policy", p))
-    assert(!LoopGuard.isTransientError("File does not exist: /docs/503.md", p), "a path containing 503 is not an HTTP status")
+    assert(
+      !LoopGuard.isTransientError("File does not exist: /docs/503.md", p),
+      "a path containing 503 is not an HTTP status"
+    )
   }
 
   test("transient: a timeout streak does not terminate at 8 — the bound scales by transientFactor") {
@@ -365,7 +368,10 @@ class LoopGuardSpec extends FunSuite:
     val (_, v8) = repeat(List(e), 8)
     assert(v8 == LoopGuard.Verdict.Pass, s"transient streak must survive 8 (hard×3=24), got $v8")
     val (c23, v23) = repeat(List(e), 23)
-    assert(!v23.isInstanceOf[LoopGuard.Verdict.Terminate], s"23 identical transient failures must not be terminal yet, got $v23")
+    assert(
+      !v23.isInstanceOf[LoopGuard.Verdict.Terminate],
+      s"23 identical transient failures must not be terminal yet, got $v23"
+    )
     val (_, v24) = LoopGuard.evaluate(List(e), "t1", c23, cfg)
     assert(v24.isInstanceOf[LoopGuard.Verdict.Terminate], s"24 must terminate (bounded, not eternal), got $v24")
   }
@@ -552,8 +558,8 @@ class LoopGuardSpec extends FunSuite:
   private def assertNotTerminal(v: LoopGuard.Verdict, what: String): Unit =
     v match
       case t: LoopGuard.Verdict.Terminate => fail(s"$what must NOT Terminate (got: ${t.msg})")
-      case f: LoopGuard.Verdict.Freeze    => fail(s"$what must NOT Freeze (got: ${f.msg})")
-      case _                              => ()
+      case f: LoopGuard.Verdict.Freeze => fail(s"$what must NOT Freeze (got: ${f.msg})")
+      case _ => ()
 
   test("R1 (bash overhaul): 20 identical Bash QUERY calls in one turn never Terminate/Freeze") {
     // 现场 A/B 的精确形态：同参 `background_job_id` 查询，全部成功（isError=false）。
@@ -587,7 +593,10 @@ class LoopGuardSpec extends FunSuite:
     val (_, v5) = LoopGuard.evaluate(List(bgQueryEvent()), "t1", c4, cfg)
     v5 match
       case LoopGuard.Verdict.Warn(msg, _) =>
-        assert(msg.contains("background_job_id") && msg.contains("timeout"), s"the nudge must point at Bash bounded wait, got: $msg")
+        assert(
+          msg.contains("background_job_id") && msg.contains("timeout"),
+          s"the nudge must point at Bash bounded wait, got: $msg"
+        )
       case other => fail(s"expected Warn (L0 nudge) at the 5th identical query, got $other")
   }
 

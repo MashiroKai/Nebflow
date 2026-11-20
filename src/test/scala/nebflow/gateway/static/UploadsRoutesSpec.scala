@@ -43,9 +43,11 @@ class UploadsRoutesSpec extends CatsEffectSuite:
         "sess-1/a+b.png"
       )
       activeOwnerStore.registerSession(rec) *>
-        resources.foldLeft(IO.unit) { (acc, id) =>
-          acc *> activeOwnerStore.createResource("attachment", id, credential).void
-        }.as((GatewaySessionStore.CookieName, rec.sessionId))
+        resources
+          .foldLeft(IO.unit) { (acc, id) =>
+            acc *> activeOwnerStore.createResource("attachment", id, credential).void
+          }
+          .as((GatewaySessionStore.CookieName, rec.sessionId))
     }
 
   /** Isolated dataRoot with a seeded uploads/sess-1/shot.png; restored after. */
@@ -133,9 +135,15 @@ class UploadsRoutesSpec extends CatsEffectSuite:
         bResp = get("/uploads/sess-1/shot.png", cookie = Some((GatewaySessionStore.CookieName, b.sessionId))).get
         _ = assertEquals(aResp.status, Status.Ok)
         _ = assertEquals(bResp.status, Status.Forbidden)
-        unknown = get("/uploads/sess-1/unregistered.png", cookie = Some((GatewaySessionStore.CookieName, a.sessionId))).get
+        unknown = get(
+          "/uploads/sess-1/unregistered.png",
+          cookie = Some((GatewaySessionStore.CookieName, a.sessionId))
+        ).get
         _ = assertEquals(unknown.status, Status.Forbidden)
-        forged = get("/uploads/other-session/shot.png", cookie = Some((GatewaySessionStore.CookieName, a.sessionId))).get
+        forged = get(
+          "/uploads/other-session/shot.png",
+          cookie = Some((GatewaySessionStore.CookieName, a.sessionId))
+        ).get
         _ = assertEquals(forged.status, Status.Forbidden)
       yield ()
     }
@@ -193,14 +201,16 @@ class UploadsRoutesSpec extends CatsEffectSuite:
         _ = assertEquals(ok.status, Status.Ok)
         etag = ok.headers.get[org.http4s.headers.ETag].map(_.tag.toString).getOrElse(fail("ETag missing"))
         // Same request shape with If-None-Match added on the wire:
-        _ = {
+        _ =
           val req = StaticRoutes
             .uploadsRoutes(TokenRef, Sessions)(
-              SpecRequests.withRemote(
-                Request[IO](Method.GET, Uri.unsafeFromString("/uploads/sess-1/shot.png"))
-                  .putHeaders(org.http4s.Header.Raw(org.typelevel.ci.CIString("If-None-Match"), etag)),
-                Some(SpecRequests.LoopbackV4)
-              ).addCookie(GatewaySessionStore.CookieName, cred(1))
+              SpecRequests
+                .withRemote(
+                  Request[IO](Method.GET, Uri.unsafeFromString("/uploads/sess-1/shot.png"))
+                    .putHeaders(org.http4s.Header.Raw(org.typelevel.ci.CIString("If-None-Match"), etag)),
+                  Some(SpecRequests.LoopbackV4)
+                )
+                .addCookie(GatewaySessionStore.CookieName, cred(1))
             )
             .value
             .unsafeRunSync()
@@ -210,7 +220,6 @@ class UploadsRoutesSpec extends CatsEffectSuite:
             req.headers.get[org.http4s.headers.`Cache-Control`].map(_.values.toList.mkString(", ")),
             Some("private, max-age=300")
           )
-        }
         missing = get("/uploads/sess-1/nope.png", cookie = Some(cred)).get
         _ = assertEquals(missing.status, Status.Forbidden)
         _ = assertEquals(missing.headers.get[org.http4s.headers.`Cache-Control`], None)

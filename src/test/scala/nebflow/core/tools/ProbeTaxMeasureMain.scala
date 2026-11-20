@@ -66,13 +66,17 @@ object ProbeTaxMeasureMain:
     }
     ((System.nanoTime() - t0) / 1000000L, per)
 
+  end serialProbe
+
   private def measureProbe(label: String, eps: List[String]): Unit =
     // ① 改前形态：串行挨个拨，各付满自己的预算（逐端点读数外发）。
     val (legacyMs, per) = serialProbe(eps)
     val perJson = per
       .map { case (ep, ms, ok) => s"""{"endpoint":"$ep","ms":$ms,"connected":$ok}""" }
       .mkString("[", ",", "]")
-    println(s"""MEASURE probe {"set":"$label","mode":"legacy-serial","endpoints":${eps.size},"ms":$legacyMs,"per":$perJson}""")
+    println(
+      s"""MEASURE probe {"set":"$label","mode":"legacy-serial","endpoints":${eps.size},"ms":$legacyMs,"per":$perJson}"""
+    )
 
     // ② 改后形态：并发探测（首胜即放行）+ 负缓存的三种状态。
     val ledger = new P2pReachability
@@ -100,12 +104,14 @@ object ProbeTaxMeasureMain:
     val expireAt = System.currentTimeMillis() + P2pProbePolicy.negativeWindowMs(n) + 1
     val stillHit = ledger.shouldSkip("measure", key, expireAt)
     println(s"""MEASURE probe {"set":"$label","mode":"negative-cache-expired-half-open","hit":$stillHit,"ms":0}""")
+  end measureProbe
 
   // ---- 传送腿：本机伪对端 + 注入 RTT ----
 
   /** 一台伪对端：真 HTTP + 真 5 MiB 字节 + 每请求注入 `rttMs` 单程延迟。 */
   private final class StubPeer(val bytes: Array[Byte], rttMs: Long):
     private val server = com.sun.net.httpserver.HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
+
     server.createContext(
       "/api/neblink/remote-exec",
       (ex: com.sun.net.httpserver.HttpExchange) =>
@@ -144,6 +150,8 @@ object ProbeTaxMeasureMain:
     server.start()
     val url: String = s"http://127.0.0.1:${server.getAddress.getPort}/api/neblink/remote-exec"
     def close(): Unit = server.stop(0)
+
+  end StubPeer
 
   private def measureTransfer(totalBytes: Int, chunkSize: Int, window: Int, rttMs: Long): Unit =
     val bytes = Array.tabulate(totalBytes)(i => ((i * 31 + 7) % 251).toByte)
@@ -210,6 +218,10 @@ object ProbeTaxMeasureMain:
       try os.remove.all(os.Path(workDir))
       catch case _: Throwable => ()
 
+    end try
+
+  end measureTransfer
+
   def main(args: Array[String]): Unit =
     println(s"""MEASURE env {"pid":${ProcessHandle.current().pid()},"note":"real sockets, real 5MiB bytes"}""")
     // 两组端点：① 真机 KAI 的两个候选（今天的实测对象）；② TEST-NET-3 两个地址
@@ -222,12 +234,23 @@ object ProbeTaxMeasureMain:
     measureTransfer(fiveMb, 512 * 1024, 1, 43)
     measureTransfer(fiveMb, 512 * 1024, 4, 43)
     measureTransfer(fiveMb, 512 * 1024, 4, 43)
-    measureTransfer(fiveMb, ChunkSizing.chunkSizeFor(fiveMb.toLong), ChunkSizing.windowFor(ChunkSizing.chunkSizeFor(fiveMb.toLong)), 43)
-    measureTransfer(fiveMb, ChunkSizing.chunkSizeFor(fiveMb.toLong), ChunkSizing.windowFor(ChunkSizing.chunkSizeFor(fiveMb.toLong)), 43)
+    measureTransfer(
+      fiveMb,
+      ChunkSizing.chunkSizeFor(fiveMb.toLong),
+      ChunkSizing.windowFor(ChunkSizing.chunkSizeFor(fiveMb.toLong)),
+      43
+    )
+    measureTransfer(
+      fiveMb,
+      ChunkSizing.chunkSizeFor(fiveMb.toLong),
+      ChunkSizing.windowFor(ChunkSizing.chunkSizeFor(fiveMb.toLong)),
+      43
+    )
 
     // 🔴 收尾纪律（2026-11-04 e2e 收口时踩到）：`import cats.effect.unsafe.implicits.global`
     // 的 IORuntime 工作线程是**非 daemon**，不 shutdown ⇒ main 返回后 JVM 挂住不退
     // （实测连开两次都留了一个 0% CPU 的僵尸 JVM）。夹具必须自退。
     cats.effect.unsafe.IORuntime.global.shutdown()
+  end main
 
 end ProbeTaxMeasureMain

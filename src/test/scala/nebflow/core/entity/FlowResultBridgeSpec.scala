@@ -8,6 +8,7 @@ import nebflow.actor.{ActorSystem, AgentError, AgentEvent}
 import scala.concurrent.duration.*
 
 class FlowResultBridgeSpec extends CatsEffectSuite:
+
   test("unrelated ticks preserve terminal handling") {
     ActorSystem.resource("bridge-tick").use { system =>
       FlowResultBridge.resource(system, "result").use { bridge =>
@@ -24,7 +25,10 @@ class FlowResultBridgeSpec extends CatsEffectSuite:
   test("failure retryability and cancellation retain their mappings") {
     ActorSystem.resource("bridge-mapping").use { system =>
       List(
-        AgentEvent.Failed("session", AgentError("session", "worker", 1, nebflow.actor.AgentErrorType.LlmFailed, "failed", retryable = Some(true))) ->
+        AgentEvent.Failed(
+          "session",
+          AgentError("session", "worker", 1, nebflow.actor.AgentErrorType.LlmFailed, "failed", retryable = Some(true))
+        ) ->
           Left(FlowResultBridge.Failure("failed", retryable = true)),
         AgentEvent.Cancelled("session", "user") ->
           Left(FlowResultBridge.Failure("cancelled: user", retryable = false))
@@ -41,8 +45,9 @@ class FlowResultBridgeSpec extends CatsEffectSuite:
       for
         entered <- Deferred[IO, Unit]
         publish <- Deferred[IO, Unit]
-        _ <- FlowResultBridge.acquire(system, "result", result => entered.complete(()).void *> publish.get.as(result)).use {
-          bridge =>
+        _ <- FlowResultBridge
+          .acquire(system, "result", result => entered.complete(()).void *> publish.get.as(result))
+          .use { bridge =>
             for
               _ <- bridge.replyTo ! AgentEvent.Completed("session")
               _ <- entered.get.timeout(3.seconds)
@@ -50,7 +55,7 @@ class FlowResultBridgeSpec extends CatsEffectSuite:
               _ <- publish.complete(())
               result <- bridge.result.timeout(3.seconds)
             yield assertEquals(result, Right(Nil))
-        }
+          }
       yield ()
     }
   }
@@ -61,7 +66,9 @@ class FlowResultBridgeSpec extends CatsEffectSuite:
         entered <- Deferred[IO, Unit]
         publish <- Deferred[IO, Unit]
         released <- Deferred[IO, Unit]
-        pair <- FlowResultBridge.acquire(system, "result", result => entered.complete(()).void *> publish.get.as(result)).allocated
+        pair <- FlowResultBridge
+          .acquire(system, "result", result => entered.complete(()).void *> publish.get.as(result))
+          .allocated
         (bridge, release) = pair
         _ <- (for
           _ <- bridge.replyTo ! AgentEvent.Completed("session")
@@ -134,3 +141,4 @@ class FlowResultBridgeSpec extends CatsEffectSuite:
       assert(outcome.isLeft)
     }
   }
+end FlowResultBridgeSpec

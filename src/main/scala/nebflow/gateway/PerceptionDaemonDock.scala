@@ -60,9 +60,11 @@ object PerceptionDaemonDock:
       token
     }
 
-  /** 端口挑选：绑 127.0.0.1:0 取实际端口即释（选中与 spawn 间的占位窗同
-    * DaemonSpawn 端口门的固有竞态级别——占用时 daemon fail-fast，watchdog
-    * 按 restartOnExit 语义走，面板 Crashed 可见）。 */
+  /**
+   * 端口挑选：绑 127.0.0.1:0 取实际端口即释（选中与 spawn 间的占位窗同
+   * DaemonSpawn 端口门的固有竞态级别——占用时 daemon fail-fast，watchdog
+   * 按 restartOnExit 语义走，面板 Crashed 可见）。
+   */
   def pickPort(): IO[Int] =
     IO.blocking {
       val s = new java.net.ServerSocket()
@@ -79,19 +81,31 @@ object PerceptionDaemonDock:
    * 引擎当前值透传——kill-switch 两进程一致）。jpackage 形态（classpath 空）⇒
    * None（spawn 不可行，与 DaemonSpawn.classPathSpawnable 同判据）。纯函数（spec 钉）。
    */
-  def buildCommand(home: os.Path, port: Int, enginePort: Int, llmEnabled: Boolean, classPath: String): Option[List[String]] =
+  def buildCommand(
+    home: os.Path,
+    port: Int,
+    enginePort: Int,
+    llmEnabled: Boolean,
+    classPath: String
+  ): Option[List[String]] =
     if classPath.trim.isEmpty then None
     else
       val javaBin = s"${sys.props.getOrElse("java.home", "java")}/bin/java"
-      Some(List(
-        javaBin,
-        s"-Dnebflow.perception.llm.enabled=$llmEnabled",
-        "-cp", classPath,
-        "nebflow.perception.PerceptionDaemonMain",
-        "--home", home.toString,
-        "--port", port.toString,
-        "--engine-port", enginePort.toString
-      ))
+      Some(
+        List(
+          javaBin,
+          s"-Dnebflow.perception.llm.enabled=$llmEnabled",
+          "-cp",
+          classPath,
+          "nebflow.perception.PerceptionDaemonMain",
+          "--home",
+          home.toString,
+          "--port",
+          port.toString,
+          "--engine-port",
+          enginePort.toString
+        )
+      )
 
   /** Upsert 结果：spawnable（classpath 可用）+ 挑定的 daemon 端口 + token。 */
   final case class Upserted(spawnable: Boolean, daemonPort: Int, token: String)
@@ -105,13 +119,17 @@ object PerceptionDaemonDock:
     writeToken(home).flatMap { token =>
       pickPort().flatMap { port =>
         buildCommand(
-          home, port, enginePort,
+          home,
+          port,
+          enginePort,
           nebflow.perception.PerceptionService.LlmJudgeEnabled,
           sys.props.getOrElse("java.class.path", "")
         ) match
           case None =>
             logger
-              .warn("perception daemon not spawnable (empty java.class.path — jpackage form); entry registered, autoStart off")
+              .warn(
+                "perception daemon not spawnable (empty java.class.path — jpackage form); entry registered, autoStart off"
+              )
               .as(Upserted(spawnable = false, port, token))
           case Some(command) =>
             val cfg = DaemonConfig(
@@ -152,7 +170,9 @@ object PerceptionDaemonDock:
         case false =>
           if System.currentTimeMillis() >= deadline then
             logger
-              .warn(s"perception unified daemon handshake timeout — boot continues; autoStart/restartOnExit will settle it")
+              .warn(
+                s"perception unified daemon handshake timeout — boot continues; autoStart/restartOnExit will settle it"
+              )
               .as(true)
           else IO.sleep(200.millis).as(false)
       }
@@ -162,7 +182,7 @@ object PerceptionDaemonDock:
   def dock(store: DaemonStore, enginePort: Int, home: os.Path = PathUtil.dataRoot): IO[Unit] =
     prepare(store, enginePort, home).flatMap {
       case Some(up) => handshake(up)
-      case None     => IO.unit
+      case None => IO.unit
     }
 
   /**
@@ -177,15 +197,18 @@ object PerceptionDaemonDock:
    */
   def prepare(store: DaemonStore, enginePort: Int, home: os.Path = PathUtil.dataRoot): IO[Option[Upserted]] =
     if !nebflow.shared.Defaults.MailProcessEnabled then
-      nebflow.core.boot.ProcessSeal.sealedNotice(
-        nebflow.core.boot.ProcessSeal.Realm.Mail,
-        "perception-daemon（dock prepare/upsert）"
-      ).as(None)
+      nebflow.core.boot.ProcessSeal
+        .sealedNotice(
+          nebflow.core.boot.ProcessSeal.Realm.Mail,
+          "perception-daemon（dock prepare/upsert）"
+        )
+        .as(None)
     else
       upsertEntry(store, home, enginePort).map {
         case u if u.spawnable => Some(u)
-        case _                => None
+        case _ => None
       }
 
   /** boot 腿第二半：autoStart 之后等 /health 200（10s 有界，WARN-only）。 */
   def handshake(up: Upserted): IO[Unit] = awaitHandshake(up.daemonPort, up.token)
+end PerceptionDaemonDock

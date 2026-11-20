@@ -149,3 +149,4 @@ class FreezeTruthSpec extends FunSuite:
     assertEquals(garbage.frozen, false)
     assertEquals(garbage.wakeable, false)
   }
+end FreezeTruthSpec

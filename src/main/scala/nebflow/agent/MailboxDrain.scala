@@ -314,17 +314,31 @@ private[agent] object MailboxDrain:
           ledger,
           io.circe.Json.obj("v" -> 1.asJson, "families" -> nextLedger.asJson).noSpaces
         )
-        (output, suppressed.map(e => (e,
-          str(e, "taskId").orElse(str(e, "failedSessionId")).orElse(e.correlationId).getOrElse(""),
-          nebflow.core.InjectionChannel.fingerprint(announcementKey(e)))))
+        (
+          output,
+          suppressed.map(e =>
+            (
+              e,
+              str(e, "taskId").orElse(str(e, "failedSessionId")).orElse(e.correlationId).getOrElse(""),
+              nebflow.core.InjectionChannel.fingerprint(announcementKey(e))
+            )
+          )
+        )
       end if
     }
     .flatMap { case (output, suppressed) =>
-      suppressed.traverse_ { case (e, id, key) =>
-        nebflow.core.InjectionChannel.logSuppressed((ledger / os.up).last, e.source, e.eventType, id, "delegate-terminal-ledger",
-          io.circe.JsonObject("announcementKeyFingerprint" -> key.asJson)
-        )
-      }.as(output)
+      suppressed
+        .traverse_ { case (e, id, key) =>
+          nebflow.core.InjectionChannel.logSuppressed(
+            (ledger / os.up).last,
+            e.source,
+            e.eventType,
+            id,
+            "delegate-terminal-ledger",
+            io.circe.JsonObject("announcementKeyFingerprint" -> key.asJson)
+          )
+        }
+        .as(output)
     }
     .handleErrorWith { error =>
       logger.warn(s"terminal notification ledger unavailable: ${error.getMessage}").as(events)

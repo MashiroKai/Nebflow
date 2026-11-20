@@ -35,6 +35,7 @@ class ShellOutputSpillSpec extends FunSuite:
   // ---------- 合成流：按固定行长反复吐字节，堆占用恒定 ----------
 
   private final class SynthLinesStream(totalBytes: Long, lineBytes: Int) extends java.io.InputStream:
+
     private val line: Array[Byte] =
       val a = Array.fill[Byte](lineBytes)('x'.toByte)
       a(lineBytes - 1) = '\n'.toByte
@@ -61,6 +62,8 @@ class ShellOutputSpillSpec extends FunSuite:
           i += 1
         served += n
         n
+
+  end SynthLinesStream
 
   /**
    * 稳定化的已用堆读数：多轮 `System.gc` + 短眠，取**最小值**（= 保留集大小）。
@@ -102,7 +105,9 @@ class ShellOutputSpillSpec extends FunSuite:
   private def withSpillDir[T](f: os.Path => T): T =
     val dir = os.temp.dir(prefix = "shell-spill-spec")
     try f(dir)
-    finally try os.remove.all(dir) catch case _: Throwable => ()
+    finally
+      try os.remove.all(dir)
+      catch case _: Throwable => ()
 
   test("M3: 100MB 输出经 readStream 后堆增长 ≤ 1MB（内存只留滚动尾窗 ≤2000 行 ∧ ≤50KB）") {
     withSpillDir { spill =>
@@ -157,3 +162,4 @@ class ShellOutputSpillSpec extends FunSuite:
       assert(os.list(spill).isEmpty, "小输出不该产生溢写文件（零副作用面）")
     }
   }
+end ShellOutputSpillSpec

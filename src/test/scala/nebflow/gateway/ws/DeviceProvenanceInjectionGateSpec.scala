@@ -38,7 +38,10 @@ class DeviceProvenanceInjectionGateSpec extends FunSuite:
     noBlock.linesIterator.map(l => l.replaceAll("//.*$", "")).mkString("\n")
 
   private lazy val wsRoutesCode: String = codeOnly(read("src/main/scala/nebflow/gateway/WebSocketRoutes.scala"))
-  private lazy val chatHandlersCode: String = codeOnly(read("src/main/scala/nebflow/gateway/WsSessionChatHandlers.scala"))
+
+  private lazy val chatHandlersCode: String = codeOnly(
+    read("src/main/scala/nebflow/gateway/WsSessionChatHandlers.scala")
+  )
   private lazy val dispatchCode: String = codeOnly(read("src/main/scala/nebflow/gateway/WsDispatch.scala"))
   private lazy val inputJs: String = read("src/main/resources/web/js/input.js")
   private lazy val recoveryJs: String = read("src/main/resources/web/js/errorRecovery.js")
@@ -83,7 +86,7 @@ class DeviceProvenanceInjectionGateSpec extends FunSuite:
   test("② the typeless leg prepends the marker BLOCK (prependMarker), never rewrites the content") {
     assert(
       wsRoutesCode.contains("deviceResolved.fold(blocks.toList)(") &&
-      wsRoutesCode.contains("nebflow.bridge.DeviceProvenance.prependMarker(_, blocks.toList)"),
+        wsRoutesCode.contains("nebflow.bridge.DeviceProvenance.prependMarker(_, blocks.toList)"),
       "typeless 腿必须块前插（prependMarker），正文块逐字不动"
     )
   }
@@ -131,15 +134,21 @@ class DeviceProvenanceInjectionGateSpec extends FunSuite:
   // 进消息面；Bearer 轨恒 None。四个结构面缺一即红——回退（提取点消失/线程断/
   // 消费点漏改回单参）都判「会话身份弃用复发」（断点表 B3 复辟）。
 
-  test("A1a the handshake extracts SessionIdentity at the SAME point as the takeover precedent (ViaSession projection)") {
+  test(
+    "A1a the handshake extracts SessionIdentity at the SAME point as the takeover precedent (ViaSession projection)"
+  ) {
     assert(
       wsRoutesCode.contains("val sessionIdentity: Option[nebflow.bridge.SessionIdentity] = cred match") &&
-        wsRoutesCode.contains("Some(nebflow.bridge.SessionIdentity(record.accountSub, record.origin, record.sessionId))"),
+        wsRoutesCode.contains(
+          "Some(nebflow.bridge.SessionIdentity(record.accountSub, record.origin, record.sessionId))"
+        ),
       "握手处必须与会话轨同点提取 SessionIdentity 投影（accountSub/origin/sessionId）"
     )
   }
 
-  test("A1b the receive pipe threads the identity into handleMessage (per-connection closure, same scope as takeover)") {
+  test(
+    "A1b the receive pipe threads the identity into handleMessage (per-connection closure, same scope as takeover)"
+  ) {
     // df7bb5334（属主附件批）给调用追了第 5 参 Some(cred)——身份穿线语义不变，
     // 钉随调用形更新（仍要求 sessionIdentity 在收流管闭包内随帧进分发）。
     assert(
@@ -168,7 +177,9 @@ class DeviceProvenanceInjectionGateSpec extends FunSuite:
       "分发上下文必须携带 deviceProvenanceImpl 注入缝（既有契约不变）"
     )
     assert(
-      wsRoutesCode.contains("deviceProvenanceImpl = (json: io.circe.Json) => deviceProvenanceOf(json, sessionIdentity)"),
+      wsRoutesCode.contains(
+        "deviceProvenanceImpl = (json: io.circe.Json) => deviceProvenanceOf(json, sessionIdentity)"
+      ),
       "分发上下文必须按本连接会话身份闭包（immediateInput 腿）"
     )
   }
@@ -179,3 +190,4 @@ class DeviceProvenanceInjectionGateSpec extends FunSuite:
       "owner 锚读取必须按会话身份门控（Bearer 轨零文件 IO，行为逐字节不变）"
     )
   }
+end DeviceProvenanceInjectionGateSpec

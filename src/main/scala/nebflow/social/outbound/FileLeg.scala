@@ -41,7 +41,15 @@ object FileLeg:
    * 类目的权威（压缩包=file 腿，与 W-4b/WO-W7 钉同面），不再被 isPushable 读取。
    */
   val ArchiveExtensions: Set[String] = Set(
-    "zip", "7z", "rar", "tar", "gz", "tgz", "bz2", "xz", "zst"
+    "zip",
+    "7z",
+    "rar",
+    "tar",
+    "gz",
+    "tgz",
+    "bz2",
+    "xz",
+    "zst"
   )
 
   /** 小写扩展名（不带点），无扩展名 ⇒ ""。与 [[RichKind.of]] 同一读取口径。 */
@@ -49,7 +57,7 @@ object FileLeg:
     val lower = name.toLowerCase
     lower.lastIndexOf('.') match
       case -1 => ""
-      case i  => lower.substring(i + 1)
+      case i => lower.substring(i + 1)
 
   /**
    * 文件腿直推判据（2026-10-31 渠道文件出站批收口，作者令「Pop 触达的文件随

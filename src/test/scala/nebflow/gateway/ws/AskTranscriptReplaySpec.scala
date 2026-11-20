@@ -74,7 +74,7 @@ class AskTranscriptReplaySpec extends CatsEffectSuite:
     val p = uiFile(sessionsDir, sid)
     assert(os.exists(p), s"missing ui file on disk: $p")
     io.circe.parser.decode[List[UiMessage]](os.read(p)) match
-      case Right(msgs)    => msgs
+      case Right(msgs) => msgs
       case Left(decoding) => throw AssertionError(s"decode failed: ${decoding.getMessage}")
 
   private def roles(rows: List[Json]): List[String] =
@@ -110,9 +110,9 @@ class AskTranscriptReplaySpec extends CatsEffectSuite:
           assertEquals(
             disk.map {
               case _: UiMessage.User => "user"
-              case _: UiMessage.Ai   => "ai"
+              case _: UiMessage.Ai => "ai"
               case _: UiMessage.Tool => "tool"
-              case other             => other.typeName
+              case other => other.typeName
             },
             List("user", "ai", "tool", "ai"),
             "磁盘上的行族顺序"
@@ -120,6 +120,7 @@ class AskTranscriptReplaySpec extends CatsEffectSuite:
           assertEquals(disk.collect { case a: UiMessage.Ai => a.text }, List("先看文件。", "一句话：这是一份影响面盘点。"))
         }
       yield ()
+      end for
     }
   }
 
@@ -156,6 +157,7 @@ class AskTranscriptReplaySpec extends CatsEffectSuite:
           )
         }
       yield ()
+      end for
     }
   }
 

@@ -81,7 +81,8 @@ case class ScheduledTask(
    * 零工具动作 ⇒ 本轮触发记 1 次，有动作清零。达 IdleDownfreqThreshold 自动
    * 降频（repeat 阶梯 hour→day→week）并挂 reviewFlag。随任务持久化，重启不清。
    */
-  idleStreak: Int = 0,  /**
+  idleStreak: Int = 0,
+  /**
    * 「待审查」标记（2026-10-29 降频批）：连续空转达阈值后被引擎自动降频的
    * 例程挂此标——list 可见；作者恢复 = 同名 re-arm（upsert 换新任务，标记与
    * 计数自然归零）或 cancel 销账。粘性：一旦挂上不自动摘（自清则作者永远看不到）。
@@ -161,8 +162,10 @@ object ScheduledTask:
   /** 重要度上界（3 = 高）。 */
   val PriorityMax: Int = 3
 
-  /** 重要度钳位单点：越界收进 [PriorityMin, PriorityMax]（0..3 之外的读数只可能
-   *  来自老/手改文件或旧前端，一律收敛，库内不出现越界值）。 */
+  /**
+   * 重要度钳位单点：越界收进 [PriorityMin, PriorityMax]（0..3 之外的读数只可能
+   *  来自老/手改文件或旧前端，一律收敛，库内不出现越界值）。
+   */
   def clampPriority(n: Int): Int = math.max(PriorityMin, math.min(PriorityMax, n))
 
   /**
@@ -194,18 +197,24 @@ object ScheduledTask:
     kind: Option[String] = None,
     condition: Option[String] = None,
     project: Option[String] = None,
-    /** 重要度 0..3（越界钳位，见 [[ScheduledTask.clampPriority]]）；kind=todo 的
-     *  唯一创建点即此处，定时任务面调用方不传 = 0（逐字节现状）。 */
+    /**
+     * 重要度 0..3（越界钳位，见 [[ScheduledTask.clampPriority]]）；kind=todo 的
+     *  唯一创建点即此处，定时任务面调用方不传 = 0（逐字节现状）。
+     */
     priority: Int = 0,
-    /** 第二段 detail（两段化批 2026-11-05；定时任务面启用 = schedule-todo-unify
+    /**
+     * 第二段 detail（两段化批 2026-11-05；定时任务面启用 = schedule-todo-unify
      *  批 2026-11-06 作者令「定时任务也要按 name description 来添加 点击展开可以
      *  查看细节」）：待办面 = detail（2026-11-05 起），定时任务面 = description。
      *  **缺键/空白 ⇒ None**（旧调用方不传 = 逐字节现状，零迁移）。
-     *  末位默认参数 ⇒ 全部既有位置/命名调用零改动。 */
+     *  末位默认参数 ⇒ 全部既有位置/命名调用零改动。
+     */
     detail: Option[String] = None,
-    /** 决策选项集（待办数据模型批 2026-11-18）：**写侧强制**非空（待办面）——
+    /**
+     * 决策选项集（待办数据模型批 2026-11-18）：**写侧强制**非空（待办面）——
      *  本工厂只做归一化，判定归 [[TodoTaxonomy.validateCreate]]（调用方在 create
-     *  之前调用它）。末位默认参数 ⇒ 全部既有位置/命名调用零改动。 */
+     *  之前调用它）。末位默认参数 ⇒ 全部既有位置/命名调用零改动。
+     */
     decision: Option[TodoDecision] = None
   ): ScheduledTask =
     val normalizedKind = kind.map(_.trim.toLowerCase).filter(_.nonEmpty)

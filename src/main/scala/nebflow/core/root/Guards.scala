@@ -41,6 +41,8 @@ object OwnerGuard:
           )
         )
 
+end OwnerGuard
+
 /**
  * 登录前置门 + 禁热切（§0 总则 2「进程级单值，禁热切」的判定面）。
  *
@@ -107,9 +109,9 @@ object LoginGuard:
       SingleInstanceGuard
         .checkPort(MachineBindHost, port, drainWaitMs = 0L)
         .map {
-          case _: SingleInstanceGuard.NebflowInstance  => true
+          case _: SingleInstanceGuard.NebflowInstance => true
           case _: SingleInstanceGuard.OtherHomeInstance => true
-          case _                                        => false
+          case _ => false
         }
         .handleError(_ => false)
     }

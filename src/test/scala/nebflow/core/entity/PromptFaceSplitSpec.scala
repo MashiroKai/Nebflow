@@ -60,8 +60,17 @@ class PromptFaceSplitSpec extends FunSuite:
         )
       do assert(text.contains(required), s"missing restart safety requirement: $required")
       assert(!text.contains("NEVER send signals to or kill any sbt/java/nebflow process"))
-      for required <- Seq("kill -TERM <pid>", "kill -KILL <pid>", "PID is gone", "port has no listener", "verification output", "pkill -f java", "killall java", "pkill sbt") do
-        assert(text.contains(required), s"missing isolated-process safety requirement: $required")
+      for required <- Seq(
+          "kill -TERM <pid>",
+          "kill -KILL <pid>",
+          "PID is gone",
+          "port has no listener",
+          "verification output",
+          "pkill -f java",
+          "killall java",
+          "pkill sbt"
+        )
+      do assert(text.contains(required), s"missing isolated-process safety requirement: $required")
       assert(!text.contains("Never directly signal or kill sbt/java"))
 
     end for

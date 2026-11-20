@@ -137,6 +137,8 @@ object WsZombieGuard:
           .flatMap(_ => frames.evalTap(_ => touch).through(base))
           .interruptWhen(deadSig.get.attempt)
 
+  end Session
+
   /** 开一条会话装配体：活跃钟起点 = 调用时刻（会话受理时刻）。 */
   def open(liveness: Liveness): IO[Session] =
     IO.realTime.map(_.toMillis).flatMap { startedMs =>

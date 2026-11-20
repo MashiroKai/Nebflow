@@ -62,7 +62,11 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
 
   override val munitIOTimeout = 30.seconds
 
-  private def adapter(passback: Boolean = false, url: String = "http://localhost:0", allow: Option[Map[String, Map[String, List[ThinkingEffort]]]] = None): AnthropicAdapter =
+  private def adapter(
+    passback: Boolean = false,
+    url: String = "http://localhost:0",
+    allow: Option[Map[String, Map[String, List[ThinkingEffort]]]] = None
+  ): AnthropicAdapter =
     AnthropicAdapter(
       url,
       "k",
@@ -97,7 +101,9 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
 
   test("historically documented endpoint is fail-closed without explicit allowlist") {
     val resolved = Some(ResolvedThinking(ThinkingKind.EffortTopLevel, enabled = true, Some(ThinkingEffort.High)))
-    val fragment = adapter(url = "https://api.kimi.com/coding").wireThinkingFragment(params("k3.1-pro-highspeed", budgetOn, resolved))
+    val fragment = adapter(url = "https://api.kimi.com/coding").wireThinkingFragment(
+      params("k3.1-pro-highspeed", budgetOn, resolved)
+    )
     assertEquals(fragment.hcursor.downField("reasoning_effort").focus, None)
   }
 
@@ -113,9 +119,12 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
   }
 
   test("budget wire does not leak internal effort or clearThinking carrier fields") {
-    val carrier = Some(nebflow.shared.ThinkingConfig.toLlmJson(
-      nebflow.shared.ThinkingConfig(budgetTokens = 32000, effort = Some(ThinkingEffort.Max), clearThinking = Some(false))
-    ))
+    val carrier = Some(
+      nebflow.shared.ThinkingConfig.toLlmJson(
+        nebflow.shared
+          .ThinkingConfig(budgetTokens = 32000, effort = Some(ThinkingEffort.Max), clearThinking = Some(false))
+      )
+    )
     val fragment = adapter().wireThinkingFragment(params("claude-sonnet-x", carrier))
     assertEquals(thinkingKeyOf(fragment), Some(Json.obj("type" -> "enabled".asJson, "budget_tokens" -> 32000.asJson)))
   }
@@ -138,10 +147,14 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
   }
 
   test("W4: toggle + off → falls back to enabled (forced-thinking off is an error path)") {
-    assertEquals(thinkingKeyOf(adapter().wireThinkingFragment(params("glm-5.3-flash", off))),
-      Some(Json.obj("type" -> "enabled".asJson)))
-    assertEquals(thinkingKeyOf(adapter().wireThinkingFragment(params("kimi-for-coding", off))),
-      Some(Json.obj("type" -> "enabled".asJson)))
+    assertEquals(
+      thinkingKeyOf(adapter().wireThinkingFragment(params("glm-5.3-flash", off))),
+      Some(Json.obj("type" -> "enabled".asJson))
+    )
+    assertEquals(
+      thinkingKeyOf(adapter().wireThinkingFragment(params("kimi-for-coding", off))),
+      Some(Json.obj("type" -> "enabled".asJson))
+    )
   }
 
   test("W5: toggle + explicit clearThinking=false → {type:enabled,clear_thinking:false}") {
@@ -204,8 +217,16 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
   // ── W9/W10/W11/W12：第二段点亮（effort 档位）────────────────────────────
 
   test("W9: k3.1 + effort high → top-level reasoning_effort:high, still NO thinking key") {
-    val f = adapter(url = "https://api.kimi.com/coding", allow = Some(Map("https://api.kimi.com/coding/v1/messages" -> Map("k3.1-pro-highspeed" -> List(ThinkingEffort.High))))).wireThinkingFragment(
-      params("k3.1-pro-highspeed", budgetOn, Some(ResolvedThinking(ThinkingKind.EffortTopLevel, enabled = true, Some(ThinkingEffort.High))))
+    val f = adapter(
+      url = "https://api.kimi.com/coding",
+      allow =
+        Some(Map("https://api.kimi.com/coding/v1/messages" -> Map("k3.1-pro-highspeed" -> List(ThinkingEffort.High))))
+    ).wireThinkingFragment(
+      params(
+        "k3.1-pro-highspeed",
+        budgetOn,
+        Some(ResolvedThinking(ThinkingKind.EffortTopLevel, enabled = true, Some(ThinkingEffort.High)))
+      )
     )
     assertEquals(f.hcursor.downField("reasoning_effort").as[String].toOption, Some("high"))
     assertEquals(thinkingKeyOf(f), None)
@@ -214,11 +235,19 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
   test("W10: unverified medium tier is omitted even at documented endpoints") {
     assertEquals(EffortWire.threeTier(ThinkingEffort.Minimal), "low")
     val k3 = adapter(url = "https://api.kimi.com/coding").wireThinkingFragment(
-      params("k3.1-pro-highspeed", budgetOn, Some(ResolvedThinking(ThinkingKind.EffortTopLevel, enabled = true, Some(ThinkingEffort.Medium))))
+      params(
+        "k3.1-pro-highspeed",
+        budgetOn,
+        Some(ResolvedThinking(ThinkingKind.EffortTopLevel, enabled = true, Some(ThinkingEffort.Medium)))
+      )
     )
     assertEquals(k3.hcursor.downField("reasoning_effort").as[String].toOption, None, "unverified tier is not remapped")
     val glm = adapter(url = "https://open.bigmodel.cn/api/anthropic").wireThinkingFragment(
-      params("glm-5.3-flash", budgetOn, Some(ResolvedThinking(ThinkingKind.Toggle, enabled = true, Some(ThinkingEffort.Medium))))
+      params(
+        "glm-5.3-flash",
+        budgetOn,
+        Some(ResolvedThinking(ThinkingKind.Toggle, enabled = true, Some(ThinkingEffort.Medium)))
+      )
     )
     assertEquals(glm.hcursor.downField("reasoning_effort").as[String].toOption, None, "unverified tier is not remapped")
     assertEquals(thinkingKeyOf(glm), Some(Json.obj("type" -> "enabled".asJson)))
@@ -226,7 +255,11 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
 
   test("W11: kimi-for-coding has NO effort face — effort config never reaches the wire") {
     val f = adapter().wireThinkingFragment(
-      params("kimi-for-coding", budgetOn, Some(ResolvedThinking(ThinkingKind.Toggle, enabled = true, Some(ThinkingEffort.Max))))
+      params(
+        "kimi-for-coding",
+        budgetOn,
+        Some(ResolvedThinking(ThinkingKind.Toggle, enabled = true, Some(ThinkingEffort.Max)))
+      )
     )
     assertEquals(f.hcursor.downField("reasoning_effort").focus, None)
     assertEquals(thinkingKeyOf(f), Some(Json.obj("type" -> "enabled".asJson)))
@@ -234,7 +267,11 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
 
   test("W12: deepseek family effort gate closed → no output_config even with effort configured") {
     val f = adapter().wireThinkingFragment(
-      params("deepseek-v4.1-flash", budgetOn, Some(ResolvedThinking(ThinkingKind.EffortAnthropic, enabled = true, Some(ThinkingEffort.High))))
+      params(
+        "deepseek-v4.1-flash",
+        budgetOn,
+        Some(ResolvedThinking(ThinkingKind.EffortAnthropic, enabled = true, Some(ThinkingEffort.High)))
+      )
     )
     assertEquals(f.hcursor.downField("output_config").focus, None)
   }
@@ -333,7 +370,10 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
       _ <- release
     yield chunks).unsafeRunSync()
 
-  private def assertOkAndCapture(result: Either[Throwable, List[StreamChunk]], captured: ConcurrentLinkedQueue[String]): Json =
+  private def assertOkAndCapture(
+    result: Either[Throwable, List[StreamChunk]],
+    captured: ConcurrentLinkedQueue[String]
+  ): Json =
     result match
       case Right(chunks) =>
         val text = chunks.collect { case StreamChunk.TextDelta(d) => d }.mkString
@@ -348,10 +388,21 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
       try
         server = startCaptureMock(captured).unsafeRunSync()
         val lowGlobal = Some(Json.obj("type" -> "enabled".asJson, "budget_tokens" -> 4096.asJson))
-        val body = assertOkAndCapture(sendTurn("p", "m1", lowGlobal, server, model,
-          providerLayer = Some(ThinkingLayerConfig(budgetTokens = Some(65536))), subagentCap = Some(32000)), captured)
+        val body = assertOkAndCapture(
+          sendTurn(
+            "p",
+            "m1",
+            lowGlobal,
+            server,
+            model,
+            providerLayer = Some(ThinkingLayerConfig(budgetTokens = Some(65536))),
+            subagentCap = Some(32000)
+          ),
+          captured
+        )
         assertEquals(body.hcursor.downField("thinking").get[Int]("budget_tokens").toOption, Some(32000))
       finally if server != null then server.stop(0)
+      end try
   }
 
   test("65536 budget clamp logs requested and effective values") {
@@ -362,8 +413,10 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
     var server: HttpServer = null
     try
       server = startCaptureMock(captured).unsafeRunSync()
-      val body = assertOkAndCapture(sendTurn("p", "m1", budgetOn, server,
-        modelLayer = Some(ThinkingLayerConfig(budgetTokens = Some(65536)))), captured)
+      val body = assertOkAndCapture(
+        sendTurn("p", "m1", budgetOn, server, modelLayer = Some(ThinkingLayerConfig(budgetTokens = Some(65536)))),
+        captured
+      )
       import scala.jdk.CollectionConverters.*
       assert(appender.list.asScala.exists(e => e.getFormattedMessage.contains("requested=65536 effective=32768")))
       assertEquals(body.hcursor.downField("thinking").get[Int]("budget_tokens").toOption, Some(32768))
@@ -377,8 +430,10 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
     var server: HttpServer = null
     try
       server = startCaptureMock(captured).unsafeRunSync()
-      val body = assertOkAndCapture(sendTurn("p", "m1", budgetOn, server,
-        modelLayer = Some(ThinkingLayerConfig(budgetTokens = Some(4096)))), captured)
+      val body = assertOkAndCapture(
+        sendTurn("p", "m1", budgetOn, server, modelLayer = Some(ThinkingLayerConfig(budgetTokens = Some(4096)))),
+        captured
+      )
       assertEquals(body.hcursor.downField("thinking").get[Int]("budget_tokens").toOption, Some(4096))
     finally if server != null then server.stop(0)
   }
@@ -389,8 +444,11 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
     try
       server = startCaptureMock(captured).unsafeRunSync()
       val body = assertOkAndCapture(sendTurn("kimi", "kimi-for-coding", budgetOn, server), captured)
-      assertEquals(body.hcursor.downField("thinking").focus,
-        Some(Json.obj("type" -> "enabled".asJson)), "budget_tokens must NOT reach the kimi-for-coding wire")
+      assertEquals(
+        body.hcursor.downField("thinking").focus,
+        Some(Json.obj("type" -> "enabled".asJson)),
+        "budget_tokens must NOT reach the kimi-for-coding wire"
+      )
     finally if server != null then server.stop(0)
   }
 
@@ -400,8 +458,11 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
     try
       server = startCaptureMock(captured).unsafeRunSync()
       val body = assertOkAndCapture(sendTurn("kimi", "k3.1-pro-highspeed", budgetOn, server), captured)
-      assertEquals(body.hcursor.downField("thinking").focus, None,
-        "K3 official migration: thinking config removed from the wire")
+      assertEquals(
+        body.hcursor.downField("thinking").focus,
+        None,
+        "K3 official migration: thinking config removed from the wire"
+      )
     finally if server != null then server.stop(0)
   }
 
@@ -411,8 +472,11 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
     try
       server = startCaptureMock(captured).unsafeRunSync()
       val body = assertOkAndCapture(sendTurn("p", "m1", off, server), captured)
-      assertEquals(body.hcursor.downField("thinking").focus, None,
-        "the old wire shape \"thinking\":null must stay dead")
+      assertEquals(
+        body.hcursor.downField("thinking").focus,
+        None,
+        "the old wire shape \"thinking\":null must stay dead"
+      )
     finally if server != null then server.stop(0)
   }
 
@@ -422,12 +486,18 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
     try
       server = startCaptureMock(captured).unsafeRunSync()
       val body = assertOkAndCapture(
-        sendTurn("kimi", "k3.1-pro-highspeed", budgetOn, server,
-          modelLayer = Some(ThinkingLayerConfig(effort = Some(ThinkingEffort.High)))),
+        sendTurn(
+          "kimi",
+          "k3.1-pro-highspeed",
+          budgetOn,
+          server,
+          modelLayer = Some(ThinkingLayerConfig(effort = Some(ThinkingEffort.High)))
+        ),
         captured
       )
       assertEquals(body.hcursor.downField("reasoning_effort").focus, None, "localhost is not a verified endpoint")
       assertEquals(body.hcursor.downField("thinking").focus, None)
     finally if server != null then server.stop(0)
+    end try
   }
 end AnthropicThinkingWireSpec

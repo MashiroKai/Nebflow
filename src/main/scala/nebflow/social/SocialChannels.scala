@@ -233,6 +233,8 @@ object SocialChannels:
     }
     Json.obj("channels" -> Json.fromFields(out), "adapterRegistered" -> registered.nonEmpty.asJson)
 
+  end channelsJson
+
   /**
    * The channel runtime health face (bind-transactional 批, 2026-10-20): the
    * strikes file a bridge plugin maintains (`<root>/tmp/social-health/<id>.json`

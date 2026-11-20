@@ -63,7 +63,8 @@ class AdaptiveThrottleSpec extends CatsEffectSuite:
 
   private def enable(ref: Ref[IO, NebflowServiceConfig], flag: Boolean): IO[Unit] =
     ref.update(c =>
-      c.copy(llm = c.llm.copy(adaptiveThrottle = c.llm.adaptiveThrottle.map(_.copy(enabled = Some(flag))))))
+      c.copy(llm = c.llm.copy(adaptiveThrottle = c.llm.adaptiveThrottle.map(_.copy(enabled = Some(flag)))))
+    )
 
   private def limitOf(t: AdaptiveThrottle, key: String = BaseUrl): IO[Option[Int]] =
     t.snapshot.map(_.get(key).flatMap(_.limit))
@@ -133,6 +134,7 @@ class AdaptiveThrottleSpec extends CatsEffectSuite:
       endInFlight <- t.snapshot.map(_(BaseUrl).inFlight)
       _ = assertEquals(endInFlight, 0) // 全部许可释放，计数归零
     yield ()
+    end for
   }
 
   // ════════ T2 回松阶梯 ══════════════════════════════════════════════════
@@ -145,7 +147,8 @@ class AdaptiveThrottleSpec extends CatsEffectSuite:
       // 风暴：在飞 10，四刀压到硬下限（cap 2）
       permits <- (1 to 10).toList.traverse(_ => t.acquire(BaseUrl))
       _ <- (1 to 4).toList.traverse(_ =>
-        t.onRateLimitSignal(BaseUrl, FailoverReason.RateLimit, account429Body, now = now))
+        t.onRateLimitSignal(BaseUrl, FailoverReason.RateLimit, account429Body, now = now)
+      )
       floor <- limitOf(t)
       _ = assertEquals(floor, Some(2))
       _ <- permits.traverse_(_.release)
@@ -170,6 +173,7 @@ class AdaptiveThrottleSpec extends CatsEffectSuite:
       _ = assertEquals(l4.limit, None)
       _ = assertEquals(l4.rungLabel, "100%")
     yield ()
+    end for
   }
 
   test("T2b 状态机：静默窗钟面消耗语义（quietSince += window，非静默重置为 now）") {
@@ -291,10 +295,12 @@ class AdaptiveThrottleSpec extends CatsEffectSuite:
     val cur: Ref[IO, Int] = Ref.unsafe(0)
     val maxSeen: Ref[IO, Int] = Ref.unsafe(0)
     val completed: Ref[IO, Int] = Ref.unsafe(0)
+
     def sendMessage(params: SendMessageParams): IO[AdapterResponse] =
       cur.update(_ + 1) *> cur.get.flatMap(c => maxSeen.update(_ max c)) *>
         IO.sleep(delayMs.millis) *>
         cur.update(_ - 1) *> completed.update(_ + 1).as(AdapterResponse("ok", Nil))
+
     def sendMessageStream(params: SendMessageParams): Stream[IO, StreamChunk] =
       Stream.exec(sendMessage(params).void)
 
@@ -326,6 +332,7 @@ class AdaptiveThrottleSpec extends CatsEffectSuite:
       drained <- t.snapshot.map(_(BaseUrl).inFlight)
       _ = assertEquals(drained, 0)
     yield ()
+    end for
   }
 
   // ════════ T8 多账户互不牵连 ════════════════════════════════════════════
@@ -370,6 +377,7 @@ class AdaptiveThrottleSpec extends CatsEffectSuite:
       _ <- extras.traverse(f => f.joinWithNever.flatMap(p => p.release))
       _ <- p.traverse_(_.release)
     yield ()
+    end for
   }
 
   // ════════ T10 配置解码 ═════════════════════════════════════════════════

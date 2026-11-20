@@ -389,7 +389,10 @@ class ProviderConcurrencyFallbackSpec extends CatsEffectSuite:
       counts <- countsRef
       sys <- wiredSystem(counts, "pconc-t3a")
       ready <- cats.effect.Deferred[IO, Unit]
-      ref <- sys.spawn(Behaviors.receiveMessage[String](_ => ready.complete(()).void.as(Behaviors.ignore[String])), "t3-stop-actor")
+      ref <- sys.spawn(
+        Behaviors.receiveMessage[String](_ => ready.complete(()).void.as(Behaviors.ignore[String])),
+        "t3-stop-actor"
+      )
       pin <- ProviderConcurrency.assign(counts, capCfg, "t3-stop-actor", chain)
       before <- counts.get
       _ <- ref ! "ready"

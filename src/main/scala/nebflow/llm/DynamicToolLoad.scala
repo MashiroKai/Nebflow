@@ -50,8 +50,7 @@ object ToolLoadMode:
 
   /** 纯函数定档：协议 + 模型 id。不在能力表内 ⇒ [[ToolLoadMode.ExecutionGate]]（fail-closed）。 */
   def forLeg(protocol: String, modelId: Option[String]): ToolLoadMode =
-    if protocol.equalsIgnoreCase("anthropic") && isAnthropicToolSearchModel(modelId) then
-      ToolLoadMode.Deferred
+    if protocol.equalsIgnoreCase("anthropic") && isAnthropicToolSearchModel(modelId) then ToolLoadMode.Deferred
     else ToolLoadMode.ExecutionGate
 
   /**
@@ -66,6 +65,8 @@ object ToolLoadMode:
   private def isAnthropicToolSearchModel(modelId: Option[String]): Boolean =
     val m = modelId.getOrElse("").trim.toLowerCase
     m.nonEmpty && AnthropicToolSearchModels.exists(m.startsWith)
+
+end ToolLoadMode
 
 object DynamicToolLoad:
 
@@ -130,6 +131,8 @@ object DynamicToolLoad:
           LoadEvent(sessionId, mode, added, currentWire.size, wire.size, fingerprint(currentWire)),
           Nil
         )
+    end match
+  end plan
 
   // ── 尾部通告渲染（ExecutionGate 档）──────────────────────────────
 
@@ -189,6 +192,7 @@ object DynamicToolLoad:
         "messages" -> msgs
       )
     )
+  end cacheablePrefixFingerprint
 
   // ── 内部 ─────────────────────────────────────────────────────────
 

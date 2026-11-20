@@ -130,6 +130,7 @@ class ProfileDescriptionStoreSpec extends CatsEffectSuite:
         s"B 根写入不得污染 A 根文件：$aStill"
       )
       assertEquals(aReloaded, ProfileDescriptions(selfBio = "A 根介绍"), "回到 A 根仍读到 A 根值")
+    end for
   }
 
   // ── D3 / D4 写语义 + 互不覆盖 ─────────────────────────────────────────
@@ -152,6 +153,7 @@ class ProfileDescriptionStoreSpec extends CatsEffectSuite:
       )
       assertEquals(snap, expected, "前后空白必须被 trim（前端显示与搜索匹配都按 trim 后值）")
       assertEquals(onDisk, expected, "Ref 与磁盘必须一致（重启后描述不丢）")
+    end for
   }
 
   test("D3 trim 后空串 = 清除（删键而非存空串），且清除同样落盘") {
@@ -207,6 +209,7 @@ class ProfileDescriptionStoreSpec extends CatsEffectSuite:
       )
       assertEquals(afterRemarkEdit.groupRemark, Map("g1" -> "我的群备注乙-改"))
       assertEquals(disk, afterRemarkEdit, "每步都落盘：磁盘 = 最新 Ref")
+    end for
   }
 
   test("D3 未知 id 照存（纯本地态：零上游校验，不因好友/群列表此刻读不到而丢用户输入）") {
@@ -232,8 +235,10 @@ class ProfileDescriptionStoreSpec extends CatsEffectSuite:
 
   // ── D5 合并优先级（上游真源 vs 本地缓存）────────────────────────────────
 
-  /** 上游桩：好友 u-up 自带 bio，u-cache 不带；群 g-up 自带 description，g-cache 不带；
-   *  上游**故意**给两个群带 remark 值（`GroupSummary.remark`），用来证明群备注恒取本地。 */
+  /**
+   * 上游桩：好友 u-up 自带 bio，u-cache 不带；群 g-up 自带 description，g-cache 不带；
+   *  上游**故意**给两个群带 remark 值（`GroupSummary.remark`），用来证明群备注恒取本地。
+   */
   private val upstreamFriends = FriendListResponse(
     friends = List(
       FriendSummary("u-up", "up", "上游有介绍", bio = Some("  上游自我介绍  ")),
@@ -300,9 +305,11 @@ class ProfileDescriptionStoreSpec extends CatsEffectSuite:
         None,
         "上游带了 remark 也不得穿透：我的备注真源在本仓（上游值被本仓本地值取代，无本地值即 None）"
       )
+    end for
   }
 
-  test("D5 好友 remark 走既有 FriendRemarkStore 同一出口：与 bio 同批合并、互不覆盖") {    val fs = new FriendService(
+  test("D5 好友 remark 走既有 FriendRemarkStore 同一出口：与 bio 同批合并、互不覆盖") {
+    val fs = new FriendService(
       IO.pure(Some(upstreamClient)),
       AgentMessagingConfig(),
       remarkRef = Ref.unsafe[IO, Map[String, String]](Map("u-cache" -> "我给对方的备注")),
@@ -349,6 +356,7 @@ class ProfileDescriptionStoreSpec extends CatsEffectSuite:
       assertEquals(diskOff, off, "删除也必须落盘")
       assertEquals(seen.friendPinned, Map("u1" -> true), "重启等价路径：磁盘值必须能被新实例读回")
       assertEquals(seen.friendMuted, Map.empty[String, Boolean], "被清掉的偏好重启后仍是关")
+    end for
   }
 
   test("D6 出站口合并：muted/pinned 恒取本地，且在好友行内嵌档案同源") {
@@ -375,6 +383,7 @@ class ProfileDescriptionStoreSpec extends CatsEffectSuite:
       assertEquals(a("u-up").muted, Some(true), "写入后回读一致（同一条出站口）")
       assertEquals(a("u-up").pinned, Some(true), "写 muted 不得覆盖 pinned")
       assertEquals(a("u-cache").bio, None, "偏好写面不得污染描述字段（friendBio）")
+    end for
   }
 
   test("D6 未知 id 照存（纯本地态，零上游校验；与 D3 同一条纪律）") {
@@ -392,11 +401,13 @@ class ProfileDescriptionStoreSpec extends CatsEffectSuite:
 
   test("D6 旧文件（无 friendMuted/friendPinned 键）逐键缺省：升级不清空既有描述") {
     for
-      _ <- IO.blocking(os.write.over(
-        descFile,
-        """{"friendBio":{"u1":"我是老林"},"selfBio":"我在写 Nebflow"}""",
-        createFolders = true
-      ))
+      _ <- IO.blocking(
+        os.write.over(
+          descFile,
+          """{"friendBio":{"u1":"我是老林"},"selfBio":"我在写 Nebflow"}""",
+          createFolders = true
+        )
+      )
       loaded <- ProfileDescriptionStore.load
     yield assertEquals(
       loaded,

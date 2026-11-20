@@ -126,9 +126,11 @@ class ActiveAgentsFilterSpec extends FunSuite:
 
     def field[A: io.circe.Decoder](sid: String, key: String): Option[A] = entry(sid).hcursor.get[A](key).toOption
 
-    val bits = registry.keys.map(sid =>
-      sid -> field[Boolean](sid, "active").getOrElse(fail(s"row $sid must carry the authoritative liveness bit"))
-    ).toMap
+    val bits = registry.keys
+      .map(sid =>
+        sid -> field[Boolean](sid, "active").getOrElse(fail(s"row $sid must carry the authoritative liveness bit"))
+      )
+      .toMap
     // ② 活性位读数：只有真在跑的那条为真；Idle / 待命 / 冻结 / 重启中断全部为假。
     assertEquals(
       bits,

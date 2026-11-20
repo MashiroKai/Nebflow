@@ -55,7 +55,8 @@ class NearPathStatsSpec extends FunSuite:
       fileLockManager = FileLockManager.create.unsafeRunSync(),
       sessionModelOverrides = cats.effect.Ref.unsafe[IO, Map[String, ModelCandidate]](Map.empty),
       providerRegistry = new nebflow.llm.ProviderRegistry(
-        cats.effect.Ref.unsafe[IO, NebflowServiceConfig](NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))),
+        cats.effect.Ref
+          .unsafe[IO, NebflowServiceConfig](NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))),
         NullBackend
       ),
       healthMonitor = nebflow.llm.ProviderHealthMonitor(null),
@@ -178,18 +179,25 @@ class NearPathStatsSpec extends FunSuite:
     val cap = NearPathStats.MaxEventsPerMinute
     // 独立 IP（不被其它用例的窗口影响）
     for _ <- 1 to cap do
-      assertEquals(report("""{"event":"hit","reason":"direct"}""", remote = Some(SpecRequests.Public)).status,
-        Status.NoContent)
+      assertEquals(
+        report("""{"event":"hit","reason":"direct"}""", remote = Some(SpecRequests.Public)).status,
+        Status.NoContent
+      )
     assertEquals(int(NearPathStats.payload, "hit"), cap.toLong)
     for _ <- 1 to 5 do
-      assertEquals(report("""{"event":"hit","reason":"direct"}""", remote = Some(SpecRequests.Public)).status,
-        Status.NoContent, "over the cap: still a quiet 204 (the observation face never errors)")
+      assertEquals(
+        report("""{"event":"hit","reason":"direct"}""", remote = Some(SpecRequests.Public)).status,
+        Status.NoContent,
+        "over the cap: still a quiet 204 (the observation face never errors)"
+      )
     val p = NearPathStats.payload
     assertEquals(int(p, "hit"), cap.toLong, "over-cap calls must not be counted")
     assertEquals(p.hcursor.downField("reasons").downField("direct").as[Long].toOption, Some(cap.toLong))
     // 另一个 IP 不受影响（闸是 per-IP 的）
-    assertEquals(report("""{"event":"hit","reason":"direct"}""", remote = Some(SpecRequests.Lan)).status,
-      Status.NoContent)
+    assertEquals(
+      report("""{"event":"hit","reason":"direct"}""", remote = Some(SpecRequests.Lan)).status,
+      Status.NoContent
+    )
     assertEquals(int(NearPathStats.payload, "hit"), cap.toLong + 1L)
 
   test("malformed body / unknown event: 204 and NO count (never a 4xx on the observation face)"):
@@ -197,8 +205,11 @@ class NearPathStatsSpec extends FunSuite:
     assertEquals(report("not json").status, Status.NoContent)
     assertEquals(report("").status, Status.NoContent)
     assertEquals(report("""{"event":"redeem"}""").status, Status.NoContent, "only hit|miss are events")
-    assertEquals(report("""{"event":"hit"}""", contentType = None).status, Status.NoContent,
-      "content-type agnostic (sendBeacon / text-plain shape must still land)")
+    assertEquals(
+      report("""{"event":"hit"}""", contentType = None).status,
+      Status.NoContent,
+      "content-type agnostic (sendBeacon / text-plain shape must still land)"
+    )
     val p = NearPathStats.payload
     assertEquals(int(p, "hit"), 1L, "only the valid one counted")
     assertEquals(int(p, "miss"), 0L)
@@ -227,6 +238,7 @@ class NearPathStatsSpec extends FunSuite:
 
   private val PortalOrigin =
     HealthRoutes.canonicalOrigin(Branding.portalUrl).getOrElse(sys.error("brand portalUrl must carry an origin"))
+
   private val RelayOrigin =
     HealthRoutes.canonicalOrigin(Branding.serverUrl).getOrElse(sys.error("brand serverUrl must carry an origin"))
 
@@ -236,7 +248,8 @@ class NearPathStatsSpec extends FunSuite:
       val viaLoopback = report("""{"event":"hit","reason":"direct"}""", origin = Some(origin))
       assertEquals(header(viaLoopback, "Access-Control-Allow-Origin"), Some(origin), s"$origin on the loopback leg")
       assertEquals(header(viaLoopback, "Access-Control-Allow-Private-Network"), Some("true"))
-      val viaTunnel = report("""{"event":"miss","reason":"tunnel-leg"}""", remote = Some(SpecRequests.Lan), origin = Some(origin))
+      val viaTunnel =
+        report("""{"event":"miss","reason":"tunnel-leg"}""", remote = Some(SpecRequests.Lan), origin = Some(origin))
       assertEquals(header(viaTunnel, "Access-Control-Allow-Origin"), Some(origin), s"$origin on the tunnel leg")
       assertEquals(header(viaTunnel, "Access-Control-Allow-Methods").exists(_.contains("POST")), true)
     for bad <- List("https://evil.example", "http://localhost:9999", "null") do
@@ -251,45 +264,59 @@ class NearPathStatsSpec extends FunSuite:
     assertEquals(header(readResp, "Cache-Control"), Some("no-store"))
 
     for path <- List("/api/health/nearpath-event", "/api/health/nearpath") do
-      val pre = serve(SpecRequests.withRemote(
-        Request[IO](Method.OPTIONS, Uri.unsafeFromString(path))
-          .putHeaders(Header.Raw(CIString("Origin"), PortalOrigin)),
-        Some(SpecRequests.LoopbackV4)
-      ))
+      val pre = serve(
+        SpecRequests.withRemote(
+          Request[IO](Method.OPTIONS, Uri.unsafeFromString(path))
+            .putHeaders(Header.Raw(CIString("Origin"), PortalOrigin)),
+          Some(SpecRequests.LoopbackV4)
+        )
+      )
       assertEquals(pre.status, Status.NoContent, s"$path preflight")
       assertEquals(header(pre, "Access-Control-Allow-Origin"), Some(PortalOrigin), s"$path preflight ACAO")
       assertEquals(header(pre, "Access-Control-Allow-Private-Network"), Some("true"))
       assert(header(pre, "Access-Control-Allow-Methods").exists(_.contains("POST")))
-      val anon = serve(SpecRequests.withRemote(
-        Request[IO](Method.OPTIONS, Uri.unsafeFromString(path))
-          .putHeaders(Header.Raw(CIString("Origin"), "https://evil.example")),
-        Some(SpecRequests.LoopbackV4)
-      ))
+      val anon = serve(
+        SpecRequests.withRemote(
+          Request[IO](Method.OPTIONS, Uri.unsafeFromString(path))
+            .putHeaders(Header.Raw(CIString("Origin"), "https://evil.example")),
+          Some(SpecRequests.LoopbackV4)
+        )
+      )
       assertEquals(header(anon, "Access-Control-Allow-Origin"), None, s"$path preflight for a foreign origin")
+    end for
 
   // ── 爆炸半径：既有 /api/health 载荷键集合不变 ─────────────────────────────
 
   test("/api/health payload unchanged: base keys only on a non-loopback leg; nearpath keys never leak in"):
     // 基线五键（HealthPayload.build 的 base；本测试基座不装配 update/throttle/fleet）
-    val lan = serve(SpecRequests.withRemote(
-      Request[IO](Method.GET, Uri.unsafeFromString("/api/health")),
-      Some(SpecRequests.Lan)
-    ))
+    val lan = serve(
+      SpecRequests.withRemote(
+        Request[IO](Method.GET, Uri.unsafeFromString("/api/health")),
+        Some(SpecRequests.Lan)
+      )
+    )
     assertEquals(lan.status, Status.Ok)
     val lanKeys = bodyJson(lan).asObject.map(_.keys.toSet).getOrElse(Set.empty)
     // 基线：base 五键 + providerConcurrency（provider-concurrency 批 · 2026-11-06，
     // spawn 侧钉定的模型链快照读数，随 1198 提交合并进入本线；本测试的爆炸半径
     // 仍是「nearpath 键不得上车」，故把该键计入基线而不放宽其余断言）
-    assertEquals(lanKeys, Set("product", "status", "version", "providers", "search", "providerConcurrency"),
-      "the LAN/relay payload must stay exactly the baseline payload (no new keys from this batch)")
+    assertEquals(
+      lanKeys,
+      Set("product", "status", "version", "providers", "search", "providerConcurrency"),
+      "the LAN/relay payload must stay exactly the baseline payload (no new keys from this batch)"
+    )
     // 环回腿只允许多 deviceId 一个键（本地加速批 ② 既有语义）；本批零新增键
-    val loop = serve(SpecRequests.withRemote(
-      Request[IO](Method.GET, Uri.unsafeFromString("/api/health")),
-      Some(SpecRequests.LoopbackV4)
-    ))
+    val loop = serve(
+      SpecRequests.withRemote(
+        Request[IO](Method.GET, Uri.unsafeFromString("/api/health")),
+        Some(SpecRequests.LoopbackV4)
+      )
+    )
     val loopKeys = bodyJson(loop).asObject.map(_.keys.toSet).getOrElse(Set.empty)
-    assert(loopKeys.diff(lanKeys).subsetOf(Set("deviceId")),
-      s"the loopback leg may add only deviceId; got extra keys: ${loopKeys.diff(lanKeys)}")
+    assert(
+      loopKeys.diff(lanKeys).subsetOf(Set("deviceId")),
+      s"the loopback leg may add only deviceId; got extra keys: ${loopKeys.diff(lanKeys)}"
+    )
     val nearPathKeys = Set("hit", "miss", "reasons", "hitLastAt", "missLastAt", "redeemedLoopback")
     assertEquals(loopKeys.intersect(nearPathKeys), Set.empty[String], "nearpath counters never ride the health payload")
 
@@ -298,10 +325,12 @@ class NearPathStatsSpec extends FunSuite:
     // （本基座 wsRoutes=null ⇒ 构造期即 NPE），而本批**一个字节都没动那条臂**
     // （`git diff src/main/scala/nebflow/gateway/HealthRoutes.scala` 只有新增臂 +
     // 新助手，见提交回执）。此处钉既有带门面：loopback-info 仍 403 无令牌。
-    val info = serve(SpecRequests.withRemote(
-      Request[IO](Method.GET, Uri.unsafeFromString("/api/health/loopback-info")),
-      Some(SpecRequests.LoopbackV4)
-    ))
+    val info = serve(
+      SpecRequests.withRemote(
+        Request[IO](Method.GET, Uri.unsafeFromString("/api/health/loopback-info")),
+        Some(SpecRequests.LoopbackV4)
+      )
+    )
     assertEquals(info.status, Status.Forbidden, "loopback-info keeps its session gate (unchanged by this batch)")
 
   // ── 身份像素面（闸③ 腿 B，近路批 2026-11-04 四道闸根因修复）────────────────
@@ -315,9 +344,7 @@ class NearPathStatsSpec extends FunSuite:
     expect: Option[String],
     own: Option[String]
   ): Response[IO] =
-    val uri = expect.fold("/api/health/loopback-pixel.png")(
-      e => s"/api/health/loopback-pixel.png?expect=$e"
-    )
+    val uri = expect.fold("/api/health/loopback-pixel.png")(e => s"/api/health/loopback-pixel.png?expect=$e")
     HealthRoutes.LoopbackPixel
       .reply(SpecRequests.withRemote(Request[IO](Method.GET, Uri.unsafeFromString(uri)), remote), own)
       .unsafeRunSync()
@@ -330,10 +357,10 @@ class NearPathStatsSpec extends FunSuite:
     val bytes = resp.body.compile.toVector.unsafeRunSync().toArray
     assertEquals(bytes.length, 71, "固定 71 B 哨兵图（进程内常量，零写盘）")
     // PNG 签名 + IHDR 宽高 = 哨兵（前端靠 naturalWidth/Height 判同机，双写常量钉死）
-    assertEquals(bytes.take(8).toList, List(0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A).map(_.toByte))
+    assertEquals(bytes.take(8).toList, List(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a).map(_.toByte))
     def be32(off: Int): Int =
-      ((bytes(off) & 0xFF) << 24) | ((bytes(off + 1) & 0xFF) << 16) |
-        ((bytes(off + 2) & 0xFF) << 8) | (bytes(off + 3) & 0xFF)
+      ((bytes(off) & 0xff) << 24) | ((bytes(off + 1) & 0xff) << 16) |
+        ((bytes(off + 2) & 0xff) << 8) | (bytes(off + 3) & 0xff)
     assertEquals(be32(16), HealthRoutes.LoopbackPixel.Width)
     assertEquals(be32(20), HealthRoutes.LoopbackPixel.Height)
     assertEquals(HealthRoutes.LoopbackPixel.Width, 5, "与 web/js/ws.js NEARPATH_PIXEL_W 双写")
@@ -343,14 +370,20 @@ class NearPathStatsSpec extends FunSuite:
     assertEquals(pixel(Some(SpecRequests.LoopbackV4), Some("dev-other"), Some("dev-own")).status, Status.NotFound)
     assertEquals(pixel(Some(SpecRequests.LoopbackV4), None, Some("dev-own")).status, Status.NotFound)
     assertEquals(pixel(Some(SpecRequests.LoopbackV4), Some(""), Some("dev-own")).status, Status.NotFound)
-    assertEquals(pixel(Some(SpecRequests.LoopbackV4), Some("dev-own"), None).status, Status.NotFound,
-      "本机身份未铸 ⇒ 谁都不答（不许凭 expect 自证）")
+    assertEquals(
+      pixel(Some(SpecRequests.LoopbackV4), Some("dev-own"), None).status,
+      Status.NotFound,
+      "本机身份未铸 ⇒ 谁都不答（不许凭 expect 自证）"
+    )
 
   test("identity pixel: NON-loopback sources never get the image (remote device / other account / tunnel bridge)"):
     for remote <- List(Some(SpecRequests.Lan), Some(SpecRequests.Public), None) do
       val resp = pixel(remote, Some("dev-own"), Some("dev-own"))
-      assertEquals(resp.status, Status.NotFound,
-        s"remote=$remote must never prove same-machine (expect matches, leg does not)")
+      assertEquals(
+        resp.status,
+        Status.NotFound,
+        s"remote=$remote must never prove same-machine (expect matches, leg does not)"
+      )
       assertEquals(header(resp, "Access-Control-Allow-Origin"), None, "404 也不带任何 CORS 头")
 
 end NearPathStatsSpec

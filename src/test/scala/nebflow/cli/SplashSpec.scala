@@ -5,6 +5,7 @@ import munit.FunSuite
 
 class SplashSpec extends FunSuite:
   private val base = Map("TERM" -> "xterm-256color", "STAND_BANNER_IMAGE" -> "off")
+
   private def render(env: Map[String, String] = base, columns: Int = 80): String =
     Splash.render(Splash.TerminalFacts(env, interactive = true, columns = columns))
 
@@ -22,16 +23,23 @@ class SplashSpec extends FunSuite:
     val output = stripAnsi(render()).stripPrefix("\n").stripSuffix("\n\n")
     val rows = output.split("\n").toList
     val token = "([0-9]+)([.un#])".r
-    val expected = payloads.getProperty("art").split(';').map { row =>
-      "  " + token.findAllMatchIn(row).map { m =>
-        val glyph = m.group(2) match
-          case "." => " "
-          case "u" => "\u2580"
-          case "n" => "\u2584"
-          case _ => "\u2588"
-        glyph * m.group(1).toInt
-      }.mkString
-    }.toList
+    val expected = payloads
+      .getProperty("art")
+      .split(';')
+      .map { row =>
+        "  " + token
+          .findAllMatchIn(row)
+          .map { m =>
+            val glyph = m.group(2) match
+              case "." => " "
+              case "u" => "\u2580"
+              case "n" => "\u2584"
+              case _ => "\u2588"
+            glyph * m.group(1).toInt
+          }
+          .mkString
+      }
+      .toList
     assertEquals(rows, expected)
     assertEquals(rows.size, 9)
     assert(rows.forall(_.length == 74))
@@ -61,10 +69,8 @@ class SplashSpec extends FunSuite:
   }
 
   test("native Windows shells do not need TERM to select images") {
-    assertEquals(render(Map("WT_SESSION" -> "test")),
-      render(Map("TERM" -> "xterm", "WT_SESSION" -> "test")))
-    assertEquals(render(Map("STAND_BANNER_IMAGE" -> "sixel")),
-      render(Map("WT_SESSION" -> "test")))
+    assertEquals(render(Map("WT_SESSION" -> "test")), render(Map("TERM" -> "xterm", "WT_SESSION" -> "test")))
+    assertEquals(render(Map("STAND_BANNER_IMAGE" -> "sixel")), render(Map("WT_SESSION" -> "test")))
     assertEquals(render(Map("WT_SESSION" -> "test"), columns = 60), "\n  Stand\n\n")
   }
 
@@ -72,7 +78,8 @@ class SplashSpec extends FunSuite:
     for env <- List(
         base ++ Map("NO_COLOR" -> "1", "STAND_BANNER_IMAGE" -> "osc"),
         base ++ Map("TERM" -> "dumb", "STAND_BANNER_IMAGE" -> "sixel")
-      ) do
+      )
+    do
       val output = render(env)
       assert(!output.contains('\u001b'))
       assert(output.contains('#'))
@@ -90,14 +97,20 @@ class SplashSpec extends FunSuite:
 
   test("legacy environment aliases render identical official artwork") {
     val canonical = render(base ++ Map("STAND_BANNER_THEME" -> "light", "STAND_UI_LEVEL" -> "3"))
-    val legacy = render(Map("TERM" -> "xterm-256color", "NEBFLOW_BANNER_IMAGE" -> "off",
-      "NEBFLOW_BANNER_THEME" -> "light", "NEBFLOW_UI_LEVEL" -> "3"))
+    val legacy = render(
+      Map(
+        "TERM" -> "xterm-256color",
+        "NEBFLOW_BANNER_IMAGE" -> "off",
+        "NEBFLOW_BANNER_THEME" -> "light",
+        "NEBFLOW_UI_LEVEL" -> "3"
+      )
+    )
     assertEquals(canonical, legacy)
   }
 
   test("canonical settings win and old variants cannot restore the S") {
     assertEquals(render(base ++ Map("NEBFLOW_BANNER_IMAGE" -> "osc")), render())
-    for variant <- List("A", "B", "C") do
-      assertEquals(render(base ++ Map("STAND_BANNER" -> variant)), render())
+    for variant <- List("A", "B", "C") do assertEquals(render(base ++ Map("STAND_BANNER" -> variant)), render())
     assertEquals(render(base ++ Map("STAND_BANNER_IMAGE" -> "invalid")), render())
   }
+end SplashSpec

@@ -60,7 +60,7 @@ class LockingSpec extends CatsEffectSuite:
       b.readEvents(0L, Int.MaxValue, logical = false).unsafeRunSync() match
         case ReadResult.Present(sr) => assertEquals(sr.records.size, 2)
         case other => fail(s"unexpected $other")
-    finally
-      b.close()
+    finally b.close()
+    end try
 
 end LockingSpec

@@ -469,7 +469,11 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
           assertEquals(nebulaResp.status, Status.Ok)
           assert(afterNebulaMemory.contains(stale.id), "main edit preserves the explicit out-of-chain pin")
           assert(afterNebulaMemory.contains(keeper.id), "main edit keeps the matching main pin in memory")
-          assertEquals(staleAfterNebula.flatMap(_.modelRef), Some("anon/anon-gone"), "main edit preserves the persisted pin")
+          assertEquals(
+            staleAfterNebula.flatMap(_.modelRef),
+            Some("anon/anon-gone"),
+            "main edit preserves the persisted pin"
+          )
           assertEquals(
             keeperAfterNebula.flatMap(_.modelRef),
             Some("zhipu/GLM-5.3-Flash"),
@@ -549,48 +553,49 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
               assertEquals(json.hcursor.downField("mode").as[String], Right("explicit"))
             }
           }
-        }.map { _ =>
-        val sessions = List(
-          "main" -> List("main-session-a", "main-session-b"),
-          // 生产 id 形状（逐条锚见 ModelRoles 头注「分类判据」）：kernel 实例 = delegate-kernel-<8hex>。
-          "kernel" -> List("delegate-kernel-a1b2c3d4", "delegate-kernel-e5f6a7b8"),
-          "dispatcher" -> List("dispatcher-1a2b3c4d", "dispatcher-5e6f7a8b"),
-          "node" -> List("dag-orders-1-123456", "dag-orders-2-123457"),
-          "subagent" -> List("delegate-a", "delegate-b")
-        )
-        // 归槽批（2026-11-18）：`delegate-` 前缀不再声明类——delegate 身份的槽由
-        // **记录 mode** 判（真相来源 DelegateRegistry.Record.mode）。本 fixture 没有
-        // delegate 注册表记录，故归槽入参在此显式给出；形状判据本身已由
-        // ModelRolesSpec 逐条钉住（含「不给 mode ⇒ 未归槽」那条）。
-        val modeOf = Map(
-          "kernel" -> Some("kernel"),
-          "dispatcher" -> Some("dispatcher"),
-          "node" -> Some("node"),
-          "subagent" -> Some("subagent"),
-          "main" -> None
-        )
-        sessions.foreach { case (slot, ids) =>
-          val sidecarSlot = nebflow.core.ModelRoles.Slots.find(_._1 == slot).get._3
-          val configured = nebflow.core.ModelRoles.ownChainOfSlot(sidecarSlot).flatMap(_.preferred)
-          val expectedModel = slot match
-            case "main" => "main-model"
-            case "kernel" => "kernel-model"
-            case "dispatcher" => "dispatcher-model"
-            case "node" => "node-model"
-            case _ => "subagent-model"
-          assertEquals(configured, Some(s"test/$expectedModel"))
-          if slot != "main" then
-            ids.foreach { id =>
-              // 归槽返回值 = 槽目录名（slots 表第三列），不是 wire 名——dispatcher 的
-              // wire 名在 agents/ 下没有目录（首轮实跑把它直接喂 ownChainOf ⇒ 类切换静默失效）。
-              assertEquals(nebflow.core.ModelRoles.slotOfSessionId(Some(id), modeOf(slot)), Some(sidecarSlot))
-              assertEquals(
-                nebflow.core.ModelRoles.slotChainOf(Some(id), modeOf(slot)).flatMap(_.preferred),
-                configured
-              )
-            }
         }
-      }
+        .map { _ =>
+          val sessions = List(
+            "main" -> List("main-session-a", "main-session-b"),
+            // 生产 id 形状（逐条锚见 ModelRoles 头注「分类判据」）：kernel 实例 = delegate-kernel-<8hex>。
+            "kernel" -> List("delegate-kernel-a1b2c3d4", "delegate-kernel-e5f6a7b8"),
+            "dispatcher" -> List("dispatcher-1a2b3c4d", "dispatcher-5e6f7a8b"),
+            "node" -> List("dag-orders-1-123456", "dag-orders-2-123457"),
+            "subagent" -> List("delegate-a", "delegate-b")
+          )
+          // 归槽批（2026-11-18）：`delegate-` 前缀不再声明类——delegate 身份的槽由
+          // **记录 mode** 判（真相来源 DelegateRegistry.Record.mode）。本 fixture 没有
+          // delegate 注册表记录，故归槽入参在此显式给出；形状判据本身已由
+          // ModelRolesSpec 逐条钉住（含「不给 mode ⇒ 未归槽」那条）。
+          val modeOf = Map(
+            "kernel" -> Some("kernel"),
+            "dispatcher" -> Some("dispatcher"),
+            "node" -> Some("node"),
+            "subagent" -> Some("subagent"),
+            "main" -> None
+          )
+          sessions.foreach { case (slot, ids) =>
+            val sidecarSlot = nebflow.core.ModelRoles.Slots.find(_._1 == slot).get._3
+            val configured = nebflow.core.ModelRoles.ownChainOfSlot(sidecarSlot).flatMap(_.preferred)
+            val expectedModel = slot match
+              case "main" => "main-model"
+              case "kernel" => "kernel-model"
+              case "dispatcher" => "dispatcher-model"
+              case "node" => "node-model"
+              case _ => "subagent-model"
+            assertEquals(configured, Some(s"test/$expectedModel"))
+            if slot != "main" then
+              ids.foreach { id =>
+                // 归槽返回值 = 槽目录名（slots 表第三列），不是 wire 名——dispatcher 的
+                // wire 名在 agents/ 下没有目录（首轮实跑把它直接喂 ownChainOf ⇒ 类切换静默失效）。
+                assertEquals(nebflow.core.ModelRoles.slotOfSessionId(Some(id), modeOf(slot)), Some(sidecarSlot))
+                assertEquals(
+                  nebflow.core.ModelRoles.slotChainOf(Some(id), modeOf(slot)).flatMap(_.preferred),
+                  configured
+                )
+              }
+          }
+        }
     }
 
   test(

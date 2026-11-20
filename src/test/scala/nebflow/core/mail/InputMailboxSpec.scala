@@ -92,12 +92,11 @@ class InputMailboxSpec extends CatsEffectSuite:
       before <- InputMailbox.scanPending(sid)
       taken = InputMailbox.takeSync(sid, before)
       after <- InputMailbox.scanTaken(sid)
-    yield (before.map(_.identity), taken.map(_.identity), after.map(_.identity))).map {
-      case (before, taken, after) =>
-        assertEquals(before, ids, "pending 顺序 = 入队顺序（seq 定序，非字典序）")
-        assertEquals(taken, ids, "take 保序")
-        assertEquals(after, ids, "taken 侧仍保序（迁移不乱）")
-        assertEquals(InputMailbox.scanPendingSync(sid), Nil, "全部迁走后 pending 为空")
+    yield (before.map(_.identity), taken.map(_.identity), after.map(_.identity))).map { case (before, taken, after) =>
+      assertEquals(before, ids, "pending 顺序 = 入队顺序（seq 定序，非字典序）")
+      assertEquals(taken, ids, "take 保序")
+      assertEquals(after, ids, "taken 侧仍保序（迁移不乱）")
+      assertEquals(InputMailbox.scanPendingSync(sid), Nil, "全部迁走后 pending 为空")
     }
   }
 
@@ -246,3 +245,4 @@ class InputMailboxSpec extends CatsEffectSuite:
       assert(q, "坏形件已被移入 quarantine-input")
     }
   }
+end InputMailboxSpec

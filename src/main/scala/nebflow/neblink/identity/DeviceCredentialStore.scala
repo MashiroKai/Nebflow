@@ -368,8 +368,10 @@ object DeviceCredential:
       else IO.unit
     }
 
-  /** Root-explicit staging seam for a future account cutover. Does not alter
-    * the process-wide root or activate the staged account. */
+  /**
+   * Root-explicit staging seam for a future account cutover. Does not alter
+   * the process-wide root or activate the staged account.
+   */
   private[nebflow] def saveAt(root: os.Path, cred: DeviceCredential): IO[Unit] =
     IO.blocking {
       val dir = root / "neblink"

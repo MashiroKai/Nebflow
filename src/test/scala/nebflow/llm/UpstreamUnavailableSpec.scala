@@ -97,12 +97,14 @@ class UpstreamUnavailableSpec extends CatsEffectSuite:
             exchange.getResponseBody.write(bytes)
             exchange.close()
           mode match
-            case "500" => json(500, """{"type":"error","error":{"type":"api_error","message":"internal server error"}}""")
+            case "500" =>
+              json(500, """{"type":"error","error":{"type":"api_error","message":"internal server error"}}""")
             // 现场形态：550 + **完全空响应体**（冻结回执里 `response:` 后面什么都没有）
             case "550" =>
               exchange.sendResponseHeaders(550, -1)
               exchange.close()
-            case "403" => json(403, """{"type":"error","error":{"type":"permission_error","message":"5-hour usage limit"}}""")
+            case "403" =>
+              json(403, """{"type":"error","error":{"type":"permission_error","message":"5-hour usage limit"}}""")
             case "429-quota" =>
               json(
                 429,
@@ -284,8 +286,9 @@ class UpstreamUnavailableSpec extends CatsEffectSuite:
   // ── T5 冷却指数退避 + 冷却期内跳过 ──────────────────────────────────────
   test("T5: 连续 3 次 5xx ⇒ 冷却窗 15s/30s/60s 指数增长，冷却期内候选被剔出链") {
     val configRef = Ref.unsafe[IO, NebflowServiceConfig](mkConfig(PortOk, PortOk))
-    LlmInterface.createLlm(Ref.unsafe[IO, Map[String, ModelCandidate]](Map.empty), None, Some(configRef)).flatMap {
-      case (_, _, monitor, release) =>
+    LlmInterface
+      .createLlm(Ref.unsafe[IO, Map[String, ModelCandidate]](Map.empty), None, Some(configRef))
+      .flatMap { case (_, _, monitor, release) =>
         val candidate = ModelCandidate(
           "a",
           ProviderConfig(
@@ -332,14 +335,16 @@ class UpstreamUnavailableSpec extends CatsEffectSuite:
           // 成功即恢复（半开试探通过的判据）
           assertEquals(recovered.get("a/m1"), None, "a successful call clears the strike counter")
         program.guarantee(release)
-    }.unsafeRunSync()
+      }
+      .unsafeRunSync()
   }
 
   // ── T6 冷却窗到期 ⇒ 候选自然回链（半开试探面） ──────────────────────────
   test("T6: 冷却窗到期后候选自动回链（无探测、无人工动作）") {
     val configRef = Ref.unsafe[IO, NebflowServiceConfig](mkConfig(PortOk, PortOk))
-    LlmInterface.createLlm(Ref.unsafe[IO, Map[String, ModelCandidate]](Map.empty), None, Some(configRef)).flatMap {
-      case (_, _, monitor, release) =>
+    LlmInterface
+      .createLlm(Ref.unsafe[IO, Map[String, ModelCandidate]](Map.empty), None, Some(configRef))
+      .flatMap { case (_, _, monitor, release) =>
         val candidate = ModelCandidate(
           "a",
           ProviderConfig(
@@ -356,7 +361,8 @@ class UpstreamUnavailableSpec extends CatsEffectSuite:
           (up, _) <- monitor.filterCandidates(List(candidate))
         yield assertEquals(up.map(c => s"${c.providerId}/${c.model}"), List("a/m1"))
         program.guarantee(release)
-    }.unsafeRunSync()
+      }
+      .unsafeRunSync()
   }
 
   // ── T7（重写，fallback 废除批）403 配额闸形态 ───────────────────────────

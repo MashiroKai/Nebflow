@@ -83,9 +83,11 @@ class PluginInjectionSpec extends CatsEffectSuite:
       createFolders = true
     )
 
-  /** 缺陷①（2026-11-02）：失败语义回退位（plugins.failOpenOnAllocationError）。
-    * 读面 = PathUtil.configJsonReadPath（品牌规范名；eee82de42 改名批口径）——
-    * 写裸旧名 nebflow.json 时开关恒缺省 false，fail-open 测试炸 None.get。 */
+  /**
+   * 缺陷①（2026-11-02）：失败语义回退位（plugins.failOpenOnAllocationError）。
+   * 读面 = PathUtil.configJsonReadPath（品牌规范名；eee82de42 改名批口径）——
+   * 写裸旧名 nebflow.json 时开关恒缺省 false，fail-open 测试炸 None.get。
+   */
   private def setFailOpenOnAllocationError(on: Boolean): Unit =
     os.write.over(
       tempRoot / nebflow.shared.Branding.configFileName,
@@ -185,7 +187,9 @@ class PluginInjectionSpec extends CatsEffectSuite:
       assert(prep.injectedBlock.contains("<plugin name=\"p1\">") && prep.injectedBlock.contains("<plugin name=\"p2\">"))
   }
 
-  test("set semantics: one DECLARATION of two capabilities mounts both without consulting the allocator (declaration face)") {
+  test(
+    "set semantics: one DECLARATION of two capabilities mounts both without consulting the allocator (declaration face)"
+  ) {
     setPluginsEnabled(true)
     writeSkillPlugin("p1", "DECL-ALPHA")
     writeSkillPlugin("p2", "DECL-BETA")
@@ -325,12 +329,15 @@ class PluginInjectionSpec extends CatsEffectSuite:
       assertEquals(calls.size, 0, "autoAllocate=false never consults the Jev/LLM family")
       // 惰性态 = 不写分配审计（与 disabled 同族）；连 allocated 成功行也不落。
       val logLines =
-        if os.exists(tempRoot / "logs" / "jev-allocation.jsonl") then os.read.lines(tempRoot / "logs" / "jev-allocation.jsonl")
+        if os.exists(tempRoot / "logs" / "jev-allocation.jsonl") then
+          os.read.lines(tempRoot / "logs" / "jev-allocation.jsonl")
         else Vector.empty
       assert(!logLines.exists(_.contains("delegate-auto-off")), logLines.mkString("\n"))
   }
 
-  test("forNode S9: autoAllocate=false + delegate-scope + empty declaration → no step-plugins line, no allocation call") {
+  test(
+    "forNode S9: autoAllocate=false + delegate-scope + empty declaration → no step-plugins line, no allocation call"
+  ) {
     setPluginsEnabled(true)
     setAutoAllocate(false)
     writeSkillPlugin("p1", "NEVER-STEP")

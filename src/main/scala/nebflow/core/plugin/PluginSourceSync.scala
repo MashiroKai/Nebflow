@@ -47,19 +47,19 @@ object PluginSourceSync:
 
   // ── 稳定错误码（🔴 禁改名——REST/CLI/测试逐字断言）──────────────
 
-  val CodeUnknownName  = "SOURCE_SYNC_UNKNOWN_NAME"   // 名字不在源声明表里
-  val CodeUnreachable  = "SOURCE_SYNC_UNREACHABLE"    // 远端/本地源不可达
-  val CodeNoBranch     = "SOURCE_SYNC_NO_BRANCH"      // 分支不存在
-  val CodeLayout       = "SOURCE_SYNC_LAYOUT"         // 拉下来的树里没有合法 plugin.json / name 不符
-  val CodeSwapFailed   = "SOURCE_SYNC_SWAP_FAILED"    // 原子换装失败（已尝试回滚）
-  val CodeLocalMissing = "SOURCE_SYNC_LOCAL_MISSING"  // kind=local 源路径不存在
+  val CodeUnknownName = "SOURCE_SYNC_UNKNOWN_NAME" // 名字不在源声明表里
+  val CodeUnreachable = "SOURCE_SYNC_UNREACHABLE" // 远端/本地源不可达
+  val CodeNoBranch = "SOURCE_SYNC_NO_BRANCH" // 分支不存在
+  val CodeLayout = "SOURCE_SYNC_LAYOUT" // 拉下来的树里没有合法 plugin.json / name 不符
+  val CodeSwapFailed = "SOURCE_SYNC_SWAP_FAILED" // 原子换装失败（已尝试回滚）
+  val CodeLocalMissing = "SOURCE_SYNC_LOCAL_MISSING" // kind=local 源路径不存在
 
   // ── 路径（与 PluginRegistry.pluginsDir / Install.stagingRoot 同根派生）──
 
-  private def pluginsDir: os.Path  = PathUtil.dataRoot / "plugins"
+  private def pluginsDir: os.Path = PathUtil.dataRoot / "plugins"
   private def stagingRoot: os.Path = PathUtil.dataRoot / ".plugin-staging"
-  private def backupRoot: os.Path  = PathUtil.dataRoot / "plugins-backups"
-  private def auditFile: os.Path   = PathUtil.dataRoot / "logs" / "plugin-source-sync.jsonl"
+  private def backupRoot: os.Path = PathUtil.dataRoot / "plugins-backups"
+  private def auditFile: os.Path = PathUtil.dataRoot / "logs" / "plugin-source-sync.jsonl"
 
   /** 拉取预算：用户驱动动作，给足时间但不许挂死。 */
   private val CloneTimeoutMs = 180_000L
@@ -67,39 +67,41 @@ object PluginSourceSync:
   // ── 类型面 ─────────────────────────────────────────────────
 
   object State:
-    val Current      = "current"
-    val Outdated     = "outdated"
-    val Unreachable  = "unreachable"
-    val Unknown      = "unknown"
+    val Current = "current"
+    val Outdated = "outdated"
+    val Unreachable = "unreachable"
+    val Unknown = "unknown"
     val NotInstalled = "not-installed"
 
   /** 一次「检查更新」的读数（面板/CLI/REST 三面共用的冻结形状）。 */
   final case class Status(
-      name: String,
-      sourceLabel: String,
-      kind: String,
-      installedVersion: String,
-      installedCommit: Option[String],
-      remoteVersion: Option[String],
-      remoteCommit: Option[String],
-      updateAvailable: Boolean,
-      /** `current` 已是最新 | `outdated` 有新版 | `unreachable` 远端不可达（本地版本照常可用） |
-        * `unknown` 名字不在声明表 | `not-installed` 声明在但本地没装 */
-      state: String,
-      checkedAt: Long,
-      detail: String
+    name: String,
+    sourceLabel: String,
+    kind: String,
+    installedVersion: String,
+    installedCommit: Option[String],
+    remoteVersion: Option[String],
+    remoteCommit: Option[String],
+    updateAvailable: Boolean,
+    /**
+     * `current` 已是最新 | `outdated` 有新版 | `unreachable` 远端不可达（本地版本照常可用） |
+     * `unknown` 名字不在声明表 | `not-installed` 声明在但本地没装
+     */
+    state: String,
+    checkedAt: Long,
+    detail: String
   )
 
   /** 一次「拉取并生效」的结果。`planId` = §6.3 统一生命周期计划身份（对账键）。 */
   final case class UpdateResult(
-      name: String,
-      fromVersion: String,
-      toVersion: String,
-      commit: String,
-      digest: String,
-      backupDir: Option[String],
-      planId: String,
-      effective: String
+    name: String,
+    fromVersion: String,
+    toVersion: String,
+    commit: String,
+    digest: String,
+    backupDir: Option[String],
+    planId: String,
+    effective: String
   )
 
   // ── 读面：安装态（本地）───────────────────────────────────────
@@ -122,7 +124,7 @@ object PluginSourceSync:
       case PluginSourceLedger.Known(entry) =>
         entry.pin.flatMap {
           case Pin.Commit(_, commit) => Some(commit)
-          case _                     => None
+          case _ => None
         }
       case _ => None
 
@@ -181,7 +183,10 @@ object PluginSourceSync:
             s"(${CodeUnreachable})"
         )
       else
-        res.out.text().linesIterator.find(_.contains(s"refs/heads/${decl.branch}"))
+        res.out
+          .text()
+          .linesIterator
+          .find(_.contains(s"refs/heads/${decl.branch}"))
           .map(_.takeWhile(_ != '\t').trim)
           .filter(_.matches("[0-9a-f]{40}")) match
           case Some(c) => Right(c)
@@ -190,7 +195,10 @@ object PluginSourceSync:
               s"branch '${decl.branch}' not found on ${decl.url} — push the branch, or fix " +
                 s"plugins.sources.${decl.name}.branch (${CodeNoBranch})"
             )
-    catch case NonFatal(e) => Left(s"git ls-remote failed (${e.getClass.getSimpleName}: ${e.getMessage}) (${CodeUnreachable})")
+      end if
+    catch
+      case NonFatal(e) =>
+        Left(s"git ls-remote failed (${e.getClass.getSimpleName}: ${e.getMessage}) (${CodeUnreachable})")
 
   /** 拉取到 `dest`（git = 浅克隆分支；local = 拷贝目录），返回实际 commit / "local"。 */
   private def fetchInto(decl: PluginSourceCatalog.SourceDecl, dest: os.Path): Either[String, String] =
@@ -255,13 +263,14 @@ object PluginSourceSync:
    * 真 git 源能抓到，即本批的内网仓源实测）。
    */
   private def git(gitArgs: List[String], timeoutMs: Long = 60_000L): os.CommandResult =
-    os.proc(("git" :: gitArgs).map(a => a: os.Shellable)*).call(
-      check = false,
-      timeout = timeoutMs,
-      env = Map("GIT_TERMINAL_PROMPT" -> "0", "GIT_ASKPASS" -> "true"),
-      stdout = os.Pipe,
-      stderr = os.Pipe
-    )
+    os.proc(("git" :: gitArgs).map(a => a: os.Shellable)*)
+      .call(
+        check = false,
+        timeout = timeoutMs,
+        env = Map("GIT_TERMINAL_PROMPT" -> "0", "GIT_ASKPASS" -> "true"),
+        stdout = os.Pipe,
+        stderr = os.Pipe
+      )
 
   private def errTail(res: os.CommandResult): String =
     try res.err.text().linesIterator.toList.takeRight(3).mkString("; ")
@@ -278,36 +287,90 @@ object PluginSourceSync:
       val now = System.currentTimeMillis() / 1000L
       PluginSourceCatalog.declaration(name) match
         case None =>
-          Status(name, "", "", installedVersion(name), installedCommit(name), None, None, false,
-            State.Unknown, now, s"no source declaration for '$name' (not a source-managed package)")
+          Status(
+            name,
+            "",
+            "",
+            installedVersion(name),
+            installedCommit(name),
+            None,
+            None,
+            false,
+            State.Unknown,
+            now,
+            s"no source declaration for '$name' (not a source-managed package)"
+          )
         case Some(decl) =>
           val label = PluginSourceCatalog.shortLabel(decl)
           if !os.isDir(pluginsDir / name) then
-            Status(name, label, decl.kind, "", None, None, None, true, State.NotInstalled, now,
+            Status(
+              name,
+              label,
+              decl.kind,
+              "",
+              None,
+              None,
+              None,
+              true,
+              State.NotInstalled,
+              now,
               s"declared source ${PluginSourceCatalog.describe(decl)} but the package is not installed locally — " +
-                "POST /api/plugins/" + name + "/source/update (or CLI 'stand plugin update " + name + "') installs it")
+                "POST /api/plugins/" + name + "/source/update (or CLI 'stand plugin update " + name + "') installs it"
+            )
           else
             val curVer = installedVersion(name)
             val curCommit = installedCommit(name)
             probeRemote(decl) match
               case Left(err) =>
-                Status(name, label, decl.kind, curVer, curCommit, None, None, false, State.Unreachable, now,
+                Status(
+                  name,
+                  label,
+                  decl.kind,
+                  curVer,
+                  curCommit,
+                  None,
+                  None,
+                  false,
+                  State.Unreachable,
+                  now,
                   s"${PluginSourceCatalog.sanitize(err)} — keeping the locally installed v$curVer (the plugin stays active "
-                    + "and dispatchable)")
+                    + "and dispatchable)"
+                )
               case Right(probe) =>
                 val differs = sourceDiffers(decl, name, probe, curCommit, curVer)
                 Status(
-                  name, label, decl.kind, curVer, curCommit, probe.version, Some(probe.commit), differs,
-                  if differs then State.Outdated else State.Current, now,
+                  name,
+                  label,
+                  decl.kind,
+                  curVer,
+                  curCommit,
+                  probe.version,
+                  Some(probe.commit),
+                  differs,
+                  if differs then State.Outdated else State.Current,
+                  now,
                   if differs then
                     s"remote ${decl.branch} is at ${probe.commit.take(12)}…${probe.version.fold("")(v => s" (v$v)")}; " +
                       s"installed v$curVer${curCommit.fold(" (no recorded commit)")(c => s" at ${c.take(12)}…")}"
                   else s"up to date — both at ${probe.commit.take(12)}… (v$curVer)"
                 )
+            end match
+          end if
+      end match
     }.handleError(e =>
-      Status(name, "", "", installedVersion(name), None, None, None, false, State.Unreachable,
+      Status(
+        name,
+        "",
+        "",
+        installedVersion(name),
+        None,
+        None,
+        None,
+        false,
+        State.Unreachable,
         System.currentTimeMillis() / 1000L,
-        s"probe failed (${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}) — keeping the locally installed version")
+        s"probe failed (${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}) — keeping the locally installed version"
+      )
     )
 
   /**
@@ -323,17 +386,17 @@ object PluginSourceSync:
    *    的本地迭代，用户手动点更新即可——`update` 不看本函数，它是无条件拉取）。
    */
   private def sourceDiffers(
-      decl: PluginSourceCatalog.SourceDecl,
-      name: String,
-      probe: Probe,
-      curCommit: Option[String],
-      curVersion: String
+    decl: PluginSourceCatalog.SourceDecl,
+    name: String,
+    probe: Probe,
+    curCommit: Option[String],
+    curVersion: String
   ): Boolean =
     if decl.isLocal then probe.version.forall(_ != curVersion)
     else
       curCommit match
         case Some(c) => c != probe.commit
-        case None    => probe.version.forall(_ != curVersion)
+        case None => probe.version.forall(_ != curVersion)
 
   /** 全量状态（面板一次拿全）。只对**声明表**里的包探远端——seed 包零网络。 */
   def checkAll(): IO[List[Status]] =
@@ -374,7 +437,11 @@ object PluginSourceSync:
    *
    * 返回 [[UpdateResult]]；失败 ⇒ `Left(人读原因（含稳定错误码）)`，**在位版本零变化**。
    */
-  def update(name: String, expectCommit: Option[String] = None, by: String = "panel/rest"): IO[Either[String, UpdateResult]] =
+  def update(
+    name: String,
+    expectCommit: Option[String] = None,
+    by: String = "panel/rest"
+  ): IO[Either[String, UpdateResult]] =
     IO.blocking {
       PluginSourceCatalog.declaration(name) match
         case None =>
@@ -391,13 +458,13 @@ object PluginSourceSync:
     }
 
   private def runUpdate(
-      decl: PluginSourceCatalog.SourceDecl,
-      staged: os.Path,
-      name: String,
-      fromVersion: String,
-      hadDir: Boolean,
-      expectCommit: Option[String],
-      by: String
+    decl: PluginSourceCatalog.SourceDecl,
+    staged: os.Path,
+    name: String,
+    fromVersion: String,
+    hadDir: Boolean,
+    expectCommit: Option[String],
+    by: String
   ): Either[String, UpdateResult] =
     for
       fetched <- expectCommit match
@@ -411,15 +478,17 @@ object PluginSourceSync:
           fetchCommit(decl, staged, c)
         case None => fetchInto(decl, staged)
       _ <- validateLayout(staged, decl)
-      digestCount <- PluginRegistry.computeDigest(packageRoot(staged, decl))
-        .left.map(err => s"digest computation failed on the freshly pulled tree: $err (${CodeLayout})")
+      digestCount <- PluginRegistry
+        .computeDigest(packageRoot(staged, decl))
+        .left
+        .map(err => s"digest computation failed on the freshly pulled tree: $err (${CodeLayout})")
       (digest, _) = digestCount
       toVersion = versionOf(staged, decl)
       // 统一生命周期计划（§6.3/§9 A 行）：swap 前锁定在位世代两面 + 作者策略
       prior = priorFaces(name, hadDir)
       policy = PluginSourceLedger.query(name) match
         case PluginSourceLedger.Known(e) => e.updatePolicy
-        case _                           => PluginDistributionTrust.UpdatePolicy.Check
+        case _ => PluginDistributionTrust.UpdatePolicy.Check
       plan = PluginLifecyclePlan.Plan(
         operation = if hadDir then PluginLifecyclePlan.Operation.Update else PluginLifecyclePlan.Operation.Install,
         name = name,
@@ -455,13 +524,13 @@ object PluginSourceSync:
       val v = installedVersion(name)
       PluginRegistry.computeDigest(pluginsDir / name) match
         case Right((d, _)) => (Option.when(v.nonEmpty)(v), Some(d))
-        case Left(_)       => (Option.when(v.nonEmpty)(v), None)
+        case Left(_) => (Option.when(v.nonEmpty)(v), None)
 
   /** 指定 commit 的拉取：完整 clone（浅克隆取不到任意 commit）+ `checkout <commit>`。 */
   private def fetchCommit(
-      decl: PluginSourceCatalog.SourceDecl,
-      dest: os.Path,
-      commit: String
+    decl: PluginSourceCatalog.SourceDecl,
+    dest: os.Path,
+    commit: String
   ): Either[String, String] =
     val res = git(List("clone", "--quiet", decl.url, dest.toString), timeoutMs = CloneTimeoutMs)
     if res.exitCode != 0 then
@@ -471,11 +540,12 @@ object PluginSourceSync:
       )
     else
       val co = git(List("-C", dest.toString, "checkout", "--quiet", commit))
-      if co.exitCode != 0 then
-        Left(s"git checkout ${commit.take(12)}… failed: ${errTail(co)} (${CodeLayout})")
+      if co.exitCode != 0 then Left(s"git checkout ${commit.take(12)}… failed: ${errTail(co)} (${CodeLayout})")
       else
         stripVcsMetadata(dest)
         Right(commit)
+
+  end fetchCommit
 
   private def validateLayout(root: os.Path, decl: PluginSourceCatalog.SourceDecl): Either[String, Unit] =
     val pkg = packageRoot(root, decl)
@@ -499,6 +569,10 @@ object PluginSourceSync:
                   s"to swap (a source may only ever replace the package it names) (${CodeLayout})"
               )
             case None => Left(s"pulled manifest has no usable 'name' (${CodeLayout})")
+
+    end if
+
+  end validateLayout
 
   private def versionOf(root: os.Path, decl: PluginSourceCatalog.SourceDecl): String =
     io.circe.parser
@@ -566,9 +640,14 @@ object PluginSourceSync:
             s"atomic swap failed (${e.getClass.getSimpleName}: ${e.getMessage}); the previously installed version was " +
               s"restored (${CodeSwapFailed})"
           )
+      end try
     catch
       case NonFatal(e) =>
         Left(s"swap preparation failed (${e.getClass.getSimpleName}: ${e.getMessage}) (${CodeSwapFailed})")
+
+    end try
+
+  end swapIn
 
   /**
    * 账本落账：`kind` = 声明态、`via` = 对应枚举、`pin` = **实测 commit**（浮动分支在这里被
@@ -576,19 +655,25 @@ object PluginSourceSync:
    * （在位即信任），该包 provenance 查询面降级 unknown-source（诚实降级）。
    */
   private def recordProvenance(
-      decl: PluginSourceCatalog.SourceDecl,
-      name: String,
-      commit: String,
-      version: String,
-      digest: String,
-      by: String
+    decl: PluginSourceCatalog.SourceDecl,
+    name: String,
+    commit: String,
+    version: String,
+    digest: String,
+    by: String
   ): Unit =
     val (kind, via, pin) =
       if decl.isGit then (Kind.Git, Via.Git, Some(Pin.Commit(None, commit)))
       else (Kind.Local, Via.Local, None)
     PluginSourceLedger
       .recordInstall(
-        name = name, kind = kind, url = Some(decl.url), pin = pin, version = version, digest = digest, via = via,
+        name = name,
+        kind = kind,
+        url = Some(decl.url),
+        pin = pin,
+        version = version,
+        digest = digest,
+        via = via,
         meta = PluginSourceLedger.InstallMeta(validationSummary = Some("sync-swap@1"))
       )
       .left
@@ -598,6 +683,8 @@ object PluginSourceSync:
             "installed at the new version; its source query degrades to unknown-source"
         )
       )
+
+  end recordProvenance
 
   /** 信任记录刷新 = 审计基准前移（**不是**装载闸；换装后 `contentChanged` 应为 false）。 */
   private def refreshTrustRecord(name: String): Unit =
@@ -677,14 +764,14 @@ object PluginSourceSync:
   // ── 审计（append-only；谁/何时/从哪/到哪/结果）──────────────────
 
   private def audit(
-      name: String,
-      by: String,
-      fromVersion: String,
-      toVersion: String,
-      commit: String,
-      digest: String,
-      backupDir: Option[String],
-      planId: String
+    name: String,
+    by: String,
+    fromVersion: String,
+    toVersion: String,
+    commit: String,
+    digest: String,
+    backupDir: Option[String],
+    planId: String
   ): Unit =
     appendAudit(
       Json.fromJsonObject(

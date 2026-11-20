@@ -19,9 +19,13 @@ object Recovery:
 
   /** 折叠视图：同 requestId 取最后一行（闭合行是追加的决议事件——原行永不动）。 */
   def foldPending(rows: List[PendingRecord]): List[PendingRecord] =
-    rows.foldLeft(Map.empty[String, PendingRecord]) { (acc, r) =>
-      acc.updated(r.requestId, r)
-    }.values.toList.sortBy(_.seq)
+    rows
+      .foldLeft(Map.empty[String, PendingRecord]) { (acc, r) =>
+        acc.updated(r.requestId, r)
+      }
+      .values
+      .toList
+      .sortBy(_.seq)
 
   /** D-8 一次恢复的动作单。 */
   final case class PendingPlan(
@@ -30,6 +34,7 @@ object Recovery:
     /** 过期关闭清单：未闭合 AskUser（本腿已为其追加 `expired-by-restart` 终态行）。 */
     expiredAsks: List[PendingRecord]
   ):
+
     def summary: String =
       s"reinstall=${reinstall.size} ask-expired-closed=${expiredAsks.size}"
 

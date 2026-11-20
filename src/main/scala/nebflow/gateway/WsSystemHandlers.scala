@@ -232,69 +232,69 @@ private[gateway] object WsSystemHandlers:
           nebflow.core.tools.ShellSession
             .forSession(cancelSessionId)
             .flatMap { shell =>
-          shell.cancelBackgroundJob(jobId).flatMap { cancelled =>
-            val logMsg =
-              if cancelled then s"Cancelled background job $jobId"
-              else s"Background job $jobId not found or already completed"
-            logger.info(logMsg, "sessionId" -> cancelSessionId, "jobId" -> jobId) *>
-              // 输出查看批（2026-09-09）：显式取消也是终态——输出留存区
-              // 翻转为 cancelled，详情卡回看「取消时刻为止」的全部输出。
-              // 幂等：若完成回调已先 finalize（竞态），此处 no-op。
-              // #1193 收口腿：**同步取走 registry 行**——原实现只出会话任务图
-              // 不取行，行残留 → death-watch 下拍以「owner lost: not owned by
-              // session」二次收割，账本/通知留下「引擎埋任务」假证。
-              // first-terminal-wins：竞态已取走 ⇒ no-op 幂等。
-              (if cancelled then
-                 nebflow.core.tools.BgTaskRegistry.unregisterReturning(jobId).void *>
-                 nebflow.core.tools.BgTaskOutputStore
-                   .finalizeTask(jobId, "cancelled", None, Some("Cancelled by user"))
-                   .handleErrorWith(e =>
-                     logger.warn(s"bg-output finalize (cancel) failed for job $jobId: ${e.getMessage}")
-                   )
-               else IO.unit) *>
-              // Notify agent so it can process cancellation.
-              // 通知详情批（2026-10-24）：取消通知补原因段（旧形态只有 jobId 一行，
-              // 作者无法从通知判断为什么没了）。
-              ensureAgent(cancelSessionId) { ref =>
-                ref ! AgentCommand.ExternalEvent(
-                  source = "background-task",
-                  eventType = "cancelled",
-                  payload = s"[Background task cancelled] Job ID: $jobId (Cancelled by user)",
-                  metadata = io.circe.JsonObject(
-                    "jobId" -> jobId.asJson
-                  ),
-                  correlationId = Some(jobId)
-                )
-              } *>
-              // Send completion update to frontend so the task is removed from the dropdown
+              shell.cancelBackgroundJob(jobId).flatMap { cancelled =>
+                val logMsg =
+                  if cancelled then s"Cancelled background job $jobId"
+                  else s"Background job $jobId not found or already completed"
+                logger.info(logMsg, "sessionId" -> cancelSessionId, "jobId" -> jobId) *>
+                  // 输出查看批（2026-09-09）：显式取消也是终态——输出留存区
+                  // 翻转为 cancelled，详情卡回看「取消时刻为止」的全部输出。
+                  // 幂等：若完成回调已先 finalize（竞态），此处 no-op。
+                  // #1193 收口腿：**同步取走 registry 行**——原实现只出会话任务图
+                  // 不取行，行残留 → death-watch 下拍以「owner lost: not owned by
+                  // session」二次收割，账本/通知留下「引擎埋任务」假证。
+                  // first-terminal-wins：竞态已取走 ⇒ no-op 幂等。
+                  (if cancelled then
+                     nebflow.core.tools.BgTaskRegistry.unregisterReturning(jobId).void *>
+                       nebflow.core.tools.BgTaskOutputStore
+                         .finalizeTask(jobId, "cancelled", None, Some("Cancelled by user"))
+                         .handleErrorWith(e =>
+                           logger.warn(s"bg-output finalize (cancel) failed for job $jobId: ${e.getMessage}")
+                         )
+                   else IO.unit) *>
+                  // Notify agent so it can process cancellation.
+                  // 通知详情批（2026-10-24）：取消通知补原因段（旧形态只有 jobId 一行，
+                  // 作者无法从通知判断为什么没了）。
+                  ensureAgent(cancelSessionId) { ref =>
+                    ref ! AgentCommand.ExternalEvent(
+                      source = "background-task",
+                      eventType = "cancelled",
+                      payload = s"[Background task cancelled] Job ID: $jobId (Cancelled by user)",
+                      metadata = io.circe.JsonObject(
+                        "jobId" -> jobId.asJson
+                      ),
+                      correlationId = Some(jobId)
+                    )
+                  } *>
+                  // Send completion update to frontend so the task is removed from the dropdown
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "backgroundTaskUpdate".asJson,
+                      "sessionId" -> cancelSessionId.asJson,
+                      // 权威分键（2026-09-05）：前端按 rootSessionId 分桶，回显
+                      // 取消请求携带的会话（即前端桶键），保证移除帧落同一桶。
+                      "rootSessionId" -> cancelSessionId.asJson,
+                      "taskId" -> jobId.asJson,
+                      "description" -> "".asJson,
+                      "status" -> "completed".asJson
+                    )
+                  )
+              }
+            }
+            .handleErrorWith { e =>
+              logger.warn(s"cancelBackgroundJob failed for session=$cancelSessionId job=$jobId: ${e.getMessage}")
+              // Send a completion update even on error, so the frontend removes the task
               wsSend(
                 io.circe.Json.obj(
                   "type" -> "backgroundTaskUpdate".asJson,
                   "sessionId" -> cancelSessionId.asJson,
-                  // 权威分键（2026-09-05）：前端按 rootSessionId 分桶，回显
-                  // 取消请求携带的会话（即前端桶键），保证移除帧落同一桶。
                   "rootSessionId" -> cancelSessionId.asJson,
                   "taskId" -> jobId.asJson,
                   "description" -> "".asJson,
-                  "status" -> "completed".asJson
+                  "status" -> "failed".asJson
                 )
-              )
-          }
-        }
-        .handleErrorWith { e =>
-          logger.warn(s"cancelBackgroundJob failed for session=$cancelSessionId job=$jobId: ${e.getMessage}")
-          // Send a completion update even on error, so the frontend removes the task
-          wsSend(
-            io.circe.Json.obj(
-              "type" -> "backgroundTaskUpdate".asJson,
-              "sessionId" -> cancelSessionId.asJson,
-              "rootSessionId" -> cancelSessionId.asJson,
-              "taskId" -> jobId.asJson,
-              "description" -> "".asJson,
-              "status" -> "failed".asJson
-            )
-          ).handleErrorWith(_ => IO.unit)
-        }
+              ).handleErrorWith(_ => IO.unit)
+            }
       }
     else IO.unit
     end if
@@ -327,6 +327,7 @@ private[gateway] object WsSystemHandlers:
         s"Cannot cancel flow '$flowName': team-pipeline cancellation was retired (session $cfSessionId) — no pipeline of that shape exists any more"
       )
     else IO.unit
+    end if
   end handleCancelFlow
 
   private def handleGetAgentSystemPrompt(
@@ -660,6 +661,8 @@ private[gateway] object WsSystemHandlers:
             wsSend(fleetFrame(true, "start", "jobId" -> job.id.asJson, "job" -> job.summaryJson))
           case Left(err) => wsSend(fleetFrame(false, "start", "error" -> err.asJson))
         }
+
+  end handleFleetUpdateStart
 
   private def handleFleetUpdateCancel(
     ctx: WsDispatchCtx,

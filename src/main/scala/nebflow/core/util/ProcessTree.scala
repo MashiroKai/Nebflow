@@ -41,6 +41,8 @@ object ProcessTree:
     /** POSIX default: the historical TERM → 5s → KILL → resweep, unchanged. */
     case object TermThenKill extends Plan
 
+  end Plan
+
   private[util] def platformPlan(osName: String): Plan =
     val n = Option(osName).getOrElse("").toLowerCase(java.util.Locale.ROOT)
     if n.contains("windows") then Plan.TaskKill
@@ -197,6 +199,7 @@ object ProcessTree:
             sweep(force = true)
             waitExit(2000)
             sweep(force = true)
+        end match
       catch case _: Exception => ()
     }
 

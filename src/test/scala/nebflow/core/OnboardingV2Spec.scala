@@ -325,7 +325,8 @@ class OnboardingV2Spec extends FunSuite:
       assert(soul.contains(sec), s"Soul.md 缺段 $sec")
     assert(soul.contains("未设置（这一题你跳过了）"), "跳过项逐字段占位")
     val user = os.read(home / "User.md")
-    for sec <- List("## 称呼与身份", "## 交流方式（你希望的）", "## 你说过的原话", "## 记录规则") do assert(user.contains(sec), s"User.md 缺段 $sec")
+    for sec <- List("## 称呼与身份", "## 交流方式（你希望的）", "## 你说过的原话", "## 记录规则") do
+      assert(user.contains(sec), s"User.md 缺段 $sec")
     assert(user.contains("未设置（这一题你跳过了）"), "跳过项逐字段占位（含交流方式段）")
     assert(res.soulBytes > 0L && res.userBytes > 0L)
 
@@ -333,7 +334,7 @@ class OnboardingV2Spec extends FunSuite:
     reset()
     val answers = Map(
       ans("outshape", "交流篇幅", "user", OnboardingArtifacts.Kind.Choice, "只说结论"),
-      ans("outtone", "说话语气", "user", OnboardingArtifacts.Kind.Free, "像微信一样短句"),
+      ans("outtone", "说话语气", "user", OnboardingArtifacts.Kind.Free, "像微信一样短句")
     ).map(t => t._1 -> t._2)
     val res = OnboardingArtifacts.apply(answers).unsafeRunSync()
     assert(!res.allSkipped, "交流方式两题算实答（已入 allSkipped 判定表）⇒ 非全跳过")

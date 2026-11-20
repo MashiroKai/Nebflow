@@ -49,22 +49,34 @@ object BackoffSupervisor:
     val marker = if emptyRun then "; empty-run" else ""
     s"\n[delegate-diagnostic] no-final-text; turns=$turns; toolCalls=$toolCalls; commits=$commits; changedFiles=$changedFiles$marker"
 
-  private[agent] def protectedCompletionDiagnostic(sessionId: String, messages: List[Message], hasText: Boolean): IO[String] =
+  private[agent] def protectedCompletionDiagnostic(
+    sessionId: String,
+    messages: List[Message],
+    hasText: Boolean
+  ): IO[String] =
     if hasText then IO.pure("")
     else
       val turns = messages.count(_.role == MessageRole.Assistant)
       val tools = sessionToolCalls(messages)
       IO.blocking {
         val rec = nebflow.core.delegate.DelegateRegistry.find(sessionId)
-        val commits = rec.flatMap { r =>
-          for
-            base <- r.baseBranch
-            branch <- r.branch
-            ws <- scala.util.Try(os.Path(r.worktree.getOrElse(r.cwd))).toOption
-          yield nebflow.core.GitWorktrees.commitsAhead(ws, base, branch)
-        }.getOrElse(0)
-        val changed = rec.flatMap(r => scala.util.Try(os.Path(r.worktree.getOrElse(r.cwd))).toOption
-          .flatMap(nebflow.core.GitWorktrees.dirtyPaths(_))).fold(0)(_.size)
+        val commits = rec
+          .flatMap { r =>
+            for
+              base <- r.baseBranch
+              branch <- r.branch
+              ws <- scala.util.Try(os.Path(r.worktree.getOrElse(r.cwd))).toOption
+            yield nebflow.core.GitWorktrees.commitsAhead(ws, base, branch)
+          }
+          .getOrElse(0)
+        val changed = rec
+          .flatMap(r =>
+            scala.util
+              .Try(os.Path(r.worktree.getOrElse(r.cwd)))
+              .toOption
+              .flatMap(nebflow.core.GitWorktrees.dirtyPaths(_))
+          )
+          .fold(0)(_.size)
         completionDiagnosticText(turns, tools, commits.toString, changed.toString, tools == 0)
       }.handleError(_ => completionDiagnosticText(turns, tools, "unknown", "unknown", tools == 0))
 
@@ -329,47 +341,82 @@ object BackoffSupervisor:
                 }
           case nebflow.shared.ExecutionProtection.Protected(List(run)) if event.isInstanceOf[AgentEvent.Completed] =>
             resources.executionCommitPort.committedTerminal(subagentId, run).flatMap {
-              case Right(confirmed) => resources.subAgentTaskStore.findByTaskId(subagentId).flatMap {
-                case Some(task) if task.runId.contains(run) && task.executionStatus.contains("finished") &&
-                    task.resultRef.contains(resources.sessionStore.executionAuthorityRoot.toAbsolutePath.normalize()
-                      .resolve(subagentId).resolve(s"terminal-${java.util.Base64.getUrlEncoder.withoutPadding()
-                        .encodeToString(run.getBytes(java.nio.charset.StandardCharsets.UTF_8))}.json").toString) &&
-                    task.notificationId.contains(s"$subagentId#$run") =>
-                  resources.sessionStore.loadTerminalEnvelope(subagentId, run).flatMap {
-                    case Some(saved) if SubAgentStartupRecovery.validTerminalEnvelope(task, run, saved) &&
-                        Json.obj("source" -> saved.source.asJson, "eventType" -> saved.eventType.asJson,
-                        "payload" -> saved.payload.asJson, "metadata" -> Json.fromJsonObject(saved.metadata),
-                        "correlationId" -> saved.correlationId.asJson, "blocks" -> saved.blocks.asJson) == confirmed =>
-                      (nebflow.core.delegate.DelegateTerminal.onTerminalCleanup(resources, subagentId,
-                        task.parentSessionId, "completed", "completed") *>
-                        MailboxProducer.deliver(resources, task.parentSessionId, saved,
-                          task.notificationId.get, "delegate-terminal", coalesce = false, producer = "task-lifecycle-recovery"))
-                      .flatMap {
-                        case nebflow.core.mail.SessionMailbox.MailResult.Failed(_) => IO.unit
-                        case nebflow.core.mail.SessionMailbox.MailResult.AlreadyPresent =>
-                          val identity = task.notificationId.get
-                          (nebflow.core.mail.SessionMailbox.scanPending(task.parentSessionId),
-                            nebflow.core.mail.SessionMailbox.scanTaken(task.parentSessionId),
-                            nebflow.core.mail.SessionMailbox.deliveredContains(task.parentSessionId, Set(identity))).tupled.flatMap {
-                            case (pending, taken, delivered) =>
-                              val entries = (pending ++ taken).filter(_.identity == identity)
-                              if entries.exists(_.event != saved) then
-                                logger.warn(s"Protected terminal mailbox identity conflicts for $subagentId")
-                              else if entries.nonEmpty || delivered.contains(identity) then
-                                resources.subAgentTaskStore.acknowledgeNotification(task.parentSessionId, subagentId, run, identity).void
-                              else logger.warn(s"Protected terminal mailbox receipt unavailable for $subagentId")
+              case Right(confirmed) =>
+                resources.subAgentTaskStore.findByTaskId(subagentId).flatMap {
+                  case Some(task)
+                      if task.runId.contains(run) && task.executionStatus.contains("finished") &&
+                        task.resultRef.contains(
+                          resources.sessionStore.executionAuthorityRoot.toAbsolutePath
+                            .normalize()
+                            .resolve(subagentId)
+                            .resolve(s"terminal-${java.util.Base64.getUrlEncoder
+                                .withoutPadding()
+                                .encodeToString(run.getBytes(java.nio.charset.StandardCharsets.UTF_8))}.json")
+                            .toString
+                        ) &&
+                        task.notificationId.contains(s"$subagentId#$run") =>
+                    resources.sessionStore.loadTerminalEnvelope(subagentId, run).flatMap {
+                      case Some(saved)
+                          if SubAgentStartupRecovery.validTerminalEnvelope(task, run, saved) &&
+                            Json.obj(
+                              "source" -> saved.source.asJson,
+                              "eventType" -> saved.eventType.asJson,
+                              "payload" -> saved.payload.asJson,
+                              "metadata" -> Json.fromJsonObject(saved.metadata),
+                              "correlationId" -> saved.correlationId.asJson,
+                              "blocks" -> saved.blocks.asJson
+                            ) == confirmed =>
+                        (nebflow.core.delegate.DelegateTerminal.onTerminalCleanup(
+                          resources,
+                          subagentId,
+                          task.parentSessionId,
+                          "completed",
+                          "completed"
+                        ) *>
+                          MailboxProducer.deliver(
+                            resources,
+                            task.parentSessionId,
+                            saved,
+                            task.notificationId.get,
+                            "delegate-terminal",
+                            coalesce = false,
+                            producer = "task-lifecycle-recovery"
+                          ))
+                          .flatMap {
+                            case nebflow.core.mail.SessionMailbox.MailResult.Failed(_) => IO.unit
+                            case nebflow.core.mail.SessionMailbox.MailResult.AlreadyPresent =>
+                              val identity = task.notificationId.get
+                              (
+                                nebflow.core.mail.SessionMailbox.scanPending(task.parentSessionId),
+                                nebflow.core.mail.SessionMailbox.scanTaken(task.parentSessionId),
+                                nebflow.core.mail.SessionMailbox.deliveredContains(task.parentSessionId, Set(identity))
+                              ).tupled.flatMap { case (pending, taken, delivered) =>
+                                val entries = (pending ++ taken).filter(_.identity == identity)
+                                if entries.exists(_.event != saved) then
+                                  logger.warn(s"Protected terminal mailbox identity conflicts for $subagentId")
+                                else if entries.nonEmpty || delivered.contains(identity) then
+                                  resources.subAgentTaskStore
+                                    .acknowledgeNotification(task.parentSessionId, subagentId, run, identity)
+                                    .void
+                                else logger.warn(s"Protected terminal mailbox receipt unavailable for $subagentId")
+                              }
+                            case _ =>
+                              resources.subAgentTaskStore
+                                .acknowledgeNotification(task.parentSessionId, subagentId, run, task.notificationId.get)
+                                .void
                           }
-                        case _ => resources.subAgentTaskStore.acknowledgeNotification(task.parentSessionId,
-                          subagentId, run, task.notificationId.get).void
-                      }.as(Behaviors.stopped[AgentEvent])
-                    case _ => IO.pure(Behaviors.stopped[AgentEvent])
-                  }
-                case _ => IO.pure(Behaviors.stopped[AgentEvent])
-              }
+                          .as(Behaviors.stopped[AgentEvent])
+                      case _ => IO.pure(Behaviors.stopped[AgentEvent])
+                    }
+                  case _ => IO.pure(Behaviors.stopped[AgentEvent])
+                }
               case Left(_) => IO.pure(Behaviors.stopped[AgentEvent])
             }
           case _ =>
-            logger.warn(s"BackoffSupervisor: protected or unknown execution $subagentId requires review; event not projected")
+            logger
+              .warn(
+                s"BackoffSupervisor: protected or unknown execution $subagentId requires review; event not projected"
+              )
               .as(Behaviors.stopped[AgentEvent])
         }
 
@@ -867,6 +914,7 @@ object BackoffSupervisor:
                               .as(None)
                         else IO.pure(Some(description))
                       }
+                    end if
                   else if nebflow.core.delegate.SessionStartLease.isHeld(subagentId) then
                     IO.pure(Some("session start lease held (revival/continuation in progress)"))
                   else IO.pure(None)
@@ -883,7 +931,9 @@ object BackoffSupervisor:
         def deliverProgressMessage(messages: List[Message], heldBy: String): IO[Unit] =
           val text = extractLastAssistantText(messages)
           if text.trim.isEmpty || text.trim == Defaults.MaxTokensStubText ||
-              !scala.util.Try(nebflow.shared.Config.loadServiceConfig().delegateProgressNotifications.getOrElse(false)).getOrElse(false)
+            !scala.util
+              .Try(nebflow.shared.Config.loadServiceConfig().delegateProgressNotifications.getOrElse(false))
+              .getOrElse(false)
           then IO.unit
           else
             val turnSeq = messages.count(_.role == MessageRole.Assistant)
@@ -1213,14 +1263,23 @@ object BackoffSupervisor:
               case SystemSignal.Terminated(ref) if ref.path == childRef.path =>
                 (resources.protectedExecutions.get(subagentId), resources.protectedRunners.get(subagentId)) match
                   case (Some(handle), Some(runner)) if handle.admission.executionId == run =>
-                    ProtectedAgentExecution.suspendOwned(handle, runner, "actor-terminated-review-required")
-                      .handleErrorWith(e => logger.warn(s"Protected interruption requires review for $subagentId: ${e.getClass.getSimpleName}")) *>
+                    ProtectedAgentExecution
+                      .suspendOwned(handle, runner, "actor-terminated-review-required")
+                      .handleErrorWith(e =>
+                        logger
+                          .warn(s"Protected interruption requires review for $subagentId: ${e.getClass.getSimpleName}")
+                      ) *>
                       IO.pure(Behaviors.stopped[AgentEvent])
-                  case _ => logger.warn(s"Protected runner unavailable for $subagentId; review required")
-                    .as(Behaviors.stopped[AgentEvent])
+                  case _ =>
+                    logger
+                      .warn(s"Protected runner unavailable for $subagentId; review required")
+                      .as(Behaviors.stopped[AgentEvent])
               case _ => IO.pure(this)
           case _ =>
-            logger.warn(s"BackoffSupervisor: protected or unknown execution $subagentId interrupted; automatic restart deferred")
+            logger
+              .warn(
+                s"BackoffSupervisor: protected or unknown execution $subagentId interrupted; automatic restart deferred"
+              )
               .as(Behaviors.stopped[AgentEvent])
         }
 
@@ -1649,8 +1708,9 @@ object BackoffSupervisor:
           _ <- DelegateBudget.release(subagentId)
           oldRecord <- resources.agentRegistry.get.map(_.get(subagentId))
           // Flush prepared child progress before the recovered actor can dispatch a new request.
-          _ <- {
-            val journal = ChildReportJournal.open((nebflow.shared.PathUtil.dataRoot / "child-report-journal").toNIO, subagentId)
+          _ <-
+            val journal =
+              ChildReportJournal.open((nebflow.shared.PathUtil.dataRoot / "child-report-journal").toNIO, subagentId)
             IO.blocking((journal.openRequests(), journal.pendingRecovery())).flatMap { case (open, prepared) =>
               open.traverse_(slot => IO.blocking(journal.closeNoReport(slot))) *>
                 prepared.traverse_ { case (id, body) =>
@@ -1658,14 +1718,15 @@ object BackoffSupervisor:
                   // 崩溃前已投过的进度按原 id 重投，父端既有判重把它折叠成一件
                   // （at-least-once + 父端按 correlation id 折叠，不做父端事务确认）。
                   val event = ChildReport.event(id, body, agentName)
-                  MailboxProducer.deliver(resources, parentSessionId, event, id, "child-report", producer = "child-report-recovery").flatMap {
-                    case nebflow.core.mail.SessionMailbox.MailResult.Failed(reason) =>
-                      IO.raiseError(new IllegalStateException(s"child report recovery delivery failed: $reason"))
-                    case _ => IO.blocking(journal.markFlushed(id.substring(id.lastIndexOf(':') + 1).toLong))
-                  }
+                  MailboxProducer
+                    .deliver(resources, parentSessionId, event, id, "child-report", producer = "child-report-recovery")
+                    .flatMap {
+                      case nebflow.core.mail.SessionMailbox.MailResult.Failed(reason) =>
+                        IO.raiseError(new IllegalStateException(s"child report recovery delivery failed: $reason"))
+                      case _ => IO.blocking(journal.markFlushed(id.substring(id.lastIndexOf(':') + 1).toLong))
+                    }
                 }
             }
-          }
           // Crash recovery: load persisted messages from the session store
           // so the child can resume from where it left off (断点续跑).
           // If no messages are found (e.g. first turn crashed before any

@@ -108,10 +108,12 @@ class MailIdleGateWiringSpec extends FunSuite:
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
-  /** fixture team（lead=boss, member=member）on disk under tmp —— 只是磁盘上的团队
+  /**
+   * fixture team（lead=boss, member=member）on disk under tmp —— 只是磁盘上的团队
    *  实体（`teams/<name>/team.json` + agents/），供 `EntityLoader.loadTeamAgent` 的
    *  重载腿读取。团队功能删除批阶段 3：团队会话登记表已删，不再有「object 单例跨
-   *  测试残留」问题；teamName 仍逐测试唯一（保持 fixture 互不干扰）。 */
+   *  测试残留」问题；teamName 仍逐测试唯一（保持 fixture 互不干扰）。
+   */
   private def fixtureTeam(tmp: os.Path, teamName: String): Unit =
     val data = tmp / "data"
     PathUtil.setDataRoot(data)

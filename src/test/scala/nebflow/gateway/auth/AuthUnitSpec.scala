@@ -43,6 +43,7 @@ class AuthUnitSpec extends CatsEffectSuite:
   private def seg(json: String): String = b64url(json.getBytes(StandardCharsets.UTF_8))
 
   private val Header = seg("""{"alg":"ES384","kid":"k1"}""")
+
   private val Payload = seg(
     """{"iss":"https://issuer.example","aud":"api://stand","scope":"read write",""" +
       """"sub":"user-1","jti":"j-1","exp":4102444800,"nbf":1}"""

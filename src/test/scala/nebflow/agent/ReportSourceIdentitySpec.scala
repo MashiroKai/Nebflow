@@ -5,6 +5,7 @@ import nebflow.actor.AgentDef
 import munit.FunSuite
 
 class ReportSourceIdentitySpec extends FunSuite:
+
   test("stamp uses emitting agent and depth, not session id") {
     val event = Json.obj("type" -> Json.fromString("textDelta"))
     val nebula = AgentDef(name = "Nebula", description = "")
@@ -19,3 +20,4 @@ class ReportSourceIdentitySpec extends FunSuite:
     val root = AgentDef(name = "Nebula", description = "")
     assertEquals(AgentActor.stampSourceIdentity(event, root, 0), event)
   }
+end ReportSourceIdentitySpec

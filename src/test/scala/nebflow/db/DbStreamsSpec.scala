@@ -37,8 +37,7 @@ class DbStreamsSpec extends CatsEffectSuite:
     val root = Files.createTempDirectory("db-streams-events")
     val h = openDb(root)
     try
-      assertEquals(h.readEvents(0L, 10, logical = false).unsafeRunSync(),
-        ReadResult.Absent(), "空流 = Absent（不是空表顶替）")
+      assertEquals(h.readEvents(0L, 10, logical = false).unsafeRunSync(), ReadResult.Absent(), "空流 = Absent（不是空表顶替）")
       val s1 = h.appendEvent(kernelEvent(1), Some("proj-a:node-3f2a:failed:1762224000001")).unsafeRunSync()
       val s2 = h.appendEvent(kernelEvent(2), None).unsafeRunSync()
       assert(s2 > s1, "seq 单调")
@@ -50,8 +49,11 @@ class DbStreamsSpec extends CatsEffectSuite:
           assertEquals(env.seq, s1)
           assert(env.checksum.startsWith("sha256:"))
           assert(EventEnvelopeTest.verifyChecksum(env), "checksum = sha256(noSpaces(event))")
-          assertEquals(env.event.hcursor.downField("type").as[String].toOption, Some("node-failed"),
-            "内核字段原样不动（D-12：外层只包 seq/checksum/dedupKey）")
+          assertEquals(
+            env.event.hcursor.downField("type").as[String].toOption,
+            Some("node-failed"),
+            "内核字段原样不动（D-12：外层只包 seq/checksum/dedupKey）"
+          )
         case other => fail(s"unexpected $other")
       // fromSeq 分页。
       h.readEvents(s2, Int.MaxValue, logical = false).unsafeRunSync() match
@@ -59,6 +61,8 @@ class DbStreamsSpec extends CatsEffectSuite:
         case other => fail(s"unexpected $other")
       verifyOk(h)
     finally h.close()
+
+    end try
 
   test("events: shard rotation by bytes + idx reflects shards + oversized line admitted"):
     val root = Files.createTempDirectory("db-streams-shards")
@@ -72,8 +76,7 @@ class DbStreamsSpec extends CatsEffectSuite:
       // 各片首尾 seq 链式衔接（不重号不跳号跨片——计数器单源）。
       idx.zip(idx.drop(1)).foreach { (a, b) => assertEquals(b.firstSeq, a.lastSeq + 1L) }
       // 单行超限例外放行。
-      val big = kernelEvent(99).deepMerge(Json.obj(
-        "payload" -> Json.obj("blob" -> Json.fromString("x" * 400))))
+      val big = kernelEvent(99).deepMerge(Json.obj("payload" -> Json.obj("blob" -> Json.fromString("x" * 400))))
       h.appendEvent(big, None).unsafeRunSync()
       val idx2 = h.eventIndex().unsafeRunSync()
       assert(idx2.size > idx.size, "oversized line lands in its own shard")
@@ -84,22 +87,22 @@ class DbStreamsSpec extends CatsEffectSuite:
     val root = Files.createTempDirectory("db-streams-sessions")
     val h = openDb(root)
     try
-      val s1 = h.appendMessage("s-1", "llm", Json.obj("role" -> Json.fromString("user"),
-        "text" -> Json.fromString("hello"))).unsafeRunSync()
-      h.appendMessage("s-1", "ui", Json.obj("kind" -> Json.fromString("bubble"),
-        "text" -> Json.fromString("hi"))).unsafeRunSync()
+      val s1 = h
+        .appendMessage("s-1", "llm", Json.obj("role" -> Json.fromString("user"), "text" -> Json.fromString("hello")))
+        .unsafeRunSync()
+      h.appendMessage("s-1", "ui", Json.obj("kind" -> Json.fromString("bubble"), "text" -> Json.fromString("hi")))
+        .unsafeRunSync()
       // 快照 + 压缩点。
       val n1 = h.writeSnapshot("s-1", """{"messages":["a","b"],"tokens":120}""").unsafeRunSync()
       assertEquals(n1, 1)
       val n2 = h.writeSnapshot("s-1", """{"messages":["a"],"tokens":60}""").unsafeRunSync()
       assertEquals(n2, 2)
-      h.appendCompactPoint("s-1", beforeRef = s"snapshots/$n1.json",
-        afterRef = s"snapshots/$n2.json", tokens = 60L).unsafeRunSync()
+      h.appendCompactPoint("s-1", beforeRef = s"snapshots/$n1.json", afterRef = s"snapshots/$n2.json", tokens = 60L)
+        .unsafeRunSync()
       // 读面。
       h.readSession("s-1", "llm").unsafeRunSync() match
         case ReadResult.Present(sr) =>
-          assertEquals(sr.records.map(_.kind),
-            List("message.append", "compact-point"))
+          assertEquals(sr.records.map(_.kind), List("message.append", "compact-point"))
           val cp = sr.records(1).payload.as[SessionEnvelopeTest.CompactPoint].toOption.get
           assertEquals(cp.beforeRef, "snapshots/1.json")
         case other => fail(s"unexpected $other")
@@ -117,6 +120,8 @@ class DbStreamsSpec extends CatsEffectSuite:
       verifyOk(h)
     finally h.close()
 
+    end try
+
   test("pending: open → close appends resolution row, original row bytes untouched"):
     val root = Files.createTempDirectory("db-streams-pending")
     val h = openDb(root)
@@ -126,14 +131,20 @@ class DbStreamsSpec extends CatsEffectSuite:
       val file = root.resolve("db").resolve("pending").resolve("permission.jsonl")
       val afterOpen = Files.readString(file)
       // 闭单 = 追加决议行。
-      assert(h.closePending(PendingStream.Permission, "r-1", closedBy = "user",
-        closeReason = "granted", now = 1762224100000L).unsafeRunSync())
+      assert(
+        h.closePending(
+          PendingStream.Permission,
+          "r-1",
+          closedBy = "user",
+          closeReason = "granted",
+          now = 1762224100000L
+        ).unsafeRunSync()
+      )
       val afterClose = Files.readString(file)
       assert(afterClose.startsWith(afterOpen), "原行字节不动（闭单只追加）")
       assert(afterClose.linesIterator.count(_.nonEmpty) == 2)
       // 幂等：再闭 ⇒ false，零追加。
-      assert(!h.closePending(PendingStream.Permission, "r-1", "user", "granted",
-        1762224200000L).unsafeRunSync())
+      assert(!h.closePending(PendingStream.Permission, "r-1", "user", "granted", 1762224200000L).unsafeRunSync())
       assertEquals(Files.readString(file), afterClose)
       h.readPending(PendingStream.Permission).unsafeRunSync() match
         case ReadResult.Present(sr) =>
@@ -144,12 +155,17 @@ class DbStreamsSpec extends CatsEffectSuite:
       verifyOk(h)
     finally h.close()
 
+    end try
+
   test("schedule: put → tombstone → logical view flips; re-put revives with content"):
     val root = Files.createTempDirectory("db-streams-schedule")
     val h = openDb(root)
     try
-      val task = Json.obj("id" -> Json.fromString("t-1"),
-        "content" -> Json.fromString("daily report"), "triggerAt" -> Json.fromLong(1762224000000L))
+      val task = Json.obj(
+        "id" -> Json.fromString("t-1"),
+        "content" -> Json.fromString("daily report"),
+        "triggerAt" -> Json.fromLong(1762224000000L)
+      )
       h.appendScheduleTask("s-9", task, 1762224000000L).unsafeRunSync()
       h.liveScheduleTasks("s-9").unsafeRunSync() match
         case ReadResult.Present(tasks) => assertEquals(tasks.size, 1)
@@ -167,22 +183,28 @@ class DbStreamsSpec extends CatsEffectSuite:
       h.liveScheduleTasks("s-9").unsafeRunSync() match
         case ReadResult.Present(tasks) =>
           assertEquals(tasks.size, 1)
-          assertEquals(tasks.head.taskDef.hcursor.downField("content").as[String].toOption,
-            Some("daily report"), "复活带完整内容（非桩）")
+          assertEquals(
+            tasks.head.taskDef.hcursor.downField("content").as[String].toOption,
+            Some("daily report"),
+            "复活带完整内容（非桩）"
+          )
         case other => fail(s"unexpected $other")
       // 不存在的任务 tombstone ⇒ false。
       assert(!h.tombstoneScheduleTask("s-9", "t-404", 1L).unsafeRunSync())
       verifyOk(h)
     finally h.close()
 
+    end try
+
   test("guard: write/read/reopen round-trip for both docs"):
     val root = Files.createTempDirectory("db-streams-guard")
     val h = openDb(root)
     try
-      h.writeNotifyGuard(GuardDocsTest.notify("dispatch-notify:failed",
-        List(1762224000000L, 1762224005000L), 1762224300000L, 1762224005000L)).unsafeRunSync()
-      h.writeAvoidGuard(GuardDocsTest.avoid(Map("openai" -> 1762224300000L),
-        1762224005000L)).unsafeRunSync()
+      h.writeNotifyGuard(
+        GuardDocsTest
+          .notify("dispatch-notify:failed", List(1762224000000L, 1762224005000L), 1762224300000L, 1762224005000L)
+      ).unsafeRunSync()
+      h.writeAvoidGuard(GuardDocsTest.avoid(Map("openai" -> 1762224300000L), 1762224005000L)).unsafeRunSync()
       h.readNotifyGuard("dispatch-notify:failed").unsafeRunSync() match
         case ReadResult.Present(d) =>
           assertEquals(d.failedAt, List(1762224000000L, 1762224005000L))
@@ -194,16 +216,19 @@ class DbStreamsSpec extends CatsEffectSuite:
       verifyOk(h)
     finally h.close()
 
+    end try
+
   test("D-12 对拍样例物化：事件流 + 待审单各一条完整 JSON 落 target/db-samples/"):
     val root = Files.createTempDirectory("db-streams-samples")
     val h = openDb(root)
     try
-      h.appendEvent(kernelEvent(1, typ = "node-failed", subject = "node-3f2a"),
-        Some("proj-a:node-3f2a:failed:1762224000001")).unsafeRunSync()
+      h.appendEvent(
+        kernelEvent(1, typ = "node-failed", subject = "node-3f2a"),
+        Some("proj-a:node-3f2a:failed:1762224000001")
+      ).unsafeRunSync()
       val card = PendingRecordTest.card("r-1", kind = "Permission")
       h.openPending(card).unsafeRunSync()
-      h.closePending(PendingStream.Permission, "r-1", "user", "granted",
-        1762224100000L).unsafeRunSync()
+      h.closePending(PendingStream.Permission, "r-1", "user", "granted", 1762224100000L).unsafeRunSync()
       // 物化到 target/db-samples/（报告对拍面；target 不进 git）。
       val outDir = Path.of(sys.props("user.dir")).resolve("target").resolve("db-samples")
       Files.createDirectories(outDir)
@@ -221,6 +246,8 @@ class DbStreamsSpec extends CatsEffectSuite:
       assert(pd.hcursor.downField("state").as[String].isRight)
     finally h.close()
 
+    end try
+
   private def verifyOk(h: DbHandle): Unit =
     h.verify().unsafeRunSync() match
       case r if r.ok => ()
@@ -230,6 +257,7 @@ end DbStreamsSpec
 
 /** 测试内窥（主代码 API 不外泄内部 codec——测试面直接调 format 包）。 */
 object EventEnvelopeTest:
+
   def verifyChecksum(e: nebflow.db.format.EventEnvelope): Boolean =
     nebflow.db.format.EventEnvelope.verify(e)
 
@@ -238,6 +266,7 @@ object SessionEnvelopeTest:
 
 object PendingRecordTest:
   import nebflow.db.format.PendingRecord
+
   def card(requestId: String, kind: String = "Permission"): PendingRecord.PendingCard =
     PendingRecord.PendingCard(
       requestId = requestId,
@@ -251,8 +280,9 @@ object PendingRecordTest:
 
 object GuardDocsTest:
   import nebflow.db.format.GuardDocs
-  def notify(source: String, failedAt: List[Long], cooldownUntil: Long,
-    updatedAt: Long): GuardDocs.NotifyGuardDoc =
+
+  def notify(source: String, failedAt: List[Long], cooldownUntil: Long, updatedAt: Long): GuardDocs.NotifyGuardDoc =
     GuardDocs.NotifyGuardDoc(1, source, failedAt, cooldownUntil, updatedAt)
+
   def avoid(avoidUntil: Map[String, Long], updatedAt: Long): GuardDocs.AvoidGuardDoc =
     GuardDocs.AvoidGuardDoc(1, "provider-avoid", avoidUntil, updatedAt)

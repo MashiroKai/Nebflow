@@ -65,8 +65,10 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
       completedAt = completedAt
     )
 
-  /** 只喂待办读写腿的 ctx（`WsBrowseDeviceLegSpec.browseCtx` / `ChainViewWsEntrySpec.chatCtx`
-   *  同款 null 占位纪律：腿读不到的依赖刻意置 null，越界即 NPE 报警，不静默蒙混）。 */
+  /**
+   * 只喂待办读写腿的 ctx（`WsBrowseDeviceLegSpec.browseCtx` / `ChainViewWsEntrySpec.chatCtx`
+   *  同款 null 占位纪律：腿读不到的依赖刻意置 null，越界即 NPE 报警，不静默蒙混）。
+   */
   private def ctx(res: SharedResources): WsDispatchCtx =
     WsDispatchCtx(
       logger = NebflowLogger.forName("todo.unify.frames.spec"),
@@ -118,8 +120,10 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
       projectCreateBroadcastImpl = null
     )
 
-  /** 起一套隔离资源（dataRoot 已在 beforeEach 指到 temp ⇒ scheduledTaskStore /
-   *  doneRecordStore 都落在 temp 下，零写真实 ~/.stand）。 */
+  /**
+   * 起一套隔离资源（dataRoot 已在 beforeEach 指到 temp ⇒ scheduledTaskStore /
+   *  doneRecordStore 都落在 temp 下，零写真实 ~/.stand）。
+   */
   private def withRig[A](f: (WsDispatchCtx, SharedResources) => IO[A]): IO[A] =
     for
       system <- IO(ActorSystem(s"todo-unify-${scala.util.Random.nextInt(1000000)}"))
@@ -151,8 +155,11 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
   test("① createScheduledTask(kind=todo, priority=7) ⇒ 落库 3（钳位）+ created 帧带三键") {
     withRig { (c, res) =>
       for
-        frames <- send(c, "createScheduledTask",
-          """{"type":"createScheduledTask","sessionId":"s1","kind":"todo","content":"买牛奶","priority":7}""")
+        frames <- send(
+          c,
+          "createScheduledTask",
+          """{"type":"createScheduledTask","sessionId":"s1","kind":"todo","content":"买牛奶","priority":7}"""
+        )
         onDisk <- res.scheduledTaskStore.loadTasks("s1")
       yield
         assertEquals(types(frames), List("scheduledTaskCreated"))
@@ -188,7 +195,8 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
   test("FTI-SCN-007 correlated create retry returns same durable row and rejects identity collision") {
     withRig { (c, res) =>
       val id = "b642c22a-e761-48c2-9f29-4237263bc973"
-      val frame = s"""{"type":"createScheduledTask","sessionId":"s1","kind":"todo","name":"same","content":"first","requestId":"$id"}"""
+      val frame =
+        s"""{"type":"createScheduledTask","sessionId":"s1","kind":"todo","name":"same","content":"first","requestId":"$id"}"""
       for
         first <- send(c, "createScheduledTask", frame)
         second <- send(c, "createScheduledTask", frame)
@@ -209,7 +217,8 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
   test("FDC-SCN-026 a retry after completion reports the stored completed state") {
     withRig { (c, res) =>
       val id = "c9d1e2f3-a4b5-4c6d-8e7f-1029384756ab"
-      val frame = s"""{"type":"createScheduledTask","sessionId":"s1","kind":"todo","name":"same","content":"first","requestId":"$id"}"""
+      val frame =
+        s"""{"type":"createScheduledTask","sessionId":"s1","kind":"todo","name":"same","content":"first","requestId":"$id"}"""
       for
         _ <- send(c, "createScheduledTask", frame)
         _ <- res.scheduledTaskStore.updateTask("s1", id)(_.copy(completedAt = Some(1234L)))
@@ -219,9 +228,14 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
         assertEquals(types(retry), List("scheduledTaskCreated"))
         val task = rowOf(retry)
         assertEquals(task.hcursor.get[String]("id").toOption, Some(id))
-        assertEquals(task.hcursor.get[Boolean]("completed").toOption, Some(true), "the receipt must not replay the request's initial completed=false")
+        assertEquals(
+          task.hcursor.get[Boolean]("completed").toOption,
+          Some(true),
+          "the receipt must not replay the request's initial completed=false"
+        )
         assertEquals(task.hcursor.get[Long]("completedAt").toOption, Some(1234L))
         assertEquals(rows.head.completedAt, Some(1234L), "the durable row is unchanged by the retry")
+      end for
     }
   }
 
@@ -237,8 +251,11 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
         _ <- res.scheduledTaskStore.addTask(todo("high-early", triggerAt = 500L, priority = 3))
         _ <- res.scheduledTaskStore.addTask(todo("done", triggerAt = 100L, priority = 3, completedAt = Some(now)))
         def_ <- send(c, "listScheduledTasks", """{"type":"listScheduledTasks","sessionId":"s1","scope":"all"}""")
-        all <- send(c, "listScheduledTasks",
-          """{"type":"listScheduledTasks","sessionId":"s1","scope":"all","includeCompleted":true}""")
+        all <- send(
+          c,
+          "listScheduledTasks",
+          """{"type":"listScheduledTasks","sessionId":"s1","scope":"all","includeCompleted":true}"""
+        )
       yield
         val defRows = def_.head.hcursor.downField("tasks").as[List[Json]].getOrElse(Nil)
         val ids = defRows.flatMap(_.hcursor.get[String]("id").toOption)
@@ -301,6 +318,7 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
         assertEquals(onDisk.head.decision, Some(decision))
         assertEquals(onDisk.head.completedAt, None)
         assertEquals(done.length, 0)
+      end for
     }
   }
 
@@ -313,8 +331,11 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
         done <- res.doneRecordStore.loadAll
         open <- res.scheduledTaskStore.getAllTodos
       yield
-        assertEquals(types(frames), List("scheduledTaskCompleted", "scheduledTaskDeleted"),
-          "新帧 scheduledTaskCompleted + 老帧 scheduledTaskDeleted 双发（老前端零改动）")
+        assertEquals(
+          types(frames),
+          List("scheduledTaskCompleted", "scheduledTaskDeleted"),
+          "新帧 scheduledTaskCompleted + 老帧 scheduledTaskDeleted 双发（老前端零改动）"
+        )
         val completedFrame = frames.head
         assertEquals(completedFrame.hcursor.get[String]("id").toOption, Some("t1"))
         assert(completedFrame.hcursor.get[Long]("completedAt").toOption.isDefined, "completed 帧带完成时刻")
@@ -412,12 +433,25 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
       for
         _ <- res.scheduledTaskStore.addTask(todo("t1"))
         _ <- res.scheduledTaskStore.addTask(
-          ScheduledTask(id = "task1", sessionId = "s1", content = "例行", triggerAt = now + 3_600_000L, createdAt = 1_000L)
+          ScheduledTask(
+            id = "task1",
+            sessionId = "s1",
+            content = "例行",
+            triggerAt = now + 3_600_000L,
+            createdAt = 1_000L
+          )
         )
-        frames <- send(c, "updateScheduledTask", """{"type":"updateScheduledTask","sessionId":"s1","id":"t1","priority":2}""")
+        frames <- send(
+          c,
+          "updateScheduledTask",
+          """{"type":"updateScheduledTask","sessionId":"s1","id":"t1","priority":2}"""
+        )
         onDisk <- res.scheduledTaskStore.loadTasks("s1")
-        taskFrames <- send(c, "updateScheduledTask",
-          """{"type":"updateScheduledTask","sessionId":"s1","id":"task1","priority":3}""")
+        taskFrames <- send(
+          c,
+          "updateScheduledTask",
+          """{"type":"updateScheduledTask","sessionId":"s1","id":"task1","priority":3}"""
+        )
         taskOnDisk <- res.scheduledTaskStore.loadTasks("s1")
       yield
         assertEquals(types(frames), List("scheduledTaskUpdated"))

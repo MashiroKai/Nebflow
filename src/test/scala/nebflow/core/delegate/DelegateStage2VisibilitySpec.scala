@@ -73,6 +73,8 @@ class DelegateStage2VisibilitySpec extends FunSuite:
       )
     )
 
+  end putRecord
+
   /** 轮次台账直接落盘（append-only JSONL 的盘上形态；read face = DelegateRoundLedger）。 */
   private def seedRound(id: String, roundNo: Int, settledAt: Option[Long]): Unit =
     val dir = tempRoot / "delegates"
@@ -106,6 +108,8 @@ class DelegateStage2VisibilitySpec extends FunSuite:
     )
     os.write.over(dir / s"$scope.json", rows.noSpaces)
 
+  end seedChild
+
   private def mkTask(id: String, parent: String, status: String, lastError: Option[String] = None): SubAgentTask =
     SubAgentTask(
       taskId = id,
@@ -126,7 +130,9 @@ class DelegateStage2VisibilitySpec extends FunSuite:
 
   // ── R1 崩溃恢复跳过（boot 对账指纹回溯腿）────────────────────────────────
 
-  test("R1 red: a STATE-settled identity (settled round, no archive flag ever written) is skipped by the boot fingerprint backfill") {
+  test(
+    "R1 red: a STATE-settled identity (settled round, no archive flag ever written) is skipped by the boot fingerprint backfill"
+  ) {
     val id = "delegate-nebflow-s2r1skip01"
     val fp = nebflow.agent.SubAgentStartupRecovery.RestartLossFingerprint
     val store = new SubAgentTaskStore(tempRoot / "subagent-tasks")

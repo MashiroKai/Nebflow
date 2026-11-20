@@ -4,6 +4,7 @@ import munit.FunSuite
 import java.nio.file.Files
 
 class ChildReportRecoveryProtocolSpec extends FunSuite:
+
   test("prepared report does not block a later request") {
     val root = Files.createTempDirectory("child-prepared-")
     val journal = ChildReportJournal.open(root, "child")
@@ -44,3 +45,4 @@ class ChildReportRecoveryProtocolSpec extends FunSuite:
     val next = recovered.beginRequest()
     assertNotEquals(next, slot)
   }
+end ChildReportRecoveryProtocolSpec

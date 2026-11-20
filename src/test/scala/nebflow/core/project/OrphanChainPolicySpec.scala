@@ -25,10 +25,14 @@ class OrphanChainPolicySpec extends CatsEffectSuite:
     def scopeState = IO.pure((chains, remaining))
     def pauseChain(chainId: String) = paused.update(_ :+ chainId)
     def event(chainId: String, remaining: Int) = events.update(_ :+ (chainId, remaining))
+
     override def notifyRoot(scope: String, chains: List[String], remaining: Int) =
       notices.update(_ :+ s"$scope|${chains.mkString(",")}|$remaining")
+
     /** 本假端口上「节点续跑」是可观测动作：孤儿处置必须**零**次（节点不无限推进）。 */
     def resumeNode(node: String): IO[Unit] = resumed.update(_ + 1)
+
+  end FakePort
 
   private def mk(chains: List[String], remaining: Int) =
     for
@@ -47,7 +51,11 @@ class OrphanChainPolicySpec extends CatsEffectSuite:
   test("① 孤儿判定：属主不在 delegate 注册表 ⇒ 孤儿；在册 ⇒ 非孤儿") {
     assert(OrphanChainPolicy.isOrphan(false), "no owner record = orphan")
     assert(!OrphanChainPolicy.isOrphan(true), "recorded owner = not an orphan (crash-resume leg unchanged)")
-    assertEquals(OrphanChainPolicy.action, "pause", "default disposition = pause (author-facing rationale in the report)")
+    assertEquals(
+      OrphanChainPolicy.action,
+      "pause",
+      "default disposition = pause (author-facing rationale in the report)"
+    )
     assert(OrphanChainPolicy.pauseEnabled)
   }
 
@@ -64,10 +72,9 @@ class OrphanChainPolicySpec extends CatsEffectSuite:
 
   test("③ 回滚开关：action=resume ⇒ 零暂停零事件（走改前续跑腿，行为可回滚）") {
     val prev = sys.props.get("nebflow.boot.orphanChain.action")
-    val restore = IO(prev match {
+    val restore = IO(prev match
       case Some(v) => sys.props("nebflow.boot.orphanChain.action") = v
-      case None    => sys.props.remove("nebflow.boot.orphanChain.action")
-    }).void
+      case None => sys.props.remove("nebflow.boot.orphanChain.action")).void
     (IO(sys.props("nebflow.boot.orphanChain.action") = "resume") *> mk(List("chain-1"), remaining = 1))
       .guarantee(restore)
       .map { case (n, paused, events, _, _) =>

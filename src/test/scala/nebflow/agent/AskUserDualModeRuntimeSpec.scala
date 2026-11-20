@@ -22,7 +22,14 @@ import nebflow.actor.{ActorPath, ActorRef, ActorSystem, Behavior, Behaviors}
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.mail.SessionMailbox
-import nebflow.core.tools.{AskHostLedger, AskHostReplyTool, AskHostTool, AskUserQuestionTool, FileLockManager, ToolContext}
+import nebflow.core.tools.{
+  AskHostLedger,
+  AskHostReplyTool,
+  AskHostTool,
+  AskUserQuestionTool,
+  FileLockManager,
+  ToolContext
+}
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
 import nebflow.shared.{
@@ -448,17 +455,34 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
       resources <- mkResources(system, tmp, new ScriptedAskLlm(requests, askInputNonBlocking, gate))
       rootRef <- system.spawn(Behaviors.receiveMessage[AgentCommand](_ => IO.pure(Behaviors.ignore)), "askhost-root")
       now <- IO(System.currentTimeMillis())
-      _ <- resources.agentRegistry.update(_ + ("askhost-root-session" -> AgentRecord(
-        sessionId = "askhost-root-session", ref = rootRef, kind = AgentKind.Root,
-        rootSessionId = "askhost-root-session", parentRef = None, startedAt = now,
-        status = AgentStatus.Processing, lastActivityMs = now
-      )))
-      delegateRef <- system.spawn(Behaviors.receiveMessage[AgentCommand](_ => IO.pure(Behaviors.ignore)), "askhost-delegate")
-      _ <- resources.agentRegistry.update(_ + ("askhost-delegate-session" -> AgentRecord(
-        sessionId = "askhost-delegate-session", ref = delegateRef, kind = AgentKind.Delegate,
-        rootSessionId = "askhost-root-session", parentRef = None, startedAt = now,
-        status = AgentStatus.Processing, lastActivityMs = now
-      )))
+      _ <- resources.agentRegistry.update(
+        _ + ("askhost-root-session" -> AgentRecord(
+          sessionId = "askhost-root-session",
+          ref = rootRef,
+          kind = AgentKind.Root,
+          rootSessionId = "askhost-root-session",
+          parentRef = None,
+          startedAt = now,
+          status = AgentStatus.Processing,
+          lastActivityMs = now
+        ))
+      )
+      delegateRef <- system.spawn(
+        Behaviors.receiveMessage[AgentCommand](_ => IO.pure(Behaviors.ignore)),
+        "askhost-delegate"
+      )
+      _ <- resources.agentRegistry.update(
+        _ + ("askhost-delegate-session" -> AgentRecord(
+          sessionId = "askhost-delegate-session",
+          ref = delegateRef,
+          kind = AgentKind.Delegate,
+          rootSessionId = "askhost-root-session",
+          parentRef = None,
+          startedAt = now,
+          status = AgentStatus.Processing,
+          lastActivityMs = now
+        ))
+      )
       context = ToolContext(
         projectRoot = tmp.toString,
         sessionId = Some("askhost-worker-session"),
@@ -469,14 +493,19 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
         toolCallId = "askhost-call-1"
       )
       groupedContext = context.copy(projectName = Some("project"), flowChainId = Some("chain"))
-      fiber <- AskHostTool.call(
-        JsonObject("question" -> "Choose a safe option".asJson), groupedContext
-      ).start
+      fiber <- AskHostTool
+        .call(
+          JsonObject("question" -> "Choose a safe option".asJson),
+          groupedContext
+        )
+        .start
       _ <- waitForMailbox("askhost-root-session")
-      second <- AskHostTool.call(
-        JsonObject("question" -> "Choose a safe option".asJson),
-        groupedContext.copy(sessionId = Some("askhost-worker-2"))
-      ).start
+      second <- AskHostTool
+        .call(
+          JsonObject("question" -> "Choose a safe option".asJson),
+          groupedContext.copy(sessionId = Some("askhost-worker-2"))
+        )
+        .start
       _ <- IO.sleep(500.millis)
       groupedRows <- AskHostLedger.recover
       _ = assertEquals(groupedRows.size, 1, "同链同项目同问题必须只有一条待答")
@@ -497,28 +526,41 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
       correlationId = event.correlationId.getOrElse(fail(s"AskHost event lacks correlation: $event"))
       _ = assertEquals(event.metadata("correlationId").flatMap(_.asString), Some(correlationId))
       _ = assert(entry.identity.contains(correlationId), s"mailbox identity not correlated: $entry")
-      rootContext = ToolContext(projectRoot = tmp.toString, sessionId = Some("askhost-root-session"),
-        agentDef = Some(AgentDef(name = "Nebula", description = "", tools = Nil)), depth = 0,
-        sharedResources = Some(resources))
+      rootContext = ToolContext(
+        projectRoot = tmp.toString,
+        sessionId = Some("askhost-root-session"),
+        agentDef = Some(AgentDef(name = "Nebula", description = "", tools = Nil)),
+        depth = 0,
+        sharedResources = Some(resources)
+      )
       replyInput = JsonObject("correlationId" -> correlationId.asJson, "decision" -> "Use option A".asJson)
       firstReply <- AskHostReplyTool.call(replyInput, rootContext)
       result <- fiber.joinWithNever
       result2 <- second.joinWithNever
       _ <- AskHostLedger.markDelivered(correlationId)
       duplicateReply <- AskHostReplyTool.call(replyInput, rootContext)
-      conflictReply <- AskHostReplyTool.call(JsonObject("correlationId" -> correlationId.asJson, "decision" -> "different".asJson), rootContext)
+      conflictReply <- AskHostReplyTool.call(
+        JsonObject("correlationId" -> correlationId.asJson, "decision" -> "different".asJson),
+        rootContext
+      )
       _ = assert(firstReply.isRight && duplicateReply.isRight, s"duplicate reply failed: $duplicateReply")
       _ = assert(conflictReply.isLeft, "conflicting decisions must not be silently accepted")
-      _ = assertEquals(result, Right("Use option A"), s"correlated AskHost reply did not complete the worker call (correlation=$correlationId)")
+      _ = assertEquals(
+        result,
+        Right("Use option A"),
+        s"correlated AskHost reply did not complete the worker call (correlation=$correlationId)"
+      )
       _ = assertEquals(result2, Right("Use option A"))
     yield ()
-    check.guarantee(IO {
-      nebflow.core.LlmLogWriter.setEnabled(previousLlmLog)
-      PathUtil.setDataRoot(previousRoot)
-      AskHostLedger.clearForTests()
-      system.stopAll.attempt.void.unsafeRunSync()
-      os.remove.all(tmp)
-    }).unsafeRunSync()
+    check
+      .guarantee(IO {
+        nebflow.core.LlmLogWriter.setEnabled(previousLlmLog)
+        PathUtil.setDataRoot(previousRoot)
+        AskHostLedger.clearForTests()
+        system.stopAll.attempt.void.unsafeRunSync()
+        os.remove.all(tmp)
+      })
+      .unsafeRunSync()
   }
 
   test("AskHost falls back to the unique trusted Nebula root when ancestry is unavailable") {
@@ -534,26 +576,42 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
       root = pair._1.id
       ref <- system.spawn(Behaviors.receiveMessage[AgentCommand](_ => IO.pure(Behaviors.ignore)), "fallback-root")
       _ <- resources.agentRegistry.update(_ + (root -> AgentRecord(root, ref, AgentKind.Root, root)))
-      context = ToolContext(projectRoot = tmp.toString, sessionId = Some("worker"), rootSessionId = Some("missing-parent"),
-        agentDef = Some(AgentDef(name = executorName, description = "", tools = Nil)), depth = 1,
-        sharedResources = Some(resources), toolCallId = "fallback-call")
+      context = ToolContext(
+        projectRoot = tmp.toString,
+        sessionId = Some("worker"),
+        rootSessionId = Some("missing-parent"),
+        agentDef = Some(AgentDef(name = executorName, description = "", tools = Nil)),
+        depth = 1,
+        sharedResources = Some(resources),
+        toolCallId = "fallback-call"
+      )
       fiber <- AskHostTool.call(JsonObject("question" -> "fallback question".asJson), context).start
       pending <- waitForMailbox(root)
       id = pending.head.event.correlationId.get
-      rootContext = ToolContext(projectRoot = tmp.toString, sessionId = Some(root),
-        agentDef = Some(AgentDef(name = "Nebula", description = "", tools = Nil)), depth = 0, sharedResources = Some(resources))
-      reply <- AskHostReplyTool.call(JsonObject("correlationId" -> id.asJson, "decision" -> "approved".asJson), rootContext)
+      rootContext = ToolContext(
+        projectRoot = tmp.toString,
+        sessionId = Some(root),
+        agentDef = Some(AgentDef(name = "Nebula", description = "", tools = Nil)),
+        depth = 0,
+        sharedResources = Some(resources)
+      )
+      reply <- AskHostReplyTool.call(
+        JsonObject("correlationId" -> id.asJson, "decision" -> "approved".asJson),
+        rootContext
+      )
       result <- fiber.joinWithNever
       _ = assert(reply.isRight)
       _ = assertEquals(result, Right("approved"))
       _ = println(s"ASKHOST_FALLBACK root=$root correlation=$id reply=$result")
     yield ()
-    check.guarantee(IO {
-      PathUtil.setDataRoot(previous)
-      AskHostLedger.clearForTests()
-      system.stopAll.attempt.void.unsafeRunSync()
-      os.remove.all(tmp)
-    }).unsafeRunSync()
+    check
+      .guarantee(IO {
+        PathUtil.setDataRoot(previous)
+        AskHostLedger.clearForTests()
+        system.stopAll.attempt.void.unsafeRunSync()
+        os.remove.all(tmp)
+      })
+      .unsafeRunSync()
   }
 
   test("AskHost timeout wakes the worker and closes the pending request") {
@@ -581,22 +639,52 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
       seen <- Deferred[IO, Unit]
       llm = new LlmHandle[IO]:
         def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("unexpected send"))
-        def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] =
+        def sendStream(
+          req: LlmRequest,
+          onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+        ): Stream[IO, StreamChunk] =
           Stream.eval(seen.tryGet).flatMap {
-            case None => Stream.eval(seen.complete(())).drain ++ Stream(
-              StreamChunk.ToolCallChunk(ToolCall("real-ask", "AskHost", JsonObject("question" -> "choose".asJson))),
-              StreamChunk.Done(None, None))
+            case None =>
+              Stream.eval(seen.complete(())).drain ++ Stream(
+                StreamChunk.ToolCallChunk(ToolCall("real-ask", "AskHost", JsonObject("question" -> "choose".asJson))),
+                StreamChunk.Done(None, None)
+              )
             case Some(_) => Stream(StreamChunk.TextDelta("done"), StreamChunk.Done(None, None))
           }
       resources <- mkResources(system, tmp, llm)
       rootRef <- system.spawn(Behaviors.receiveMessage[AgentCommand](_ => IO.pure(Behaviors.ignore)), "root-probe")
-      worker <- system.spawn(AgentActor(agentDef = AgentDef(name = executorName, description = "", tools = Nil),
-        resources = resources, wsSend = _ => IO.unit, depth = 1, parentRef = None,
-        sessionId = Some("real-worker"), rootSessionId = "real-root", safetyMode = "auto-all"), "real-worker")
+      worker <- system.spawn(
+        AgentActor(
+          agentDef = AgentDef(name = executorName, description = "", tools = Nil),
+          resources = resources,
+          wsSend = _ => IO.unit,
+          depth = 1,
+          parentRef = None,
+          sessionId = Some("real-worker"),
+          rootSessionId = "real-root",
+          safetyMode = "auto-all"
+        ),
+        "real-worker"
+      )
       now <- IO(System.currentTimeMillis())
-      _ <- resources.agentRegistry.set(Map(
-        "real-root" -> AgentRecord(sessionId = "real-root", ref = rootRef, kind = AgentKind.Root, rootSessionId = "real-root", startedAt = now),
-        "real-worker" -> AgentRecord(sessionId = "real-worker", ref = worker, kind = AgentKind.Delegate, rootSessionId = "real-root", startedAt = now)))
+      _ <- resources.agentRegistry.set(
+        Map(
+          "real-root" -> AgentRecord(
+            sessionId = "real-root",
+            ref = rootRef,
+            kind = AgentKind.Root,
+            rootSessionId = "real-root",
+            startedAt = now
+          ),
+          "real-worker" -> AgentRecord(
+            sessionId = "real-worker",
+            ref = worker,
+            kind = AgentKind.Delegate,
+            rootSessionId = "real-root",
+            startedAt = now
+          )
+        )
+      )
       _ <- worker ! AgentCommand.UserInput("begin", None, Some("real-input"))
       entries <- waitForMailbox("real-root")
       id = entries.head.identity
@@ -609,14 +697,18 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
         case r: nebflow.shared.ContentBlock.ToolResult => r.toolUseId == "real-ask" && r.content == "approved"
         case _ => false
       })))
-      _ <- IO.println(s"TRANSCRIPT_READBACK worker=real-worker toolUseId=real-ask result=approved correlation=$id startupScan=$recovered")
+      _ <- IO.println(
+        s"TRANSCRIPT_READBACK worker=real-worker toolUseId=real-ask result=approved correlation=$id startupScan=$recovered"
+      )
     yield ()
-    check.guarantee(IO {
-      nebflow.core.LlmLogWriter.setEnabled(previousLlmLog)
-      PathUtil.setDataRoot(previousRoot)
-      system.stopAll.attempt.void.unsafeRunSync()
-      os.remove.all(tmp)
-    }).unsafeRunSync()
+    check
+      .guarantee(IO {
+        nebflow.core.LlmLogWriter.setEnabled(previousLlmLog)
+        PathUtil.setDataRoot(previousRoot)
+        system.stopAll.attempt.void.unsafeRunSync()
+        os.remove.all(tmp)
+      })
+      .unsafeRunSync()
   }
 
   private def waitForPersistedAskResult(resources: SharedResources, sid: String): IO[Unit] =
@@ -733,7 +825,11 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
       reqs <- f.requests.get
       toolResults <- IO(lastToolResults(reqs))
       _ = assert(toolResults.exists(_.contains("non-blocking:")), s"root identity 未能 dispatch AskUser: $toolResults")
-      _ <- waitFor(f.wsEvents, _.exists(j => j.hcursor.get[String]("type").toOption.contains("askUser")), "root AskUser 卡片未渲染")
+      _ <- waitFor(
+        f.wsEvents,
+        _.exists(j => j.hcursor.get[String]("type").toOption.contains("askUser")),
+        "root AskUser 卡片未渲染"
+      )
       pend <- pendingAsksUntil(f.hub, f.sid, _.size == 1, "root AskUser 未占 hub 槽位")
       _ = assertEquals(pend.size, 1)
       _ <- f.cleanup

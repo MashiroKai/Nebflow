@@ -43,7 +43,10 @@ class DeepseekDirectLiveE2ESpec extends CatsEffectSuite:
     val path = java.nio.file.Paths.get(System.getProperty("user.home"), ".stand", "stand.json")
     if !java.nio.file.Files.exists(path) then None
     else
-      Config.loadServiceConfig(Some(path.toString)).llm.providers
+      Config
+        .loadServiceConfig(Some(path.toString))
+        .llm
+        .providers
         .get("Deepseek")
         .filter(_.apiKey.trim.nonEmpty)
 
@@ -88,7 +91,9 @@ class DeepseekDirectLiveE2ESpec extends CatsEffectSuite:
       before <- monitor.getStates
       trialsBefore <- monitor.getHalfOpenTrials
       _ <- line(s"health table BEFORE call: ${before.map { case (k, v) => s"$k=$v" }.mkString(" | ")}")
-      _ <- line(s"half-open ledger BEFORE call: ${trialsBefore.map { case (k, t) => s"$k(at=${t.at}, trials=${t.trials})" }.mkString(" | ")}")
+      _ <- line(
+        s"half-open ledger BEFORE call: ${trialsBefore.map { case (k, t) => s"$k(at=${t.at}, trials=${t.trials})" }.mkString(" | ")}"
+      )
       chain <- registry.getCandidatesForAgentUnfiltered(
         Some(AgentModelConfig(preferred = Some("deadprov/m1"), fallbacks = List("Deepseek/deepseek-flash")))
       )
@@ -98,7 +103,8 @@ class DeepseekDirectLiveE2ESpec extends CatsEffectSuite:
         messages = List(Message(MessageRole.User, Left("Reply with the single word: pong"))),
         sessionId = "live-e2e-fake-down",
         agentId = "live-e2e-fake-down",
-        agentModel = Some(AgentModelConfig(preferred = Some("deadprov/m1"), fallbacks = List("Deepseek/deepseek-flash")))
+        agentModel =
+          Some(AgentModelConfig(preferred = Some("deadprov/m1"), fallbacks = List("Deepseek/deepseek-flash")))
       )
       resp <- handle.send(req)
       totalMs <- IO(System.currentTimeMillis() - t0)
@@ -113,46 +119,53 @@ class DeepseekDirectLiveE2ESpec extends CatsEffectSuite:
       }
       _ <- line(s"WINNER: ${resp.meta.providerId}/${resp.meta.model} reply=${resp.reply.trim.take(60)}")
       _ <- line(s"health table AFTER call: ${after.map { case (k, v) => s"$k=$v" }.mkString(" | ")}")
-      _ <- line(s"half-open ledger AFTER call: ${trialsAfter.map { case (k, t) => s"$k(trials=${t.trials})" }.mkString(" | ")}")
+      _ <- line(
+        s"half-open ledger AFTER call: ${trialsAfter.map { case (k, t) => s"$k(trials=${t.trials})" }.mkString(" | ")}"
+      )
       _ <- release
-    yield (resp, before, after, trialsBefore, trialsAfter)).map { case (resp, before, after, trialsBefore, trialsAfter) =>
-      // ── 判据 4：链真的落到 Deepseek 直连并出结果 ────────────────────────────
-      assertEquals(resp.meta.providerId, "Deepseek", "the chain must really land on the Deepseek direct leg")
-      assertEquals(resp.meta.model, "deepseek-flash", "and on the configured model")
-      assert(resp.reply.trim.nonEmpty, "the direct leg must PRODUCE a reply, not merely be attempted")
-      // 化石 DOWN 是调用前的事实（本 spec 不是空测）
-      assert(
-        before.get("Deepseek/deepseek-flash").exists(_.isInstanceOf[HealthState.Down]),
-        s"precondition: the fossil DOWN must be in the table before the call, got ${before.get("Deepseek/deepseek-flash")}"
-      )
-      assertEquals(trialsBefore.get("Deepseek/deepseek-flash").map(_.trials), Some(0))
-      // ── 判据 4 另一半：半开放行真的发生过（不是碰巧没人过滤）────────────────────
-      //   证据链：① 调用前它在表里是 Down（上面已断言）⇒ 修前它会被 `health-down`
-      //   直接跳过、**一次真实调用都不会发生**；② 本轮的 attempt 账本里出现
-      //   `Deepseek … reason=OK`；③ 表里随之 Down→Up。三者同时成立只可能来自
-      //   「到期半开放行 + 这一次真实调用成功」。
-      val dsSteps = resp.meta.fallbackChain.toList.flatten.filter(_.providerId == "Deepseek")
-      assertEquals(dsSteps.size, 1, s"exactly one Deepseek attempt must be recorded, got ${resp.meta.fallbackChain}")
-      assertEquals(dsSteps.head.reason, None, "that attempt must have SUCCEEDED (no failure reason)")
-      // 成功即清零：半开阶梯记账随 markUp 一起消失（下一次 Down 从 base 重新起算）。
-      assertEquals(
-        trialsAfter.get("Deepseek/deepseek-flash"),
-        None,
-        "a successful trial must clear the half-open ladder (markUp clears it)"
-      )
-      // ── 成功即清除：真实调用成功 ⇒ 表里不再有 Down ────────────────────────────
-      assert(
-        !after.get("Deepseek/deepseek-flash").exists(_.isInstanceOf[HealthState.Down]),
-        s"a real successful call must clear the Down state, got ${after.get("Deepseek/deepseek-flash")}"
-      )
-      // ── 判据 5 反例腿：真不可用的首选被真实试过、带原因 ───────────────────────
-      val deadSteps = resp.meta.fallbackChain.toList.flatten.filter(_.providerId == "deadprov")
-      assert(deadSteps.nonEmpty, s"the dead preferred candidate must appear in the attempt ledger: ${resp.meta.fallbackChain}")
-      assert(deadSteps.forall(_.reason.isDefined), "the dead candidate's failure reason must be recorded")
-    }.guarantee(IO {
-      prev match
-        case Some(v) => System.setProperty("nebflow.health.downRetryBaseMs", v)
-        case None    => System.clearProperty("nebflow.health.downRetryBaseMs")
-    })
+    yield (resp, before, after, trialsBefore, trialsAfter))
+      .map { case (resp, before, after, trialsBefore, trialsAfter) =>
+        // ── 判据 4：链真的落到 Deepseek 直连并出结果 ────────────────────────────
+        assertEquals(resp.meta.providerId, "Deepseek", "the chain must really land on the Deepseek direct leg")
+        assertEquals(resp.meta.model, "deepseek-flash", "and on the configured model")
+        assert(resp.reply.trim.nonEmpty, "the direct leg must PRODUCE a reply, not merely be attempted")
+        // 化石 DOWN 是调用前的事实（本 spec 不是空测）
+        assert(
+          before.get("Deepseek/deepseek-flash").exists(_.isInstanceOf[HealthState.Down]),
+          s"precondition: the fossil DOWN must be in the table before the call, got ${before.get("Deepseek/deepseek-flash")}"
+        )
+        assertEquals(trialsBefore.get("Deepseek/deepseek-flash").map(_.trials), Some(0))
+        // ── 判据 4 另一半：半开放行真的发生过（不是碰巧没人过滤）────────────────────
+        //   证据链：① 调用前它在表里是 Down（上面已断言）⇒ 修前它会被 `health-down`
+        //   直接跳过、**一次真实调用都不会发生**；② 本轮的 attempt 账本里出现
+        //   `Deepseek … reason=OK`；③ 表里随之 Down→Up。三者同时成立只可能来自
+        //   「到期半开放行 + 这一次真实调用成功」。
+        val dsSteps = resp.meta.fallbackChain.toList.flatten.filter(_.providerId == "Deepseek")
+        assertEquals(dsSteps.size, 1, s"exactly one Deepseek attempt must be recorded, got ${resp.meta.fallbackChain}")
+        assertEquals(dsSteps.head.reason, None, "that attempt must have SUCCEEDED (no failure reason)")
+        // 成功即清零：半开阶梯记账随 markUp 一起消失（下一次 Down 从 base 重新起算）。
+        assertEquals(
+          trialsAfter.get("Deepseek/deepseek-flash"),
+          None,
+          "a successful trial must clear the half-open ladder (markUp clears it)"
+        )
+        // ── 成功即清除：真实调用成功 ⇒ 表里不再有 Down ────────────────────────────
+        assert(
+          !after.get("Deepseek/deepseek-flash").exists(_.isInstanceOf[HealthState.Down]),
+          s"a real successful call must clear the Down state, got ${after.get("Deepseek/deepseek-flash")}"
+        )
+        // ── 判据 5 反例腿：真不可用的首选被真实试过、带原因 ───────────────────────
+        val deadSteps = resp.meta.fallbackChain.toList.flatten.filter(_.providerId == "deadprov")
+        assert(
+          deadSteps.nonEmpty,
+          s"the dead preferred candidate must appear in the attempt ledger: ${resp.meta.fallbackChain}"
+        )
+        assert(deadSteps.forall(_.reason.isDefined), "the dead candidate's failure reason must be recorded")
+      }
+      .guarantee(IO {
+        prev match
+          case Some(v) => System.setProperty("nebflow.health.downRetryBaseMs", v)
+          case None => System.clearProperty("nebflow.health.downRetryBaseMs")
+      })
   }
 end DeepseekDirectLiveE2ESpec

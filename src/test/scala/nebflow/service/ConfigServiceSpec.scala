@@ -216,12 +216,19 @@ class ConfigServiceSpec extends FunSuite:
     val llmHc = saved.hcursor.downField("llm")
     assert(llmHc.downField("providers").downField("Zai").focus.isEmpty, "old name must be gone")
     // Masked updates retain the synthetic credential, stored as a managed reference.
-    val savedKey = llmHc.downField("providers").downField("zai-new").downField("apiKey").as[String]
+    val savedKey = llmHc
+      .downField("providers")
+      .downField("zai-new")
+      .downField("apiKey")
+      .as[String]
       .getOrElse(fail("renamed provider apiKey missing"))
     assert(savedKey.matches("secret:config-[a-f0-9]{32}"), "expected managed credential reference")
     assert(
       nebflow.core.secrets.ConfigCredentialStore.resolve(
-        PathUtil.dataRoot, savedKey, "config-service-spec", (_, _) => ()
+        PathUtil.dataRoot,
+        savedKey,
+        "config-service-spec",
+        (_, _) => ()
       ) == "sk-test",
       "renamed provider retains its synthetic credential"
     )
@@ -348,7 +355,10 @@ class ConfigServiceSpec extends FunSuite:
     )
 
   private def readWorkSchedule(): Option[Json] =
-    parse(os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)).toOption.get.hcursor.downField("workSchedule").as[Json].toOption
+    parse(os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)).toOption.get.hcursor
+      .downField("workSchedule")
+      .as[Json]
+      .toOption
 
   test(
     "updateConfig: stale incoming workSchedule is overridden by runtime-authoritative value (roll-back regression)"
@@ -374,7 +384,9 @@ class ConfigServiceSpec extends FunSuite:
     )
     // The non-runtime part of the update still landed (deep merge unchanged).
     val providers =
-      parse(os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)).toOption.get.hcursor.downField("llm").downField("providers")
+      parse(os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)).toOption.get.hcursor
+        .downField("llm")
+        .downField("providers")
     assertEquals(providers.downField("newp").as[Json].isRight, true)
   }
 
@@ -405,7 +417,7 @@ class ConfigServiceSpec extends FunSuite:
   // 对应（前端只消费，不拼写——静态闸 check-provider-panel.mjs P5 同钉）。
 
   test("providerTypes: domains mirror ProviderDomains.All one-to-one, in order") {
-    val json    = ConfigService.providerTypes.unsafeRunSync()
+    val json = ConfigService.providerTypes.unsafeRunSync()
     val domains = json.hcursor.downField("domains")
     val ids = domains.values
       .map(_.toList.map(d => d.hcursor.downField("id").as[String].getOrElse("<unreadable>")))
@@ -426,11 +438,15 @@ class ConfigServiceSpec extends FunSuite:
   }
 
   test("providerTypes: adapters come from the engine enums, zero literal duplication") {
-    val json     = ConfigService.providerTypes.unsafeRunSync()
+    val json = ConfigService.providerTypes.unsafeRunSync()
     val adapters = json.hcursor.downField("adapters")
     def strs(key: String): List[String] =
-      adapters.downField(key).values.map(_.toList.flatMap(_.as[String].toOption)).getOrElse(fail(s"adapters.$key missing"))
-    val llm      = strs("llm")
+      adapters
+        .downField(key)
+        .values
+        .map(_.toList.flatMap(_.as[String].toOption))
+        .getOrElse(fail(s"adapters.$key missing"))
+    val llm = strs("llm")
     val imagegen = strs("imagegen")
     // LLM 协议 = LlmProtocol 枚举（anthropic/openai）。
     assertEquals(llm.sortBy(identity), List("anthropic", "openai").sortBy(identity))
@@ -456,9 +472,11 @@ class ConfigServiceSpec extends FunSuite:
 
   test("legacy config with a residual jev block still boots (zero-migration decode compatibility)") {
     val legacy = tmpRoot / "legacy-jev-config.json"
-    os.write.over(legacy,
+    os.write.over(
+      legacy,
       s"""{"llm":{"providers":{"z4":${validProvider("z4").noSpaces}}},
-         |"jev":{"enabled":true,"provider":"typesafe-jev","endpoint":"https://api.typesafe.ai/v1/systemone","keyRef":"typesafe-api-key"}}""".stripMargin)
+         |"jev":{"enabled":true,"provider":"typesafe-jev","endpoint":"https://api.typesafe.ai/v1/systemone","keyRef":"typesafe-api-key"}}""".stripMargin
+    )
     val loaded = nebflow.shared.Config.loadServiceConfig(Some(legacy.toString))
     assert(loaded.llm.providers.contains("z4"), "the llm providers decode normally alongside the dead jev block")
   }

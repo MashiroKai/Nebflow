@@ -88,3 +88,4 @@ class ExecutionRunnerSpec extends munit.CatsEffectSuite:
       yield ()
     }
   }
+end ExecutionRunnerSpec

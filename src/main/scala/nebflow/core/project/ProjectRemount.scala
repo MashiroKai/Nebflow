@@ -113,21 +113,29 @@ object ProjectRemount:
                   (for
                     _ <- ProjectStore.clearUnmounted(canonical).flatMap {
                       case Left(err) => IO.raiseError(new RuntimeException(s"clear unmount marker failed: $err"))
-                      case Right(_)  => IO.unit
+                      case Right(_) => IO.unit
                     }
-                    fresh <- ProjectStore.load(canonical).map(
-                      _.getOrElse(throw new IllegalStateException(s"remount: definition '$canonical' vanished mid-flight"))
-                    )
+                    fresh <- ProjectStore
+                      .load(canonical)
+                      .map(
+                        _.getOrElse(
+                          throw new IllegalStateException(s"remount: definition '$canonical' vanished mid-flight")
+                        )
+                      )
                     _ <- ProjectRuntimeRegistry.mount(fresh, system, resources, wsSend, rootSessionId)
                   yield fresh).attempt.flatMap {
                     case Left(e) =>
-                      IO.pure(Left(s"remount failed (project stays unmounted on the list face; retry is safe): ${e.getMessage}"))
+                      IO.pure(
+                        Left(
+                          s"remount failed (project stays unmounted on the list face; retry is safe): ${e.getMessage}"
+                        )
+                      )
                     case Right(fresh) =>
-                      wsSend.fold(IO.unit)(send =>
-                        send(ProjectActor.projectRemountedFrame(fresh, at))
-                      ).handleErrorWith(e =>
-                        logger.warn(s"[$canonical] remount: projectRemounted broadcast failed: ${e.getMessage}")
-                      ) *>
+                      wsSend
+                        .fold(IO.unit)(send => send(ProjectActor.projectRemountedFrame(fresh, at)))
+                        .handleErrorWith(e =>
+                          logger.warn(s"[$canonical] remount: projectRemounted broadcast failed: ${e.getMessage}")
+                        ) *>
                         FlowMapEventLog
                           .append(
                             ProjectStore.brainWorkspace(fresh),
@@ -136,8 +144,10 @@ object ProjectRemount:
                             ProjectUnmount.AuditTypeRemounted,
                             s"remounted by $actor at $at (unmount marker cleared; workspace files kept byte-for-byte)"
                           )
-                          .handleErrorWith(e => IO(logger.warn(s"[$canonical] remount audit append failed: ${e.getMessage}")))
-                        .as(Right(RemountReport(canonical, at, alreadyMounted = false, unmountedAt = unmountedAt)))
+                          .handleErrorWith(e =>
+                            IO(logger.warn(s"[$canonical] remount audit append failed: ${e.getMessage}"))
+                          )
+                          .as(Right(RemountReport(canonical, at, alreadyMounted = false, unmountedAt = unmountedAt)))
                   }
               }
             end if

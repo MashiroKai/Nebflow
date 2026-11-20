@@ -27,7 +27,6 @@ class SystemRemindersSpec extends FunSuite:
   test("clock generation is absent from reminder collection (input conversion owns it)"):
     assertEquals(SystemReminders.collectAll(), Nil)
 
-
   test("insertAnchor puts the anchor BEFORE the triggering input (last-user-input invariant kept)"):
     val input = Message(MessageRole.User, Left("hello"), source = None)
     val mail = Message(MessageRole.User, Left("[MAIL] task"), source = Some("mail"))
@@ -70,7 +69,10 @@ class SystemRemindersSpec extends FunSuite:
     // 时钟简化批：新极简形态**不被识别** ⇒ append-only 永不裁剪
     assert(
       !SystemReminders.isTimeReminderMessage(
-        Message(MessageRole.User, Left("<system-reminder>\nNow: 2026-11-06 22:29:36 +08:00 周五 | epoch_ms 1793975376978\n</system-reminder>"))
+        Message(
+          MessageRole.User,
+          Left("<system-reminder>\nNow: 2026-11-06 22:29:36 +08:00 周五 | epoch_ms 1793975376978\n</system-reminder>")
+        )
       ),
       "新形态不得进旧裁剪闸"
     )

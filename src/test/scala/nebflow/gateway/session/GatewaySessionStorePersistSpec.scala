@@ -51,6 +51,8 @@ class GatewaySessionStorePersistSpec extends CatsEffectSuite:
       _ = after.shutdown()
     yield ()
 
+    end for
+
   test("expired rows are NOT resurrected by a restore"):
     val f = tempFile
     for
@@ -112,6 +114,8 @@ class GatewaySessionStorePersistSpec extends CatsEffectSuite:
       _ = restored.shutdown()
     yield ()
 
+    end for
+
   test("marker creation failure rejects revocation before mutating sessions"):
     val f = tempFile
     val marker = f / os.up / os.RelPath(f.last + ".revocation-pending")
@@ -151,6 +155,8 @@ class GatewaySessionStorePersistSpec extends CatsEffectSuite:
       _ = assertEquals(hitAgain, None)
       _ = again.shutdown()
     yield ()
+
+    end for
 
   test("concurrent flush and revocation never restore revoked sessions"):
     val f = tempFile

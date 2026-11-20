@@ -32,3 +32,4 @@ private[gateway] object AttachmentScope:
       // 带上它就是两段——读取面按 2 段判形，落了也取不回来）。
       else if s.exists(c => c == '/' || c == '\\' || c == '\u0000' || c.isControl) then None
       else Some(s)
+end AttachmentScope

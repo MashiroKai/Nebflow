@@ -58,8 +58,10 @@ class MsgTokenAgentExpandLegSpec extends CatsEffectSuite:
   // ── 装配（NodeMessageSpec / MailDelegateContinuationDeliverySpec 同款）────────
 
   private object NoLlm extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
@@ -92,7 +94,8 @@ class MsgTokenAgentExpandLegSpec extends CatsEffectSuite:
       providerRegistry = null,
       healthMonitor = ProviderHealthMonitor(null),
       actorSystem = system,
-      subAgentTaskStore = new SubAgentTaskStore(tempRoot / s"subagent-tasks-${java.util.UUID.randomUUID().toString.take(6)}"),
+      subAgentTaskStore =
+        new SubAgentTaskStore(tempRoot / s"subagent-tasks-${java.util.UUID.randomUUID().toString.take(6)}"),
       voiceMutedRef = voiceMuted
     )
 
@@ -191,7 +194,9 @@ class MsgTokenAgentExpandLegSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(r1.isRight, s"mail must succeed: $r1")
-      val in1 = cmds.collect { case u: AgentCommand.UserInput => u.text }.headOption
+      val in1 = cmds
+        .collect { case u: AgentCommand.UserInput => u.text }
+        .headOption
         .getOrElse(fail(s"the delegate must receive a UserInput, got $cmds"))
       // 收件 agent 侧原文（这就是进 LLM 上下文的那段）
       assert(in1.contains("[引用 · 输入统一令"), s"展开抬头必须在场：${in1.take(300)}")
@@ -200,12 +205,16 @@ class MsgTokenAgentExpandLegSpec extends CatsEffectSuite:
       assert(!in1.contains(token), "牌 token 不许出现在注入原文里")
       assert(in1.contains(s"共 ${body.length} 字"), "字数必须与源消息一致（零截断的读数面）")
       assert(in1.contains("其余照旧"), "牌外文本原样保留")
-      val in2 = cmds.collect { case u: AgentCommand.UserInput => u.text }.lift(1)
+      val in2 = cmds
+        .collect { case u: AgentCommand.UserInput => u.text }
+        .lift(1)
         .getOrElse(fail("second mail must be injected"))
       assert(in2.contains("[引用未能解析：{{msg:deadbeef-000001}}]"), s"映射缺失必须显式：$in2")
       assert(in2.contains("映射缺失"), s"原因须可读：$in2")
       assert(!in2.contains("{{msg:deadbeef-000001}} 请忽略"), "原串不许作为普通文本漏给收件方")
-      val in3 = cmds.collect { case u: AgentCommand.UserInput => u.text }.lift(2)
+      val in3 = cmds
+        .collect { case u: AgentCommand.UserInput => u.text }
+        .lift(2)
         .getOrElse(fail("third mail must be injected"))
       assert(in3.contains(s"[引用未能解析：{{$core}}]"), s"格式残缺必须显式：$in3")
       assert(in3.contains("`msg:` 前缀"), s"诊断必须点名缺 msg: 前缀：$in3")
@@ -213,6 +222,7 @@ class MsgTokenAgentExpandLegSpec extends CatsEffectSuite:
       println("[EVIDENCE-MAIL-INJECTED-START]\n" + in1 + "\n[EVIDENCE-MAIL-INJECTED-END]")
       println("[EVIDENCE-MAIL-MISS-START]\n" + in2 + "\n[EVIDENCE-MAIL-MISS-END]")
       println("[EVIDENCE-MAIL-FMT-START]\n" + in3 + "\n[EVIDENCE-MAIL-FMT-END]")
+    end for
   }
 
   test("Mail 腿（长引用）：正文前后字数一致，超长注记在场，零截断") {
@@ -251,7 +261,8 @@ class MsgTokenAgentExpandLegSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(r.isRight, s"mail must succeed: $r")
-      val injected = cmds.collect { case u: AgentCommand.UserInput => u.text }
+      val injected = cmds
+        .collect { case u: AgentCommand.UserInput => u.text }
         .headOption
         .getOrElse(fail("the delegate must receive the mail"))
       val start = injected.indexOf('\n')
@@ -266,6 +277,7 @@ class MsgTokenAgentExpandLegSpec extends CatsEffectSuite:
           s"逐字相等=${quoted == huge} 注入全文长度=${injected.length}"
       )
       assert(!injected.contains(token), "牌 token 零残留")
+    end for
   }
 
   // ── 2/3. node 腿：sendNodeMessage → running 注入 / pending 追加 ──────────────
@@ -340,7 +352,8 @@ class MsgTokenAgentExpandLegSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(r.isRight, s"node inject must succeed: $r")
-      val injected = cmds.collect { case i: AgentCommand.ImmediateInput => i.text }
+      val injected = cmds
+        .collect { case i: AgentCommand.ImmediateInput => i.text }
         .headOption
         .getOrElse(fail(s"the node session must receive an ImmediateInput, got $cmds"))
       assert(injected.startsWith("[NODE-MESSAGE]"), s"node header intact: ${injected.take(80)}")
@@ -348,6 +361,7 @@ class MsgTokenAgentExpandLegSpec extends CatsEffectSuite:
       assert(injected.contains(body), "正文逐字 = 源消息全文")
       assert(!injected.contains(token), "牌 token 零残留")
       assert(injected.contains(s"共 ${body.length} 字"), "字数读数在场")
+    end for
   }
 
   test("node 腿（pending 追加）：task 的「分发器补充」段里是完整原文块；坏牌变显式标记") {
@@ -375,6 +389,7 @@ class MsgTokenAgentExpandLegSpec extends CatsEffectSuite:
       assert(!task.contains(token), "牌 token 零残留")
       assert(task.contains(s"[引用未能解析：{{$core}}]"), s"坏牌必须显式：${task.take(600)}")
       assert(task.contains("`msg:` 前缀"), "诊断点名缺 msg: 前缀")
+    end for
   }
 
 end MsgTokenAgentExpandLegSpec

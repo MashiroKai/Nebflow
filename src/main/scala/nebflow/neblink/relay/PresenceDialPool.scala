@@ -5,13 +5,7 @@ import nebflow.neblink.relay.DialBudget
 import cats.effect.IO
 
 import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
-import java.util.concurrent.{
-  CompletableFuture,
-  SynchronousQueue,
-  ThreadFactory,
-  ThreadPoolExecutor,
-  TimeUnit
-}
+import java.util.concurrent.{CompletableFuture, SynchronousQueue, ThreadFactory, ThreadPoolExecutor, TimeUnit}
 
 /**
  * presence 拨号专用阻塞池（presence-dial-overhaul 批 2026-11-04，作者 13:05 批「可以派」）。
@@ -109,6 +103,8 @@ object PresenceDialPool:
   /** 读数面：`(活跃线程数, 池内线程数)`（报告/夹具取数用）。 */
   def stats: (Int, Int) = (executor.getActiveCount, executor.getPoolSize)
 
+end PresenceDialPool
+
 /** 拨号体跑错线程（占用 `io-compute-*`）——见 [[PresenceDialPool.requireDialThread]]。 */
 final class PresenceDialThreadViolation(where: String, actualThread: String)
     extends IllegalStateException(
@@ -138,6 +134,8 @@ final case class PresenceDialSchedule(
     else
       val batch = candidates.take(math.max(1, maxConcurrentPerRound))
       math.min(budget.roundBudgetMs, if batch.isEmpty then 0L else batch.map(budget.budgetMsFor).max)
+
+end PresenceDialSchedule
 
 object PresenceDialSchedule:
 

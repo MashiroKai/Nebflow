@@ -40,32 +40,41 @@ class ChatSearchAdapterSpec extends CatsEffectSuite:
   private val adapter = new ChatSearchAdapter(dir)
 
   test("message 片：user/ai/agent/ask 入索引；system/askUser 不入") {
-    writeUi("s1", List(
-      UiMessage.User(text = "hello author", timestamp = 1000L),
-      UiMessage.Ai(text = "ai reply", timestamp = 1100L),
-      UiMessage.Agent(agentId = "sub1", text = "agent note", timestamp = 0L),
-      UiMessage.Ask(question = "q?", answer = "a!", timestamp = 0L),
-      UiMessage.System(content = "noise"),
-      UiMessage.AskUser(items = Nil)
-    ))
+    writeUi(
+      "s1",
+      List(
+        UiMessage.User(text = "hello author", timestamp = 1000L),
+        UiMessage.Ai(text = "ai reply", timestamp = 1100L),
+        UiMessage.Agent(agentId = "sub1", text = "agent note", timestamp = 0L),
+        UiMessage.Ask(question = "q?", answer = "a!", timestamp = 0L),
+        UiMessage.System(content = "noise"),
+        UiMessage.AskUser(items = Nil)
+      )
+    )
     val docs = adapter.extractSession("s1").getOrElse(Nil)
     assertEquals(docs.count(_.kind == "message"), 4)
     assertEquals(docs.count(_.kind == "tool"), 0)
   }
 
   test("user 行附件名并入可检索文本（📎 前缀——图片/文件 tab 可按键命中）") {
-    writeUi("s2", List(
-      UiMessage.User(
-        text = "look at this",
-        timestamp = 1000L,
-        attachments = List(
-          io.circe.Json.obj("type" -> io.circe.Json.fromString("image"),
-            "name" -> io.circe.Json.fromString("photo.png"),
-            "path"  -> io.circe.Json.fromString("/tmp/photo.png"))
-        ))
-    ))
+    writeUi(
+      "s2",
+      List(
+        UiMessage.User(
+          text = "look at this",
+          timestamp = 1000L,
+          attachments = List(
+            io.circe.Json.obj(
+              "type" -> io.circe.Json.fromString("image"),
+              "name" -> io.circe.Json.fromString("photo.png"),
+              "path" -> io.circe.Json.fromString("/tmp/photo.png")
+            )
+          )
+        )
+      )
+    )
     val docs = adapter.extractSession("s2").getOrElse(Nil)
-    val msg  = docs.find(_.kind == "message").get
+    val msg = docs.find(_.kind == "message").get
     assert(msg.text.contains("📎 photo.png"))
     // 附件同时产生 media 条目（extra = popMediaIndex 形状）
     val media = docs.find(_.kind == "media").get
@@ -74,13 +83,23 @@ class ChatSearchAdapterSpec extends CatsEffectSuite:
   }
 
   test("distinct attachments on one message retain separate searchable entries") {
-    writeUi("attachments", List(UiMessage.User(
-      text = "files", timestamp = 1000L,
-      attachments = List(
-        io.circe.Json.obj("name" -> io.circe.Json.fromString("alpha.txt"), "path" -> io.circe.Json.fromString("/tmp/alpha.txt")),
-        io.circe.Json.obj("name" -> io.circe.Json.fromString("beta.txt"), "path" -> io.circe.Json.fromString("/tmp/beta.txt"))
+    writeUi(
+      "attachments",
+      List(
+        UiMessage.User(
+          text = "files",
+          timestamp = 1000L,
+          attachments = List(
+            io.circe.Json.obj(
+              "name" -> io.circe.Json.fromString("alpha.txt"),
+              "path" -> io.circe.Json.fromString("/tmp/alpha.txt")
+            ),
+            io.circe.Json
+              .obj("name" -> io.circe.Json.fromString("beta.txt"), "path" -> io.circe.Json.fromString("/tmp/beta.txt"))
+          )
+        )
       )
-    )))
+    )
     val files = adapter.extractSession("attachments").getOrElse(Nil).filter(_.kind == "file")
     assertEquals(files.length, 2)
     assertEquals(files.map(_.ord).distinct, List(0))
@@ -89,11 +108,13 @@ class ChatSearchAdapterSpec extends CatsEffectSuite:
   }
 
   test("tool 行不入索引（作者令①）：summary/input/content 不产生 kind=\"tool\" 文档；Pop 载荷媒体条目照产") {
-    writeUi("s3", List(
-      UiMessage.User(text = "run it", timestamp = 1000L),
-      UiMessage.Tool(label = "Bash\n  (ls)", summary = "ls output",
-        content = "file list", input = "{\"cmd\":\"ls\"}")
-    ))
+    writeUi(
+      "s3",
+      List(
+        UiMessage.User(text = "run it", timestamp = 1000L),
+        UiMessage.Tool(label = "Bash\n  (ls)", summary = "ls output", content = "file list", input = "{\"cmd\":\"ls\"}")
+      )
+    )
     val docs = adapter.extractSession("s3").getOrElse(Nil)
     assertEquals(docs.count(_.kind == "tool"), 0)
     assertEquals(docs.count(_.kind == "message"), 1)
@@ -102,10 +123,13 @@ class ChatSearchAdapterSpec extends CatsEffectSuite:
   }
 
   test("时间锚：tool 行的媒体条目取向前最近带 ts 行（回复锚——popMediaIndex 同款）") {
-    writeUi("s4", List(
-      UiMessage.User(text = "at 5000", timestamp = 5000L),
-      UiMessage.Tool(label = "Pop", summary = "p", content = "x")
-    ))
+    writeUi(
+      "s4",
+      List(
+        UiMessage.User(text = "at 5000", timestamp = 5000L),
+        UiMessage.Tool(label = "Pop", summary = "p", content = "x")
+      )
+    )
     val docs = adapter.extractSession("s4").getOrElse(Nil)
     // tool 行自身已不入索引（作者令①）；回复锚语义保留在 media/file/link
     // 条目上（此处无 Pop 载荷 ⇒ 无条目，断言退化恒真；有载荷时锚 = 5000）。
@@ -117,10 +141,13 @@ class ChatSearchAdapterSpec extends CatsEffectSuite:
     val payload = """___POP_JSON___
 [{"kind":"image","path":"/tmp/out.png","name":"out.png","itemType":"image","src":"data:image/png;base64,AAA"},
  {"itemType":"url","url":"https://example.com/report","title":"Report"}]"""
-    writeUi("s5", List(
-      UiMessage.User(text = "pop it", timestamp = 1000L),
-      UiMessage.Tool(label = "Pop", summary = "pop output", content = payload)
-    ))
+    writeUi(
+      "s5",
+      List(
+        UiMessage.User(text = "pop it", timestamp = 1000L),
+        UiMessage.Tool(label = "Pop", summary = "pop output", content = payload)
+      )
+    )
     val docs = adapter.extractSession("s5").getOrElse(Nil)
     assertEquals(docs.count(_.kind == "media"), 1)
     assertEquals(docs.count(_.kind == "link"), 1)
@@ -132,19 +159,25 @@ class ChatSearchAdapterSpec extends CatsEffectSuite:
   }
 
   test("injected user 行 = agent 投影（messageKind 口径：injected ⇒ agent 类）") {
-    writeUi("s6", List(
-      UiMessage.User(text = "injected row", timestamp = 1000L, injected = true, sender = Some("mail"))
-    ))
+    writeUi(
+      "s6",
+      List(
+        UiMessage.User(text = "injected row", timestamp = 1000L, injected = true, sender = Some("mail"))
+      )
+    )
     val docs = adapter.extractSession("s6").getOrElse(Nil)
     assertEquals(docs.length, 1)
     assert(docs.head.extra.contains("\"agent\":\"mail\""))
   }
 
   test("索引化端到端：抽取 → 灌库 → CJK/ASCII 查询命中（内存库）") {
-    writeUi("s7", List(
-      UiMessage.User(text = "聊天记录检索很慢", timestamp = 1000L),
-      UiMessage.Ai(text = "delegate dispatch note", timestamp = 1100L)
-    ))
+    writeUi(
+      "s7",
+      List(
+        UiMessage.User(text = "聊天记录检索很慢", timestamp = 1000L),
+        UiMessage.Ai(text = "delegate dispatch note", timestamp = 1100L)
+      )
+    )
     SearchIndexService.unsafeResetForTests()
     SearchIndexService.unsafeRegisterInMemory(adapter)
     SearchIndexService.unsafeInsertDocs("chat", adapter.extractSession("s7").getOrElse(Nil))
@@ -190,26 +223,33 @@ class ChatSearchAdapterSpec extends CatsEffectSuite:
     val json = rows.map { case (ts, role, content) =>
       io.circe.Json.obj(
         "timestamp" -> io.circe.Json.fromLong(ts),
-        "role"      -> io.circe.Json.fromString(role),
-        "content"   -> io.circe.Json.fromString(content)
+        "role" -> io.circe.Json.fromString(role),
+        "content" -> io.circe.Json.fromString(content)
       )
     }
     os.write(f, io.circe.Json.arr(json*).noSpaces)
     f
 
   test("压缩前归档段：窗口外的 user/assistant 入索引（origin=archive、负行号），tool 不抽") {
-    writeUi("s10", List(
-      UiMessage.User(text = "recent question", timestamp = 9_000L),
-      UiMessage.Ai(text = "recent answer", timestamp = 9_500L)
-    ))
-    writeArchive("s10", "20260101-000000", List(
-      (1_000L, "user", "ancient question about 归档段"),
-      (2_000L, "assistant", "ancient answer about 归档段"),
-      (3_000L, "tool", "tool output should NOT be indexed"),
-      (9_800L, "assistant", "in-window duplicate must be skipped")
-    ))
+    writeUi(
+      "s10",
+      List(
+        UiMessage.User(text = "recent question", timestamp = 9_000L),
+        UiMessage.Ai(text = "recent answer", timestamp = 9_500L)
+      )
+    )
+    writeArchive(
+      "s10",
+      "20260101-000000",
+      List(
+        (1_000L, "user", "ancient question about 归档段"),
+        (2_000L, "assistant", "ancient answer about 归档段"),
+        (3_000L, "tool", "tool output should NOT be indexed"),
+        (9_800L, "assistant", "in-window duplicate must be skipped")
+      )
+    )
     val docs = adapter.extractSession("s10").getOrElse(Nil)
-    val arc  = docs.filter(d => d.extra.contains("\"origin\":\"archive\""))
+    val arc = docs.filter(d => d.extra.contains("\"origin\":\"archive\""))
     assertEquals(arc.length, 2, clue(arc.map(d => (d.ord, d.ts, d.text))))
     assert(arc.forall(_.ord < 0), "归档段行号取负值（与回放 ord ≥ 0 不撞键）")
     assert(arc.forall(_.monthKey.contains("")), "归档段写空月桶（防时间窗粗筛误杀）")

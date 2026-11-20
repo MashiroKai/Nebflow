@@ -49,7 +49,9 @@ class DelegateArchiveRemovalSpec extends FunSuite:
 
   // ── 1. 引擎写点退场 ──────────────────────────────────────────────────────
 
-  test("removed: DelegateRegistry has no archive/unarchive write point any more (disposition is the only visibility write)") {
+  test(
+    "removed: DelegateRegistry has no archive/unarchive write point any more (disposition is the only visibility write)"
+  ) {
     val registry = src("src/main/scala/nebflow/core/delegate/DelegateRegistry.scala")
     assert(!registry.contains("def archive("), "DelegateRegistry.archive must be gone (storage-style archive retired)")
     assert(!registry.contains("def unarchive("), "DelegateRegistry.unarchive must be gone (manual unarchive retired)")
@@ -58,7 +60,10 @@ class DelegateArchiveRemovalSpec extends FunSuite:
       "no writer may stamp archivedAt any more (legacy slot is read-only compatibility)"
     )
     assert(registry.contains("def setDisposition("), "the nondestructive acknowledged/ignored write face must exist")
-    assert(registry.contains("def clearDisposition("), "the disposition clear face must exist (nondestructive: row returns)")
+    assert(
+      registry.contains("def clearDisposition("),
+      "the disposition clear face must exist (nondestructive: row returns)"
+    )
   }
 
   test("removed: no engine call site invokes a delegate archive/unarchive writer") {
@@ -113,7 +118,10 @@ class DelegateArchiveRemovalSpec extends FunSuite:
   test("removed: the panel has no 5s undo affordance and no manual archive/unarchive binding") {
     val view = src("src/main/resources/web/js/delegateChainView.js")
     val api = src("src/main/resources/web/js/delegateApi.js")
-    assert(!view.contains("unarchiveDelegate"), "the undo/restore action (unarchive binding) must be gone from the view")
+    assert(
+      !view.contains("unarchiveDelegate"),
+      "the undo/restore action (unarchive binding) must be gone from the view"
+    )
     assert(!view.contains("delegate.archive.undo"), "the 5s undo label must be gone from the view")
     assert(!view.contains("delegate-restore"), "the drawer's manual 'restore' action must be gone")
     assert(
@@ -134,7 +142,9 @@ class DelegateArchiveRemovalSpec extends FunSuite:
 
   // ── 3. 读面不因退场出错（控制面：两轮都绿）──────────────────────────────
 
-  test("do not error: both panel windows answer cleanly for a legacy-archived row and a dismissed row (zero deletion)") {
+  test(
+    "do not error: both panel windows answer cleanly for a legacy-archived row and a dismissed row (zero deletion)"
+  ) {
     val id = "delegate-nebflow-s2rmguard1"
     os.makeDir.all(tempRoot / "general")
     DelegateRegistry.put(
@@ -153,7 +163,10 @@ class DelegateArchiveRemovalSpec extends FunSuite:
     val active = ChainsReadFace.rowsJson(Map.empty, archived = false).unsafeRunSync()
     val history = ChainsReadFace.rowsJson(Map.empty, archived = true).unsafeRunSync()
     assert(active.hcursor.downField("rows").focus.isDefined, s"active window must stay a well-formed payload: $active")
-    assert(history.hcursor.downField("rows").focus.isDefined, s"history window must stay a well-formed payload: $history")
+    assert(
+      history.hcursor.downField("rows").focus.isDefined,
+      s"history window must stay a well-formed payload: $history"
+    )
     assert(DelegateRegistry.find(id).isDefined, "zero deletion: the row is still queryable after both windows are read")
   }
 

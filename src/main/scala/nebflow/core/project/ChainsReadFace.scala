@@ -133,8 +133,10 @@ object ChainsReadFace:
       // （非破坏性确认/忽略旗 ∨ 存量归档旗））——存储式归档写点已退役，读面不再看旗本身。
       val readings: Map[String, nebflow.core.delegate.DelegateVisibility.Reading] =
         records.map(r => r.id -> nebflow.core.delegate.DelegateVisibility.readOf(r.id)).toMap
-      val scoped = records.filter(rec => !nebflow.core.delegate.LegacySettledManifest.contains(rec.id) &&
-        readings.get(rec.id).exists(_.historyWindow) == archived)
+      val scoped = records.filter(rec =>
+        !nebflow.core.delegate.LegacySettledManifest.contains(rec.id) &&
+          readings.get(rec.id).exists(_.historyWindow) == archived
+      )
       val windowed: IO[List[DelegateRegistry.Record]] =
         if archived then IO.pure(scoped) // 历史窗：全量（零删除展示纪律）
         else activeWorldSeatFilter(scoped)
@@ -161,9 +163,8 @@ object ChainsReadFace:
       .view
       .mapValues(_.map(t => s"${t.description}\n${t.prompt}").mkString("\n"))
       .toMap
-    val interrupted = records.filter(r =>
-      r.restartInterruptedAt.isDefined && !nebflow.core.delegate.DelegateVisibility.settledOf(r)
-    )
+    val interrupted =
+      records.filter(r => r.restartInterruptedAt.isDefined && !nebflow.core.delegate.DelegateVisibility.settledOf(r))
     interrupted.flatMap { r =>
       val needle = r.id
       val candidates = records.filter { c =>
@@ -256,7 +257,8 @@ object ChainsReadFace:
       // 「真活」判定的唯一派生单点（legacy-delegate-settle 批）：持久记录 × 本实例在册
       // 快照 → running | interrupted。零逐行 resolve；旧投影的「键缺席 ⇒ 前端兜底 running」
       // 是本批要收口的陈旧面板根因——读面现在**总是**给显式读数。
-      val live = nebflow.core.delegate.DelegateLiveness.verdictOf(registry.get(rec.id), adoptedIds.contains(rec.id)).json
+      val live =
+        nebflow.core.delegate.DelegateLiveness.verdictOf(registry.get(rec.id), adoptedIds.contains(rec.id)).json
       val verdict = latestVerdict(key)
       rec.asJson.asObject match
         case Some(obj) =>
@@ -449,7 +451,11 @@ object ChainsReadFace:
    * per-task 链视图投影（chains/:key 臂）。`None` = 查无 delegate 记录（HTTP 404 面）；
    * `Some` 的 `chain` 字段可为 null（作用域图不存在 = 三行族降级投影）。
    */
-  def chainJson(key: String, registry: Map[String, nebflow.actor.AgentRecord], adoptedIds: Set[String] = Set.empty): IO[Option[Json]] =
+  def chainJson(
+    key: String,
+    registry: Map[String, nebflow.actor.AgentRecord],
+    adoptedIds: Set[String] = Set.empty
+  ): IO[Option[Json]] =
     if !ChainStore.validKey(key) then IO.pure(None)
     else
       IO.blocking(findRecord(key)).flatMap {
@@ -483,7 +489,12 @@ object ChainsReadFace:
    * `/delegates/:id/output` 同源单点，本面零触碰 executor 域）。**零新存储**：全部
    * 现读既有面。
    */
-  def delegateJson(id: String, registry: Map[String, nebflow.actor.AgentRecord], childrenCount: Int, adoptedIds: Set[String] = Set.empty): IO[Option[Json]] =
+  def delegateJson(
+    id: String,
+    registry: Map[String, nebflow.actor.AgentRecord],
+    childrenCount: Int,
+    adoptedIds: Set[String] = Set.empty
+  ): IO[Option[Json]] =
     if !DelegateRegistry.validId(id) then IO.pure(None)
     else
       IO.blocking(DelegateRegistry.find(id)).flatMap {
@@ -497,7 +508,9 @@ object ChainsReadFace:
             Some(
               Json.obj(
                 "record" -> rec.asJson,
-                "live" -> nebflow.core.delegate.DelegateLiveness.verdictOf(registry.get(id), adoptedIds.contains(id)).json,
+                "live" -> nebflow.core.delegate.DelegateLiveness
+                  .verdictOf(registry.get(id), adoptedIds.contains(id))
+                  .json,
                 "verdict" -> verdict.getOrElse(Json.Null),
                 "task" -> task.map(_.asJson).getOrElse(Json.Null),
                 "childrenCount" -> childrenCount.asJson
@@ -521,7 +534,11 @@ object ChainsReadFace:
    * 持有，探针不读归档区 = 「宽限窗可补拉」的承诺空转。目录删除后本面照旧 null
    * （三行族降级投影）——窗口有界，纪律不变。
    */
-  private def scopeProjection(rec: DelegateRegistry.Record, registry: Map[String, nebflow.actor.AgentRecord], adoptedIds: Set[String]): IO[Option[Json]] =
+  private def scopeProjection(
+    rec: DelegateRegistry.Record,
+    registry: Map[String, nebflow.actor.AgentRecord],
+    adoptedIds: Set[String]
+  ): IO[Option[Json]] =
     DelegateFlowHosts.get(rec.id).flatMap {
       case Some(h) => h.store.snapshot.map(s => Some(chainNodesJson(rec.id, mounted = true, s, registry, adoptedIds)))
       case None =>
@@ -562,7 +579,13 @@ object ChainsReadFace:
    * 活动区节点 → ChainNode 形 JSON（label=任务首行，description=短描述，状态经
    * [[rowStatusOf]] v3 §9 映射表单点；执行器 = ''（继承链——ChainNode 契约））。
    */
-  private def chainNodesJson(scope: String, mounted: Boolean, s: FlowMapState, registry: Map[String, nebflow.actor.AgentRecord], adoptedIds: Set[String]): Json =
+  private def chainNodesJson(
+    scope: String,
+    mounted: Boolean,
+    s: FlowMapState,
+    registry: Map[String, nebflow.actor.AgentRecord],
+    adoptedIds: Set[String]
+  ): Json =
     Json.obj(
       "scope" -> scope.asJson,
       "mounted" -> mounted.asJson,
@@ -579,7 +602,13 @@ object ChainsReadFace:
               "kind" -> "flow-step".asJson,
               "label" -> label.asJson,
               "description" -> n.description.getOrElse("").asJson,
-              "status" -> (if n.status == "running" && !n.sessionRef.exists(id => nebflow.core.delegate.DelegateLiveness.verdictOf(registry.get(id), adoptedIds.contains(id)).running) then "interrupted" else rowStatusOf(n.status)).asJson,
+              "status" -> (if n.status == "running" && !n.sessionRef.exists(id =>
+                               nebflow.core.delegate.DelegateLiveness
+                                 .verdictOf(registry.get(id), adoptedIds.contains(id))
+                                 .running
+                             )
+                           then "interrupted"
+                           else rowStatusOf(n.status)).asJson,
               "deps" -> n.deps.asJson,
               "executor" -> "".asJson
             )

@@ -34,16 +34,19 @@ class CanvasSeatTakeoverSpec extends CatsEffectSuite:
   private val isolatedRoot: os.Path = os.temp.dir(prefix = "canvas-seat-takeover-spec-")
 
   override def beforeAll(): Unit = PathUtil.setDataRoot(isolatedRoot)
+
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
-    try os.remove.all(isolatedRoot) catch case _: Throwable => ()
+    try os.remove.all(isolatedRoot)
+    catch case _: Throwable => ()
 
   private val token = "canvas-seat-takeover-token"
 
   private def mkRoutes(tk: ConsoleTakeover): HttpRoutes[IO] =
     new RestApiRoutes(
       tokenRef = Ref.unsafe[IO, String](token),
-      configRef = Ref.unsafe[IO, NebflowServiceConfig](NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))),
+      configRef =
+        Ref.unsafe[IO, NebflowServiceConfig](NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))),
       sharedResources = null,
       sessionStore = null,
       wsRoutes = null,
@@ -136,11 +139,16 @@ class CanvasSeatTakeoverSpec extends CatsEffectSuite:
       second <- claim(routes, "client-b", "tab-b")
       e2 <- epochOf(second)
       frames <- sent.get
-      seatFrames = frames.filter { case (_, j) => j.hcursor.get[String]("type").toOption.contains("canvasWriterChanged") }
+      seatFrames = frames.filter { case (_, j) =>
+        j.hcursor.get[String]("type").toOption.contains("canvasWriterChanged")
+      }
       _ = assertEquals(seatFrames.map(_._1).distinct.toList, List("conn-a"), "席位变更帧必须定向到被顶下的写者连接")
       _ = assertEquals(seatFrames.map(_._2.hcursor.get[Long]("epoch").toOption).toList, List(Some(e2)))
       // 没有别的帧型（尤其没有任何接管卡片/提示帧）：零用户可见文案面
-      _ = assertEquals(frames.map(_._2.hcursor.get[String]("type").toOption).distinct.toList, List(Some("canvasWriterChanged")))
+      _ = assertEquals(
+        frames.map(_._2.hcursor.get[String]("type").toOption).distinct.toList,
+        List(Some("canvasWriterChanged"))
+      )
       // 被顶下的写者此后写穿一律 409（它必须走草稿这条路，而不是悄悄写穿）
       oldPut <- put(routes, "client-a", "tab-a", e1)
       _ = assertEquals(oldPut.status, Status.Conflict)
@@ -185,7 +193,11 @@ class CanvasSeatTakeoverSpec extends CatsEffectSuite:
       sent <- Ref.of[IO, Vector[(String, Json)]](Vector.empty)
       tk = mkTakeover(sent)
       routes = mkRoutes(tk)
-      _ <- tk.onConnect("s-ghost", "conn-ghost", ConsoleTakeover.ClientMeta(clientId = Some("ghost-client"), ua = Some(Ua)))
+      _ <- tk.onConnect(
+        "s-ghost",
+        "conn-ghost",
+        ConsoleTakeover.ClientMeta(clientId = Some("ghost-client"), ua = Some(Ua))
+      )
       first <- claim(routes, "ghost-client", "tab-ghost")
       _ = assertEquals(first.status, Status.Ok)
       e1 <- epochOf(first)
@@ -219,3 +231,4 @@ class CanvasSeatTakeoverSpec extends CatsEffectSuite:
       assertEquals(List(a, b).count(_ == Status.Conflict), 1)
     }
   }
+end CanvasSeatTakeoverSpec

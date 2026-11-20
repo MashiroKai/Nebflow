@@ -78,3 +78,4 @@ object OwnerIdentity:
 
   /** 测试面：清空单槽缓存（spec 间隔离）。 */
   def resetCache(): Unit = cache = null
+end OwnerIdentity

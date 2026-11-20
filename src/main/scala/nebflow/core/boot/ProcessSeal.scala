@@ -43,18 +43,22 @@ object ProcessSeal:
 
       /** 该族当前开关读数（**每次现读** system prop ⇒ 测试/运维可即时翻转）。 */
       def enabled: Boolean = r match
-        case Realm.Mail      => Defaults.MailProcessEnabled
+        case Realm.Mail => Defaults.MailProcessEnabled
         case Realm.Heartbeat => Defaults.HeartbeatProcessEnabled
 
       /** 开关的 system prop 名（说明日志与验收面引用同一字符串）。 */
       def prop: String = r match
-        case Realm.Mail      => MailProp
+        case Realm.Mail => MailProp
         case Realm.Heartbeat => HeartbeatProp
 
       /** 说明日志里的人类可读族名（封存行逐字用）。 */
       def sealLabel: String = r match
-        case Realm.Mail      => "邮件后台投递"
+        case Realm.Mail => "邮件后台投递"
         case Realm.Heartbeat => "心跳（daemon 家族）"
+
+    end extension
+
+  end Realm
 
   /** 决策面（纯函数，spec 判红锚）。 */
   enum Decision:

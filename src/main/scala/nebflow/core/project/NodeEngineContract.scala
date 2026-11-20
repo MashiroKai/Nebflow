@@ -713,8 +713,10 @@ private[project] object NodeEngineContract:
       )
     // Legacy-stock leg: blocked rows (pre-retirement stock) stay dispatcher-owned too —
     // the engine must not auto-reset a row the dispatcher has not migrated yet.
-    else if (NodeLifecycle.Terminal.contains(status) && status != NodeLifecycle.Completed) || status == NodeLifecycle.Blocked then
-      Left(s"$status (failed/cancelled — and legacy blocked — scenes are dispatcher-owned)")
+    else if (NodeLifecycle.Terminal.contains(
+        status
+      ) && status != NodeLifecycle.Completed) || status == NodeLifecycle.Blocked
+    then Left(s"$status (failed/cancelled — and legacy blocked — scenes are dispatcher-owned)")
     else Right(())
 
   /**

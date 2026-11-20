@@ -321,7 +321,10 @@ class HealthGateSpec extends munit.CatsEffectSuite:
       _ = assertEquals(layout.current, Some("2026.9.19"), "green: the launcher now runs the previous version")
       _ = assertEquals(layout.previous, Some("2026.9.20"))
       seen <- captured.get
-      _ = assert(seen.exists(_._1.replace('\\', '/').endsWith("versions/2026.9.19/stand-assembly-2026.9.19.jar")), seen.toString)
+      _ = assert(
+        seen.exists(_._1.replace('\\', '/').endsWith("versions/2026.9.19/stand-assembly-2026.9.19.jar")),
+        seen.toString
+      )
       // 「只替换包路径」的可核判据：回执/意图里的复起命令**逐字等于既有纯函数命令构造**
       // 对同一 form/javaBin **只把包路径换成上一版**的产物（不新造命令构造器）。
       // ⚠️ 不直接断言 spawnCmd 含版本号：`HotRestart.detectForm` 在测试 JVM（sbt 类路径、

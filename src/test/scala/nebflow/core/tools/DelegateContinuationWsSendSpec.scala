@@ -103,9 +103,11 @@ class DelegateContinuationWsSendSpec extends CatsEffectSuite:
     val bridgeAt = body.indexOf("ctx.wsSend")
     assert(bridgeAt >= 0, "continueDelegate 内找不到 ctx.wsSend 桥接（必须随 Deps 传入续跑链）")
     assert(
-      body.substring(math.max(0, bridgeAt - 200), math.min(body.length, bridgeAt + 200))
+      body
+        .substring(math.max(0, bridgeAt - 200), math.min(body.length, bridgeAt + 200))
         .contains("SessionResumption.Deps"),
       "ctx.wsSend 必须桥进 SessionResumption.Deps（下游 routeWsSendFor 消费它）"
     )
     assert(!body.contains("wsSend = None"), "续聊腿回退成 wsSend = None 会让面板重新空白（2026-11-01 报障根因）")
   }
+end DelegateContinuationWsSendSpec

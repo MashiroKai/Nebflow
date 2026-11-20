@@ -55,25 +55,31 @@ private[agent] object MailboxProducer:
     producer: String = ""
   ): IO[SessionMailbox.MailResult] =
     if parentSessionId.trim.isEmpty then
-      logger.warn(s"[mailbox-producer] empty parentSessionId — event not deliverable (kind=$kind identity=$identity)")
+      logger
+        .warn(s"[mailbox-producer] empty parentSessionId — event not deliverable (kind=$kind identity=$identity)")
         .as(SessionMailbox.MailResult.Failed("parent-session-missing"))
     else
-      SessionLiveness.alive(resources, parentSessionId).flatMap {
-        case false =>
-          // 父会话真没了（活体记录与盘上记录都查不到）= 跳过（不产生无人读的垃圾文件；
-          // payload 仍在生产者转录可取回）。判据见 [[SessionLiveness]]：**只**在确实
-          // 查不到会话记录时成立——「索引里没有」不再是判死依据。
-          logger.warn(
-            s"[mailbox-producer] parent session '$parentSessionId' is gone (${SessionLiveness.goneReason(parentSessionId)}) — " +
-              s"skipping mailbox write (kind=$kind identity=$identity); payload remains in the producer session transcript"
-          ).as(SessionMailbox.MailResult.Failed("parent-session-gone"))
-        case true =>
-          attempt(resources, parentSessionId, event, identity, kind, coalesce, producer, attemptNo = 1)
-      }.handleErrorWith(e =>
-        logger
-          .warn(s"[mailbox-producer] deliver failed for '$parentSessionId' ($kind/$identity): ${e.getMessage}")
-          .as(SessionMailbox.MailResult.Failed(Option(e.getMessage).getOrElse("deliver-error")))
-      )
+      SessionLiveness
+        .alive(resources, parentSessionId)
+        .flatMap {
+          case false =>
+            // 父会话真没了（活体记录与盘上记录都查不到）= 跳过（不产生无人读的垃圾文件；
+            // payload 仍在生产者转录可取回）。判据见 [[SessionLiveness]]：**只**在确实
+            // 查不到会话记录时成立——「索引里没有」不再是判死依据。
+            logger
+              .warn(
+                s"[mailbox-producer] parent session '$parentSessionId' is gone (${SessionLiveness.goneReason(parentSessionId)}) — " +
+                  s"skipping mailbox write (kind=$kind identity=$identity); payload remains in the producer session transcript"
+              )
+              .as(SessionMailbox.MailResult.Failed("parent-session-gone"))
+          case true =>
+            attempt(resources, parentSessionId, event, identity, kind, coalesce, producer, attemptNo = 1)
+        }
+        .handleErrorWith(e =>
+          logger
+            .warn(s"[mailbox-producer] deliver failed for '$parentSessionId' ($kind/$identity): ${e.getMessage}")
+            .as(SessionMailbox.MailResult.Failed(Option(e.getMessage).getOrElse("deliver-error")))
+        )
 
   private def attempt(
     resources: AgentRuntimePort,
@@ -85,22 +91,41 @@ private[agent] object MailboxProducer:
     producer: String,
     attemptNo: Int
   ): IO[SessionMailbox.MailResult] =
-    SessionMailbox.mailOnce(
-      parentSessionId, event, kind, identity, coalesce = coalesce, producer = producer,
-      deduplicateReceipts = !coalesce
-    ).flatMap {
-      case r @ (SessionMailbox.MailResult.Enqueued(_) | SessionMailbox.MailResult.Coalesced(_)) =>
-        MailboxDrain.doorbell(resources, parentSessionId).as(r)
-      case SessionMailbox.MailResult.AlreadyPresent => IO.pure(SessionMailbox.MailResult.AlreadyPresent)
-      case SessionMailbox.MailResult.Failed(cause) =>
-        if attemptNo >= MaxAttempts then
-          // 穷尽 = 响亮 ERROR（绝不静默继续；绝不回退旧 push 链——双发=事故）。
-          // 残余由 boot 对账合成补投（SubAgentTaskStore 终态行 = 账面真源）。
-          logger.error(
-            s"[mailbox-producer] FAILED to enqueue after $MaxAttempts attempts — terminal/escalation event " +
-              s"(kind=$kind identity=$identity parent=$parentSessionId) is NOT on disk; cause=$cause; " +
-              s"payload head: ${event.payload.take(300)} — boot reconcile will synthesize a replacement entry"
-          ).as(SessionMailbox.MailResult.Failed(cause))
-        else IO.sleep(RetryGap) *> attempt(resources, parentSessionId, event, identity, kind, coalesce, producer, attemptNo + 1)
-    }
+    SessionMailbox
+      .mailOnce(
+        parentSessionId,
+        event,
+        kind,
+        identity,
+        coalesce = coalesce,
+        producer = producer,
+        deduplicateReceipts = !coalesce
+      )
+      .flatMap {
+        case r @ (SessionMailbox.MailResult.Enqueued(_) | SessionMailbox.MailResult.Coalesced(_)) =>
+          MailboxDrain.doorbell(resources, parentSessionId).as(r)
+        case SessionMailbox.MailResult.AlreadyPresent => IO.pure(SessionMailbox.MailResult.AlreadyPresent)
+        case SessionMailbox.MailResult.Failed(cause) =>
+          if attemptNo >= MaxAttempts then
+            // 穷尽 = 响亮 ERROR（绝不静默继续；绝不回退旧 push 链——双发=事故）。
+            // 残余由 boot 对账合成补投（SubAgentTaskStore 终态行 = 账面真源）。
+            logger
+              .error(
+                s"[mailbox-producer] FAILED to enqueue after $MaxAttempts attempts — terminal/escalation event " +
+                  s"(kind=$kind identity=$identity parent=$parentSessionId) is NOT on disk; cause=$cause; " +
+                  s"payload head: ${event.payload.take(300)} — boot reconcile will synthesize a replacement entry"
+              )
+              .as(SessionMailbox.MailResult.Failed(cause))
+          else
+            IO.sleep(RetryGap) *> attempt(
+              resources,
+              parentSessionId,
+              event,
+              identity,
+              kind,
+              coalesce,
+              producer,
+              attemptNo + 1
+            )
+      }
 end MailboxProducer

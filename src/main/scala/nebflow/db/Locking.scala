@@ -38,10 +38,11 @@ final class InstanceLock private (
     try if lock.isValid then lock.release()
     catch case scala.util.control.NonFatal(e) => failure = Some(e)
     try channel.close()
-    catch case scala.util.control.NonFatal(e) =>
-      failure match
-        case Some(first) => first.addSuppressed(e)
-        case None => failure = Some(e)
+    catch
+      case scala.util.control.NonFatal(e) =>
+        failure match
+          case Some(first) => first.addSuppressed(e)
+          case None => failure = Some(e)
     failure.foreach(throw _)
 
 end InstanceLock
@@ -73,27 +74,28 @@ object InstanceLock:
           case _: java.io.IOException => null
       if fl == null then
         ch.close()
-        Left(DbError.InstanceLockHeld(
-          s"instance lock held at $f — second instance refused (design §3.9 layer 3)"))
+        Left(DbError.InstanceLockHeld(s"instance lock held at $f — second instance refused (design §3.9 layer 3)"))
       else
         val gen = priorGen.getOrElse(0L) + 1L
         val bootId = UUID.randomUUID().toString
         val now = System.currentTimeMillis()
-        val content = Json.obj(
-          "version" -> Json.fromInt(1),
-          "generation" -> Json.fromLong(gen),
-          "bootId" -> Json.fromString(bootId),
-          "pid" -> Json.fromLong(ProcessHandle.current().pid()),
-          "acquiredAt" -> Json.fromLong(now)
-        ).noSpaces + "\n"
+        val content = Json
+          .obj(
+            "version" -> Json.fromInt(1),
+            "generation" -> Json.fromLong(gen),
+            "bootId" -> Json.fromString(bootId),
+            "pid" -> Json.fromLong(ProcessHandle.current().pid()),
+            "acquiredAt" -> Json.fromLong(now)
+          )
+          .noSpaces + "\n"
         ch.position(0)
         ch.truncate(0)
         val buf = java.nio.ByteBuffer.wrap(content.getBytes("UTF-8"))
         while buf.hasRemaining do ch.write(buf)
         ch.force(true)
-        log.info("instance lock claimed: generation={} bootId={} pid={}", gen, bootId,
-          ProcessHandle.current().pid())
+        log.info("instance lock claimed: generation={} bootId={} pid={}", gen, bootId, ProcessHandle.current().pid())
         Right(new InstanceLock(f, ch, fl, gen, bootId, ProcessHandle.current().pid(), now))
+      end if
     catch
       case e: Exception =>
         Left(DbError.InstanceLockHeld(s"instance lock claim failed: ${e.getMessage}"))

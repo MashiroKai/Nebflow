@@ -50,8 +50,9 @@ private[project] trait NodeCompletion:
     expectedRun: Option[(Option[String], Option[Long])] = None
   ): IO[Boolean] =
     store.getNode(nodeId).flatMap {
-      case Some(fresh) if fresh.status == NodeLifecycle.Running &&
-          expectedRun.forall(_ == (fresh.sessionRef, fresh.startedAt)) =>
+      case Some(fresh)
+          if fresh.status == NodeLifecycle.Running &&
+            expectedRun.forall(_ == (fresh.sessionRef, fresh.startedAt)) =>
         // Plain-verifier verdict leg: a verifier's first-line `VERDICT: PASS|FAIL` IS the verdict
         // declaration. FAIL routes through the same leg the loop runner uses (verdict recorded +
         // fail-route selection + rejection-state audit + re-loop / circuit break); a genuine
@@ -91,11 +92,14 @@ private[project] trait NodeCompletion:
   private[project] def gateAndComplete(nodeId: String, resultText: String): IO[Boolean] =
     store.getNode(nodeId).flatMap {
       case Some(fresh) => gateAndCompleteFor(nodeId, fresh, resultText)
-      case None        => completedNodeR(nodeId, resultText)
+      case None => completedNodeR(nodeId, resultText)
     }
 
   private[project] def gateAndCompleteFor(
-    nodeId: String, fresh: NodeDef, resultText: String, verdict: Option[(String, Boolean)] = None
+    nodeId: String,
+    fresh: NodeDef,
+    resultText: String,
+    verdict: Option[(String, Boolean)] = None
   ): IO[Boolean] =
     CompletionGate.check(workspace, fresh.worktree, resultText, gateRunner).flatMap {
       case CompletionGate.Pass(reason) =>
@@ -124,8 +128,9 @@ private[project] trait NodeCompletion:
       now <- IO(System.currentTimeMillis())
       (_, transition) <- store.mutateWithResult { st =>
         st.nodes.get(nodeId) match
-          case Some(fresh) if fresh.status == NodeLifecycle.Running &&
-              expectedRun.forall(_ == (fresh.sessionRef, fresh.startedAt)) =>
+          case Some(fresh)
+              if fresh.status == NodeLifecycle.Running &&
+                expectedRun.forall(_ == (fresh.sessionRef, fresh.startedAt)) =>
             val completed = withoutReportPending(
               fresh.copy(
                 status = NodeLifecycle.Completed,
@@ -558,8 +563,11 @@ private[project] trait NodeCompletion:
         now <- IO(System.currentTimeMillis())
         (_, transition) <- store.mutateWithResult { st =>
           st.nodes.get(nodeId) match
-            case Some(fresh) if expectedRun.isEmpty ||
-                (fresh.status == NodeLifecycle.Running && expectedRun.contains((fresh.sessionRef, fresh.startedAt))) =>
+            case Some(fresh)
+                if expectedRun.isEmpty ||
+                  (fresh.status == NodeLifecycle.Running && expectedRun.contains(
+                    (fresh.sessionRef, fresh.startedAt)
+                  )) =>
               val failed = withoutReportPending(
                 fresh.copy(
                   status = NodeLifecycle.Failed,

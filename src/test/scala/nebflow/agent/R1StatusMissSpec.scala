@@ -47,10 +47,14 @@ class R1StatusMissSpec extends FunSuite:
     store.updateStatus("parent-never-existed", "delegate-nebflow-b1", "cancelled").unsafeRunSync()
     val after = store.recentStatusMisses
     assertEquals(after.size, before + 1, "a missed write must leave a trace")
-    assert(after.head.contains("parent-never-existed") && after.head.contains("delegate-nebflow-b1"),
-      "trace must name the parent and the task")
-    assert(!os.exists(tmp / "subagent-tasks" / "parent-never-existed.json"),
-      "a missed write must NOT create the parent file (no fabricated rows)")
+    assert(
+      after.head.contains("parent-never-existed") && after.head.contains("delegate-nebflow-b1"),
+      "trace must name the parent and the task"
+    )
+    assert(
+      !os.exists(tmp / "subagent-tasks" / "parent-never-existed.json"),
+      "a missed write must NOT create the parent file (no fabricated rows)"
+    )
   }
 
   test("B2 父文件在但行不匹配 ⇒ 留痕 + 原文件零改写") {

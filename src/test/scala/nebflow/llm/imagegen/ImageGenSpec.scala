@@ -73,7 +73,10 @@ class ImageGenSpec extends munit.FunSuite:
 
   test("Imagen.buildBody: instances/parameters 双段协议") {
     val body = ImageGenAdapters.Imagen.buildBody("imagen-3.0-generate-002", sampleReq)
-    assertEquals(body.hcursor.downField("instances").downArray.downField("prompt").as[String].toOption, Some(sampleReq.prompt))
+    assertEquals(
+      body.hcursor.downField("instances").downArray.downField("prompt").as[String].toOption,
+      Some(sampleReq.prompt)
+    )
     assertEquals(body.hcursor.downField("parameters").downField("sampleCount").as[Int].toOption, Some(1))
   }
 
@@ -83,7 +86,11 @@ class ImageGenSpec extends munit.FunSuite:
       "https://open.bigmodel.cn/api/paas/v4/images/generations"
     )
     assertEquals(
-      ImageGenAdapters.endpointFor(ImageGenAdapters.Imagen, "https://generativelanguage.googleapis.com/v1beta", "imagen-3.0-generate-002"),
+      ImageGenAdapters.endpointFor(
+        ImageGenAdapters.Imagen,
+        "https://generativelanguage.googleapis.com/v1beta",
+        "imagen-3.0-generate-002"
+      ),
       "https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:generateImages"
     )
   }
@@ -113,7 +120,10 @@ class ImageGenSpec extends munit.FunSuite:
 
   test("materialize: b64 解码、非法 b64、空载荷三面") {
     val resolved = ResolvedProvider("t", ImageGenAdapters.CogView, "https://x", "m", "token", 1000)
-    assertEquals(ImageGenService.materialize(ImageRef.B64("QUJD"), resolved).map(_.toList), Right(List(65.toByte, 66, 67)))
+    assertEquals(
+      ImageGenService.materialize(ImageRef.B64("QUJD"), resolved).map(_.toList),
+      Right(List(65.toByte, 66, 67))
+    )
     assert(ImageGenService.materialize(ImageRef.B64("!!!not-base64!!!"), resolved).isLeft)
     assert(ImageGenService.materialize(ImageRef.B64(""), resolved).isLeft)
   }
@@ -129,7 +139,8 @@ class ImageGenSpec extends munit.FunSuite:
   // ── 2. 配置节 decode ───────────────────────────────────────
 
   test("ImageGenConfig decode: 全节") {
-    val json = """{"enabled":true,"defaultProvider":"zhipu","providers":{"zhipu":{"type":"cogview","model":"cogview-3-flash","keyRef":"zhipu-api-key"}}}"""
+    val json =
+      """{"enabled":true,"defaultProvider":"zhipu","providers":{"zhipu":{"type":"cogview","model":"cogview-3-flash","keyRef":"zhipu-api-key"}}}"""
     val decoded = parse(json).flatMap(_.as[ImageGenConfig]).toOption.get
     assert(decoded.isEnabled)
     assertEquals(decoded.defaultProvider, Some("zhipu"))
@@ -183,13 +194,19 @@ class ImageGenSpec extends munit.FunSuite:
     assertEquals(registry.imageGenTools(compiledIn = true, panelEnabled = false).keySet, Set.empty[String])
     assertEquals(registry.imageGenTools(compiledIn = false, panelEnabled = true).keySet, Set.empty[String])
     val present = registry.TOOL_MAP.contains("GenerateImage")
-    assertEquals(present, nebflow.core.ImageGenSeal.CompiledIn && nebflow.service.ConfigService.imagegenEnabledForToolFace)
+    assertEquals(
+      present,
+      nebflow.core.ImageGenSeal.CompiledIn && nebflow.service.ConfigService.imagegenEnabledForToolFace
+    )
   }
 
   test("seal: Nebula 固定面交付 iff 编译进产物（静态集与件数常量不动）") {
     val nebulaDef = nebflow.actor.AgentDef(name = "Nebula", description = "root")
     val delivered = nebflow.agent.AgentCore.fixedToolsFor(nebulaDef)
-    assertEquals(delivered.contains("GenerateImage"), nebflow.core.ImageGenSeal.CompiledIn && nebflow.service.ConfigService.imagegenEnabledForToolFace)
+    assertEquals(
+      delivered.contains("GenerateImage"),
+      nebflow.core.ImageGenSeal.CompiledIn && nebflow.service.ConfigService.imagegenEnabledForToolFace
+    )
     // 件数常量钉死静态集大小（FriendsSealKit 同款纪律：期望值由交付快照推导）。
     val constant = nebflow.agent.AgentCore.RootOrchestrationToolsExpectedSize
     assertEquals(nebflow.agent.AgentCore.RootOrchestrationTools.size, constant)

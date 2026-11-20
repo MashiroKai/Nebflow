@@ -102,7 +102,10 @@ class FleetUpdateSpec extends CatsEffectSuite:
       view("d3", "old", "2026.09.01", UpdateCapability.Verdict.VersionTooOld) -> true
     )
     val plan = FleetPlan.build(devs, target)
-    assertEquals(plan.devices.map(_.branch), List(FleetDispatch.Branch.Push, FleetDispatch.Branch.Push, FleetDispatch.Branch.Manual))
+    assertEquals(
+      plan.devices.map(_.branch),
+      List(FleetDispatch.Branch.Push, FleetDispatch.Branch.Push, FleetDispatch.Branch.Manual)
+    )
     assertEquals(plan.devices.map(_.versionState), List("in-sync", "outdated", "outdated"))
     // `pushCount` = **本轮真会被推送**的台数（执行体对 `in-sync` 行直接判完成、不推），
     // 不是「分支落在 Push 列」的台数：d1 已同版 ⇒ 不推。判据单点在 `FleetSummary.of`。
@@ -243,10 +246,10 @@ class FleetUpdateSpec extends CatsEffectSuite:
           listDevices = () =>
             onlineFlag.get.map { on =>
               List(
-                FleetUpdateCoordinator.Peer("local", "this-mac", "darwin", "", online = true,
-                  Some(nebflow.Version.string), isLocal = true),
-                FleetUpdateCoordinator.Peer("remote-c", "win-box", "win32", "http://127.0.0.1:1", on,
-                  Some("2026.10.26"), isLocal = false)
+                FleetUpdateCoordinator
+                  .Peer("local", "this-mac", "darwin", "", online = true, Some(nebflow.Version.string), isLocal = true),
+                FleetUpdateCoordinator
+                  .Peer("remote-c", "win-box", "win32", "http://127.0.0.1:1", on, Some("2026.10.26"), isLocal = false)
               )
             },
           probe = p =>
@@ -256,10 +259,12 @@ class FleetUpdateSpec extends CatsEffectSuite:
               else FleetUpdateCoordinator.ProbeResult(Some("2026.10.26"), false)
             ),
           pushRemote = (peer, _, _) =>
-            pushes.update(_ + 1).as(
-              if peer.deviceId == "remote-c" then Right("accepted")
-              else Left("unexpected device")
-            ),
+            pushes
+              .update(_ + 1)
+              .as(
+                if peer.deviceId == "remote-c" then Right("accepted")
+                else Left("unexpected device")
+              ),
           latestVersion = () => IO.pure(Some("2026.11.01")),
           currentVersion = () => "2026.10.26",
           verifyWindow = 2.seconds,
@@ -278,13 +283,12 @@ class FleetUpdateSpec extends CatsEffectSuite:
     program.map { case (started, atStart, queuedSnap, atEnd, snap) =>
       assert(started.isRight)
       assertEquals(atStart, 0) // 离线 ⇒ 本轮不推
-      val pending = queuedSnap.hcursor.downField("job").downField("pending").as[List[io.circe.Json]]
-        .toOption.getOrElse(Nil)
+      val pending =
+        queuedSnap.hcursor.downField("job").downField("pending").as[List[io.circe.Json]].toOption.getOrElse(Nil)
       assertEquals(pending.length, 1)
       assertEquals(pending.head.hcursor.downField("deviceId").as[String].toOption, Some("remote-c"))
       assertEquals(atEnd, 1) // 上线即补推
-      val runs = snap.hcursor.downField("job").downField("runs").as[List[io.circe.Json]]
-        .toOption.getOrElse(Nil)
+      val runs = snap.hcursor.downField("job").downField("runs").as[List[io.circe.Json]].toOption.getOrElse(Nil)
       val row = runs.find(_.hcursor.downField("deviceId").as[String].toOption.contains("remote-c"))
       assert(row.isDefined, s"remote-c row missing: ${runs.mkString}")
     }
@@ -299,7 +303,8 @@ class FleetUpdateSpec extends CatsEffectSuite:
       rows <- auditRows
     yield rows
     program.map { rows =>
-      val actions = rows.flatMap(l => parser.parse(l).toOption)
+      val actions = rows
+        .flatMap(l => parser.parse(l).toOption)
         .flatMap(j => j.hcursor.downField("action").as[String].toOption)
       assert(actions.contains("fleet-start"), s"missing fleet-start in $actions")
       assert(actions.contains("fleet-finish"), s"missing fleet-finish in $actions")
@@ -319,13 +324,23 @@ class FleetUpdateSpec extends CatsEffectSuite:
           listDevices = () =>
             IO.pure(
               List(
-                FleetUpdateCoordinator.Peer("local", "this-mac", "darwin", "", online = true,
-                  Some("2026.11.01"), isLocal = true),
-                FleetUpdateCoordinator.Peer("remote-d", "offline-box", "linux", "http://127.0.0.1:9",
-                  online = false, Some("2026.11.01"), isLocal = false)
+                FleetUpdateCoordinator
+                  .Peer("local", "this-mac", "darwin", "", online = true, Some("2026.11.01"), isLocal = true),
+                FleetUpdateCoordinator.Peer(
+                  "remote-d",
+                  "offline-box",
+                  "linux",
+                  "http://127.0.0.1:9",
+                  online = false,
+                  Some("2026.11.01"),
+                  isLocal = false
+                )
               )
             ),
-          probe = p => IO.pure(FleetUpdateCoordinator.ProbeResult(if p.isLocal then Some("2026.11.01") else Some("2026.11.01"), true)),
+          probe = p =>
+            IO.pure(
+              FleetUpdateCoordinator.ProbeResult(if p.isLocal then Some("2026.11.01") else Some("2026.11.01"), true)
+            ),
           pushRemote = (_, _, _) => pushes.update(_ + 1).as(Right("accepted")),
           latestVersion = () => IO.pure(Some("2026.11.01")),
           currentVersion = () => "2026.11.01",
@@ -360,10 +375,22 @@ class FleetUpdateSpec extends CatsEffectSuite:
       targetVersion = Some("2026.11.01"),
       status = FleetJobStatus.Running,
       runs = List(
-        FleetDeviceRun("local", "this-mac", isLocal = true, stage = FleetStage.Restarting,
-          detail = "in flight when the process died", updatedAt = System.currentTimeMillis() - 60_000),
-        FleetDeviceRun("remote-a", "mac-mini", isLocal = false, stage = FleetStage.Completed,
-          detail = "done before the restart", updatedAt = System.currentTimeMillis() - 60_000)
+        FleetDeviceRun(
+          "local",
+          "this-mac",
+          isLocal = true,
+          stage = FleetStage.Restarting,
+          detail = "in flight when the process died",
+          updatedAt = System.currentTimeMillis() - 60_000
+        ),
+        FleetDeviceRun(
+          "remote-a",
+          "mac-mini",
+          isLocal = false,
+          stage = FleetStage.Completed,
+          detail = "done before the restart",
+          updatedAt = System.currentTimeMillis() - 60_000
+        )
       ),
       manual = Nil,
       pending = Nil
@@ -395,8 +422,10 @@ class FleetUpdateSpec extends CatsEffectSuite:
   test("stage vocabulary: every FleetStage carries a fleet.stage.* key and a state token; terminals are frozen") {
     FleetStage.values.foreach { s =>
       assert(s.messageKey.startsWith("fleet.stage."), s"bad key for ${s.wire}: ${s.messageKey}")
-      assert(Set("pending", "in-progress", "completed", "failed", "manual", "cancelled").contains(s.stateToken),
-        s"bad state token for ${s.wire}: ${s.stateToken}")
+      assert(
+        Set("pending", "in-progress", "completed", "failed", "manual", "cancelled").contains(s.stateToken),
+        s"bad state token for ${s.wire}: ${s.stateToken}"
+      )
     }
     assert(FleetStage.Completed.terminal)
     assert(FleetStage.Failed.terminal)
@@ -428,12 +457,19 @@ class FleetUpdateSpec extends CatsEffectSuite:
           listDevices = () =>
             IO.pure(
               List(
-                FleetUpdateCoordinator.Peer("local", "this-mac", "darwin", "", online = true,
-                  Some(nebflow.Version.string), isLocal = true),
-                FleetUpdateCoordinator.Peer("remote-a", "mac-mini", "darwin", "http://127.0.0.1:1", true,
-                  Some("2026.10.26"), isLocal = false),
-                FleetUpdateCoordinator.Peer("remote-b", "win-box", "win32", "http://127.0.0.1:2", true,
-                  Some("2026.10.26"), isLocal = false)
+                FleetUpdateCoordinator
+                  .Peer("local", "this-mac", "darwin", "", online = true, Some(nebflow.Version.string), isLocal = true),
+                FleetUpdateCoordinator.Peer(
+                  "remote-a",
+                  "mac-mini",
+                  "darwin",
+                  "http://127.0.0.1:1",
+                  true,
+                  Some("2026.10.26"),
+                  isLocal = false
+                ),
+                FleetUpdateCoordinator
+                  .Peer("remote-b", "win-box", "win32", "http://127.0.0.1:2", true, Some("2026.10.26"), isLocal = false)
               )
             ),
           probe = p =>
@@ -446,8 +482,7 @@ class FleetUpdateSpec extends CatsEffectSuite:
             },
           pushRemote = (peer, _, _) =>
             pushes.update(_ + 1) *>
-              (if okDeviceIds.contains(peer.deviceId) then
-                 updated.update(_ + peer.deviceId).as(Right("accepted"))
+              (if okDeviceIds.contains(peer.deviceId) then updated.update(_ + peer.deviceId).as(Right("accepted"))
                else IO.pure(Left("device refused the update (test fixture)"))),
           latestVersion = () => IO.pure(Some("2026.11.01")),
           currentVersion = () => "2026.10.26",
@@ -481,7 +516,16 @@ class FleetUpdateSpec extends CatsEffectSuite:
     version: String,
     cap: UpdateCapability.Verdict
   ): FleetDeviceView =
-    FleetDeviceView(id, name, "darwin", isLocal = false, online = true, Some(version), cap,
-      FleetDispatch.Branch.Manual, None)
+    FleetDeviceView(
+      id,
+      name,
+      "darwin",
+      isLocal = false,
+      online = true,
+      Some(version),
+      cap,
+      FleetDispatch.Branch.Manual,
+      None
+    )
 
 end FleetUpdateSpec

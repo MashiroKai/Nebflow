@@ -38,6 +38,7 @@ object NodeLifecycle:
   val Completed = "completed"
   val Failed = "failed"
   val Cancelled = "cancelled"
+
   /** Retired token used only while migrating legacy stored rows. */
   val Blocked = "blocked"
 
@@ -206,11 +207,12 @@ object CancelSource:
 
 end CancelSource
 
-/** Structured node feedback (category / detail / suggestion): a verifier FAIL verdict
-  * (issues + requirements) travels in it, and legacy blocked rows keep their stored feedback
-  * in it. Formerly `BlockedFeedback` (the blocked terminal retired: blocked is no longer a
-  * reachable node state; the shape is unchanged so legacy journal/JSONL rows keep decoding).
-  */
+/**
+ * Structured node feedback (category / detail / suggestion): a verifier FAIL verdict
+ * (issues + requirements) travels in it, and legacy blocked rows keep their stored feedback
+ * in it. Formerly `BlockedFeedback` (the blocked terminal retired: blocked is no longer a
+ * reachable node state; the shape is unchanged so legacy journal/JSONL rows keep decoding).
+ */
 case class NodeFeedback(
   category: String, // "other" for a verifier FAIL verdict; legacy blocked rows keep their stored class
   detail: String,

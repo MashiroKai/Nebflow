@@ -168,10 +168,20 @@ class BackoffSupervisorCancelSpec extends CatsEffectSuite:
       _ <- system.stopAll
     yield
       val ext = mailed.collect { case e if e.event.source == "delegate" => e }
-      assertEquals(ext.size, 1, s"mailbox must hold exactly one delegate terminal entry, got: ${mailed.map(_.identity)}")
+      assertEquals(
+        ext.size,
+        1,
+        s"mailbox must hold exactly one delegate terminal entry, got: ${mailed.map(_.identity)}"
+      )
       assertEquals(ext.head.event.eventType, "cancelled")
-      assert(ext.head.event.payload.contains("cancelled by Nebula via AgentControl"), s"payload: ${ext.head.event.payload}")
-      assert(ext.head.event.payload.contains("user lost patience"), s"reason must be carried: ${ext.head.event.payload}")
+      assert(
+        ext.head.event.payload.contains("cancelled by Nebula via AgentControl"),
+        s"payload: ${ext.head.event.payload}"
+      )
+      assert(
+        ext.head.event.payload.contains("user lost patience"),
+        s"reason must be carried: ${ext.head.event.payload}"
+      )
       assertEquals(ext.head.event.metadata("cancelled").flatMap(_.asBoolean), Some(true))
       assertEquals(ext.head.event.metadata("failureType").flatMap(_.asString), Some("cancelled"))
       assertEquals(ext.head.event.correlationId, Some(childSid))
@@ -238,7 +248,11 @@ class BackoffSupervisorCancelSpec extends CatsEffectSuite:
       // P2 迁移后「single notification」语义 = 邮箱恰一条 cancelled 条目
       // （identity=subagentId 幂等 + 首个终态胜出）；迟到 Completed 不新增条目。
       val ext = mailed.collect { case e if e.event.eventType == "cancelled" => e }
-      assertEquals(ext.size, 1, s"exactly one terminal entry expected, got: ${mailed.map(e => (e.identity, e.event.eventType))}")
+      assertEquals(
+        ext.size,
+        1,
+        s"exactly one terminal entry expected, got: ${mailed.map(e => (e.identity, e.event.eventType))}"
+      )
       assertEquals(ext.head.event.eventType, "cancelled", "first terminal (cancelled) must win")
       val task = tasks.find(_.taskId == childSid).get
       assertEquals(task.status, "cancelled", "late Completed must NOT overwrite the cancelled status")

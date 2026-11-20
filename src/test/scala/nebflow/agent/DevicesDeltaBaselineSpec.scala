@@ -221,7 +221,10 @@ class DevicesDeltaBaselineSpec extends CatsEffectSuite:
         lines3 = deviceDeltaLines(req3)
       yield
         // ── P2(b) 真变更仍提示：成员增 / 成员删 / 条目文本变更各一例 ──
-        assert(lines2.nonEmpty, s"真实 roster 变更必须仍注入 devices 提示行（requestOnlyContext）:\n${req2.requestOnlyContext.map(_.textContent).mkString("\n")}")
+        assert(
+          lines2.nonEmpty,
+          s"真实 roster 变更必须仍注入 devices 提示行（requestOnlyContext）:\n${req2.requestOnlyContext.map(_.textContent).mkString("\n")}"
+        )
         assert(lines2.exists(l => l.contains("DEVZ")), s"成员增（+Z）缺失: $lines2")
         assert(lines2.exists(l => l.contains("DEVY")), s"成员删（-Y）缺失: $lines2")
         assert(lines2.exists(l => l.contains("cwd=/p2")), s"条目文本变更（新画像后缀）缺失: $lines2")

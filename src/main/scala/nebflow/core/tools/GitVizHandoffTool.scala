@@ -3,7 +3,7 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.{AskHandoffPort}
+import nebflow.core.AskHandoffPort
 import nebflow.core.ask.{AskGatewayServices, AskSessions}
 
 import scala.util.control.NonFatal
@@ -74,8 +74,13 @@ object GitVizHandoffTool extends Tool:
     if result.length > 160 then result.take(157) + "..." else result
 
   private def strs(input: JsonObject, key: String): List[String] =
-    input(key).flatMap(_.asArray).getOrElse(Vector.empty).toList
-      .flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+    input(key)
+      .flatMap(_.asArray)
+      .getOrElse(Vector.empty)
+      .toList
+      .flatMap(_.asString)
+      .map(_.trim)
+      .filter(_.nonEmpty)
 
   override def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val sid = ctx.sessionId.getOrElse("")
@@ -90,12 +95,16 @@ object GitVizHandoffTool extends Tool:
 
     // 身份双保险之工具内侧：非 gitviz ask 会话（含 REST 直调 / 其余一切身份）拒绝。
     if !AskSessions.isGitVizSession(sid) then
-      IO.pure(Left(ToolError(
-        "gitviz_handoff: permission denied — this tool is exclusive to branch-management ask sessions (ask-gv-*). (GITVIZ_HANDOFF_FORBIDDEN)")))
+      IO.pure(
+        Left(
+          ToolError(
+            "gitviz_handoff: permission denied — this tool is exclusive to branch-management ask sessions (ask-gv-*). (GITVIZ_HANDOFF_FORBIDDEN)"
+          )
+        )
+      )
     else if branches.isEmpty then
       IO.pure(Left(ToolError("gitviz_handoff: `branches` must list at least one branch name.")))
-    else if target.isEmpty then
-      IO.pure(Left(ToolError("gitviz_handoff: `target` (the target line) is required.")))
+    else if target.isEmpty then IO.pure(Left(ToolError("gitviz_handoff: `target` (the target line) is required.")))
     else if ctx.agentDef.isEmpty then
       IO.pure(Left(ToolError("gitviz_handoff: no agent context — handoff unavailable. (GITVIZ_HANDOFF_FORBIDDEN)")))
     else
@@ -106,14 +115,25 @@ object GitVizHandoffTool extends Tool:
 
       val flow: IO[Either[ToolError, String]] = bindingIO.flatMap {
         case None =>
-          IO.pure(Left(ToolError(
-            "gitviz_handoff: this ask session has no project binding — open the Git 可视化 panel first. (GITVIZ_HANDOFF_NO_BINDING)")))
+          IO.pure(
+            Left(
+              ToolError(
+                "gitviz_handoff: this ask session has no project binding — open the Git 可视化 panel first. (GITVIZ_HANDOFF_NO_BINDING)"
+              )
+            )
+          )
         case Some(binding) if !binding.isGitViz =>
-          IO.pure(Left(ToolError(
-            "gitviz_handoff: binding is not a branch-management scope. (GITVIZ_HANDOFF_NO_BINDING)")))
+          IO.pure(
+            Left(ToolError("gitviz_handoff: binding is not a branch-management scope. (GITVIZ_HANDOFF_NO_BINDING)"))
+          )
         case Some(binding) if binding.mainSessionId.trim.isEmpty =>
-          IO.pure(Left(ToolError(
-            "gitviz_handoff: main session not connected yet — reopen the 分支管理问答 dock, then try again. (GITVIZ_HANDOFF_NO_TARGET)")))
+          IO.pure(
+            Left(
+              ToolError(
+                "gitviz_handoff: main session not connected yet — reopen the 分支管理问答 dock, then try again. (GITVIZ_HANDOFF_NO_TARGET)"
+              )
+            )
+          )
         case Some(binding) =>
           val now = System.currentTimeMillis()
           // 频控复用文件 ask 的同一条（每会话每分钟 1 条）：git 交办一次请求可能
@@ -159,6 +179,7 @@ object GitVizHandoffTool extends Tool:
                   AskTools.pushHandoffFrame(sid, req, ctx, ok = false, error = err.message) *> IO.pure(left)
               }
               .map(_.map(_ => okText))
+          end if
       }
       flow.handleErrorWith(e => IO.pure(Left(ToolError(s"gitviz_handoff failed: ${e.getMessage}"))))
     end if

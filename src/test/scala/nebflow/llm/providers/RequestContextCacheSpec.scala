@@ -12,11 +12,13 @@ class RequestContextCacheSpec extends FunSuite:
   // 验证的是「每轮变化的临时尾段」装配语义，夹具改等价字面串（仍带 epoch_ms）。
   private val clock1 = "[request clock] Now: 2026-11-05 22:13:20 +08:00 周四 | epoch_ms 1793920000000"
   private val clock2 = "[request clock] Now: 2026-11-05 22:14:20 +08:00 周四 | epoch_ms 1793920060000"
+
   private val history = List(
     Message(MessageRole.User, Left("inspect file")),
     Message(MessageRole.Assistant, Right(List(ContentBlock.ToolUse("c1", "Read", JsonObject.empty)))),
     Message(MessageRole.User, Right(List(ContentBlock.ToolResult("c1", "file contents", Some(false)))))
   )
+
   private def params(msgs: List[Message], clock: Option[String]) = SendMessageParams(
     messages = msgs,
     model = "deepseek-flash",
@@ -77,5 +79,9 @@ class RequestContextCacheSpec extends FunSuite:
     val am = messages(anthropic.bodyOf(params(Nil, Some(clock1)), false))
     assertEquals(am.size, 1)
     assertEquals(blocks(am.head).head.hcursor.get[String]("text").toOption, Some(clock1))
-    assertEquals(openai.requestMessages(params(Nil, Some(clock1)), false).last.hcursor.get[String]("content").toOption, Some(clock1))
+    assertEquals(
+      openai.requestMessages(params(Nil, Some(clock1)), false).last.hcursor.get[String]("content").toOption,
+      Some(clock1)
+    )
   }
+end RequestContextCacheSpec

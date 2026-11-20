@@ -299,6 +299,7 @@ object RecoverySummary:
         Option.when(facets.rounds.openRoundNos.nonEmpty)(s"open-rounds:${facets.rounds.openRoundNos.size}"),
         Option.when(facets.pendingDeliveries.total > 0)(s"pending-deliveries:${facets.pendingDeliveries.total}")
       ).flatten
+    end blockers
   end Summary
 
   /**
@@ -337,7 +338,12 @@ object RecoverySummary:
   private def terminalStateOf(record: Option[DelegateRegistry.Record]): TerminalState =
     val reading = record match
       case None => DelegateVisibility.Empty
-      case Some(rec) => DelegateVisibility.read(Some(rec), DelegateRoundLedger.currentRounds(rec.id), DelegateVisibility.liveChildrenOf(rec.id))
+      case Some(rec) =>
+        DelegateVisibility.read(
+          Some(rec),
+          DelegateRoundLedger.currentRounds(rec.id),
+          DelegateVisibility.liveChildrenOf(rec.id)
+        )
     TerminalState(
       terminal = reading.identityClosed,
       archived = reading.legacyArchived,
@@ -349,6 +355,8 @@ object RecoverySummary:
       settlementEvidence = reading.evidence,
       settledAt = reading.settledAt
     )
+
+  end terminalStateOf
 
   /**
    * 子项档路径（`SubAgentTaskStore.sessionFile` 同布局：`<baseDir>/<parentSessionId>.json`，

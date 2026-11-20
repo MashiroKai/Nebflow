@@ -57,7 +57,7 @@ object InteractionHub:
    * （而 `Map.toList` 的遍历序不是插入序 ⇒ 并列时无确定性）。
    * 现在序键在**分支处理时同步取号**（见 Request 分支的 `nextFifoSeq`，fork 之前）⇒
    * 严格递增且 = 邮箱到达序，`sortBy(_.fifoSeq)` 的「最老/创建序」在并发下真的确定
-   *（无 requestId 的旧前端 FIFO 兜底路靠它才真是「先到先得」）。
+   * （无 requestId 的旧前端 FIFO 兜底路靠它才真是「先到先得」）。
    */
   private[agent] case class PendingRequest(
     reply: InteractionReply,
@@ -139,7 +139,7 @@ object InteractionHub:
                     case InteractionKind.ModelUnavailable => IO.unit
                 )
               // permission-landing 批 P0（2026-11-18）：落点解析前置。目标 root 不可达
-              //（项目节点的挂载根常无本进程客户端：rootWsSend 只登记经 WS spawn 的
+              // （项目节点的挂载根常无本进程客户端：rootWsSend 只登记经 WS spawn 的
               // root——WebSocketRoutes.doSpawnRootAgent ⇒ registerRootInteraction）时
               // **不再**全 root 扇出 fallback 帧（前端全局 toast = 原生弹窗形态，弹窗
               // 禁令），而是把整张卡**重定锚**到字典序最小的可达 root：pending 槽 /
@@ -151,14 +151,14 @@ object InteractionHub:
                 else
                   m.keySet.filterNot(_ == req.rootSessionId).toList.sorted.headOption match
                     case Some(landing) => (req.copy(rootSessionId = landing), Some(req.rootSessionId))
-                    case None          => (req, None)
+                    case None => (req, None)
               }
               // 落点解析 + FIFO 取号 + **槽位注册**一律在分支处理时同步完成（= 邮箱序）；
               // 只有渲染 / 台账 / 待办镜像 fork。理由：原来的「Register BEFORE rendering
               // so a fast answer can never miss the slot」三步全在 fork 内 ⇒ 邮箱里紧随
               // 其后的 Answered / CloseRequest 完全可能抢在注册之前落地（答复 ⇒
               // unknown-request-id 静默丢、取消 ⇒ 空命中），次序全凭调度运气
-              //（InteractionHubCancelSpec ② 的 «答复未落地» 即这一面）。
+              // （InteractionHubCancelSpec ② 的 «答复未落地» 即这一面）。
               for
                 seq <- nextFifoSeq.modify(n => (n + 1L, n))
                 (landing, retargetedFrom) <- resolveLanding
@@ -167,15 +167,18 @@ object InteractionHub:
                 // 注册本就是分支处理同步完成（见 registerPending 注），故此处按 payload 判。
                 _ <-
                   if landing.payload.hcursor.downField("reportOnly").as[Boolean].toOption.contains(true) then
-                    logger.info(
-                      s"InteractionRequest kind=${landing.kind} reportOnly — rendered without registering a pending slot"
-                    ).void
+                    logger
+                      .info(
+                        s"InteractionRequest kind=${landing.kind} reportOnly — rendered without registering a pending slot"
+                      )
+                      .void
                   else registerPending(pending, landing, seq)
                 _ <- ctx.forkTurn(
                   handleRequest(rootWsSend, landing, retargetedFrom) *>
                     ledgerRecord(landing) *> todoAttach(landing)
                 )
               yield behavior
+              end for
             case InteractionHubCommand.Answered(ans) =>
               ctx.forkTurn(handleAnswered(pending, rootWsSend, ans, ledger, todoBridge)) *> IO.pure(behavior)
             case InteractionHubCommand.DecideBridgePermission(rid, root, kind, approved, reply) =>
@@ -241,7 +244,7 @@ object InteractionHub:
 
   /**
    * 槽位注册（permission-landing 批续做，2026-11-18）：**必须由分支处理同步调用**
-   *（= 邮箱序），不得挪进 `ctx.forkTurn`。
+   * （= 邮箱序），不得挪进 `ctx.forkTurn`。
    *
    * 原实现把注册放在本文件的渲染函数（fork 内）里，注释写着「Register BEFORE
    * rendering so a fast answer can never miss the slot」——那句不变式只覆盖了
@@ -333,7 +336,7 @@ object InteractionHub:
         case None =>
           // permission-landing 批 P0：零可达（解析与渲染之间 root 恰好全部掉线）。
           // 槽位保留：迟到的 requestId 作答仍能收口；等待方一律持有界超时
-          //（AgentCore.awaitPermissionDecisionBounded）失败关闭——不扇出 fallback
+          // （AgentCore.awaitPermissionDecisionBounded）失败关闭——不扇出 fallback
           // 帧（弹窗禁令）、不无限挂起。
           logger.warn(
             s"InteractionRequest has no reachable root wsSend (rootSessionId=${req.rootSessionId}) — " +
@@ -565,6 +568,7 @@ object InteractionHub:
       // ——第四种 kind 的渲染分支，与既有三种同款「加 kind 分支」形态。
       case InteractionKind.ModelUnavailable => renderModelUnavailable(req)
       case InteractionKind.Permission => renderPermission(req)
+  end renderPending
 
   // ============================================================
   // askuser-secret 批（2026-10-08）：secret 槽位判据（本文件内单一实现，守卫/
@@ -617,7 +621,8 @@ object InteractionHub:
                 ttlSec = item.hcursor.downField("ttlSec").as[Int].toOption.filter(_ > 0),
                 // 可查询批（2026-11-18）：随题卡下发的说明与标签，落库时写进
                 // 元数据侧车。两者都是元数据字段，闸门仍是「值只在 secretSlots」。
-                description = item.hcursor.downField("secretDescription").as[String].toOption.map(_.trim).filter(_.nonEmpty),
+                description =
+                  item.hcursor.downField("secretDescription").as[String].toOption.map(_.trim).filter(_.nonEmpty),
                 tags =
                   if item.hcursor.downField("secret").as[Boolean].toOption.getOrElse(false) then
                     nebflow.core.secrets.SecretsCatalog.normalizeTags(

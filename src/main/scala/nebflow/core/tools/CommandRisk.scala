@@ -22,19 +22,25 @@ object CommandRisk:
   // 首/尾边界同时钉住：`curling`、`ssh-keygen`、`rmdir` 的子串不误判。
   private val WriteVerbs =
     """(?s)(?:^|[\s;|&(/])(?:tee|truncate|dd|mv|cp|install|patch|chmod|chown|ln|mkdir|touch|rmdir)(?=$|[\s;|&)])""".r
+
   private val DeleteVerbs =
     """(?s)(?:^|[\s;|&(/])(?:rm|unlink|shred)(?=$|[\s;|&)])""".r
+
   private val NetworkVerbs =
     """(?s)(?:^|[\s;|&(|'"`])(?:ssh|scp|sftp|rsync|curl|wget|nc|ncat|telnet|Invoke-WebRequest|Invoke-RestMethod)(?=$|[\s;|&)])""".r
+
   private val EditorVerbs =
     """(?s)(?:^|[\s;|&(/])(?:vi|vim|nvim|nano|emacs|ed|ex)(?=$|[\s;|&)])""".r
+
   private val GitMutations =
     """(?s)(?:^|[\s;|&(])git\s+(?:add|commit|checkout|restore|reset|apply|rm|clean|switch|revert|merge|rebase|push|stash\s+(?:push|pop|drop|clear|apply|save))(?=$|[\s;|&)])""".r
+
   private val SedInPlace =
     """(?s)(?:^|[\s;|&(])sed\s+(?:-[^\s]*i[^\s]*|--in-place(?:=[^\s]*)?)(?=$|[\s;|&)])""".r
   // `> f` / `>>f` 是写；`->` `=>` 与 `2>&1` 不算；写 /dev/null 的噪音不计。
   private val Redirection = """(?s)(?<![=<-])>{1,2}\s*(?!&|/dev/null|$)[^\s;|&]""".r
   private val DeleteFlags = """(?s)(?:-delete\b|git\s+clean\s+-[a-zA-Z]*f)""".r
+
   private val CredentialPaths =
     """(?i)(?:^|[\s;|&(/=~'"`])(?:\.ssh|\.aws|\.gnupg|\.netrc|id_rsa|id_ed25519|\.env|credentials|secrets)(?=$|[\s;|&)'"`/])""".r
 
@@ -48,8 +54,7 @@ object CommandRisk:
         SedInPlace.findFirstIn(c).nonEmpty || GitMutations.findFirstIn(c).nonEmpty ||
         Redirection.findFirstIn(c).nonEmpty
       then out += CommandRisk.Write
-      if DeleteVerbs.findFirstIn(c).nonEmpty || DeleteFlags.findFirstIn(c).nonEmpty then
-        out += CommandRisk.Delete
+      if DeleteVerbs.findFirstIn(c).nonEmpty || DeleteFlags.findFirstIn(c).nonEmpty then out += CommandRisk.Delete
       if NetworkVerbs.findFirstIn(c).nonEmpty then out += CommandRisk.NetworkEgress
       if CredentialPaths.findFirstIn(c).nonEmpty then out += CommandRisk.CredentialAccess
       out.toSet

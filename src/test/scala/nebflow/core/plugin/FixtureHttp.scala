@@ -13,7 +13,7 @@ import scala.collection.mutable
  * 未注册路径一律 404（= 端点不可达负例的伺服形态）。
  */
 final class FixtureHttp:
-  private val routes   = mutable.Map.empty[String, (Int, Array[Byte])]
+  private val routes = mutable.Map.empty[String, (Int, Array[Byte])]
   private val requests = mutable.ListBuffer.empty[String]
   private var server: HttpServer = null
 
@@ -38,20 +38,24 @@ final class FixtureHttp:
     server = HttpServer.create(new InetSocketAddress("127.0.0.1", port0), 0)
     val exec = java.util.concurrent.Executors.newCachedThreadPool()
     server.setExecutor(exec)
-    server.createContext("/", (ex: HttpExchange) => {
-      val path = ex.getRequestURI.getPath
-      requests.synchronized { requests += path }
-      routes.get(path) match
-        case Some((status, bytes)) =>
-          ex.sendResponseHeaders(status, if bytes.isEmpty then -1 else bytes.length)
-          if bytes.nonEmpty then ex.getResponseBody.write(bytes)
-          ex.close()
-        case None =>
-          ex.sendResponseHeaders(404, -1)
-          ex.close()
-    })
+    server.createContext(
+      "/",
+      (ex: HttpExchange) =>
+        val path = ex.getRequestURI.getPath
+        requests.synchronized { requests += path }
+        routes.get(path) match
+          case Some((status, bytes)) =>
+            ex.sendResponseHeaders(status, if bytes.isEmpty then -1 else bytes.length)
+            if bytes.nonEmpty then ex.getResponseBody.write(bytes)
+            ex.close()
+          case None =>
+            ex.sendResponseHeaders(404, -1)
+            ex.close()
+    )
     server.start()
     this
+
+  end start
 
   def stop(): Unit =
     if server != null then server.stop(0)

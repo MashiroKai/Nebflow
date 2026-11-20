@@ -161,6 +161,7 @@ end FleetDeviceView
 
 object FleetDeviceView:
   given Encoder[FleetDeviceView] = Encoder.instance(v => v.toJson)
+
   given Decoder[FleetDeviceView] = Decoder.instance { c =>
     for
       deviceId <- c.downField("deviceId").as[String]
@@ -204,6 +205,7 @@ final case class FleetSummary(
   totalDevices: Int,
   status: String
 ):
+
   def toJson: Json =
     Json.obj(
       "allConsistent" -> allConsistent.asJson,
@@ -214,6 +216,8 @@ final case class FleetSummary(
       "status" -> status.asJson,
       "messageKey" -> s"fleet.summary.$status".asJson
     )
+
+end FleetSummary
 
 object FleetSummary:
 
@@ -256,6 +260,7 @@ object FleetSummary:
       totalDevices = devices.length,
       status = status
     )
+  end of
 
 end FleetSummary
 
@@ -327,12 +332,14 @@ enum FleetStage(val wire: String):
     case Manual => "manual"
     case Cancelled => "cancelled"
 
-  /** 是否终态（终态不再被推进；重试 = 新的一次尝试）。
+  /**
+   * 是否终态（终态不再被推进；重试 = 新的一次尝试）。
    *
    * 🔴 [[WaitingOnline]] **算终态**：它是「本轮到此为止」的稳定停点——作者令的收口
    * 状态本身就允许「M 台待上线」，若把它算成在飞，任务永远收不了口（卡上会一直显示
    * 进行中）。哨兵补推时会把任务重新打开（`FleetUpdateCoordinator#onPeerOnline` 的
-   * reopen 腿），所以「终态」只表示**本轮**结束，不表示这台设备从此不管。 */
+   * reopen 腿），所以「终态」只表示**本轮**结束，不表示这台设备从此不管。
+   */
   def terminal: Boolean = this match
     case Completed | Failed | Manual | Cancelled | WaitingOnline => true
     case _ => false
@@ -415,7 +422,8 @@ object FleetFailureClassify:
 
   def of(error: String): FleetFailure =
     val e = Option(error).getOrElse("").toLowerCase
-    rules.collectFirst { case (needle, failure) if e.contains(needle) => failure }
+    rules
+      .collectFirst { case (needle, failure) if e.contains(needle) => failure }
       .getOrElse(if e.isEmpty then FleetFailure.Unknown else FleetFailure.DeviceRefused)
 
 end FleetFailureClassify
@@ -456,6 +464,7 @@ end FleetDeviceRun
 
 object FleetDeviceRun:
   given Encoder[FleetDeviceRun] = Encoder.instance(r => r.toJson)
+
   given Decoder[FleetDeviceRun] = Decoder.instance { c =>
     for
       deviceId <- c.downField("deviceId").as[String]
@@ -531,6 +540,8 @@ final case class FleetJob(
       "cancelledCount" -> runs.count(_.stage == FleetStage.Cancelled).asJson
     )
 
+  end summaryJson
+
   def toJson: Json =
     Json.obj(
       "job" -> summaryJson,
@@ -544,6 +555,7 @@ end FleetJob
 object FleetJob:
 
   given Encoder[FleetJob] = Encoder.instance(j => j.toJson)
+
   given Decoder[FleetJob] = Decoder.instance { c =>
     for
       jobId <- c.downField("job").downField("jobId").as[String]

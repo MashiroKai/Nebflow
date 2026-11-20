@@ -54,12 +54,13 @@ object RestartLossLedger:
 
   /** 一条已投递但未被父会话「消化」的收殓通知。 */
   final case class Entry(
-      taskId: String,
-      deliveredAt: Long,
-      restatements: Int = 0,
-      lastRestatedAt: Option[Long] = None,
-      head: String = ""
+    taskId: String,
+    deliveredAt: Long,
+    restatements: Int = 0,
+    lastRestatedAt: Option[Long] = None,
+    head: String = ""
   ):
+
     def json: Json =
       Json.obj(
         "taskId" -> Json.fromString(taskId),
@@ -68,6 +69,8 @@ object RestartLossLedger:
         "lastRestatedAt" -> lastRestatedAt.fold(Json.Null)(Json.fromLong),
         "head" -> Json.fromString(head)
       )
+
+  end Entry
 
   def pathFor(parentSessionId: String): os.Path =
     PathUtil.dataRoot / "sessions" / parentSessionId / FileName
@@ -163,6 +166,8 @@ object RestartLossLedger:
               entries.filterNot(e => liveEntries.exists(_.taskId == e.taskId)).filter(e => live(e, at))
           )
           Some(Message(MessageRole.User, Left(text), at))
+        end if
+      end if
     }
 
   /**
@@ -174,7 +179,7 @@ object RestartLossLedger:
     existing.lastOption.forall { m =>
       m.role != MessageRole.Assistant || !m.content.toOption.exists(_.exists {
         case _: nebflow.shared.ContentBlock.ToolUse => true
-        case _                                      => false
+        case _ => false
       })
     }
 

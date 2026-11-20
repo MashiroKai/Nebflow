@@ -239,11 +239,13 @@ class SecretsStore(
     IO.blocking {
       if !Files.isDirectory(secretsDir.toNIO) then Right(Nil)
       else
-        val names = os.list(secretsDir)
+        val names = os
+          .list(secretsDir)
           .filter(p => Files.isRegularFile(p.toNIO))
           .map(_.last)
           .filterNot(isArchiveBackup)
-          .toList.sorted
+          .toList
+          .sorted
         val refs = referencedByAll()
         val meta = SecretsCatalog.load(dataRoot)
         Right(
@@ -314,6 +316,7 @@ class SecretsStore(
                   )
                 )
               case None => Left(Failure.UnknownSecret(name))
+          end if
         }.handleErrorWith(e => IO.pure(Left(Failure.Io(describe(e, name)))))
 
   // ── Write face ─────────────────────────────────────────────────────────
@@ -805,5 +808,6 @@ object SecretsStore:
     case ManagedNamespace(name: String)
     case SecretMode(name: String, reason: String)
     case Io(reason: String)
+  end Failure
 
 end SecretsStore

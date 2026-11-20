@@ -78,27 +78,29 @@ object DoneBoardWatch:
     firstSeenMs: Long,
     lastNotifyMs: Long = 0L
   ):
+
     def toJson: Json =
       Json.obj(
-        "kind"          -> kind.asJson,
-        "recordId"      -> recordId.asJson,
-        "branch"        -> branch.asJson,
-        "baseBranch"    -> baseBranch.asJson,
-        "title"         -> title.asJson,
+        "kind" -> kind.asJson,
+        "recordId" -> recordId.asJson,
+        "branch" -> branch.asJson,
+        "baseBranch" -> baseBranch.asJson,
+        "title" -> title.asJson,
         "rootSessionId" -> rootSessionId.asJson,
-        "detail"        -> detail.asJson,
-        "firstSeenMs"   -> firstSeenMs.asJson,
-        "lastNotifyMs"  -> lastNotifyMs.asJson
+        "detail" -> detail.asJson,
+        "firstSeenMs" -> firstSeenMs.asJson,
+        "lastNotifyMs" -> lastNotifyMs.asJson
       )
 
   end Entry
 
   object Entry:
+
     def fromJson(j: Json): Option[Entry] =
       val c = j.hcursor
       for
         recordId <- c.get[String]("recordId").toOption
-        branch   <- c.get[String]("branch").toOption
+        branch <- c.get[String]("branch").toOption
       yield Entry(
         kind = c.get[String]("kind").toOption.getOrElse("branch"),
         recordId = recordId,
@@ -110,12 +112,14 @@ object DoneBoardWatch:
         firstSeenMs = c.get[Long]("firstSeenMs").toOption.getOrElse(0L),
         lastNotifyMs = c.get[Long]("lastNotifyMs").toOption.getOrElse(0L)
       )
+    end fromJson
   end Entry
 
   final case class State(version: Int, lastScanMs: Long, entries: Map[String, Entry]):
+
     def toJson: Json =
       Json.obj(
-        "version"    -> version.asJson,
+        "version" -> version.asJson,
         "lastScanMs" -> lastScanMs.asJson,
         "entries" -> Json.fromJsonObject(
           JsonObject.fromMap(entries.toList.sortBy(_._1).map((k, e) => k -> e.toJson).toMap)
@@ -124,6 +128,7 @@ object DoneBoardWatch:
 
   object State:
     val empty: State = State(StateVersion, 0L, Map.empty)
+
     def fromJson(j: Json): Option[State] =
       val c = j.hcursor
       c.get[Long]("lastScanMs").toOption.map { lastScanMs =>
@@ -139,6 +144,7 @@ object DoneBoardWatch:
           entries
         )
       }
+    end fromJson
   end State
 
   /** Clean-tree readout for a still-present worktree (all readings fail-soft). */
@@ -148,9 +154,11 @@ object DoneBoardWatch:
   trait Port:
     def delegates: IO[List[DelegateRegistry.Record]]
     def liveSessionIds: IO[Set[String]]
+
     /** Clean-tree readout for a still-present worktree; None = unreadable (skip, never guess). */
     def treeRead(worktreePath: String, baseBranch: String, branch: String): Option[TreeRead]
     def worktreePresent(worktreePath: String): Boolean
+
     /** Fully-merged check of `branch` against `baseBranch`; None = unreadable. */
     def branchMerged(workspace: String, baseBranch: String, branch: String): Option[Boolean]
     def notifyRoot(sessionId: String, text: String): IO[Boolean]
@@ -163,33 +171,37 @@ object DoneBoardWatch:
   def fromResources(resources: AgentRuntimePort): Port = new Port:
     def delegates =
       IO.blocking(DelegateRegistry.list())
-        .handleErrorWith(e =>
-          logger.warn(s"[done-board-watch] registry read failed: ${e.getMessage}").as(Nil)
-        )
+        .handleErrorWith(e => logger.warn(s"[done-board-watch] registry read failed: ${e.getMessage}").as(Nil))
     def liveSessionIds = resources.agentRegistry.get.map(_.keySet)
     def worktreePresent(p: String) =
       scala.util.Try(os.isDir(os.Path(p))).toOption.getOrElse(false)
     def treeRead(worktreePath: String, baseBranch: String, branch: String) =
-      scala.util.Try {
-        val p = os.Path(worktreePath)
-        if !os.isDir(p) then None
-        else
-          GitWorktrees.dirtyPaths(p).map { dirty =>
-            TreeRead(
-              dirtyCount = dirty.size,
-              aheadOfBase = GitWorktrees.commitsAhead(p, baseBranch, branch),
-              lastActiveMs = GitWorktrees.headCommitEpoch(p).map(_ * 1000L).getOrElse(0L)
-            )
-          }
-      }.toOption.flatten
+      scala.util
+        .Try {
+          val p = os.Path(worktreePath)
+          if !os.isDir(p) then None
+          else
+            GitWorktrees.dirtyPaths(p).map { dirty =>
+              TreeRead(
+                dirtyCount = dirty.size,
+                aheadOfBase = GitWorktrees.commitsAhead(p, baseBranch, branch),
+                lastActiveMs = GitWorktrees.headCommitEpoch(p).map(_ * 1000L).getOrElse(0L)
+              )
+            }
+        }
+        .toOption
+        .flatten
     def branchMerged(workspace: String, baseBranch: String, branch: String) =
-      scala.util.Try {
-        val ws = os.Path(workspace)
-        for
-          tip     <- GitWorktrees.headShaOfBranch(ws, branch)
-          baseTip <- GitWorktrees.headShaOfBranch(ws, baseBranch)
-        yield tip == baseTip || GitWorktrees.isAncestor(ws, tip, baseTip).contains(true)
-      }.toOption.flatten
+      scala.util
+        .Try {
+          val ws = os.Path(workspace)
+          for
+            tip <- GitWorktrees.headShaOfBranch(ws, branch)
+            baseTip <- GitWorktrees.headShaOfBranch(ws, baseBranch)
+          yield tip == baseTip || GitWorktrees.isAncestor(ws, tip, baseTip).contains(true)
+        }
+        .toOption
+        .flatten
     def notifyRoot(sessionId: String, text: String) =
       DelegateNotify
         .inject(resources.agentRegistry, sessionId, text)
@@ -219,7 +231,7 @@ object DoneBoardWatch:
       if live.contains(r.id) then None
       else
         val branch = r.branch.getOrElse("")
-        val base   = r.baseBranch.getOrElse("")
+        val base = r.baseBranch.getOrElse("")
         // (a) done tree lingering: worktree present, clean, activity older than AgeMs.
         val treeItem = for
           wt <- r.worktree
@@ -229,9 +241,9 @@ object DoneBoardWatch:
           lastActive = math.max(r.createdAt, read.lastActiveMs)
           if now - lastActive > AgeMs
         yield
-          val key   = s"tree:${r.id}"
+          val key = s"tree:${r.id}"
           val prior = prev.get(key)
-          val ageH  = (now - lastActive) / 3600000L
+          val ageH = (now - lastActive) / 3600000L
           key -> ((
             Entry(
               kind = "tree",
@@ -256,10 +268,10 @@ object DoneBoardWatch:
               else false
             if !treeGone || !merged then None
             else
-              val key       = s"branch:${r.id}"
-              val prior     = prev.get(key)
+              val key = s"branch:${r.id}"
+              val prior = prev.get(key)
               val firstSeen = prior.map(_.firstSeenMs).getOrElse(now)
-              val ageH      = (now - firstSeen) / 3600000L
+              val ageH = (now - firstSeen) / 3600000L
               Some(
                 key -> ((
                   Entry(
@@ -276,16 +288,21 @@ object DoneBoardWatch:
                   now - firstSeen > AgeMs
                 ))
               )
+            end if
         treeItem.orElse(branchItem)
     }.toMap
 
   /** Root notice ([done-board] prefix = grep anchor; one aggregated message). */
   def message(items: List[Entry]): String =
     val sorted = items.sortBy(e => (e.kind, e.recordId))
-    val shown  = sorted.take(MaxItemsPerNotice)
-    val extra  = sorted.size - shown.size
+    val shown = sorted.take(MaxItemsPerNotice)
+    val extra = sorted.size - shown.size
     val lines = shown
-      .map(e => s"  - [${e.kind}] ${e.branch} — ${e.detail}${if e.title.isEmpty then "" else s" — task \"${e.title.take(80)}\""}")
+      .map(e =>
+        s"  - [${e.kind}] ${e.branch} — ${e.detail}${
+            if e.title.isEmpty then "" else s" — task \"${e.title.take(80)}\""
+          }"
+      )
       .mkString("\n")
     val extraPart = if extra > 0 then s"\n  … (+$extra more)" else ""
     s"""[done-board] ${sorted.size} finished delegate item(s) have been lingering for more than ${AgeMs / 3600000L}h:$lines$extraPart
@@ -302,10 +319,10 @@ object DoneBoardWatch:
         if throttled then IO.pure(Nil)
         else
           for
-            recs     <- port.delegates
-            live     <- port.liveSessionIds
-            detected =   detect(port, recs, live, now, prev.entries)
-            entries  =   detected.map { case (k, (e, _)) => k -> e }
+            recs <- port.delegates
+            live <- port.liveSessionIds
+            detected = detect(port, recs, live, now, prev.entries)
+            entries = detected.map { case (k, (e, _)) => k -> e }
             eligible = detected.collect {
               case (k, (e, true)) if e.lastNotifyMs == 0L || now - e.lastNotifyMs >= NotifyWindowMs => k -> e
             }
@@ -318,7 +335,7 @@ object DoneBoardWatch:
                   .traverse { case (root, items) =>
                     val list = items.toList
                     port.notifyRoot(root, message(list)).map {
-                      case true  => Some(s"$root: ${list.size} lingering finished item(s)")
+                      case true => Some(s"$root: ${list.size} lingering finished item(s)")
                       case false => None
                     }
                   }
@@ -333,6 +350,7 @@ object DoneBoardWatch:
               .whenA(next != prev)
               .handleErrorWith(e => logger.warn(s"[done-board-watch] state save failed: ${e.getMessage}").void)
           yield notices
+        end if
       }
     }
 

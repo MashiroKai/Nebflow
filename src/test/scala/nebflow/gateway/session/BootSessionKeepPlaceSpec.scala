@@ -43,7 +43,14 @@ class BootSessionKeepPlaceSpec extends CatsEffectSuite:
       f(tmp).guarantee(IO(PathUtil.setDataRoot(original)) *> IO(os.remove.all(tmp)))
 
   private def meta(id: String, name: String, updatedAt: Long, agent: Option[String]): SessionMeta =
-    SessionMeta(id = id, name = name, createdAt = updatedAt, updatedAt = updatedAt, hasUnread = false, agentName = agent)
+    SessionMeta(
+      id = id,
+      name = name,
+      createdAt = updatedAt,
+      updatedAt = updatedAt,
+      hasUnread = false,
+      agentName = agent
+    )
 
   /** Seed `_index.json` directly (bypassing create legs) to reach a precise boot state. */
   private def seedIndex(home: os.Path, activeId: String, sessions: List[SessionMeta]): IO[Unit] =
@@ -53,7 +60,7 @@ class BootSessionKeepPlaceSpec extends CatsEffectSuite:
       val payload = Map(
         "activeId" -> activeId.asJson,
         "sessions" -> sessions.asJson,
-        "folders"  -> List.empty[SessionMeta].asJson,
+        "folders" -> List.empty[SessionMeta].asJson
       ).asJson
       os.write.over(dir / "_index.json", payload.noSpaces)
     }
@@ -69,9 +76,11 @@ class BootSessionKeepPlaceSpec extends CatsEffectSuite:
         _ <- store.load
         _ <- store.ensureActiveAgentSession("Nebula")
         all <- store.listSessions
-      yield
-        assertEquals(all.map(_.id).toSet, Set("sess-a", "sess-b", "sess-c"),
-          "every Nebula-tagged conversation must survive boot (pre-fix: all but newest were pruned)")
+      yield assertEquals(
+        all.map(_.id).toSet,
+        Set("sess-a", "sess-b", "sess-c"),
+        "every Nebula-tagged conversation must survive boot (pre-fix: all but newest were pruned)"
+      )
     }
   }
 
@@ -110,7 +119,12 @@ class BootSessionKeepPlaceSpec extends CatsEffectSuite:
         assertEquals(claimed.id, "sess-y", "claim must adopt the ACTIVE agentless session (pre-fix: always the first)")
         assertEquals(claimed.agentName, Some("Nebula"))
         assertEquals(activeId, "sess-y", "adoption preserves the active id — no visible session change")
-        assertEquals(all.find(_.id == "sess-x").flatMap(_.agentName), None, "the sibling agentless session is untouched")
+        assertEquals(
+          all.find(_.id == "sess-x").flatMap(_.agentName),
+          None,
+          "the sibling agentless session is untouched"
+        )
+      end for
     }
   }
 

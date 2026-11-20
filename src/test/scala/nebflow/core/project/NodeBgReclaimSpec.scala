@@ -97,6 +97,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     val nodeSessions: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
     val turnCount: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
     @volatile var res: SharedResources = null
+
     /** death-watch 批 fixture 收尾：行对应真进程——杀后台进程 + 毁会话（幂等）。 */
     def cleanupBg: IO[Unit] =
       for
@@ -109,7 +110,6 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
             ShellSession.destroySession(sid).attempt.void
         }
       yield ()
-
 
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))

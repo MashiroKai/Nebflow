@@ -38,13 +38,15 @@ class BashToolForegroundSpec extends CatsEffectSuite:
 
   /** Query a background job through the tool face (same face the model uses). */
   private def query(jobId: String): IO[String] =
-    BashTool.call(
-      JsonObject("background_job_id" -> jobId.asJson, "timeout" -> 1.asJson),
-      ToolContext(projectRoot = "/tmp")
-    ).map {
-      case Right(out) => out
-      case Left(e) => fail(s"background query failed: ${e.message}")
-    }
+    BashTool
+      .call(
+        JsonObject("background_job_id" -> jobId.asJson, "timeout" -> 1.asJson),
+        ToolContext(projectRoot = "/tmp")
+      )
+      .map {
+        case Right(out) => out
+        case Left(e) => fail(s"background query failed: ${e.message}")
+      }
 
   /** Poll the query face until `want` appears or the deadline passes. */
   private def pollUntil(jobId: String, want: String, deadline: FiniteDuration): IO[String] =

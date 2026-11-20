@@ -487,9 +487,9 @@ class ConnGuardSpec extends CatsEffectSuite:
       case "GATEWAY_CONN_GUARD_TUNNEL_CHAINS_PER_IP_CAP" => Some("30")
       case "GATEWAY_CONN_GUARD_TUNNEL_FILES_PER_IP_CAP" => Some("40")
       case "GATEWAY_CONN_GUARD_TUNNEL_OTHER_PER_IP_CAP" => Some("50")
-      case "GATEWAY_CONN_GUARD_TUNNEL_TOTAL_CAP"  => Some("1200")
+      case "GATEWAY_CONN_GUARD_TUNNEL_TOTAL_CAP" => Some("1200")
       case "GATEWAY_CONN_GUARD_TUNNEL_WINDOW_SEC" => Some("junk")
-      case _                                       => None
+      case _ => None
     }
     assertEquals(o.tunnelPerIpCap, 120)
     assertEquals(o.tunnelChainsPerIpCap, Some(30))
@@ -510,11 +510,16 @@ class ConnGuardSpec extends CatsEffectSuite:
     val cfg = ConnGuardConfig.fromEnv(_ => None)
     assert(cfg.tunnelPerIpCap >= 4096, s"per-IP budget too tight for a cold console load: ${cfg.tunnelPerIpCap}")
     assert(cfg.tunnelTotalCap >= cfg.tunnelPerIpCap, "the cross-IP total must not be below one IP's budget")
-    assertEquals(cfg.tunnelChainsPerIpCap, Some(ConnGuardConfig.DefaultTunnelChainsPerIpCap),
-      "fromEnv supplies the chains-class production default")
+    assertEquals(
+      cfg.tunnelChainsPerIpCap,
+      Some(ConnGuardConfig.DefaultTunnelChainsPerIpCap),
+      "fromEnv supplies the chains-class production default"
+    )
     assert(cfg.tunnelChainsPerIpCap.exists(_ >= 1024), "the chains class must admit a bounded bulk load")
-    assert(cfg.tunnelChainsPerIpCap.exists(_ < cfg.tunnelPerIpCap),
-      "the chains class stays tighter than the general bucket (per-request cost is the highest)")
+    assert(
+      cfg.tunnelChainsPerIpCap.exists(_ < cfg.tunnelPerIpCap),
+      "the chains class stays tighter than the general bucket (per-request cost is the highest)"
+    )
 
   test("tunnel face: the chains class budget is its own bucket, not the general one"):
     val ip = "198.51.100.11"
@@ -538,8 +543,10 @@ class ConnGuardSpec extends CatsEffectSuite:
       assertEquals(s.tunnelChainsPerIpCap, 3)
       assertEquals(s.tunnelFilesPerIpCap, 2, "an unconfigured class reports the general budget")
       assertEquals(s.tunnelOtherPerIpCap, 2)
-      assert(ConnGuard.snapshotLine(s).contains("tunnelCaps=2/3/2/2"),
-        s"the snapshot line must carry the per-class caps: ${ConnGuard.snapshotLine(s)}")
+      assert(
+        ConnGuard.snapshotLine(s).contains("tunnelCaps=2/3/2/2"),
+        s"the snapshot line must carry the per-class caps: ${ConnGuard.snapshotLine(s)}"
+      )
       val tunnel = ConnGuard.healthJson(s, 0L).hcursor.downField("tunnel")
       assertEquals(tunnel.get[Int]("chainsPerIpCap").toOption, Some(3))
       assertEquals(tunnel.get[Int]("filesPerIpCap").toOption, Some(2))

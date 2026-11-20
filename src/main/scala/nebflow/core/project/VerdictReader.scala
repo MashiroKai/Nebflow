@@ -55,7 +55,7 @@ object VerdictReader:
     firstLine match
       case VerdictRe("PASS") => Some(Verdict.Pass)
       case VerdictRe("FAIL") => Some(failVerdict(resultText))
-      case _                 => None
+      case _ => None
 
   /** 解析 verify 最终输出：pass/fail 判定（§2.3 四态表）。 */
   def parse(resultText: String): Verdict =

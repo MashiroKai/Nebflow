@@ -57,8 +57,7 @@ class ChildReportRoutingSpec extends FunSuite:
       after <- IO.blocking(MailboxDrain.mailboxHeldCount("parent"))
     yield (held, afterHeld, rest, after)
     val (held, afterHeld, rest, after) = run.unsafeRunSync()
-    assertEquals(held._1.map(_.payload), List("第一段进度"),
-      "进度件在边界放行（不打断在飞回合，但不占屏障槽）；真批次结果留箱等齐")
+    assertEquals(held._1.map(_.payload), List("第一段进度"), "进度件在边界放行（不打断在飞回合，但不占屏障槽）；真批次结果留箱等齐")
     assertEquals(held._2, 1, "留箱 = 唯一拷贝在盘上（计入徽标深度），不是丢弃")
     assertEquals(rest._1.map(_.source), List("delegate"), "批次齐后结果照常注入")
     assertEquals(after, 0, "取走后箱空")
@@ -101,11 +100,11 @@ class ChildReportRoutingSpec extends FunSuite:
       // 中间轮（continues = true, 带 report 块）⇒ 一件进度
       _ <- ChildReport.body("<report>中间进度</report>", continues = true) match
         case Some(body) => progress("child-report:child:1", body)
-        case None       => IO.unit
+        case None => IO.unit
       // 终态轮（continues = false）⇒ 结构上不产出进度（正文只走 result channel）
       _ <- ChildReport.body("<report>最终结论</report>", continues = false) match
         case Some(body) => progress("child-report:child:2", body)
-        case None       => IO.unit
+        case None => IO.unit
       got <- drainedBodies()
     yield got
     assertEquals(run.unsafeRunSync(), List("中间进度"), "同一条消息绝不两路都投")
@@ -140,3 +139,4 @@ class ChildReportRoutingSpec extends FunSuite:
     yield got
     assertEquals(run.unsafeRunSync(), List("一", "二", "三"), "3 条独立消息 ⇒ 恰好 3 件，重投零放大")
   }
+end ChildReportRoutingSpec

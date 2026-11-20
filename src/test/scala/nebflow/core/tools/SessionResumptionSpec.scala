@@ -399,19 +399,21 @@ class SessionResumptionSpec extends CatsEffectSuite:
       // DelegateWakeLeg 的执行窗重建按行取数（无行 = 无法唤醒的诚实拒绝）。
       // 夹具补播种无 runId 的 legacy 行（recordTask 契约禁 runId 行直写），
       // 使「冻结 → 面板唤醒」可达性与生产行形态一致。
-      _ <- resources.subAgentTaskStore.recordTask(SubAgentTask(
-        taskId = id,
-        parentSessionId = "parent",
-        agentName = "nebflow",
-        prompt = "original continuation",
-        description = "original continuation",
-        status = "running",
-        retryCount = 0,
-        spawnedAt = System.currentTimeMillis(),
-        completedAt = None,
-        lastError = None,
-        source = "delegate"
-      ))
+      _ <- resources.subAgentTaskStore.recordTask(
+        SubAgentTask(
+          taskId = id,
+          parentSessionId = "parent",
+          agentName = "nebflow",
+          prompt = "original continuation",
+          description = "original continuation",
+          status = "running",
+          retryCount = 0,
+          spawnedAt = System.currentTimeMillis(),
+          completedAt = None,
+          lastError = None,
+          source = "delegate"
+        )
+      )
       _ <- seedTranscript(resources, id, List("saved original task", "saved partial result"))
       result <- mailToDelegate(resources, failing, "parent", id, "continue with the wiring")
       _ = assert(result.toOption.exists(_.contains("MANUAL_RECOVERY_REQUIRED")), result.toString)

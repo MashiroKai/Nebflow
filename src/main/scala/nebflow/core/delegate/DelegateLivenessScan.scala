@@ -74,5 +74,6 @@ object DelegateLivenessScan:
       "preFixRunningIds" -> preFix.map(_.id).sorted.asJson
     )
     println(out.noSpaces)
+  end main
 
 end DelegateLivenessScan

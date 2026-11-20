@@ -78,48 +78,49 @@ object PluginSourceCheck:
   // ── 类型面（全部宽容解析；安装强依赖字段在 Install 层判）────────────
 
   final case class IndexEntry(
-      id: String,
-      latest: Option[String],
-      sequence: Option[Long],
-      manifest: Option[String]
+    id: String,
+    latest: Option[String],
+    sequence: Option[Long],
+    manifest: Option[String]
   )
 
   final case class OfficialIndex(
-      schema: Int,
-      sequence: Option[Long],
-      updatedAt: Option[String],
-      minCompatibleEngine: Option[String],
-      plugins: List[IndexEntry]
+    schema: Int,
+    sequence: Option[Long],
+    updatedAt: Option[String],
+    minCompatibleEngine: Option[String],
+    plugins: List[IndexEntry]
   ):
     def entry(id: String): Option[IndexEntry] = plugins.find(_.id == id)
 
   final case class Artifact(
-      format: Option[String],
-      sizeBytes: Option[Long],
-      sha256: Option[String],
-      digest: Option[String],
-      url: Option[String],
-      mirror: Option[String]
+    format: Option[String],
+    sizeBytes: Option[Long],
+    sha256: Option[String],
+    digest: Option[String],
+    url: Option[String],
+    mirror: Option[String]
   ):
+
     /** P2 安装可用性：zip 格式（缺省视为 zip——唯一已知格式）+ 下载/双值校验三字段齐备。 */
     def usableForZipInstall: Boolean =
       (format.isEmpty || format.exists(_.equalsIgnoreCase("zip"))) &&
         url.exists(_.trim.nonEmpty) && sha256.exists(_.trim.nonEmpty) && digest.exists(_.trim.nonEmpty)
 
   final case class VersionEntry(
-      version: String,
-      publishedAt: Option[String],
-      notesUrl: Option[String],
-      minEngine: Option[String],
-      manifestSchema: Option[String],
-      artifacts: List[Artifact]
+    version: String,
+    publishedAt: Option[String],
+    notesUrl: Option[String],
+    minEngine: Option[String],
+    manifestSchema: Option[String],
+    artifacts: List[Artifact]
   )
 
   final case class VersionManifest(
-      schema: Int,
-      id: Option[String],
-      sequence: Option[Long],
-      versions: List[VersionEntry]
+    schema: Int,
+    id: Option[String],
+    sequence: Option[Long],
+    versions: List[VersionEntry]
   )
 
   // ── 解析（纯函数；schema=1 门 + 宽容降级）──────────────────────
@@ -208,6 +209,7 @@ object PluginSourceCheck:
 
   /** 读端点失败清单：`(url, reason)` 有序——render 给用户的「试过哪些端点」证据面。 */
   final case class Unreachable(tried: List[(String, String)]):
+
     def render: String =
       s"official plugin source unreachable — tried: " +
         tried.map((u, r) => s"$u ($r)").mkString("; ")
@@ -240,7 +242,7 @@ object PluginSourceCheck:
             case Right(raw) =>
               parse(raw) match
                 case Some(v) => IO.pure(Right((v, url)))
-                case None    => go(tail, tried :+ (url -> "unparseable or schema not supported"))
+                case None => go(tail, tried :+ (url -> "unparseable or schema not supported"))
             case Left(reason) => go(tail, tried :+ (url -> reason))
           }
     go(urls, Nil)

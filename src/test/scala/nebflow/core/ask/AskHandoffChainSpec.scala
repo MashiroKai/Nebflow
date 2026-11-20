@@ -82,7 +82,9 @@ final class AskHandoffChainSpec extends CatsEffectSuite:
     "expected" -> "合并后的 README + 构建结果".asJson
   )
 
-  test("H1: a cross-file request produces a structured handoff the main session receives, and the panel frame is visible") {
+  test(
+    "H1: a cross-file request produces a structured handoff the main session receives, and the panel frame is visible"
+  ) {
     val run = withAskServices("main-sess-1").flatMap { case (binding, delivered, frames, teardown) =>
       for
         res <- SendMessageToMainChatTool.call(crossFileInput, ctxFor(binding.id, os.pwd.toString, frames))

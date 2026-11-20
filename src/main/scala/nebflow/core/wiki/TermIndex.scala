@@ -37,6 +37,7 @@ final class TermIndex:
 
   /** vaultKey → (rel → 指纹 + 已解析词条) */
   private val state = new AtomicReference[Map[String, Map[String, FileEntry]]](Map.empty)
+
   /** vaultKey → 累计重解析次数（观测面：稳态下应停止增长） */
   private val reparsedTotal = new AtomicReference[Map[String, Long]](Map.empty)
 
@@ -47,7 +48,12 @@ final class TermIndex:
    * @param skipRels 需要剪掉的子 vault 根（vault 相对路径）
    * @param name     查询键（词条名或别名，大小写不敏感）
    */
-  def lookup(vaultKey: String, vault: os.Path, skipRels: Set[String], name: String): IO[(WikiIndex.TermSelection, Int)] =
+  def lookup(
+    vaultKey: String,
+    vault: os.Path,
+    skipRels: Set[String],
+    name: String
+  ): IO[(WikiIndex.TermSelection, Int)] =
     IO.blocking {
       val previous = state.get().getOrElse(vaultKey, Map.empty)
       val (next, reparsed, changed) = refresh(vault, skipRels, previous)
@@ -55,8 +61,7 @@ final class TermIndex:
       // 重解析数是 0，若只认重解析数，被删文件的条目会永远留在表里（TI-5 抓到的
       // 真 bug：删文件后仍能查到已不存在的词条）。
       if changed then state.set(state.get() + (vaultKey -> next))
-      if reparsed > 0 then
-        reparsedTotal.updateAndGet(m => m + (vaultKey -> (m.getOrElse(vaultKey, 0L) + reparsed)))
+      if reparsed > 0 then reparsedTotal.updateAndGet(m => m + (vaultKey -> (m.getOrElse(vaultKey, 0L) + reparsed)))
       val terms = next.valuesIterator.flatMap(_.terms).toList
       (WikiIndex.selectTerm(name, terms), reparsed)
     }
@@ -67,7 +72,11 @@ final class TermIndex:
     (entries.size, entries.valuesIterator.map(_.terms.size).sum, reparsedTotal.get().getOrElse(vaultKey, 0L))
 
   /** 走查 + 指纹对账；返回新快照、实际重解析的文件数、条目集合是否变化。 */
-  private def refresh(vault: os.Path, skipRels: Set[String], previous: Map[String, FileEntry]): (Map[String, FileEntry], Int, Boolean) =
+  private def refresh(
+    vault: os.Path,
+    skipRels: Set[String],
+    previous: Map[String, FileEntry]
+  ): (Map[String, FileEntry], Int, Boolean) =
     if !os.isDir(vault) then (Map.empty, 0, previous.nonEmpty)
     else
       val next = scala.collection.mutable.LinkedHashMap.empty[String, FileEntry]
@@ -90,7 +99,7 @@ final class TermIndex:
       try
         val parsed = WikiIndex.parseDoc(rel, os.read(f))
         WikiIndex.termsOf(rel, parsed)
-      catch case _: Exception => Nil   // 读失败 = 该文件无词条（下轮指纹不变则不再重试）
+      catch case _: Exception => Nil // 读失败 = 该文件无词条（下轮指纹不变则不再重试）
 
   /** 深度/文件数有界的走查（与 `WikiService.listVaultFiles` 同预算，剪掉子 vault）。 */
   private def eachDocFile(vault: os.Path, skipRels: Set[String])(f: os.Path => Unit): Unit =
@@ -108,6 +117,10 @@ final class TermIndex:
             f(p)
         }
     walk(vault, 0)
+
+  end eachDocFile
+
+end TermIndex
 
 object TermIndex:
   /** 词条只可能声明在 markdown 里（`.html` 无块锚段落语义 ⇒ `termsOf` 恒空）。 */

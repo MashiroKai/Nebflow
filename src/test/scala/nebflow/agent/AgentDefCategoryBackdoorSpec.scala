@@ -57,9 +57,7 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
         AgentCore.imageGenSealedStrip
     else face
 
-  /**
-   * legacyFixedTools 的 category=team 分支产物：BaseTools + Mail ++ TeamTaskTools。
-   */
+  /** legacyFixedTools 的 category=team 分支产物：BaseTools + Mail ++ TeamTaskTools。 */
   private val LegacyTeamFace: Set[String] = AgentCore.BaseTools + "Mail" ++ AgentCore.TeamTaskTools
 
   /**

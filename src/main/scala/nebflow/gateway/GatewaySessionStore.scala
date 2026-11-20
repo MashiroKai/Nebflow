@@ -126,16 +126,21 @@ class GatewaySessionStore private (
   // boot ignores the entire old snapshot until a new snapshot has been saved.
   private def revokeDurably(change: IO[Int]): IO[Int] = revocationLock.permit.use { _ =>
     val marker = persistenceFile.map(GatewaySessionStore.revocationMarker)
-    val prepare = marker.fold(IO.unit)(f => IO.blocking {
-      os.makeDir.all(f / os.up)
-      val channel = FileChannel.open(f.toNIO, StandardOpenOption.CREATE, StandardOpenOption.WRITE)
-      try channel.force(true) finally channel.close()
-      GatewaySessionStore.syncDirectory(f / os.up)
-    })
-    val complete = marker.fold(IO.unit)(f => IO.blocking {
-      os.remove(f)
-      GatewaySessionStore.syncDirectory(f / os.up)
-    })
+    val prepare = marker.fold(IO.unit)(f =>
+      IO.blocking {
+        os.makeDir.all(f / os.up)
+        val channel = FileChannel.open(f.toNIO, StandardOpenOption.CREATE, StandardOpenOption.WRITE)
+        try channel.force(true)
+        finally channel.close()
+        GatewaySessionStore.syncDirectory(f / os.up)
+      }
+    )
+    val complete = marker.fold(IO.unit)(f =>
+      IO.blocking {
+        os.remove(f)
+        GatewaySessionStore.syncDirectory(f / os.up)
+      }
+    )
     prepare *> change.flatTap(_ => persistNow *> complete)
   }
 
@@ -150,20 +155,22 @@ class GatewaySessionStore private (
   /** Structural writes report errors to the caller rather than claiming durable revocation. */
   private def persistNow: IO[Unit] = persistenceFile match
     case None => IO.unit
-    case Some(f) => IO.blocking {
-      snapshotLock.synchronized {
-        val rows = sessionsRef.get.unsafeRunSync()
-        val tmp = f / os.up / os.RelPath(f.last + ".tmp")
-        os.write.over(tmp, io.circe.syntax.EncoderOps(rows.values.toVector).asJson.noSpaces, createFolders = true)
-        if !scala.util.Properties.isWin then
-          java.nio.file.Files
-            .setPosixFilePermissions(tmp.toNIO, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"))
-        val channel = FileChannel.open(tmp.toNIO, StandardOpenOption.WRITE)
-        try channel.force(true) finally channel.close()
-        os.move(tmp, f, replaceExisting = true, atomicMove = true)
-        GatewaySessionStore.syncDirectory(f / os.up)
+    case Some(f) =>
+      IO.blocking {
+        snapshotLock.synchronized {
+          val rows = sessionsRef.get.unsafeRunSync()
+          val tmp = f / os.up / os.RelPath(f.last + ".tmp")
+          os.write.over(tmp, io.circe.syntax.EncoderOps(rows.values.toVector).asJson.noSpaces, createFolders = true)
+          if !scala.util.Properties.isWin then
+            java.nio.file.Files
+              .setPosixFilePermissions(tmp.toNIO, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"))
+          val channel = FileChannel.open(tmp.toNIO, StandardOpenOption.WRITE)
+          try channel.force(true)
+          finally channel.close()
+          os.move(tmp, f, replaceExisting = true, atomicMove = true)
+          GatewaySessionStore.syncDirectory(f / os.up)
+        }
       }
-    }
 
   /** Daemon lifecycle hook (tests shut their store down; assemblies live for the process). */
   def shutdown(): Unit = flusher.foreach(_.shutdownNow())
@@ -315,7 +322,8 @@ object GatewaySessionStore:
     // platform force the files; directory metadata durability is OS-dependent.
     if !scala.util.Properties.isWin then
       val channel = FileChannel.open(dir.toNIO, StandardOpenOption.READ)
-      try channel.force(true) finally channel.close()
+      try channel.force(true)
+      finally channel.close()
 
   /**
    * Absolute TTL: the 30d hard ceiling (session TTL batch 2026-10-21, was

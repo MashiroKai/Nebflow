@@ -53,15 +53,50 @@ object PdfAsk:
   private val MinTermLength: Int = 2
 
   private val Stopwords: Set[String] = Set(
-    "the", "and", "for", "with", "that", "this", "from", "what", "which", "where", "when", "how",
-    "why", "are", "was", "were", "does", "did", "is", "in", "on", "at", "to", "of", "it", "its",
-    "as", "by", "be", "or", "an", "a", "page", "pdf", "please", "tell", "about", "into", "than"
+    "the",
+    "and",
+    "for",
+    "with",
+    "that",
+    "this",
+    "from",
+    "what",
+    "which",
+    "where",
+    "when",
+    "how",
+    "why",
+    "are",
+    "was",
+    "were",
+    "does",
+    "did",
+    "is",
+    "in",
+    "on",
+    "at",
+    "to",
+    "of",
+    "it",
+    "its",
+    "as",
+    "by",
+    "be",
+    "or",
+    "an",
+    "a",
+    "page",
+    "pdf",
+    "please",
+    "tell",
+    "about",
+    "into",
+    "than"
   )
 
   /** Question -> terms (deterministic, language-agnostic beyond the stopword list). */
   def terms(question: String): List[String] =
-    question
-      .toLowerCase
+    question.toLowerCase
       .split("[^\\p{L}\\p{N}]+")
       .iterator
       .map(_.trim)
@@ -102,12 +137,19 @@ object PdfAsk:
       .sortBy(c => (-c.score, c.page))
       .take(budget)
 
+  end rankIndexed
+
   /**
    * Rank pages by term overlap in page bodies already in hand. Retained for the
    * legacy/in-memory case (a caller that has the text anyway); the ask path uses
    * [[rankIndexed]] so that it never needs it.
    */
-  def rankAll(pageTexts: List[(Int, String)], notes: Map[Int, String], question: String, budget: Int = MaxPagesPerAsk): List[Candidate] =
+  def rankAll(
+    pageTexts: List[(Int, String)],
+    notes: Map[Int, String],
+    question: String,
+    budget: Int = MaxPagesPerAsk
+  ): List[Candidate] =
     val ts = terms(question)
     pageTexts
       .map { case (n, text) =>
@@ -123,13 +165,21 @@ object PdfAsk:
       .sortBy(c => (-c.score, c.page))
       .take(budget)
 
+  end rankAll
+
   /** Trim a page's Markdown to the per-page character cap. */
   private def excerptOf(page: Int, markdown: String): (String, Boolean) =
     if markdown.length <= MaxCharsPerPage then (markdown, false)
     else (markdown.take(MaxCharsPerPage), true)
 
   /** The context block handed to an answer: cited excerpts, nothing else. */
-  def render(question: String, excerpts: List[Excerpt], manifest: PdfManifest, leftOut: Int, notes: Map[Int, String]): String =
+  def render(
+    question: String,
+    excerpts: List[Excerpt],
+    manifest: PdfManifest,
+    leftOut: Int,
+    notes: Map[Int, String]
+  ): String =
     val sb = new StringBuilder
     sb.append(s"PDF: ${manifest.sourceName} (sha256 ${manifest.sourceSha256.take(12)}…, ${manifest.pageCount} pages)\n")
     sb.append(s"Question: $question\n")
@@ -138,18 +188,20 @@ object PdfAsk:
       sb.append(s"Relevant pages (cite these numbers):\n")
       var used = 0
       for e <- excerpts if used < MaxCharsPerAsk do
-        val body = if e.markdown.length > MaxCharsPerAsk - used then e.markdown.take(MaxCharsPerAsk - used) else e.markdown
+        val body =
+          if e.markdown.length > MaxCharsPerAsk - used then e.markdown.take(MaxCharsPerAsk - used) else e.markdown
         used += body.length
         sb.append(s"\n--- page ${e.page} ---\n")
         sb.append(body)
         if !body.endsWith("\n") then sb.append("\n")
-        if e.truncated then
-          sb.append(s"[page ${e.page} was truncated at $MaxCharsPerPage characters]\n")
+        if e.truncated then sb.append(s"[page ${e.page} was truncated at $MaxCharsPerPage characters]\n")
         if notes.contains(e.page) then sb.append(s"[the reader left a note on page ${e.page}]\n")
     if leftOut > 0 then
       sb.append(s"\n[$leftOut further page(s) matched the question but were not read (budget $MaxPagesPerAsk pages)]\n")
     sb.append("[This is an excerpt set, not the whole document. Cite page numbers.]\n")
     sb.toString
+
+  end render
 
   /** JSON shape of one excerpt (page number first — the citation). */
   def excerptJson(e: Excerpt): Json = Json.obj(
@@ -249,4 +301,6 @@ object PdfAsk:
             "context" -> render(question, excerpts, manifest, leftOut, noteMap).asJson
           )
         yield Right(result)
+        end for
     }
+end PdfAsk

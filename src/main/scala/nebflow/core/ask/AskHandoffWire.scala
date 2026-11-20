@@ -18,9 +18,11 @@ import nebflow.core.AskHandoffPort
  * ═══════════════════════════════════════════════════════════════════════════ */
 object AskHandoffWire:
 
-  /** 结构化四件 + 身份四件（leg/会话/文件）。
+  /**
+   * 结构化四件 + 身份四件（leg/会话/文件）。
    *  gitviz 批（2026-11-19 第二轮）：`git` 非空时同时携带分支清单/目标线/意图（机器
-   *  可读面与面板帧同一单源 —— 面板多选合并与问答交办走同一份 request）。 */
+   *  可读面与面板帧同一单源 —— 面板多选合并与问答交办走同一份 request）。
+   */
   final case class Handoff(
     askSessionId: String,
     file: String,
@@ -80,7 +82,8 @@ object AskHandoffWire:
     h.git match
       // gitviz：摘要要说清「哪几支 → 哪条线」（作者口径：分支清单 · 目标线 · 意图）
       case Some(g) =>
-        val gv = s"${intentLabel(g.intent)} ${g.branches.mkString("、")} → ${if g.target.nonEmpty then g.target else "（未定目标线）"}"
+        val gv =
+          s"${intentLabel(g.intent)} ${g.branches.mkString("、")} → ${if g.target.nonEmpty then g.target else "（未定目标线）"}"
         val notes = if g.notes.isEmpty then "" else s" · ${g.notes.length} 条备注"
         head + (if head.contains(g.target) || g.target.isEmpty then "" else s"（$gv$notes）")
       case None => head + pathNote + tail
@@ -122,6 +125,8 @@ object AskHandoffWire:
     sb ++= s"· 来源腿：${h.leg}\n"
     sb ++= s"\n（续聊该问答会话：Mail(address=\"$mailAddress\")）"
     sb.result()
+
+  end injectedBody
 
   /**
    * 面板状态帧（ask 会话 WS 面）：`askHandoffAck`。两条腿（工具腿 / dock 腿）同帧，

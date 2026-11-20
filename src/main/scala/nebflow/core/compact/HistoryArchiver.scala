@@ -53,8 +53,10 @@ object HistoryArchiver:
 
   private val logger = NebflowLogger.forName("nebflow.compaction.archiver")
 
-  /** 生产默认落盘根（GatewayMain:673 装配点同值；默认根判别自开的基准）。
-   *  def 而非 val：PathUtil.dataRoot 是测试换根缝，须每次求值。 */
+  /**
+   * 生产默认落盘根（GatewayMain:673 装配点同值；默认根判别自开的基准）。
+   *  def 而非 val：PathUtil.dataRoot 是测试换根缝，须每次求值。
+   */
   def defaultSessionsRoot: os.Path = PathUtil.dataRoot / "sessions"
 
   /**
@@ -68,9 +70,11 @@ object HistoryArchiver:
 
     /** db 影子面句柄（None = 未接线/自开失败 ⇒ db 腿全部 no-op）。 */
     private val dbHandle: Option[DbHandle] = db.orElse(
-      Option.when(sessionsRoot == defaultSessionsRoot)(
-        DbHost.openBestEffort(PathUtil.dataRoot.toNIO)
-      ).flatten
+      Option
+        .when(sessionsRoot == defaultSessionsRoot)(
+          DbHost.openBestEffort(PathUtil.dataRoot.toNIO)
+        )
+        .flatten
     )
 
     def archiveCompaction(
@@ -81,37 +85,39 @@ object HistoryArchiver:
       after: List[Message],
       mode: String,
       extra: Map[String, String]
-    ): IO[Either[String, CompactionArchive]] = IO.blocking {
-      try
-        val now = Instant.now()
-        val ts = formatTimestamp(now)
-        val dir = sessionsRoot / sessionId / "compaction"
-        os.makeDir.all(dir)
+    ): IO[Either[String, CompactionArchive]] = IO
+      .blocking {
+        try
+          val now = Instant.now()
+          val ts = formatTimestamp(now)
+          val dir = sessionsRoot / sessionId / "compaction"
+          os.makeDir.all(dir)
 
-        val prefix = s"$ts"
-        val beforeFile = dir / s"$prefix-before.json"
-        val afterFile = dir / s"$prefix-after.json"
+          val prefix = s"$ts"
+          val beforeFile = dir / s"$prefix-before.json"
+          val afterFile = dir / s"$prefix-after.json"
 
-        // --- Raw JSON dumps (the only artifacts this archiver writes) ---
-        os.write.over(beforeFile, before.asJson.spaces2)
-        os.write.over(afterFile, after.asJson.spaces2)
+          // --- Raw JSON dumps (the only artifacts this archiver writes) ---
+          os.write.over(beforeFile, before.asJson.spaces2)
+          os.write.over(afterFile, after.asJson.spaces2)
 
-        Right(
-          CompactionArchive(
-            sessionDir = dir.toString,
-            beforeJsonPath = beforeFile.toString,
-            afterJsonPath = afterFile.toString
+          Right(
+            CompactionArchive(
+              sessionDir = dir.toString,
+              beforeJsonPath = beforeFile.toString,
+              afterJsonPath = afterFile.toString
+            )
           )
-        )
-      catch case e: Throwable => Left(e.getMessage)
-    }.flatMap { res =>
-      // db 影子腿（C7）：旧档写成功后补写快照 + 压缩点位 + 读回校验；任何 db
-      // 故障 ⇒ WARN、返回值语义不变（旧档仍是主读面，best-effort 铁律 0.1）。
-      // 元信息（sessionName/agentName/mode/extra）留旧档侧——第一阶边界。
-      res match
-        case Right(_) => shadowToDb(sessionId, before, after).as(res)
-        case Left(_)  => IO.pure(res)
-    }
+        catch case e: Throwable => Left(e.getMessage)
+      }
+      .flatMap { res =>
+        // db 影子腿（C7）：旧档写成功后补写快照 + 压缩点位 + 读回校验；任何 db
+        // 故障 ⇒ WARN、返回值语义不变（旧档仍是主读面，best-effort 铁律 0.1）。
+        // 元信息（sessionName/agentName/mode/extra）留旧档侧——第一阶边界。
+        res match
+          case Right(_) => shadowToDb(sessionId, before, after).as(res)
+          case Left(_) => IO.pure(res)
+      }
 
     /** 单份快照落 db + 读回校验（不符/失败 ⇒ WARN，返回 db 内引用位或 None）。 */
     private def putSnapshot(h: DbHandle, sessionId: String, label: String, content: String): IO[Option[String]] =
@@ -146,8 +152,7 @@ object HistoryArchiver:
           putSnapshot(h, sessionId, "after", after.asJson.spaces2).flatMap { aRef =>
             (bRef, aRef) match
               case (Some(b), Some(a)) =>
-                h.appendCompactPoint(sessionId, b, a,
-                  tokens = (before.size + after.size).toLong).attempt.flatMap {
+                h.appendCompactPoint(sessionId, b, a, tokens = (before.size + after.size).toLong).attempt.flatMap {
                   case Left(e) =>
                     logger.warn(s"db compactPoint append failed for $sessionId: ${e.getMessage}")
                   case Right(_) => IO.unit

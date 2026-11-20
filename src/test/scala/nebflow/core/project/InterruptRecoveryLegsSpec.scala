@@ -61,6 +61,7 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
 
   private final class RecordingLlm:
     val requests: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
     val handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[nebflow.shared.LlmResponse] =
         IO.raiseError(new RuntimeException("send not expected (streaming leg only)"))
@@ -136,6 +137,8 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(originalRoot)
       os.remove.all(tmp)
       os.remove.all(seat)
+
+  end withFx
 
   private def mkTask(id: String, parent: String, status: String = "running"): SubAgentTask =
     SubAgentTask(
@@ -316,6 +319,7 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
             seen.mkString("\n====")
         )
       yield ()
+      end for
     }
   }
 
@@ -342,7 +346,10 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
         _ <- IO(DelegateRegistry.markCancelRequested(child, "the user panel"))
         _ <- fx.sessionStore.saveMessagesForSession(
           child,
-          List(Message(MessageRole.User, Left("V2_BRIEF")), Message(MessageRole.Assistant, Left("V2_WORK before cancel")))
+          List(
+            Message(MessageRole.User, Left("V2_BRIEF")),
+            Message(MessageRole.Assistant, Left("V2_WORK before cancel"))
+          )
         )
         report1 <- sweepWith(fx)
         row <- fx.store.loadTasks(parent.id).map(_.find(_.taskId == child).get)
@@ -391,6 +398,7 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
             "any new revival leg must consult the same tombstone"
         )
       yield ()
+      end for
     }
   }
 
@@ -428,7 +436,10 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
         _ <- IO(DelegateRegistry.put(mkRecord(child, parent.id, fx.seat.toString)))
         _ <- fx.sessionStore.saveMessagesForSession(
           child,
-          List(Message(MessageRole.User, Left("V3_NODE_BRIEF")), Message(MessageRole.Assistant, Left("V3_PRECRASH_DONE step")))
+          List(
+            Message(MessageRole.User, Left("V3_NODE_BRIEF")),
+            Message(MessageRole.Assistant, Left("V3_PRECRASH_DONE step"))
+          )
         )
         // 崩溃前的盘面：接收方已把消息落进 injection-queues.json（AgentProcessing:1650）。
         _ <- nebflow.agent.CompactionQueueStore.save(
@@ -458,6 +469,7 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
           "V3a: node context must be complete after restart (pre-crash transcript intact)"
         )
       yield ()
+      end for
     }
 
     // ── V3b：fire-and-forget 窗口 —— 投递成功但盘上零字节 ──
@@ -474,14 +486,16 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
           _ + (sid -> AgentRecord(sid, ref, AgentKind.Delegate, sid))
         )
         _ <- store.mutate(s =>
-          s.copy(nodes = s.nodes + (nodeId -> NodeDef(
-            id = nodeId,
-            name = "n-v3b",
-            agent = "general",
-            status = NodeLifecycle.Running,
-            sessionRef = Some(sid),
-            createdAt = System.currentTimeMillis() - 1000L
-          )))
+          s.copy(nodes =
+            s.nodes + (nodeId -> NodeDef(
+              id = nodeId,
+              name = "n-v3b",
+              agent = "general",
+              status = NodeLifecycle.Running,
+              sessionRef = Some(sid),
+              createdAt = System.currentTimeMillis() - 1000L
+            ))
+          )
         )
         engine = new NodeEngine(
           store,
@@ -502,7 +516,9 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
         transcript <- fx.sessionStore.loadMessagesForSession(sid).attempt.map(_.getOrElse(Nil))
         node <- store.getNode(nodeId)
         probeSeen <- seen.get
-        ledgerEntries <- NodeMessageLedger.entries(ws.toString).map(_.filter(_.text.contains("V3_INFLIGHT_INSTRUCTION")))
+        ledgerEntries <- NodeMessageLedger
+          .entries(ws.toString)
+          .map(_.filter(_.text.contains("V3_INFLIGHT_INSTRUCTION")))
         ledgered = ledgerEntries.nonEmpty
         durable =
           queue.exists(q => q.imms.exists(_.text.contains("V3_INFLIGHT_INSTRUCTION"))) ||
@@ -519,7 +535,8 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
           (Seq(
             s"sendNodeMessage result = $res",
             s"probe actor received = ${probeSeen.size} message(s) (stands for: the receiving process died before persisting)",
-            s"durable replay surfaces after a SUCCESSFUL delivery: injection-queues=${queue.exists(q => q.imms.exists(_.text.contains("V3_INFLIGHT_INSTRUCTION")))}, transcript=${transcript.exists(_.textContent.contains("V3_INFLIGHT_INSTRUCTION"))}, node.task=${node.exists(_.task.exists(_.contains("V3_INFLIGHT_INSTRUCTION")))}, node-message-ledger=$ledgered",
+            s"durable replay surfaces after a SUCCESSFUL delivery: injection-queues=${queue
+                .exists(q => q.imms.exists(_.text.contains("V3_INFLIGHT_INSTRUCTION")))}, transcript=${transcript.exists(_.textContent.contains("V3_INFLIGHT_INSTRUCTION"))}, node.task=${node.exists(_.task.exists(_.contains("V3_INFLIGHT_INSTRUCTION")))}, node-message-ledger=$ledgered",
             s"ledger rows for this message = ${ledgerEntries.map(e => s"${e.id}=${e.event}").mkString(", ")}",
             s"flow-map-events trace lines (NOT replayed by anyone — audit D5) = ${eventLines.size}"
           ) ++ eventLines.map(l => s"  event: $l"))*
@@ -541,6 +558,7 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
           "V3b(STRICT, post-C-2): the ledger row is written by the SENDER before the tell — no other surface may be the only witness"
         )
       yield ()
+      end for
     }
 
     // ── V3c（C-2 新增）：台账面**确实**被重启回放腿消费 —— 幂等证明 ──
@@ -557,14 +575,16 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
         probe <- fx.system.spawn(probeBehavior(probeSeen), "v3c-node-probe")
         _ <- fx.resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref = probe, AgentKind.Delegate, sid)))
         _ <- store.mutate(s =>
-          s.copy(nodes = s.nodes + (nodeId -> NodeDef(
-            id = nodeId,
-            name = "n-v3c",
-            agent = "general",
-            status = NodeLifecycle.Running,
-            sessionRef = Some(sid),
-            createdAt = System.currentTimeMillis() - 1000L
-          )))
+          s.copy(nodes =
+            s.nodes + (nodeId -> NodeDef(
+              id = nodeId,
+              name = "n-v3c",
+              agent = "general",
+              status = NodeLifecycle.Running,
+              sessionRef = Some(sid),
+              createdAt = System.currentTimeMillis() - 1000L
+            ))
+          )
         )
         _ <- fx.sessionStore.saveMessagesForSession(
           sid,
@@ -621,12 +641,17 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
           prompt1.contains("history restored from disk (2 messages"),
           "V3c: node context recovery — pre-crash transcript + breakpoint pointer still present"
         )
-        _ = assertEquals(finalEntries.find(_.id == msgId).map(_.event), Some(NodeMessageLedger.Consumed), "V3c: consumed closes the ledger")
+        _ = assertEquals(
+          finalEntries.find(_.id == msgId).map(_.event),
+          Some(NodeMessageLedger.Consumed),
+          "V3c: consumed closes the ledger"
+        )
         _ = assert(
           !prompt2.contains(NodeMessageLedger.markerOf(msgId)),
           "V3c IDEMPOTENCY: a consumed node message must never be replayed twice"
         )
       yield ()
+      end for
     }
   }
 
@@ -661,22 +686,30 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
         report <- sweepWith(fx)
         _ = assert(report.revived.contains(child), s"V4 fixture must revive: ${report.summary}")
         _ <- waitUntil(25.seconds, "V4: revival nudge landed") {
-          fx.sessionStore.loadMessagesForSession(child).map(_.exists(_.textContent.contains("engine process restarted")))
+          fx.sessionStore
+            .loadMessagesForSession(child)
+            .map(_.exists(_.textContent.contains("engine process restarted")))
         }
         transcript <- fx.sessionStore.loadMessagesForSession(child)
         row <- fx.store.loadTasks(parent.id).map(_.find(_.taskId == child).get)
-        nudge = transcript.find(_.textContent.contains("engine process restarted")).map(_.textContent).getOrElse("<none>")
+        nudge = transcript
+          .find(_.textContent.contains("engine process restarted"))
+          .map(_.textContent)
+          .getOrElse("<none>")
         // 断点探测：会话持久目录里是否存在列举已完成 round 的机器可读台账。
         artifacts <- checkpointArtifacts(child)
         _ <- evidence("V4")(
           s"pre-crash completed turns = 3 (V4_ROUND_1..3_DONE)",
-          s"after-revival transcript contains all 3 rounds = ${List("V4_ROUND_1_DONE", "V4_ROUND_2_DONE", "V4_ROUND_3_DONE").forall(m => transcript.exists(_.textContent.contains(m)))}",
+          s"after-revival transcript contains all 3 rounds = ${List("V4_ROUND_1_DONE", "V4_ROUND_2_DONE", "V4_ROUND_3_DONE")
+              .forall(m => transcript.exists(_.textContent.contains(m)))}",
           s"task row = status=${row.status} revivalCount=${row.revivalCount}",
           s"revival nudge (the ONLY hand-off the model gets) = ${nudge.take(300)}",
           s"machine-readable checkpoint artifacts under sessions/$child/ = ${artifacts.size} ${artifacts.mkString(", ")}"
         )
         _ = assertEquals(
-          List("V4_ROUND_1_DONE", "V4_ROUND_2_DONE", "V4_ROUND_3_DONE").count(m => transcript.exists(_.textContent.contains(m))),
+          List("V4_ROUND_1_DONE", "V4_ROUND_2_DONE", "V4_ROUND_3_DONE").count(m =>
+            transcript.exists(_.textContent.contains(m))
+          ),
           3,
           "V4 guard: the completed turns must survive the revival verbatim (no truncation/reset — today green)"
         )
@@ -690,6 +723,7 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
             "checkpoint must exist for the session and be carried into the revival."
         )
       yield ()
+      end for
     }
   }
 
@@ -727,7 +761,10 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
         )
         _ <- fx.sessionStore.saveMessagesForSession(
           child,
-          List(Message(MessageRole.User, Left("V5_BRIEF")), Message(MessageRole.Assistant, Left(s"work finished; $marker")))
+          List(
+            Message(MessageRole.User, Left("V5_BRIEF")),
+            Message(MessageRole.Assistant, Left(s"work finished; $marker"))
+          )
         )
         // 「重启」= boot 链上的两条 delegate 面清扫腿（GatewayMain 装配）。
         report <- sweepWith(fx)
@@ -758,6 +795,7 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
             s"reportStatus=${rec.flatMap(_.reportStatus)}"
         )
       yield ()
+      end for
     }
   }
 
@@ -785,7 +823,10 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
         )
         _ <- fx.sessionStore.saveMessagesForSession(
           child,
-          List(Message(MessageRole.User, Left("V5_OPEN_BRIEF")), Message(MessageRole.Assistant, Left("started, no result yet")))
+          List(
+            Message(MessageRole.User, Left("V5_OPEN_BRIEF")),
+            Message(MessageRole.Assistant, Left("started, no result yet"))
+          )
         )
         report <- sweepWith(fx)
         row <- fx.store.loadTasks(parent.id).map(_.find(_.taskId == child).get)
@@ -805,6 +846,7 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
         _ = assertEquals(rec.flatMap(_.reportStatus), None, "V5-neg: no delivered-report state for unfinished work")
         _ = assertEquals(events, Nil, s"V5-neg: no completion notice may reach the parent: $events")
       yield ()
+      end for
     }
   }
 
@@ -815,7 +857,7 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
     lazy val b: nebflow.actor.Behavior[AgentCommand] =
       Behaviors.receiveMessage[AgentCommand] {
         case m: AgentCommand.ImmediateInput => seen.update(_ :+ m.text) *> IO.pure(b)
-        case _                              => IO.pure(b)
+        case _ => IO.pure(b)
       }
     b
 
@@ -843,10 +885,12 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
             val rounds = List("V4_ROUND_1_DONE", "V4_ROUND_2_DONE", "V4_ROUND_3_DONE").count(txt.contains)
             // 接受族②：cursor/checkpoint 形态的数值台账（含 ledgerish 关键词且出现 ≥3 的数）。
             val lower = txt.toLowerCase
-            val ledgerish = List("checkpoint", "completedturns", "completed_turns", "turncursor", "cursor").exists(lower.contains)
+            val ledgerish =
+              List("checkpoint", "completedturns", "completed_turns", "turncursor", "cursor").exists(lower.contains)
             rounds >= 2 || (ledgerish && List("3", "4", "5", "6", "7", "8", "9").exists(txt.contains))
           }
           .map(_.toString)
+      end if
     }
 
 end InterruptRecoveryLegsSpec

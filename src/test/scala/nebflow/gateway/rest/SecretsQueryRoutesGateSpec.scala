@@ -57,7 +57,9 @@ class SecretsQueryRoutesGateSpec extends FunSuite:
           .unsafeRunSync()
           .isRight
       )
-      assert(store.setMetadata("vercel-token", None, Some("Vercel deploy token"), List("deploy")).unsafeRunSync().isRight)
+      assert(
+        store.setMetadata("vercel-token", None, Some("Vercel deploy token"), List("deploy")).unsafeRunSync().isRight
+      )
 
       val cfg = NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))
       val inner = new RestApiRoutes(
@@ -159,9 +161,13 @@ class SecretsQueryRoutesGateSpec extends FunSuite:
         assert(r.hcursor.downField("tags").focus.isDefined, s"entry must carry tags: $r")
         assert(r.hcursor.downField("path").as[String].toOption.exists(_.contains("/secrets/")), s"entry path: $r")
       }
-      val aliyun = rows.find(_.hcursor.downField("name").as[String].toOption.contains("aliyun-oss")).getOrElse(fail("row missing"))
+      val aliyun =
+        rows.find(_.hcursor.downField("name").as[String].toOption.contains("aliyun-oss")).getOrElse(fail("row missing"))
       assertEquals(aliyun.hcursor.downField("tags").as[List[String]].toOption, Some(List("cloud", "deploy", "oss")))
-      assertEquals(aliyun.hcursor.downField("description").as[String].toOption, Some("OSS access key for the docs bucket"))
+      assertEquals(
+        aliyun.hcursor.downField("description").as[String].toOption,
+        Some("OSS access key for the docs bucket")
+      )
     }
   }
 
@@ -177,7 +183,9 @@ class SecretsQueryRoutesGateSpec extends FunSuite:
       assertSentinelFree("PATCH response", text)
       val (_, list, listText) = call(routes, Method.GET, "/secrets?tag=from-panel,cloud")
       assertSentinelFree("filtered list", listText)
-      val names = list.flatMap(_.hcursor.downField("secrets").values.map(_.toList)).getOrElse(Nil)
+      val names = list
+        .flatMap(_.hcursor.downField("secrets").values.map(_.toList))
+        .getOrElse(Nil)
         .flatMap(_.hcursor.downField("name").as[String].toOption)
       assertEquals(names, List("plain-unlabelled"), "tags are folded lowercase and filter as an intersection")
 
@@ -199,7 +207,11 @@ class SecretsQueryRoutesGateSpec extends FunSuite:
         routes,
         Method.POST,
         "/secrets/fresh-key",
-        Some(json("""{"value":"SENTINEL-DO-NOT-LEAK-8f3a41-created","description":"Created with metadata","tags":"New,Cloud"}"""))
+        Some(
+          json(
+            """{"value":"SENTINEL-DO-NOT-LEAK-8f3a41-created","description":"Created with metadata","tags":"New,Cloud"}"""
+          )
+        )
       )
       assertEquals(st.code, 200, s"POST ⇒ $st")
       assertSentinelFree("POST response", text)

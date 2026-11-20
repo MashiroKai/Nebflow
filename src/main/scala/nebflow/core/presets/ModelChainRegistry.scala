@@ -65,18 +65,26 @@ object ModelChainRegistry:
           .downField("chains")
           .focus
           .flatMap(_.asObject)
-          .map(_.toList.flatMap { (name, pj) =>
-            pj.as[ModelPreset].toOption.map(p => name -> p).orElse {
-              logger.warnSync(s"chain registry: dropping unparseable entry '$name'")
-              None
-            }
-          }.toMap)
+          .map(
+            _.toList
+              .flatMap { (name, pj) =>
+                pj.as[ModelPreset].toOption.map(p => name -> p).orElse {
+                  logger.warnSync(s"chain registry: dropping unparseable entry '$name'")
+                  None
+                }
+              }
+              .toMap
+          )
         chains match
           case None => None
           case Some(m) =>
             val default = c.downField("defaultPreset").as[Option[String]].toOption.flatten.getOrElse("general")
             Some(PresetFile(defaultPreset = default, presets = m))
       }
+
+    end if
+
+  end load
 
   /** migratedAt 迁移完成戳（已迁移 home 的对偶记录；未迁移 ⇒ None）。 */
   def migratedAt(root: os.Path = PathUtil.dataRoot): Option[String] =
@@ -112,7 +120,7 @@ object ModelChainRegistry:
     // （幂等重放/用户后编辑不被陈旧目录数据覆盖）。
     val merged = existing match
       case Some(f) => entries ++ f.presets
-      case None    => entries
+      case None => entries
     val effectiveDefault = existing.map(_.defaultPreset).getOrElse(defaultPreset)
     save(PresetFile(effectiveDefault, merged), root)
     logger.infoSync(
@@ -123,8 +131,8 @@ object ModelChainRegistry:
   private def render(file: PresetFile, stamp: String): Json =
     Json.fromFields(
       List(
-        "version"       -> 1.asJson,
-        "migratedAt"    -> stamp.asJson,
+        "version" -> 1.asJson,
+        "migratedAt" -> stamp.asJson,
         "defaultPreset" -> file.defaultPreset.asJson,
         "chains" -> Json.fromFields(
           file.presets.toList.sortBy(_._1).map { (name, p) => name -> p.asJson }

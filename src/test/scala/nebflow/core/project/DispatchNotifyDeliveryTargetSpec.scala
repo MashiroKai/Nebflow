@@ -73,13 +73,19 @@ class DispatchNotifyDeliveryTargetSpec extends CatsEffectSuite:
       _ <- store.mutate(s => s.copy(nodes = s.nodes + ("n-fail" -> failureNode("n-fail", "FAIL")))).void
     yield Rig(store, dn, triggered, delivered, ws.toString)
 
+    end for
+
+  end mkRig
+
   private def readEvents(ws: String): IO[List[String]] =
     IO.blocking {
       val p = os.Path(ws, PathUtil.dataRoot) / ".nebflow" / FlowMapEventLog.FileName
       if os.exists(p) then os.read.lines(p).toList else Nil
     }
 
-  test("R1 default path (deliveryTarget=None): unchanged legacy semantics — trigger fired, notifySentAt set, verbatim audit line, no new rows") {
+  test(
+    "R1 default path (deliveryTarget=None): unchanged legacy semantics — trigger fired, notifySentAt set, verbatim audit line, no new rows"
+  ) {
     for
       rig <- mkRig("default", None, live = true)
       _ <- rig.dn.notifyTerminal(failureNode("n-fail", "FAIL"), NotifyReason.Failed)
@@ -102,7 +108,9 @@ class DispatchNotifyDeliveryTargetSpec extends CatsEffectSuite:
       assertEquals(delivered, Nil, "R1: no delivery probe on the default path")
   }
 
-  test("R2 creator live (probe=true): delivered to the delegate target, markSent, legacy line + dispatch-notify-delivery") {
+  test(
+    "R2 creator live (probe=true): delivered to the delegate target, markSent, legacy line + dispatch-notify-delivery"
+  ) {
     for
       rig <- mkRig(
         "live",
@@ -168,10 +176,14 @@ class DispatchNotifyDeliveryTargetSpec extends CatsEffectSuite:
   test("delivery exception stays unmarked and is retried after recovery") {
     for
       available <- Ref.of[IO, Boolean](false)
-      target = DispatchNotify.DeliveryTarget("creator", _ => available.get.flatMap {
-        case true => IO.pure(true)
-        case false => IO.raiseError(new RuntimeException("receiver write failed"))
-      })
+      target = DispatchNotify.DeliveryTarget(
+        "creator",
+        _ =>
+          available.get.flatMap {
+            case true => IO.pure(true)
+            case false => IO.raiseError(new RuntimeException("receiver write failed"))
+          }
+      )
       rig <- mkRig("exception", Some(target), live = true)
       _ <- rig.dn.notifyTerminal(failureNode("n-fail", "FAIL"), NotifyReason.Failed)
       before <- rig.store.getNode("n-fail")
@@ -189,11 +201,15 @@ class DispatchNotifyDeliveryTargetSpec extends CatsEffectSuite:
   test("empty recorded results are redelivered; absent results are not") {
     for
       rig <- mkRig("empty", Some(DispatchNotify.DeliveryTarget("creator", _ => IO.pure(true))), live = true)
-      _ <- rig.store.mutate(s => s.copy(nodes = Map(
-        "empty" -> failureNode("empty", "EMPTY").copy(result = Some("")),
-        "blank" -> failureNode("blank", "BLANK").copy(result = Some("  \n")),
-        "absent" -> failureNode("absent", "ABSENT").copy(result = None)
-      )))
+      _ <- rig.store.mutate(s =>
+        s.copy(nodes =
+          Map(
+            "empty" -> failureNode("empty", "EMPTY").copy(result = Some("")),
+            "blank" -> failureNode("blank", "BLANK").copy(result = Some("  \n")),
+            "absent" -> failureNode("absent", "ABSENT").copy(result = None)
+          )
+        )
+      )
       count <- rig.dn.redeliver()
       snapshot <- rig.store.snapshot
     yield
@@ -209,14 +225,19 @@ class DispatchNotifyDeliveryTargetSpec extends CatsEffectSuite:
       store <- FlowMapStore.open("trigger-error", ws.toString)
       available <- Ref.of[IO, Boolean](false)
       dn = new DispatchNotify(
-        store, ws.toString, "trigger-error",
+        store,
+        ws.toString,
+        "trigger-error",
         escalate = (_, _) => IO.unit,
         emitUpdated = _ => IO.unit,
-        trigger = _ => available.get.flatMap {
-          case true => IO.unit
-          case false => IO.raiseError(new RuntimeException("trigger failed"))
-        },
-        failedBudgetMax = 1000, failedWindowThreshold = 1000, windowMs = 0L
+        trigger = _ =>
+          available.get.flatMap {
+            case true => IO.unit
+            case false => IO.raiseError(new RuntimeException("trigger failed"))
+          },
+        failedBudgetMax = 1000,
+        failedWindowThreshold = 1000,
+        windowMs = 0L
       )
       _ <- store.mutate(s => s.copy(nodes = Map("n-fail" -> failureNode("n-fail", "FAIL"))))
       _ <- dn.notifyTerminal(failureNode("n-fail", "FAIL"), NotifyReason.Failed)
@@ -227,6 +248,7 @@ class DispatchNotifyDeliveryTargetSpec extends CatsEffectSuite:
     yield
       assertEquals(before.flatMap(_.notifySentAt), None)
       assert(after.flatMap(_.notifySentAt).isDefined)
+    end for
   }
 
 end DispatchNotifyDeliveryTargetSpec

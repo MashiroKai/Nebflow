@@ -103,3 +103,4 @@ class InputPayloadSpec extends CatsEffectSuite:
     val p = InputPayload(kind = "bogus", text = "x")
     assertEquals(InputPayload.toCommand(p), None)
   }
+end InputPayloadSpec

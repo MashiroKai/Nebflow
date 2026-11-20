@@ -13,17 +13,17 @@ import nebflow.shared.{NebflowLogger, PathUtil}
 
 /** 索引条目（持久层账面；`last` 变量字段供 LRU touch 原地更新）。 */
 private[tools] final case class FileOpenCacheMeta(
-    key: String,
-    file: String, // blobs/ 下相对文件名
-    bytes: Long,
-    fpSize: Long,
-    fpMtime: Long,
-    sha16: String,
-    at: Long,
-    @volatile var last: Long,
-    kind: String, // "local" | "dev"
-    @volatile var matSize: Long = 0L, // pickup 落位读数（0 = 从未落位）
-    @volatile var matMtime: Long = 0L
+  key: String,
+  file: String, // blobs/ 下相对文件名
+  bytes: Long,
+  fpSize: Long,
+  fpMtime: Long,
+  sha16: String,
+  at: Long,
+  @volatile var last: Long,
+  kind: String, // "local" | "dev"
+  @volatile var matSize: Long = 0L, // pickup 落位读数（0 = 从未落位）
+  @volatile var matMtime: Long = 0L
 ):
   def fpMatch(size: Long, mtimeMs: Long): Boolean = fpSize == size && fpMtime == mtimeMs
 
@@ -73,21 +73,21 @@ object FileOpenCache:
 
   /** 计数器快照（spec 钉的断言面；全部单调递增）。 */
   final case class Stats(
-      diskReads: Long,
-      hotHits: Long,
-      diskHits: Long,
-      remotePullSkips: Long,
-      puts: Long,
-      invalidations: Long
+    diskReads: Long,
+    hotHits: Long,
+    diskHits: Long,
+    remotePullSkips: Long,
+    puts: Long,
+    invalidations: Long
   )
 
   // ---- 计数器 ----
-  private val cDiskReads        = AtomicLong(0) // 真实全量磁盘读（本机 miss 读 / 探测后仍拉取）
-  private val cHotHits          = AtomicLong(0) // ① 热层命中
-  private val cDiskHits         = AtomicLong(0) // ② 持久层命中
-  private val cRemotePullSkips  = AtomicLong(0) // ③ 探测指纹命中 ⇒ 跳过对端全量拉取
-  private val cPuts             = AtomicLong(0)
-  private val cInvalidations    = AtomicLong(0)
+  private val cDiskReads = AtomicLong(0) // 真实全量磁盘读（本机 miss 读 / 探测后仍拉取）
+  private val cHotHits = AtomicLong(0) // ① 热层命中
+  private val cDiskHits = AtomicLong(0) // ② 持久层命中
+  private val cRemotePullSkips = AtomicLong(0) // ③ 探测指纹命中 ⇒ 跳过对端全量拉取
+  private val cPuts = AtomicLong(0)
+  private val cInvalidations = AtomicLong(0)
 
   def statsSnapshot: Stats = Stats(
     cDiskReads.get(),
@@ -109,26 +109,27 @@ object FileOpenCache:
     if v == null then dflt
     else Try(v.trim.toLong).filter(_ > 0).getOrElse(dflt)
 
-  private def enabled       = confBool("enabled", true)
-  private def hotCapBytes   = confBytes("hotBytes", 64L * 1024 * 1024)
-  private def diskCapBytes  = confBytes("diskBytes", 512L * 1024 * 1024)
+  private def enabled = confBool("enabled", true)
+  private def hotCapBytes = confBytes("hotBytes", 64L * 1024 * 1024)
+  private def diskCapBytes = confBytes("diskBytes", 512L * 1024 * 1024)
   private def maxEntryBytes = confBytes("maxEntryBytes", 96L * 1024 * 1024)
 
   // ---- 账面（全在 lock 内读写）----
-  private val lock   = new Object
-  private val index  = mutable.LinkedHashMap[String, FileOpenCacheMeta]() // 插入序 = LRU 序（touch = remove+put）
-  private val hot    = mutable.LinkedHashMap[String, (Array[Byte], Fingerprint)]()
+  private val lock = new Object
+  private val index = mutable.LinkedHashMap[String, FileOpenCacheMeta]() // 插入序 = LRU 序（touch = remove+put）
+  private val hot = mutable.LinkedHashMap[String, (Array[Byte], Fingerprint)]()
   private var indexBytesTotal = 0L
-  private var hotBytesTotal   = 0L
+  private var hotBytesTotal = 0L
   private var loadedRoot: os.Path = null
 
   /** 持久层落位（def 非 val：dataRoot 可重定向——f1cd3709 规则）。 */
-  private def diskRoot: os.Path  = PathUtil.dataRoot / "cache" / "fileopen" / "v1"
+  private def diskRoot: os.Path = PathUtil.dataRoot / "cache" / "fileopen" / "v1"
   private def blobsRoot: os.Path = diskRoot / "blobs"
   private def indexFile: os.Path = diskRoot / "index.json"
 
   // ==== 键 ====
   private def localKey(p: os.Path): String = "local:" + p.toString
+
   private def remoteKey(deviceId: String, remotePath: String): String =
     "dev:" + deviceId + ":" + remotePath.replaceAll("""[/\\]+""", "/")
 
@@ -170,13 +171,14 @@ object FileOpenCache:
           if !known.contains(f.last) then Try(os.remove(f))
         }
       }.failed.foreach(err => logger.warn(s"[file-open-cache] lazy load degraded: ${err.getMessage}"))
+    end if
   end ensureLoaded
 
   private def parseMeta(e: Json): Option[FileOpenCacheMeta] =
     val c = e.hcursor
     for
-      k  <- c.downField("k").as[String].toOption
-      f  <- c.downField("f").as[String].toOption
+      k <- c.downField("k").as[String].toOption
+      f <- c.downField("f").as[String].toOption
       by <- c.downField("size").as[Long].toOption
       fs <- c.downField("fpSize").as[Long].toOption
       fm <- c.downField("fpMtime").as[Long].toOption
@@ -188,18 +190,27 @@ object FileOpenCache:
       mm <- Right(c.downField("matMtime").as[Long].toOption.getOrElse(0L)).toOption
     yield FileOpenCacheMeta(k, f, by, fs, fm, sh, at, la, kd, ms, mm)
 
+  end parseMeta
+
   private def metaToJson(m: FileOpenCacheMeta): Json = Json.obj(
-    "k" -> m.key.asJson, "f" -> m.file.asJson, "size" -> m.bytes.asJson,
-    "fpSize" -> m.fpSize.asJson, "fpMtime" -> m.fpMtime.asJson,
-    "sha16" -> m.sha16.asJson, "at" -> m.at.asJson, "last" -> m.last.asJson,
-    "kind" -> m.kind.asJson, "matSize" -> m.matSize.asJson, "matMtime" -> m.matMtime.asJson
+    "k" -> m.key.asJson,
+    "f" -> m.file.asJson,
+    "size" -> m.bytes.asJson,
+    "fpSize" -> m.fpSize.asJson,
+    "fpMtime" -> m.fpMtime.asJson,
+    "sha16" -> m.sha16.asJson,
+    "at" -> m.at.asJson,
+    "last" -> m.last.asJson,
+    "kind" -> m.kind.asJson,
+    "matSize" -> m.matSize.asJson,
+    "matMtime" -> m.matMtime.asJson
   )
 
   /** 索引原子落盘（tmp + move；0600）。失败 = WARN 不外抛（读侧指纹兜底）。 */
   private def saveIndexLocked(): Unit =
     Try {
       val json = Json.obj("v" -> 1.asJson, "entries" -> index.values.toVector.map(metaToJson).asJson)
-      val tmp  = indexFile / os.up / s"index.json.tmp-${System.nanoTime()}"
+      val tmp = indexFile / os.up / s"index.json.tmp-${System.nanoTime()}"
       os.write.over(tmp, json.noSpaces.getBytes("UTF-8"))
       os.move(tmp, indexFile, replaceExisting = true)
       setPerms0600(indexFile)
@@ -242,7 +253,8 @@ object FileOpenCache:
         ensureLoaded()
         val name = blobName(key)
         Try(writeBlobLocked(blobsRoot / name, bytes)).failed.foreach(err =>
-          logger.warn(s"[file-open-cache] blob write failed: ${err.getMessage}"))
+          logger.warn(s"[file-open-cache] blob write failed: ${err.getMessage}")
+        )
         index.remove(key).foreach(old => indexBytesTotal -= old.bytes)
         val now = System.currentTimeMillis()
         index(key) = FileOpenCacheMeta(key, name, bytes.length, fp.size, fp.mtimeMs, sha16, now, now, kind)
@@ -362,22 +374,30 @@ object FileOpenCache:
         target
     }
 
+  end ensurePickup
+
   /**
    * 远端列表应答 → 单件指纹（纯函数，gateway 探测腿消费）。要求 size≥0 且
    * mtime>0 齐备——缺任一即 None（旁路走全量拉取，绝不以残缺指纹放行命中）。
    */
   def fingerprintFromListing(listJson: Json, fileName: String): Option[Fingerprint] =
     val entries = listJson.hcursor.downField("entries").as[Vector[Json]].getOrElse(Vector.empty)
-    entries.view.flatMap { e =>
-      val c = e.hcursor
-      for
-        n  <- c.downField("name").as[String].toOption
-        if n == fileName || n.equalsIgnoreCase(fileName)
-        sz <- c.downField("size").as[Long].toOption
-        mt <- c.downField("mtime").as[Long].toOption
-        if sz >= 0L && mt > 0L
-      yield Fingerprint(sz, mt)
-    }.take(1).toList.headOption
+    entries.view
+      .flatMap { e =>
+        val c = e.hcursor
+        for
+          n <- c.downField("name").as[String].toOption
+          if n == fileName || n.equalsIgnoreCase(fileName)
+          sz <- c.downField("size").as[Long].toOption
+          mt <- c.downField("mtime").as[Long].toOption
+          if sz >= 0L && mt > 0L
+        yield Fingerprint(sz, mt)
+      }
+      .take(1)
+      .toList
+      .headOption
+
+  end fingerprintFromListing
 
   /** 写穿失效（本机路径；`NfCacheInvalidator` 单点消费）。目录删除走前缀扫。 */
   def invalidateLocalPath(pathStr: String): Unit =

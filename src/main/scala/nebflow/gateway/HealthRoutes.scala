@@ -9,7 +9,7 @@ import fs2.Stream
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.core.hotrestart.HealthPayload
-import nebflow.shared.{ Branding, NebflowLogger }
+import nebflow.shared.{Branding, NebflowLogger}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
@@ -78,7 +78,8 @@ private[gateway] object HealthRoutes:
               sharedResources.providerConcurrencyJson.flatMap { concKey =>
                 val concStateKey = if concKey.isNull then Json.obj() else Json.obj("providerConcurrency" -> concKey)
                 val extraAll =
-                  throttleKey.fold(updateKey)(t => updateKey.deepMerge(Json.obj("throttle" -> t)))
+                  throttleKey
+                    .fold(updateKey)(t => updateKey.deepMerge(Json.obj("throttle" -> t)))
                     .deepMerge(concStateKey)
                 HealthPayload.build(sharedResources.healthMonitor, extraAll.deepMerge(fleetKey))
               }
@@ -298,20 +299,24 @@ private[gateway] object HealthRoutes:
       val expect = req.uri.multiParams.get("expect").flatMap(_.headOption).map(_.trim).filter(_.nonEmpty)
       (ownId, expect) match
         case (Some(own), Some(want)) if own == want && LoopbackLeg.isLoopback(req) =>
-          NebflowLogger.forName("nebflow.rest-api")
-            .info("nearpath: loopback-pixel served (identity match; same-machine proof for the passive leg)") *> IO.pure(
-            Response[IO](
-              status = Status.Ok,
-              headers = Headers(
-                `Content-Type`(MediaType.image.png),
-                Header.Raw(org.typelevel.ci.CIString("Content-Length"), Body.length.toString),
-                NoStoreHeader
-              ),
-              body = Stream.emits(Body).covary[IO]
+          NebflowLogger
+            .forName("nebflow.rest-api")
+            .info("nearpath: loopback-pixel served (identity match; same-machine proof for the passive leg)") *> IO
+            .pure(
+              Response[IO](
+                status = Status.Ok,
+                headers = Headers(
+                  `Content-Type`(MediaType.image.png),
+                  Header.Raw(org.typelevel.ci.CIString("Content-Length"), Body.length.toString),
+                  NoStoreHeader
+                ),
+                body = Stream.emits(Body).covary[IO]
+              )
             )
-          )
         case (Some(_), Some(want)) => IO.pure(Response[IO](Status.NotFound))
-        case _                     => IO.pure(Response[IO](Status.NotFound))
+        case _ => IO.pure(Response[IO](Status.NotFound))
+      end match
+    end reply
 
   end LoopbackPixel
 

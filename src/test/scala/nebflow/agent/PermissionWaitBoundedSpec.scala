@@ -72,7 +72,7 @@ class PermissionWaitBoundedSpec extends CatsEffectSuite:
 
   test("R1 保留半边（原 WaitTimeoutR1PermissionSpec 验收2 迁移）: 跨 6min 虚拟时间仍挂起、不抢先自动拒绝，迟到批准照常生效") {
     // 旧断言（无界原语，跨 6min ≫ 被移除的 5min PermissionTimeout）→ 新断言
-    //（有界原语，阈值取产线缺省 600_000ms = 10min，由「缺省阈值」用例另钉）：
+    // （有界原语，阈值取产线缺省 600_000ms = 10min，由「缺省阈值」用例另钉）：
     //   - 「6min 检查点仍挂起」旧口径靠「没有超时」，新口径靠「10min > 6min」——
     //     被 R1 移除的那个 5min 硬顶仍被钉死（6min > 5min 却不结算）；
     //   - 「迟到 6min 的回答生效」两条口径逐字相同。
@@ -158,7 +158,7 @@ class PermissionWaitBoundedSpec extends CatsEffectSuite:
       hub <- system.spawn(InteractionHub(), "hub-bounded-withdraw")
       sent <- Ref.of[IO, List[Json]](Nil)
       // live-root 先注册、请求却指向 zombie root——P0 批会把卡重定锚到 live-root
-      //（渲染成对话内卡片）；随后调用方超时撤回：关卡帧必须广播到该窗口。
+      // （渲染成对话内卡片）；随后调用方超时撤回：关卡帧必须广播到该窗口。
       d <- Deferred[IO, Boolean]
       _ <- hub ! InteractionHubCommand.RegisterRoot("live-root", (j: Json) => sent.update(_ :+ j))
       _ <- hub ! InteractionHubCommand.Request(

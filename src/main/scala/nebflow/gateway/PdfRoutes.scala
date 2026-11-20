@@ -57,7 +57,11 @@ private[gateway] object PdfRoutes:
    * costs one streaming sha256 (the same identity the parser would compute) and
    * then a cache lookup. A miss is reported as a miss — never by parsing.
    */
-  private def manifestFor(cache: PdfCache, path: Option[String], sha: Option[String]): IO[Either[String, (String, Option[PdfManifest])]] =
+  private def manifestFor(
+    cache: PdfCache,
+    path: Option[String],
+    sha: Option[String]
+  ): IO[Either[String, (String, Option[PdfManifest])]] =
     (path, sha) match
       case (_, Some(s)) if PdfNotes.validDigest(s) =>
         cache.lookup(s).map(m => Right((s, m)))
@@ -65,8 +69,7 @@ private[gateway] object PdfRoutes:
       case (Some(p), None) =>
         val file = os.Path(p, os.pwd)
         if !os.exists(file) then IO.pure(Left(s"no such file: $p"))
-        else
-          PdfParser.sha256OfFile(file).flatMap(s => cache.lookup(s).map(m => Right((s, m))))
+        else PdfParser.sha256OfFile(file).flatMap(s => cache.lookup(s).map(m => Right((s, m))))
       case (None, None) => IO.pure(Left("either `path` or `sha256` is required"))
 
   def routes(ctx: RestApiCtx): HttpRoutes[IO] =
@@ -142,11 +145,14 @@ private[gateway] object PdfRoutes:
                       )
                       .flatMap {
                         case PdfNotes.WriteResult.Ok(v) =>
-                          PdfNotes.json(nebflow.shared.PathUtil.dataRoot, digest, p, manifest).map(_.deepMerge(Json.obj("state" -> "ok".asJson, "version" -> v.asJson))).flatMap(Ok(_))
+                          PdfNotes
+                            .json(nebflow.shared.PathUtil.dataRoot, digest, p, manifest)
+                            .map(_.deepMerge(Json.obj("state" -> "ok".asJson, "version" -> v.asJson)))
+                            .flatMap(Ok(_))
                         case PdfNotes.WriteResult.TooLarge(limit, field) =>
                           badRequest(s"`$field` exceeds $limit UTF-8 bytes")
                         case PdfNotes.WriteResult.BadDigest(s) => badRequest(s"invalid sha256: $s")
-                        case PdfNotes.WriteResult.BadPage(p)   => badRequest(s"invalid page: $p")
+                        case PdfNotes.WriteResult.BadPage(p) => badRequest(s"invalid page: $p")
                         case PdfNotes.WriteResult.Conflict(current) =>
                           Conflict(
                             Json.obj(
@@ -155,7 +161,8 @@ private[gateway] object PdfRoutes:
                               "current_version" -> current.asJson
                             )
                           )
-                        case PdfNotes.WriteResult.Failed(msg) => InternalServerError(Json.obj("state" -> "failed".asJson, "error" -> msg.asJson))
+                        case PdfNotes.WriteResult.Failed(msg) =>
+                          InternalServerError(Json.obj("state" -> "failed".asJson, "error" -> msg.asJson))
                       }
             }
           }
@@ -174,7 +181,14 @@ private[gateway] object PdfRoutes:
               case (Some(p), _) =>
                 val file = os.Path(p, os.pwd)
                 if !os.exists(file) then badRequest(s"no such file: $p")
-                else askAsync(cache, dataRoot, file, Option(p).map(f => os.Path(f, os.pwd).last).getOrElse("document.pdf"), question)
+                else
+                  askAsync(
+                    cache,
+                    dataRoot,
+                    file,
+                    Option(p).map(f => os.Path(f, os.pwd).last).getOrElse("document.pdf"),
+                    question
+                  )
               case _ =>
                 // Asking by digest alone is only answerable when the entry (and
                 // therefore the source) is already there: without a path there is
@@ -182,7 +196,9 @@ private[gateway] object PdfRoutes:
                 cache.lookup(sha.get).flatMap {
                   case Some(_) =>
                     InternalServerError(
-                      Json.obj("error" -> "a cache entry exists but no source path was supplied — send `path` so the ask can be answered".asJson)
+                      Json.obj(
+                        "error" -> "a cache entry exists but no source path was supplied — send `path` so the ask can be answered".asJson
+                      )
                     )
                   case None =>
                     Conflict(
@@ -192,6 +208,7 @@ private[gateway] object PdfRoutes:
                       )
                     )
                 }
+            end match
           }
         }
 
@@ -203,7 +220,13 @@ private[gateway] object PdfRoutes:
           manifestFor(cache, q.get("path"), q.get("sha256")).flatMap {
             case Left(err) => badRequest(err)
             case Right((digest, None)) =>
-              NotFound(Json.obj("state" -> "not_parsed".asJson, "sha256" -> digest.asJson, "error" -> "no cache entry for this document (send an ask to parse it)".asJson))
+              NotFound(
+                Json.obj(
+                  "state" -> "not_parsed".asJson,
+                  "sha256" -> digest.asJson,
+                  "error" -> "no cache entry for this document (send an ask to parse it)".asJson
+                )
+              )
             case Right((digest, Some(manifest))) =>
               q.get("page").flatMap(_.toIntOption) match
                 case None => badRequest("`page` (1-based integer) is required")
@@ -226,6 +249,8 @@ private[gateway] object PdfRoutes:
           }
         }
     }
+
+  end routes
 
   /**
    * Start (or join) the parse for one document and answer the ask.
@@ -272,11 +297,20 @@ private[gateway] object PdfRoutes:
       yield response
     }
 
-  private def answer(cache: PdfCache, dataRoot: os.Path, file: os.Path, displayName: String, question: String): IO[Response[IO]] =
+  private def answer(
+    cache: PdfCache,
+    dataRoot: os.Path,
+    file: os.Path,
+    displayName: String,
+    question: String
+  ): IO[Response[IO]] =
     PdfAsk.ask(cache, dataRoot, file, displayName, question).flatMap { r =>
       r match
         case Right(json) => Ok(json)
-        case Left(f)     => UnprocessableEntity(Json.obj("state" -> "failed".asJson, "error" -> f.code.asJson, "message" -> f.message.asJson))
+        case Left(f) =>
+          UnprocessableEntity(
+            Json.obj("state" -> "failed".asJson, "error" -> f.code.asJson, "message" -> f.message.asJson)
+          )
     }
 
   private def answerFrom(
@@ -296,3 +330,4 @@ private[gateway] object PdfRoutes:
             "message" -> f.message.asJson
           )
         )
+end PdfRoutes

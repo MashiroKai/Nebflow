@@ -92,6 +92,10 @@ object AccountRoot:
           warnDamaged(path, err.message)
           None
 
+    end if
+
+  end readPointer
+
   /** 原子写指针（tmp + rename，0600）。 */
   def writePointer(machineRoot: os.Path, acct: ActiveAccount): Unit =
     AtomicJson.writeSyncRestricted(
@@ -186,6 +190,10 @@ object AccountRoot:
           )).toOption
         case Left(_) => None
 
+    end if
+
+  end readProfile
+
   /** 原子写档案（0600）。`hostPromptDeclinedAt = None` ⇒ 键不落盘（缺键读回同样是 None）。 */
   def writeProfile(accountRoot: os.Path, p: AccountProfile): Unit =
     val fields = List(
@@ -228,8 +236,11 @@ object AccountRoot:
 
   /** 十六进制 sha256（`dirNameOf` / 迁移记账共用一份实现）。 */
   private[root] def sha256Hex(s: String): String =
-    MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8))
-      .map("%02x".format(_)).mkString
+    MessageDigest
+      .getInstance("SHA-256")
+      .digest(s.getBytes(StandardCharsets.UTF_8))
+      .map("%02x".format(_))
+      .mkString
 
   private[root] def sha256Hex(bytes: Array[Byte]): String =
     MessageDigest.getInstance("SHA-256").digest(bytes).map("%02x".format(_)).mkString

@@ -55,3 +55,4 @@ trait SearchIndexAdapter:
 
   /** Enumerate authoritative session IDs when all-session queries require reconciliation. */
   def sessionIdsForReconcile: Option[List[String]] = None
+end SearchIndexAdapter

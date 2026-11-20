@@ -14,7 +14,18 @@ import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{BgTaskRegistry, FileLockManager, ShellSession}
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, PathUtil, StreamChunk, ThinkingConfig, SubAgentTask}
+import nebflow.shared.{
+  FallbackAttempt,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  Message,
+  MessageRole,
+  PathUtil,
+  StreamChunk,
+  ThinkingConfig,
+  SubAgentTask
+}
 
 import scala.concurrent.duration.*
 
@@ -199,7 +210,10 @@ class DelegateBackgroundHoldSpec extends CatsEffectSuite:
         "supervisor-bgwait-1"
       )
       // 第一轮结束：终稿已写，但 sbt 回归还在后台跑 ⇒ 必须 hold
-      _ <- supervisor ! AgentEvent.Completed(childSid, List(assistantMsg("hardening done; full suite still running in background")))
+      _ <- supervisor ! AgentEvent.Completed(
+        childSid,
+        List(assistantMsg("hardening done; full suite still running in background"))
+      )
       // hold 窗口：父邮箱**无**终态件、child **不**被 Stop、任务库**不**终态化
       _ <- IO.sleep(600.millis)
       heldParentEvents <- parentEvents.get
@@ -209,7 +223,10 @@ class DelegateBackgroundHoldSpec extends CatsEffectSuite:
       heldWaiting <- BgTaskRegistry.waitingFor(childSid)
       // 唤醒复检：后台作业完成（registry 注销）+ 新一轮 Completed（消化通知后的终稿）
       _ <- BgTaskRegistry.unregister(jobId)
-      _ <- supervisor ! AgentEvent.Completed(childSid, List(assistantMsg("full suite green — final report: all 55 tests passed")))
+      _ <- supervisor ! AgentEvent.Completed(
+        childSid,
+        List(assistantMsg("full suite green — final report: all 55 tests passed"))
+      )
       _ <- waitUntil(10.seconds)(
         resources.subAgentTaskStore
           .loadTasks(parentSid)
@@ -224,10 +241,18 @@ class DelegateBackgroundHoldSpec extends CatsEffectSuite:
       _ <- system.stopAll
     yield
       // hold 面：零父通知（actor 面与邮箱面双零）、零 child Stop、任务仍 running、等待集仍在册
-      assertEquals(heldParentEvents, Nil, s"held phase must NOT push any actor event to the parent, got: $heldParentEvents")
+      assertEquals(
+        heldParentEvents,
+        Nil,
+        s"held phase must NOT push any actor event to the parent, got: $heldParentEvents"
+      )
       assertEquals(heldMails, Nil, s"held phase must NOT deliver a terminal mail, got: ${heldMails.map(_.kind)}")
       assert(!heldChildCmds.exists(_.isInstanceOf[AgentCommand.Stop]), "held phase must NOT stop the child")
-      assertEquals(heldTasks.find(_.taskId == childSid).map(_.status), Some("running"), "held phase must keep the task running")
+      assertEquals(
+        heldTasks.find(_.taskId == childSid).map(_.status),
+        Some("running"),
+        "held phase must keep the task running"
+      )
       assertEquals(heldWaiting.map(_.jobId), List(jobId), "held phase keeps the wait set")
       // release 面：清空后的 Completed 放行 → 恰一条 delegate-terminal 邮件（父持久邮箱）+ child Stop
       assertEquals(mails.size, 1, s"exactly one terminal mail after release, got: ${mails.map(_.kind)}")
@@ -322,10 +347,14 @@ class DelegateBackgroundHoldSpec extends CatsEffectSuite:
       _ <- supervisor ! AgentEvent.Completed(childSid, List(assistantMsg("turn done; bg job still running")))
       // cap 300ms 后强制终判：父**持久邮箱**收到 completed + [delegate-background-wait] 诚实注记
       _ <- waitUntil(15.seconds)(
-        terminalMail(parentSid).map(_.exists(e => e.event.eventType == "completed" && e.event.payload.contains("[delegate-background-wait]")))
+        terminalMail(parentSid).map(
+          _.exists(e => e.event.eventType == "completed" && e.event.payload.contains("[delegate-background-wait]"))
+        )
       )
       _ <- waitUntil(15.seconds)(
-        resources.subAgentTaskStore.loadTasks(parentSid).map(_.exists(t => t.taskId == childSid && t.status == "completed"))
+        resources.subAgentTaskStore
+          .loadTasks(parentSid)
+          .map(_.exists(t => t.taskId == childSid && t.status == "completed"))
       )
       mails <- terminalMail(parentSid)
       childCmds <- childEvents.get
@@ -342,7 +371,11 @@ class DelegateBackgroundHoldSpec extends CatsEffectSuite:
       assert(payload.contains("Full test suite"), s"note must name the description: $payload")
       assert(payload.contains("turn done"), s"held turn's deliverable must ride the forced delivery: $payload")
       assert(childCmds.exists(_.isInstanceOf[AgentCommand.Stop]), "child stopped at forced terminal")
-      assertEquals(tasks.find(_.taskId == childSid).map(_.status), Some("completed"), "forced terminal completes the task honestly")
+      assertEquals(
+        tasks.find(_.taskId == childSid).map(_.status),
+        Some("completed"),
+        "forced terminal completes the task honestly"
+      )
     end for
   }
 
@@ -355,6 +388,5 @@ class DelegateBackgroundHoldSpec extends CatsEffectSuite:
       .scanPending(parentSid)
       .map(_.filter(_.kind == "delegate-terminal"))
       .handleErrorWith(_ => IO.pure(Nil))
-
 
 end DelegateBackgroundHoldSpec

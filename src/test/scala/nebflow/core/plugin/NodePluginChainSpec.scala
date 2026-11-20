@@ -392,8 +392,15 @@ class NodePluginChainSpec extends CatsEffectSuite:
         // startServer 后 refs.update）——等 refcount==1 落定再快照
         _ <- waitUntil(30.seconds)(res.pluginMcp.runningServers.map(_.get("plugin_echo-mcp_srv").contains(1)))
         sessionRunning <- res.pluginMcp.runningServers
-        grantedNames <- IO.blocking(PluginExecutionGateProbe.allowed(AgentDef(name = "general", description = "", tools = Nil).copy(pluginMcpServers = List("plugin_echo-mcp_srv"))))
-        revokedNames <- IO.blocking(PluginExecutionGateProbe.allowed(AgentDef(name = "general", description = "", tools = Nil)))
+        grantedNames <- IO.blocking(
+          PluginExecutionGateProbe.allowed(
+            AgentDef(name = "general", description = "", tools = Nil)
+              .copy(pluginMcpServers = List("plugin_echo-mcp_srv"))
+          )
+        )
+        revokedNames <- IO.blocking(
+          PluginExecutionGateProbe.allowed(AgentDef(name = "general", description = "", tools = Nil))
+        )
         _ <- waitUntil(30.seconds)(
           rt.store.snapshot.map(_.nodes.values.exists(n => n.name == "mcpped" && n.status == NodeLifecycle.Completed))
         )
@@ -610,7 +617,9 @@ class NodePluginChainSpec extends CatsEffectSuite:
     val system = ActorSystem(s"plc-off-${scala.util.Random.nextInt(100000)}")
     val program =
       for
-        _ <- IO.blocking(os.write.over(tempRoot / nebflow.shared.Branding.configFileName, """{"plugins":{"enabled":false}}"""))
+        _ <- IO.blocking(
+          os.write.over(tempRoot / nebflow.shared.Branding.configFileName, """{"plugins":{"enabled":false}}""")
+        )
         res <- mkResources(system, tempRoot, new RecordingLlm(capture))
         rt <- mountProject("plc-off", ws, system, res)
         ctx = mkCtx(res, system, ws.toString)

@@ -65,7 +65,10 @@ class DeviceResultOutboxSpec extends FunSuite:
     val (onDisk, afterBoot) = io.unsafeRunSync()
     assertEquals(clue(onDisk).map(_.id), List("dd-1", "dd-2"))
     assertEquals(clue(afterBoot).map(_.id), List("dd-1", "dd-2"), "outbox is the durability face: disk == truth")
-    assertEquals(onDisk.map(_.payload.hcursor.downField("spawnId").as[String].toOption), List(Some("dd-1"), Some("dd-2")))
+    assertEquals(
+      onDisk.map(_.payload.hcursor.downField("spawnId").as[String].toOption),
+      List(Some("dd-1"), Some("dd-2"))
+    )
   }
 
   // ── ② 断连窗口 → 重连补投（两次状态迁移：留在盘上 → 出队送达）─────────

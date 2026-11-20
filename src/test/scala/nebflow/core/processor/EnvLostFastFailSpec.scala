@@ -158,24 +158,38 @@ class EnvLostFastFailSpec extends CatsEffectSuite:
     val system = ActorSystem("protected-watchdog")
     val run = for
       root <- IO.blocking(os.temp.dir(prefix = "protected-watchdog-"))
-      _ <- nebflow.agent.ExecutionCommitStore.resource(root.toNIO).use { authority =>
-        val admission = nebflow.shared.ExecutionAdmission(Sid, "run", "commit", "request", "attempt", "incarnation",
-          "owner", "business", "audit", Json.fromString("input"), "input-id")
-        for
-          admitted <- authority.admit(admission)
-          _ = assert(admitted.isInstanceOf[nebflow.shared.ExecutionCommitResult.Committed])
-          registry <- Ref.of[IO, Map[String, AgentRecord]](Map(Sid -> record(System.currentTimeMillis())))
-          resources = mkResources(registry).copy(executionCommitPort = authority)
-          hub = new WsHub()
-          events <- Ref.of[IO, List[Json]](Nil)
-          _ <- hub.registerListener(json => events.update(_ :+ json))
-          _ <- TaskStuckWatcher.scan(resources, hub, StuckThresholdMs, cwdProbe = _ => IO.pure(Some(false)))
-          frames <- events.get
-          observed <- authority.observeChain(Sid, "run")
-        yield
-          assertEquals(stuckFrames(frames), Nil)
-          assert(observed.isInstanceOf[nebflow.shared.ExecutionChainObservation.Verified])
-      }.guarantee(IO.blocking(os.remove.all(root)))
+      _ <- nebflow.agent.ExecutionCommitStore
+        .resource(root.toNIO)
+        .use { authority =>
+          val admission = nebflow.shared.ExecutionAdmission(
+            Sid,
+            "run",
+            "commit",
+            "request",
+            "attempt",
+            "incarnation",
+            "owner",
+            "business",
+            "audit",
+            Json.fromString("input"),
+            "input-id"
+          )
+          for
+            admitted <- authority.admit(admission)
+            _ = assert(admitted.isInstanceOf[nebflow.shared.ExecutionCommitResult.Committed])
+            registry <- Ref.of[IO, Map[String, AgentRecord]](Map(Sid -> record(System.currentTimeMillis())))
+            resources = mkResources(registry).copy(executionCommitPort = authority)
+            hub = new WsHub()
+            events <- Ref.of[IO, List[Json]](Nil)
+            _ <- hub.registerListener(json => events.update(_ :+ json))
+            _ <- TaskStuckWatcher.scan(resources, hub, StuckThresholdMs, cwdProbe = _ => IO.pure(Some(false)))
+            frames <- events.get
+            observed <- authority.observeChain(Sid, "run")
+          yield
+            assertEquals(stuckFrames(frames), Nil)
+            assert(observed.isInstanceOf[nebflow.shared.ExecutionChainObservation.Verified])
+        }
+        .guarantee(IO.blocking(os.remove.all(root)))
     yield ()
     run.guarantee(system.stopAll)
   }
@@ -184,42 +198,42 @@ class EnvLostFastFailSpec extends CatsEffectSuite:
     val system = ActorSystem("wtsurv-env-lost-fire")
     val body: IO[Unit] =
       nebflow.agent.ExecutionCommitStore.resource(watchdogLogTmp.toNIO).use { authority =>
-      for
-        _ <- IO(system)
-        registry <- Ref.of[IO, Map[String, AgentRecord]](Map.empty)
-        resources = mkResources(registry).copy(executionCommitPort = authority)
-        wsHub = new WsHub()
-        wsEvents <- Ref.of[IO, List[Json]](Nil)
-        _ <- wsHub.registerListener(json => wsEvents.update(_ :+ json))
-        now = System.currentTimeMillis()
-        _ <- resources.agentRegistry.set(Map(Sid -> record(now)))
-        t0 = System.currentTimeMillis()
-        _ <- TaskStuckWatcher.scan(resources, wsHub, StuckThresholdMs, cwdProbe = _ => IO.pure(Some(false)))
-        _ <- IO.sleep(300.millis)
-        events <- wsEvents.get
-        fires <- eventsOfTypeSince("stuck-fire", t0)
-        detected <- eventsOfTypeSince(TaskStuckWatcher.StuckDetectedType, t0)
-      yield
-        val stuck = stuckFrames(events)
-        assertEquals(stuck.size, 1, s"类③ 必须广播恰好一帧 taskStuck，实得 $stuck")
-        val f = stuck.head
-        assertEquals(f.hcursor.get[String]("action").toOption, Some("failed"))
-        val reason = f.hcursor.get[String]("reason").toOption.getOrElse("")
-        assert(reason.contains("env-lost"), s"明确错误必须自报类别：$reason")
-        assert(reason.contains("J1"), s"明确错误必须含判据号（J1）：$reason")
-        assert(reason.contains("NodeEdit"), s"明确错误必须给处置（NodeEdit 重激活）：$reason")
-        val idle = f.hcursor.get[Long]("idleSecs").toOption.getOrElse(-1L)
-        assert(idle < StuckThresholdMs / 1000, s"快速失败：不得等到 600s 判死阈值才动作（实得 ${idle}s）")
-        assertEquals(
-          fires.count(_.hcursor.get[String]("level").toOption.contains("env-lost")),
-          1,
-          s"开火面留痕必须恰好一行 level=env-lost，实得 ${fires.map(_.noSpaces)}"
-        )
-        assertEquals(
-          detected.count(_.hcursor.get[String]("class").toOption.contains(TaskStuckWatcher.ClassEnvLost)),
-          1,
-          "检出面必须留一行 class=env-lost"
-        )
+        for
+          _ <- IO(system)
+          registry <- Ref.of[IO, Map[String, AgentRecord]](Map.empty)
+          resources = mkResources(registry).copy(executionCommitPort = authority)
+          wsHub = new WsHub()
+          wsEvents <- Ref.of[IO, List[Json]](Nil)
+          _ <- wsHub.registerListener(json => wsEvents.update(_ :+ json))
+          now = System.currentTimeMillis()
+          _ <- resources.agentRegistry.set(Map(Sid -> record(now)))
+          t0 = System.currentTimeMillis()
+          _ <- TaskStuckWatcher.scan(resources, wsHub, StuckThresholdMs, cwdProbe = _ => IO.pure(Some(false)))
+          _ <- IO.sleep(300.millis)
+          events <- wsEvents.get
+          fires <- eventsOfTypeSince("stuck-fire", t0)
+          detected <- eventsOfTypeSince(TaskStuckWatcher.StuckDetectedType, t0)
+        yield
+          val stuck = stuckFrames(events)
+          assertEquals(stuck.size, 1, s"类③ 必须广播恰好一帧 taskStuck，实得 $stuck")
+          val f = stuck.head
+          assertEquals(f.hcursor.get[String]("action").toOption, Some("failed"))
+          val reason = f.hcursor.get[String]("reason").toOption.getOrElse("")
+          assert(reason.contains("env-lost"), s"明确错误必须自报类别：$reason")
+          assert(reason.contains("J1"), s"明确错误必须含判据号（J1）：$reason")
+          assert(reason.contains("NodeEdit"), s"明确错误必须给处置（NodeEdit 重激活）：$reason")
+          val idle = f.hcursor.get[Long]("idleSecs").toOption.getOrElse(-1L)
+          assert(idle < StuckThresholdMs / 1000, s"快速失败：不得等到 600s 判死阈值才动作（实得 ${idle}s）")
+          assertEquals(
+            fires.count(_.hcursor.get[String]("level").toOption.contains("env-lost")),
+            1,
+            s"开火面留痕必须恰好一行 level=env-lost，实得 ${fires.map(_.noSpaces)}"
+          )
+          assertEquals(
+            detected.count(_.hcursor.get[String]("class").toOption.contains(TaskStuckWatcher.ClassEnvLost)),
+            1,
+            "检出面必须留一行 class=env-lost"
+          )
       }
     body.guarantee(system.stopAll.attempt.void)
   }

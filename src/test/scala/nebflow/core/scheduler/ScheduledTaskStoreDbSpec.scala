@@ -33,10 +33,16 @@ class ScheduledTaskStoreDbSpec extends FunSuite:
       })
     yield a
 
-  private def task(id: String, sess: String, at: Long, name: Option[String] = None,
-                   kind: Option[String] = None) =
-    ScheduledTask(id = id, sessionId = sess, content = s"c-$id",
-      triggerAt = at, createdAt = at, name = name, kind = kind)
+  private def task(id: String, sess: String, at: Long, name: Option[String] = None, kind: Option[String] = None) =
+    ScheduledTask(
+      id = id,
+      sessionId = sess,
+      content = s"c-$id",
+      triggerAt = at,
+      createdAt = at,
+      name = name,
+      kind = kind
+    )
 
   private def live(h: DbHandle, sess: String): List[ScheduledTask] =
     h.liveScheduleTasks(sess).unsafeRunSync() match
@@ -73,6 +79,7 @@ class ScheduledTaskStoreDbSpec extends FunSuite:
         _ = assertEquals(d4.map(_.id), List("t2"), "折叠后 t2 单行")
         _ = assert(d4.head.triggered, "触发态写穿（折叠最后行带 triggered）")
       yield ()
+      end for
     }
 
   test("C6-2 坏档：隔离+db 恢复读；无 db 档 ⇒ 隔离+缺席起步（坏档字节保全）"):
@@ -95,6 +102,7 @@ class ScheduledTaskStoreDbSpec extends FunSuite:
         none <- store.loadTasks("sx")
         _ = assertEquals(none, Nil, "db 无档 ⇒ 按缺席起步")
       yield ()
+      end for
     }
 
   test("C6 revision update preserves rows recovered from a corrupt session file"):

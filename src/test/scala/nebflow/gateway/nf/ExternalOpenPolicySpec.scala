@@ -36,10 +36,12 @@ class ExternalOpenPolicySpec extends FunSuite:
   // ——ExternalOpenRoutes.localLeg 直接调它，所以这里绿 = 入口绿。
 
   private def denyFor(path: Path, dataRoot: Path): Option[(NfFilePolicy.NfDenyLayer, String)] =
-    NfFilePolicy.nfVerdictForRealLayer(
-      path,
-      NfFilePolicy.NfPathPolicy(dataRoot, dataRoot.resolve("ws").resolve(".nebflow"), Set.empty)
-    ).map { case (layer, denied) => (layer, denied.reason) }
+    NfFilePolicy
+      .nfVerdictForRealLayer(
+        path,
+        NfFilePolicy.NfPathPolicy(dataRoot, dataRoot.resolve("ws").resolve(".nebflow"), Set.empty)
+      )
+      .map { case (layer, denied) => (layer, denied.reason) }
 
   test("credential shapes are refused — credential-path (negative control ①)"):
     val tmp = Files.createTempDirectory("nf-ext-cred").toRealPath()
@@ -109,8 +111,7 @@ class ExternalOpenPolicySpec extends FunSuite:
     val evil = (host: String) => if host == "evil.example" then List(ip("10.9.8.7")) else Nil
     assertEquals(refused("https://evil.example/a.png", evil).reason, "url-private-address")
     // 一个坏一个好的多地址（轮询绕过）：fail-closed，整条拒。
-    val mixed = (host: String) =>
-      if host == "mixed.example" then List(ip("93.184.216.34"), ip("192.168.0.2")) else Nil
+    val mixed = (host: String) => if host == "mixed.example" then List(ip("93.184.216.34"), ip("192.168.0.2")) else Nil
     assertEquals(refused("https://mixed.example/a.png", mixed).reason, "url-private-address")
     // 解析不出任何地址同样拒（不许「空解析 = 放行」）。
     assertEquals(refused("https://nowhere.example/a", _ => Nil).reason, "url-unresolved")
@@ -171,8 +172,10 @@ class ExternalOpenPolicySpec extends FunSuite:
     val root = java.nio.file.Paths.get("/data")
     val sha = "0123456789abcdef" + "f" * 48
     assertEquals(P.storagePath(root, sha, "a.png").toString, "/data/external-fetch/0123456789abcdef/a.png")
-    assertEquals(P.sha256Hex("abc".getBytes(StandardCharsets.UTF_8)),
-      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    assertEquals(
+      P.sha256Hex("abc".getBytes(StandardCharsets.UTF_8)),
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    )
 
   // ── ⑤ TTL 清账 ─────────────────────────────────────────────────────────
 

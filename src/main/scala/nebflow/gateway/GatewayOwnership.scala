@@ -1,12 +1,13 @@
 package nebflow.gateway
 
-/** Trusted ownership primitives for owner-scoped gateway operations.
-  *
-  * A principal is derived only from a server-validated session record. Bearer
-  * credentials (including PATs and file tokens) deliberately have no owner.
-  * Resource callers must supply the server-side target record; client-provided
-  * identifiers are selectors, never proof of ownership.
-  */
+/**
+ * Trusted ownership primitives for owner-scoped gateway operations.
+ *
+ * A principal is derived only from a server-validated session record. Bearer
+ * credentials (including PATs and file tokens) deliberately have no owner.
+ * Resource callers must supply the server-side target record; client-provided
+ * identifiers are selectors, never proof of ownership.
+ */
 object GatewayOwnership:
 
   sealed trait Principal extends Product with Serializable

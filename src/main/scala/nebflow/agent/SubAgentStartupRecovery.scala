@@ -179,7 +179,11 @@ object SubAgentStartupRecovery:
    * 逐个或一键全部复活。冻结行维持既有「原样保留」处置；完成未报告收尾腿
    * （finalizeCompletedUnreported）保留——完成交付不是错误通知。
    */
-  private[agent] def validTerminalEnvelope(task: SubAgentTask, run: String, event: AgentCommand.ExternalEvent): Boolean =
+  private[agent] def validTerminalEnvelope(
+    task: SubAgentTask,
+    run: String,
+    event: AgentCommand.ExternalEvent
+  ): Boolean =
     task.runId.contains(run) && event.source == task.source && event.correlationId.contains(task.taskId) &&
       event.metadata("parentSessionId").flatMap(_.asString).contains(task.parentSessionId) &&
       event.metadata("taskRunId").flatMap(_.asString).contains(run)
@@ -198,9 +202,11 @@ object SubAgentStartupRecovery:
         def scan(authority: nebflow.core.ExecutionCommitPort): IO[Report] =
           authority.candidates.flatMap {
             case Right(Nil) => sweepLegacy(store, sessionStore, revival, manual)
-            case Right(_) if manual => repairCommittedProjections(store, authority) *> sweepManualUnprotected(store, authority)
-            case Right(_) => repairCommittedProjections(store, authority) *>
-              logger.warn("[startup-recovery] protected or unknown candidate; legacy sweep deferred").as(Report())
+            case Right(_) if manual =>
+              repairCommittedProjections(store, authority) *> sweepManualUnprotected(store, authority)
+            case Right(_) =>
+              repairCommittedProjections(store, authority) *>
+                logger.warn("[startup-recovery] protected or unknown candidate; legacy sweep deferred").as(Report())
             case Left(reason) => logger.warn(s"[startup-recovery] authority discovery failed: $reason").as(Report())
           }
         sessionStore.installedExecutionAuthority match
@@ -215,7 +221,11 @@ object SubAgentStartupRecovery:
               sweepManualUnprotected(store, deps.resources.executionCommitPort, Some(deps.resources))
           case Right(candidates) if candidates.nonEmpty =>
             recoverPendingInternal(store, sessionStore, Some(deps.resources)) *>
-              logger.warn(s"[startup-recovery] ${candidates.size} protected or unknown session(s) found; legacy sweep deferred").as(Report())
+              logger
+                .warn(
+                  s"[startup-recovery] ${candidates.size} protected or unknown session(s) found; legacy sweep deferred"
+                )
+                .as(Report())
           case Right(_) =>
             store.findAllTasks().flatMap { tasks =>
               tasks.traverse(t => deps.resources.executionProtection(t.taskId)).flatMap { states =>
@@ -233,18 +243,30 @@ object SubAgentStartupRecovery:
     resources: Option[SharedResources] = None
   ): IO[Report] =
     inFlightTasks(store).flatMap { rows =>
-      rows.filterNot(t => t.status == FrozenStatus || isReconciliationRow(t)).traverseFilter { task =>
-        resources.fold(authority.protection(task.taskId))(_.executionProtection(task.taskId)).flatMap {
-          case nebflow.shared.ExecutionProtection.Unprotected =>
-            authority.withUnprotectedSession(task.taskId) {
-              store.transitionObserved(task, PendingRecoveryStatus,
-                Some("Execution interrupted; manual recovery required")).as(Some(task.taskId))
-            }.handleErrorWith(e =>
-              logger.warn(s"[startup-recovery] guarded pending transition failed for ${task.taskId}: ${e.getMessage}").as(None)
-            )
-          case _ => IO.pure(None)
+      rows
+        .filterNot(t => t.status == FrozenStatus || isReconciliationRow(t))
+        .traverseFilter { task =>
+          resources.fold(authority.protection(task.taskId))(_.executionProtection(task.taskId)).flatMap {
+            case nebflow.shared.ExecutionProtection.Unprotected =>
+              authority
+                .withUnprotectedSession(task.taskId) {
+                  store
+                    .transitionObserved(
+                      task,
+                      PendingRecoveryStatus,
+                      Some("Execution interrupted; manual recovery required")
+                    )
+                    .as(Some(task.taskId))
+                }
+                .handleErrorWith(e =>
+                  logger
+                    .warn(s"[startup-recovery] guarded pending transition failed for ${task.taskId}: ${e.getMessage}")
+                    .as(None)
+                )
+            case _ => IO.pure(None)
+          }
         }
-      }.map(ids => Report(pended = ids))
+        .map(ids => Report(pended = ids))
     }
 
   private def sweepLegacy(
@@ -263,178 +285,188 @@ object SubAgentStartupRecovery:
         nebflow.core.delegate.DelegateLedgerReconcile.reconcileInterruptedRecords(store).void
     val tasks = recoverPendingInternal(store, sessionStore, revival.map(_.resources)) *> interruptExternalRuns(store) *>
       inFlightTasks(store, includeRestartLost = revival.isDefined && Defaults.DelegateRevivalEnabled)
-    tasks.map(_.filterNot(t => isReconciliationRow(t) || revival.exists(_.resources.isProtectedExecution(t.taskId)))).flatMap {
-      case Nil => settle().as(Report())
-      case allOrphans =>
-        // ── 会话死亡台账结算（2026-10-28 · R1 同族监督持久性面）────────────────
-        // ready-to-merge 行（legacy 状态值）单独分诊：终态化/待恢复见 rtmSettled。
-        val (rtmRows, rest1) = allOrphans.partition(_.status == "ready-to-merge")
-        // 错误冻结批（2026-11-01）：冻结行单独分诊——**绝不进收殓链**（冻结不是
-        // 在飞孤儿，忠实终态化 = 把作者要保留的现场判死）。有复活腿 ⇒ 与在飞孤儿
-        // 走同一判据（`DelegateRevival.eligibility` 的冻结腿放开预算/年龄闸）；复活
-        // 不成的冻结行原样留着（作者仍可 Mail `delegate:<id>` 唤醒；长期无人唤醒由
-        // `DelegateFreeze.dormantSweep` 提示/归档兜底）。
-        val (frozenRows, orphans) = rest1.partition(_.status == FrozenStatus)
-        val frozenNote: IO[Unit] =
-          if frozenRows.isEmpty then IO.unit
-          else
-            logger.info(
-              s"[startup-recovery] ${frozenRows.size} FROZEN delegate row(s) survived the restart — kept as-is awaiting a wake " +
-                s"(never terminalized): ${frozenRows.map(_.taskId).mkString(", ")}"
-            )
-        // 冻结行的复活 = 可选腿（有 deps 才做）：冻结行不参与「在飞孤儿」的收殓分流，
-        // 复活失败也只回原状（行仍 frozen、待作者唤醒）。
-        def reviveFrozen(): IO[List[String]] =
-          if frozenRows.isEmpty || revival.isEmpty || !Defaults.DelegateRevivalEnabled then IO.pure(Nil)
-          else
-            frozenRows
-              .traverse(t =>
-                DelegateRevival
-                  .eligibility(sessionStore, t)
-                  .flatMap {
-                    case Some(_) => IO.pure(None)
-                    case None =>
-                      DelegateRevival
-                        .revive(DelegateRevival.Deps(revival.get.resources, revival.get.system, revival.get.wsSend), t)
-                        .map {
-                          case Right(()) => Some(t.taskId)
-                          case Left(err) =>
-                            logger.warn(s"[startup-recovery] frozen wake failed for ${t.taskId}: $err — left frozen")
-                            None
-                        }
-                  }
-                  .handleErrorWith(e =>
-                    logger.warn(s"[startup-recovery] frozen wake errored for ${t.taskId}: ${e.getMessage}").as(None)
-                  )
+    tasks
+      .map(_.filterNot(t => isReconciliationRow(t) || revival.exists(_.resources.isProtectedExecution(t.taskId))))
+      .flatMap {
+        case Nil => settle().as(Report())
+        case allOrphans =>
+          // ── 会话死亡台账结算（2026-10-28 · R1 同族监督持久性面）────────────────
+          // ready-to-merge 行（legacy 状态值）单独分诊：终态化/待恢复见 rtmSettled。
+          val (rtmRows, rest1) = allOrphans.partition(_.status == "ready-to-merge")
+          // 错误冻结批（2026-11-01）：冻结行单独分诊——**绝不进收殓链**（冻结不是
+          // 在飞孤儿，忠实终态化 = 把作者要保留的现场判死）。有复活腿 ⇒ 与在飞孤儿
+          // 走同一判据（`DelegateRevival.eligibility` 的冻结腿放开预算/年龄闸）；复活
+          // 不成的冻结行原样留着（作者仍可 Mail `delegate:<id>` 唤醒；长期无人唤醒由
+          // `DelegateFreeze.dormantSweep` 提示/归档兜底）。
+          val (frozenRows, orphans) = rest1.partition(_.status == FrozenStatus)
+          val frozenNote: IO[Unit] =
+            if frozenRows.isEmpty then IO.unit
+            else
+              logger.info(
+                s"[startup-recovery] ${frozenRows.size} FROZEN delegate row(s) survived the restart — kept as-is awaiting a wake " +
+                  s"(never terminalized): ${frozenRows.map(_.taskId).mkString(", ")}"
               )
-              .map(_.flatten)
-        // ready-to-merge 行（legacy 状态值，现行引擎不再写入）：没有合并队列可再
-        // 授予合并轮 ⇒ 全部按「重启丢失」终态化（branch/worktree 原样保留；集成走
-        // 项目 merger 的授权请求）。
-        val rtmSettled: IO[List[String]] =
-          if rtmRows.isEmpty then IO.pure(Nil)
-          else
-            logger
-              .warn(
-                s"[startup-recovery] ${rtmRows.size} ready-to-merge row(s) survived a restart — settling to interrupted: ${rtmRows.map(_.taskId).mkString(", ")}"
-              )
-              .as(()) *> rtmRows
-              .traverse { t =>
-                val head =
-                  s"[task lost: crash] Delegate \"${t.description}\" (agent=${t.agentName}, session=${t.taskId}) " +
-                    "had reached ready-to-merge under a previous engine version; no merge round can be granted for it anymore — " +
-                    "the row is settled to interrupted (branch/worktree kept as-is; commits remain on the branch, landing is the author's decision)."
-                recoverOne(store, sessionStore, t, head, "lostToCrash", revival.map(_.resources))
-                  .handleErrorWith { e =>
+          // 冻结行的复活 = 可选腿（有 deps 才做）：冻结行不参与「在飞孤儿」的收殓分流，
+          // 复活失败也只回原状（行仍 frozen、待作者唤醒）。
+          def reviveFrozen(): IO[List[String]] =
+            if frozenRows.isEmpty || revival.isEmpty || !Defaults.DelegateRevivalEnabled then IO.pure(Nil)
+            else
+              frozenRows
+                .traverse(t =>
+                  DelegateRevival
+                    .eligibility(sessionStore, t)
+                    .flatMap {
+                      case Some(_) => IO.pure(None)
+                      case None =>
+                        DelegateRevival
+                          .revive(
+                            DelegateRevival.Deps(revival.get.resources, revival.get.system, revival.get.wsSend),
+                            t
+                          )
+                          .map {
+                            case Right(()) => Some(t.taskId)
+                            case Left(err) =>
+                              logger.warn(s"[startup-recovery] frozen wake failed for ${t.taskId}: $err — left frozen")
+                              None
+                          }
+                    }
+                    .handleErrorWith(e =>
+                      logger.warn(s"[startup-recovery] frozen wake errored for ${t.taskId}: ${e.getMessage}").as(None)
+                    )
+                )
+                .map(_.flatten)
+          // ready-to-merge 行（legacy 状态值，现行引擎不再写入）：没有合并队列可再
+          // 授予合并轮 ⇒ 全部按「重启丢失」终态化（branch/worktree 原样保留；集成走
+          // 项目 merger 的授权请求）。
+          val rtmSettled: IO[List[String]] =
+            if rtmRows.isEmpty then IO.pure(Nil)
+            else
+              logger
+                .warn(
+                  s"[startup-recovery] ${rtmRows.size} ready-to-merge row(s) survived a restart — settling to interrupted: ${rtmRows.map(_.taskId).mkString(", ")}"
+                )
+                .as(()) *> rtmRows
+                .traverse { t =>
+                  val head =
+                    s"[task lost: crash] Delegate \"${t.description}\" (agent=${t.agentName}, session=${t.taskId}) " +
+                      "had reached ready-to-merge under a previous engine version; no merge round can be granted for it anymore — " +
+                      "the row is settled to interrupted (branch/worktree kept as-is; commits remain on the branch, landing is the author's decision)."
+                  recoverOne(store, sessionStore, t, head, "lostToCrash", revival.map(_.resources))
+                    .handleErrorWith { e =>
+                      logger
+                        .warn(s"[startup-recovery] rtm settle failed for ${t.taskId}: ${e.getMessage}")
+                        .as(t.taskId)
+                    }
+                }
+          def salvageAll(tasks: List[SubAgentTask]): IO[List[String]] =
+            if tasks.isEmpty then IO.pure(Nil)
+            else
+              logger
+                .warn(
+                  s"[startup-recovery] ${tasks.size} in-flight delegate task(s) survived a process restart — terminalizing + notifying parent session(s)"
+                )
+                .as(()) *> tasks
+                .traverse(t =>
+                  recoverOne(store, sessionStore, t, revival.map(_.resources)).handleErrorWith { e =>
                     logger
-                      .warn(s"[startup-recovery] rtm settle failed for ${t.taskId}: ${e.getMessage}")
+                      .warn(s"[startup-recovery] recovery failed for task ${t.taskId}: ${e.getMessage}")
                       .as(t.taskId)
                   }
-              }
-        def salvageAll(tasks: List[SubAgentTask]): IO[List[String]] =
-          if tasks.isEmpty then IO.pure(Nil)
-          else
-            logger
-              .warn(
-                s"[startup-recovery] ${tasks.size} in-flight delegate task(s) survived a process restart — terminalizing + notifying parent session(s)"
-              )
-              .as(()) *> tasks
-              .traverse(t =>
-                recoverOne(store, sessionStore, t, revival.map(_.resources)).handleErrorWith { e =>
-                  logger.warn(s"[startup-recovery] recovery failed for task ${t.taskId}: ${e.getMessage}").as(t.taskId)
+                )
+          // ── 手动模式腿（重启手动恢复批 2026-11-06 20:36 作者令）：标 pending-recovery，
+          // 不复活、不收殓、零向上通知（recoverOne 的通知链本批已整体摘除，本腿根本不进它）。
+          def markPending(tasks: List[SubAgentTask]): IO[List[String]] =
+            if tasks.isEmpty then IO.pure(Nil)
+            else
+              logger
+                .info(
+                  s"[startup-recovery] MANUAL recovery mode: ${tasks.size} row(s) → pending-recovery " +
+                    s"(no auto-revive / no terminalize / zero parent notify): ${tasks.map(_.taskId).mkString(", ")}"
+                )
+                .as(()) *> tasks
+                .traverse(t =>
+                  store
+                    .transitionObserved(
+                      t,
+                      PendingRecoveryStatus,
+                      Some("Execution interrupted; manual recovery required")
+                    )
+                    .handleErrorWith(e =>
+                      logger
+                        .warn(s"[startup-recovery] pending-recovery mark failed for ${t.taskId}: ${e.getMessage}")
+                        .as(())
+                    )
+                    .as(t.taskId)
+                )
+          // 手动模式下的 ready-to-merge 行：不收殓（那是判死+通知）→ 标
+          // pending-recovery 待手动恢复。
+          def rtmManual(): IO[List[String]] = markPending(rtmRows)
+          frozenNote *> (
+            if manual then
+              rtmManual().flatMap { pendedRtm =>
+                markPending(orphans).flatMap { pendedOrphans =>
+                  settle().as(Report(pended = pendedRtm ++ pendedOrphans))
                 }
-              )
-        // ── 手动模式腿（重启手动恢复批 2026-11-06 20:36 作者令）：标 pending-recovery，
-        // 不复活、不收殓、零向上通知（recoverOne 的通知链本批已整体摘除，本腿根本不进它）。
-        def markPending(tasks: List[SubAgentTask]): IO[List[String]] =
-          if tasks.isEmpty then IO.pure(Nil)
-          else
-            logger
-              .info(
-                s"[startup-recovery] MANUAL recovery mode: ${tasks.size} row(s) → pending-recovery " +
-                  s"(no auto-revive / no terminalize / zero parent notify): ${tasks.map(_.taskId).mkString(", ")}"
-              )
-              .as(()) *> tasks
-              .traverse(t =>
-                store
-                  .transitionObserved(t, PendingRecoveryStatus, Some("Execution interrupted; manual recovery required"))
-                  .handleErrorWith(e =>
-                    logger
-                      .warn(s"[startup-recovery] pending-recovery mark failed for ${t.taskId}: ${e.getMessage}")
-                      .as(())
-                  )
-                  .as(t.taskId)
-              )
-        // 手动模式下的 ready-to-merge 行：不收殓（那是判死+通知）→ 标
-        // pending-recovery 待手动恢复。
-        def rtmManual(): IO[List[String]] = markPending(rtmRows)
-        frozenNote *> (
-          if manual then
-            rtmManual().flatMap { pendedRtm =>
-              markPending(orphans).flatMap { pendedOrphans =>
-                settle().as(Report(pended = pendedRtm ++ pendedOrphans))
               }
-            }
-          else
-            revival match // 手动模式分支包裹（最小 diff：花括号界定既有 case 缩进）
-              case None =>
-                salvageAll(orphans).flatMap(ids =>
-                  rtmSettled.flatMap(rtm => settle().as(Report(terminalized = rtm ++ ids)))
-                )
-              case Some(deps) if !Defaults.DelegateRevivalEnabled =>
-                logger
-                  .info("[delegate-revival] kill-switch off — all orphans fall through to the salvage chain")
-                  .as(())
-                  .flatMap(_ =>
-                    salvageAll(orphans)
-                      .flatMap(ids => rtmSettled.flatMap(rtm => settle().as(Report(terminalized = rtm ++ ids))))
+            else
+              revival match // 手动模式分支包裹（最小 diff：花括号界定既有 case 缩进）
+                case None =>
+                  salvageAll(orphans)
+                    .flatMap(ids => rtmSettled.flatMap(rtm => settle().as(Report(terminalized = rtm ++ ids))))
+                case Some(deps) if !Defaults.DelegateRevivalEnabled =>
+                  logger
+                    .info("[delegate-revival] kill-switch off — all orphans fall through to the salvage chain")
+                    .as(())
+                    .flatMap(_ =>
+                      salvageAll(orphans)
+                        .flatMap(ids => rtmSettled.flatMap(rtm => settle().as(Report(terminalized = rtm ++ ids))))
+                    )
+                case Some(deps) =>
+                  for
+                    rtm <- rtmSettled
+                    // 冻结行复活腿（错误冻结批）：先于在飞孤儿判据——冻结行的 eligibility
+                    // 走冻结预算/保留期，与在飞孤儿的年龄预算分道。
+                    revivedFrozen <- reviveFrozen()
+                    judged <- orphans.traverse { t =>
+                      DelegateRevival.eligibility(sessionStore, t).map(reason => (t, reason))
+                    }
+                    eligible = judged.collect { case (t, None) => t }.sortBy(-_.spawnedAt) // 新者优先（设计 §2.2 #8）
+                    cap = math.max(0, Defaults.DelegateRevivalBootCap)
+                    reviveSet = eligible.take(cap)
+                    skipped =
+                      judged.collect { case (t, Some(reason)) => (t.taskId, reason) } ++
+                        eligible.drop(cap).map(t => (t.taskId, s"boot revival cap exhausted ($cap)"))
+                    _ <-
+                      if reviveSet.isEmpty then IO.unit
+                      else
+                        logger.info(
+                          s"[delegate-revival] ${reviveSet.size} eligible orphan(s) queued for revival: " +
+                            reviveSet.map(t => s"${t.taskId}(rev=${t.revivalCount.getOrElse(0)})").mkString(", ") +
+                            skipped.map((id, r) => s"; skip $id: $r").mkString
+                        )
+                    // 慢段：fork 复活（并发护栏；spawn 失败的单条 fork 内落回收殓链）。
+                    revivedRef <-
+                      if reviveSet.isEmpty then Ref.of[IO, List[String]](Nil)
+                      else
+                        DelegateRevival.reviveAll(
+                          DelegateRevival.Deps(deps.resources, deps.system, deps.wsSend),
+                          reviveSet,
+                          salvage = t => recoverOne(store, sessionStore, t, revival.map(_.resources)).as(())
+                        )
+                    // 同步段：复活集之外的孤儿收殓（F2 队列单写者纪律——复活 fork 零触碰
+                    // 队列文件，收殓全部在本同步段串行完成，无并发写）。
+                    reviveIds = reviveSet.map(_.taskId).toSet
+                    rest = orphans.filterNot(o => reviveIds.contains(o.taskId))
+                    terminalized <- salvageAll(rest)
+                    _ <- settle()
+                    revivedNow <- revivedRef.get
+                  yield Report(
+                    terminalized = rtm ++ terminalized,
+                    revived = revivedNow ++ revivedFrozen,
+                    revivalSkipped = skipped
                   )
-              case Some(deps) =>
-                for
-                  rtm <- rtmSettled
-                  // 冻结行复活腿（错误冻结批）：先于在飞孤儿判据——冻结行的 eligibility
-                  // 走冻结预算/保留期，与在飞孤儿的年龄预算分道。
-                  revivedFrozen <- reviveFrozen()
-                  judged <- orphans.traverse { t =>
-                    DelegateRevival.eligibility(sessionStore, t).map(reason => (t, reason))
-                  }
-                  eligible = judged.collect { case (t, None) => t }.sortBy(-_.spawnedAt) // 新者优先（设计 §2.2 #8）
-                  cap = math.max(0, Defaults.DelegateRevivalBootCap)
-                  reviveSet = eligible.take(cap)
-                  skipped =
-                    judged.collect { case (t, Some(reason)) => (t.taskId, reason) } ++
-                      eligible.drop(cap).map(t => (t.taskId, s"boot revival cap exhausted ($cap)"))
-                  _ <-
-                    if reviveSet.isEmpty then IO.unit
-                    else
-                      logger.info(
-                        s"[delegate-revival] ${reviveSet.size} eligible orphan(s) queued for revival: " +
-                          reviveSet.map(t => s"${t.taskId}(rev=${t.revivalCount.getOrElse(0)})").mkString(", ") +
-                          skipped.map((id, r) => s"; skip $id: $r").mkString
-                      )
-                  // 慢段：fork 复活（并发护栏；spawn 失败的单条 fork 内落回收殓链）。
-                  revivedRef <-
-                    if reviveSet.isEmpty then Ref.of[IO, List[String]](Nil)
-                    else
-                      DelegateRevival.reviveAll(
-                        DelegateRevival.Deps(deps.resources, deps.system, deps.wsSend),
-                        reviveSet,
-                        salvage = t => recoverOne(store, sessionStore, t, revival.map(_.resources)).as(())
-                      )
-                  // 同步段：复活集之外的孤儿收殓（F2 队列单写者纪律——复活 fork 零触碰
-                  // 队列文件，收殓全部在本同步段串行完成，无并发写）。
-                  reviveIds = reviveSet.map(_.taskId).toSet
-                  rest = orphans.filterNot(o => reviveIds.contains(o.taskId))
-                  terminalized <- salvageAll(rest)
-                  _ <- settle()
-                  revivedNow <- revivedRef.get
-                yield Report(
-                  terminalized = rtm ++ terminalized,
-                  revived = revivedNow ++ revivedFrozen,
-                  revivalSkipped = skipped
-                )
-        )
-    }
+          )
+      }
 
   end sweepLegacy
 
@@ -443,17 +475,22 @@ object SubAgentStartupRecovery:
       case authority: ExecutionCommitStore =>
         authority.candidates.flatMap {
           case Left(reason) => logger.warn(s"[startup-recovery] candidate scan failed: $reason")
-          case Right(candidates) => candidates.traverse_ { candidate =>
-            candidate.protection match
-              case nebflow.shared.ExecutionProtection.Protected(ids) => ids.traverse_ { run =>
-                authority.repairTerminalProjection(candidate.sessionId, run, store).flatMap {
-                  case Right(_) => IO.unit
-                  case Left(reason) if reason == "terminal-uncommitted" => IO.unit
-                  case Left(reason) => logger.warn(s"[startup-recovery] terminal projection requires review: ${candidate.sessionId}/$run: $reason")
-                }
-              }
-              case _ => IO.unit
-          }
+          case Right(candidates) =>
+            candidates.traverse_ { candidate =>
+              candidate.protection match
+                case nebflow.shared.ExecutionProtection.Protected(ids) =>
+                  ids.traverse_ { run =>
+                    authority.repairTerminalProjection(candidate.sessionId, run, store).flatMap {
+                      case Right(_) => IO.unit
+                      case Left(reason) if reason == "terminal-uncommitted" => IO.unit
+                      case Left(reason) =>
+                        logger.warn(
+                          s"[startup-recovery] terminal projection requires review: ${candidate.sessionId}/$run: $reason"
+                        )
+                    }
+                  }
+                case _ => IO.unit
+            }
         }
       case _ => IO.unit
 
@@ -463,197 +500,350 @@ object SubAgentStartupRecovery:
     reconcileWithoutResourcesImpl(store, sessionStore)
 
   private def reconcileWithoutResourcesImpl(store: SubAgentTaskStore, sessionStore: SessionStore): IO[Unit] =
-    store.findAllTasks().flatMap(_.filter(t =>
-      isReconciliationRow(t) && t.runId.nonEmpty && !t.executionStatus.contains("interrupted")
-    ).traverse_ { task =>
-      val run = task.runId.get
-      val debtOnly = nebflow.core.mail.CompletionDebtStore.pendingManaged(task.parentSessionId, task.taskId, run, task.source)
-        .map(_.map { debt =>
-          val text = debt.messages.reverse.find(_.role == MessageRole.Assistant).map(_.textContent.trim).getOrElse("")
-          val payload = if text.nonEmpty && text != Defaults.MaxTokensStubText then s"\"${task.description}\":\n$text"
-            else s"\"${task.description}\" (no text output)"
-          AgentCommand.ExternalEvent(task.source, "completed", payload,
-            JsonObject("parentSessionId" -> task.parentSessionId.asJson, "taskRunId" -> run.asJson,
-              "description" -> task.description.asJson, "agentName" -> task.agentName.asJson,
-              "completionMessages" -> debt.messages.asJson, "completionGeneration" -> run.asJson), Some(task.taskId))
-        })
-      (sessionStore.loadTerminalEnvelope(task.taskId, run), debtOnly).tupled.flatMap {
-        case (Some(event), _) if event.eventType == "completed" && validTerminalEnvelope(task, run, event) =>
-          sessionStore.saveTerminalEnvelope(task.taskId, run, event).flatMap(ref =>
-            store.completeRun(task.parentSessionId, task.taskId, run, "finished", resultRef = Some(ref),
-              notificationId = Some(s"${task.taskId}#$run")).void)
-        case (None, Some(event)) =>
-          sessionStore.saveTerminalEnvelope(task.taskId, run, event).flatMap(ref =>
-            store.completeRun(task.parentSessionId, task.taskId, run, "finished", resultRef = Some(ref),
-              notificationId = Some(s"${task.taskId}#$run")).void)
-        case _ => IO.unit
-      }.handleErrorWith(e => logger.warn(s"[startup-recovery] resource-free reconciliation failed for ${task.taskId}: ${e.getMessage}"))
-    })
+    store
+      .findAllTasks()
+      .flatMap(
+        _.filter(t => isReconciliationRow(t) && t.runId.nonEmpty && !t.executionStatus.contains("interrupted"))
+          .traverse_ { task =>
+            val run = task.runId.get
+            val debtOnly = nebflow.core.mail.CompletionDebtStore
+              .pendingManaged(task.parentSessionId, task.taskId, run, task.source)
+              .map(_.map { debt =>
+                val text =
+                  debt.messages.reverse.find(_.role == MessageRole.Assistant).map(_.textContent.trim).getOrElse("")
+                val payload =
+                  if text.nonEmpty && text != Defaults.MaxTokensStubText then s"\"${task.description}\":\n$text"
+                  else s"\"${task.description}\" (no text output)"
+                AgentCommand.ExternalEvent(
+                  task.source,
+                  "completed",
+                  payload,
+                  JsonObject(
+                    "parentSessionId" -> task.parentSessionId.asJson,
+                    "taskRunId" -> run.asJson,
+                    "description" -> task.description.asJson,
+                    "agentName" -> task.agentName.asJson,
+                    "completionMessages" -> debt.messages.asJson,
+                    "completionGeneration" -> run.asJson
+                  ),
+                  Some(task.taskId)
+                )
+              })
+            (sessionStore.loadTerminalEnvelope(task.taskId, run), debtOnly).tupled
+              .flatMap {
+                case (Some(event), _) if event.eventType == "completed" && validTerminalEnvelope(task, run, event) =>
+                  sessionStore
+                    .saveTerminalEnvelope(task.taskId, run, event)
+                    .flatMap(ref =>
+                      store
+                        .completeRun(
+                          task.parentSessionId,
+                          task.taskId,
+                          run,
+                          "finished",
+                          resultRef = Some(ref),
+                          notificationId = Some(s"${task.taskId}#$run")
+                        )
+                        .void
+                    )
+                case (None, Some(event)) =>
+                  sessionStore
+                    .saveTerminalEnvelope(task.taskId, run, event)
+                    .flatMap(ref =>
+                      store
+                        .completeRun(
+                          task.parentSessionId,
+                          task.taskId,
+                          run,
+                          "finished",
+                          resultRef = Some(ref),
+                          notificationId = Some(s"${task.taskId}#$run")
+                        )
+                        .void
+                    )
+                case _ => IO.unit
+              }
+              .handleErrorWith(e =>
+                logger
+                  .warn(s"[startup-recovery] resource-free reconciliation failed for ${task.taskId}: ${e.getMessage}")
+              )
+          }
+      )
 
   private[agent] def recoverPendingInternal(
     store: SubAgentTaskStore,
     sessionStore: SessionStore,
     resources: Option[SharedResources]
   ): IO[Unit] = resources.fold(IO.unit) { rs =>
-    val recoverDeliveredLegacy = store.findAllTasks().flatMap(_.filter(t =>
-      isReconciliationRow(t) && t.source == "subagent" && t.runId.isEmpty && t.toolCallId.exists(_.nonEmpty)
-    ).traverse_ { task =>
-      sessionStore.loadMessagesForSession(task.parentSessionId).flatMap { messages =>
-        val delivered = messages.exists {
-          case Message(MessageRole.User, Right(blocks), _, Some(source), _, _) if source.startsWith("subagent-tool-returns:") =>
-            val trustedIds = source.stripPrefix("subagent-tool-returns:").split(",").toSet
-            blocks.exists {
-              case ContentBlock.ToolResult(id, _, _) => task.toolCallId.contains(id) && trustedIds.contains(id)
-              case _ => false
-            }
-          case _ => false
-        }
-        if delivered then store.completeDeliveredLegacy(task.parentSessionId, task.taskId, task.toolCallId.get).void
-        else IO.unit
-      }.handleErrorWith(e => logger.warn(s"[startup-recovery] legacy delivery check failed for ${task.taskId}: ${e.getMessage}"))
-    })
-    val recoverActiveEnvelopes = store.findAllTasks().flatMap(_.filter(t =>
-      isReconciliationRow(t) && t.executor.contains("nebflow") && t.runId.nonEmpty &&
-        !t.executionStatus.contains("interrupted")
-    ).traverse_ { task =>
-      val run = task.runId.get
-      rs.executionProtection(task.taskId).flatMap {
-        case nebflow.shared.ExecutionProtection.Unprotected =>
-          (sessionStore.loadTerminalEnvelope(task.taskId, run),
-            nebflow.core.mail.CompletionDebtStore.pendingManaged(task.parentSessionId, task.taskId, run, task.source)).tupled.flatMap {
-            case (Some(event), Some(debt)) if !validTerminalEnvelope(task, run, event) || event.eventType != "completed" ||
-                !event.metadata("completionMessages").contains(debt.messages.asJson) =>
-              store.markSuspectedLostTerminal(task).void *>
-                logger.warn(s"[startup-recovery] conflicting terminal evidence for ${task.taskId}; manual review required")
-            case (Some(event), _) if event.eventType == "completed" && validTerminalEnvelope(task, run, event) =>
-              sessionStore.saveTerminalEnvelope(task.taskId, run, event).flatMap { ref =>
-                store.completeRun(task.parentSessionId, task.taskId, run, "finished", resultRef = Some(ref),
-                  notificationId = Some(s"${task.taskId}#$run")).void
-              }
-            case (None, _) =>
-              nebflow.core.mail.CompletionDebtStore.pendingManaged(task.parentSessionId, task.taskId, run, task.source).flatMap {
-                case Some(debt) =>
-                  val text = debt.messages.reverse.find(_.role == MessageRole.Assistant).map(_.textContent.trim).getOrElse("")
-                  val payload = if text.nonEmpty && text != Defaults.MaxTokensStubText then s"\"${task.description}\":\n$text"
-                    else s"\"${task.description}\" (no text output)"
-                  val event = AgentCommand.ExternalEvent(task.source, "completed", payload,
-                    JsonObject("parentSessionId" -> task.parentSessionId.asJson,
-                      "taskRunId" -> run.asJson, "description" -> task.description.asJson,
-                      "agentName" -> task.agentName.asJson, "completionMessages" -> debt.messages.asJson,
-                      "completionGeneration" -> run.asJson), Some(task.taskId))
-                  sessionStore.saveTerminalEnvelope(task.taskId, run, event).flatMap { ref =>
-                    store.completeRun(task.parentSessionId, task.taskId, run, "finished", resultRef = Some(ref),
-                      notificationId = Some(s"${task.taskId}#$run")).void
-                  }
-                case None => IO.unit
-              }
-            case _ => IO.unit
-          }
-        case _ => IO.unit
-      }.handleErrorWith(e => logger.warn(s"[startup-recovery] terminal envelope recovery failed for ${task.taskId}: ${e.getMessage}"))
-    })
-    val markUnresolved = store.findAllTasks().flatMap(_.filter(isReconciliationRow).traverse_ { row =>
-      (rs.executionProtection(row.taskId), rs.agentRegistry.get).tupled.flatMap {
-        case (nebflow.shared.ExecutionProtection.Unprotected, registry) if !registry.contains(row.taskId) =>
-          val mayMark = if row.executionStatus.contains("interrupted") then
-            row.runId.fold(IO.pure(false)) { run =>
-              sessionStore.loadTerminalEnvelope(row.taskId, run).map(_.exists(event =>
-                event.eventType == "completed" && validTerminalEnvelope(row, run, event)))
-            }
-          else IO.pure(true)
-          mayMark.flatMap { yes =>
-            if !yes then IO.unit
-            else store.markSuspectedLostTerminal(row).flatMap { marked =>
-              if marked then logger.warn(s"[suspected-lost-terminal] ${row.parentSessionId}/${row.taskId}: manual review required")
-              else IO.unit
-            }
-          }
-        case _ => IO.unit
-      }
-    })
-    repairCommittedProjections(store, rs.executionCommitPort) *> recoverDeliveredLegacy *> recoverActiveEnvelopes *> markUnresolved *> store
+    val recoverDeliveredLegacy = store
       .findAllTasks()
       .flatMap(
         _.filter(t =>
-          t.executor.contains("nebflow") && t.runId.nonEmpty && t.notificationId.nonEmpty
+          isReconciliationRow(t) && t.source == "subagent" && t.runId.isEmpty && t.toolCallId.exists(_.nonEmpty)
         ).traverse_ { task =>
-          rs.executionProtection(task.taskId).flatMap {
-            case nebflow.shared.ExecutionProtection.Unprotected if task.notificationPending.contains(true) =>
-              sessionStore.loadTerminalEnvelope(task.taskId, task.runId.get).flatMap { saved =>
-                val fallback = Option.when(
-                  task.executionStatus.exists(Set("failed", "cancelled").contains) &&
-                    task.resultRef.isEmpty && task.terminalReason.nonEmpty
-                )(
-                  AgentCommand.ExternalEvent(
-                    task.source,
-                    task.status,
-                    task.terminalReason.get,
-                    JsonObject("taskId" -> task.taskId.asJson, "runId" -> task.runId.asJson),
-                    Some(task.taskId)
-                  )
-                )
-                saved.filter(validTerminalEnvelope(task, task.runId.get, _)).orElse(Option.when(saved.isEmpty)(fallback).flatten).fold(IO.unit) { event =>
-                  val identity = task.notificationId.get
-                  MailboxProducer
-                    .deliver(
-                      rs,
-                      task.parentSessionId,
-                      event,
-                      identity,
-                      "delegate-terminal",
-                      coalesce = false,
-                      producer = "task-lifecycle-recovery"
-                    )
-                    .flatMap {
-                      case nebflow.core.mail.SessionMailbox.MailResult.Failed(_) => IO.unit
-                      case _ =>
-                        store.acknowledgeNotification(task.parentSessionId, task.taskId, task.runId.get, identity).void
-                    }
-                }
+          sessionStore
+            .loadMessagesForSession(task.parentSessionId)
+            .flatMap { messages =>
+              val delivered = messages.exists {
+                case Message(MessageRole.User, Right(blocks), _, Some(source), _, _)
+                    if source.startsWith("subagent-tool-returns:") =>
+                  val trustedIds = source.stripPrefix("subagent-tool-returns:").split(",").toSet
+                  blocks.exists {
+                    case ContentBlock.ToolResult(id, _, _) => task.toolCallId.contains(id) && trustedIds.contains(id)
+                    case _ => false
+                  }
+                case _ => false
               }
-            case nebflow.shared.ExecutionProtection.Protected(List(run)) if task.runId.contains(run) &&
-                task.executionStatus.contains("finished") && task.notificationId.contains(s"${task.taskId}#$run") =>
-              val encoded = java.util.Base64.getUrlEncoder.withoutPadding()
-                .encodeToString(run.getBytes(java.nio.charset.StandardCharsets.UTF_8))
-              val expected = sessionStore.executionAuthorityRoot.toAbsolutePath.normalize()
-                .resolve(task.taskId).resolve(s"terminal-$encoded.json").toString
-              if !task.resultRef.contains(expected) then IO.unit
-              else rs.executionCommitPort.committedTerminal(task.taskId, run).flatMap {
-                case Left(_) => IO.unit
-                case Right(confirmed) => sessionStore.loadTerminalEnvelope(task.taskId, run).flatMap {
-                  case Some(event) if validTerminalEnvelope(task, run, event) && Json.obj("source" -> event.source.asJson, "eventType" -> event.eventType.asJson,
-                      "payload" -> event.payload.asJson, "metadata" -> Json.fromJsonObject(event.metadata),
-                      "correlationId" -> event.correlationId.asJson, "blocks" -> event.blocks.asJson) == confirmed =>
-                    MailboxProducer.deliver(rs, task.parentSessionId, event,
-                    task.notificationId.get, "delegate-terminal", coalesce = false, producer = "task-lifecycle-recovery")
-                    .flatMap {
-                      case nebflow.core.mail.SessionMailbox.MailResult.Failed(_) => IO.unit
-                      case nebflow.core.mail.SessionMailbox.MailResult.AlreadyPresent =>
-                        val identity = task.notificationId.get
-                        (nebflow.core.mail.SessionMailbox.scanPending(task.parentSessionId),
-                          nebflow.core.mail.SessionMailbox.scanTaken(task.parentSessionId),
-                          nebflow.core.mail.SessionMailbox.deliveredContains(task.parentSessionId, Set(identity))).tupled.flatMap {
-                          case (pending, taken, delivered) =>
-                            val matches = (pending ++ taken).filter(_.identity == identity)
-                            if matches.exists(_.event != event) then
-                              logger.warn(s"[startup-recovery] conflicting protected terminal mailbox identity for ${task.taskId}")
-                            else if matches.nonEmpty || delivered.contains(identity) then
-                              store.acknowledgeNotification(task.parentSessionId, task.taskId, run, identity).void
-                            else logger.warn(s"[startup-recovery] protected terminal mailbox receipt unavailable for ${task.taskId}")
-                        }
-                      case _ => store.acknowledgeNotification(task.parentSessionId, task.taskId, run,
-                        task.notificationId.get).void
+              if delivered then
+                store.completeDeliveredLegacy(task.parentSessionId, task.taskId, task.toolCallId.get).void
+              else IO.unit
+            }
+            .handleErrorWith(e =>
+              logger.warn(s"[startup-recovery] legacy delivery check failed for ${task.taskId}: ${e.getMessage}")
+            )
+        }
+      )
+    val recoverActiveEnvelopes = store
+      .findAllTasks()
+      .flatMap(
+        _.filter(t =>
+          isReconciliationRow(t) && t.executor.contains("nebflow") && t.runId.nonEmpty &&
+            !t.executionStatus.contains("interrupted")
+        ).traverse_ { task =>
+          val run = task.runId.get
+          rs.executionProtection(task.taskId)
+            .flatMap {
+              case nebflow.shared.ExecutionProtection.Unprotected =>
+                (
+                  sessionStore.loadTerminalEnvelope(task.taskId, run),
+                  nebflow.core.mail.CompletionDebtStore
+                    .pendingManaged(task.parentSessionId, task.taskId, run, task.source)
+                ).tupled.flatMap {
+                  case (Some(event), Some(debt))
+                      if !validTerminalEnvelope(task, run, event) || event.eventType != "completed" ||
+                        !event.metadata("completionMessages").contains(debt.messages.asJson) =>
+                    store.markSuspectedLostTerminal(task).void *>
+                      logger.warn(
+                        s"[startup-recovery] conflicting terminal evidence for ${task.taskId}; manual review required"
+                      )
+                  case (Some(event), _) if event.eventType == "completed" && validTerminalEnvelope(task, run, event) =>
+                    sessionStore.saveTerminalEnvelope(task.taskId, run, event).flatMap { ref =>
+                      store
+                        .completeRun(
+                          task.parentSessionId,
+                          task.taskId,
+                          run,
+                          "finished",
+                          resultRef = Some(ref),
+                          notificationId = Some(s"${task.taskId}#$run")
+                        )
+                        .void
                     }
-                  case Some(event) if !validTerminalEnvelope(task, run, event) =>
-                    store.markInvalidTerminalEnvelope(task).flatMap { marked =>
-                      if marked then logger.warn(s"[startup-recovery] invalid protected terminal identity for ${task.taskId}; manual review required")
-                      else IO.unit
-                    }
+                  case (None, _) =>
+                    nebflow.core.mail.CompletionDebtStore
+                      .pendingManaged(task.parentSessionId, task.taskId, run, task.source)
+                      .flatMap {
+                        case Some(debt) =>
+                          val text = debt.messages.reverse
+                            .find(_.role == MessageRole.Assistant)
+                            .map(_.textContent.trim)
+                            .getOrElse("")
+                          val payload =
+                            if text.nonEmpty && text != Defaults.MaxTokensStubText then
+                              s"\"${task.description}\":\n$text"
+                            else s"\"${task.description}\" (no text output)"
+                          val event = AgentCommand.ExternalEvent(
+                            task.source,
+                            "completed",
+                            payload,
+                            JsonObject(
+                              "parentSessionId" -> task.parentSessionId.asJson,
+                              "taskRunId" -> run.asJson,
+                              "description" -> task.description.asJson,
+                              "agentName" -> task.agentName.asJson,
+                              "completionMessages" -> debt.messages.asJson,
+                              "completionGeneration" -> run.asJson
+                            ),
+                            Some(task.taskId)
+                          )
+                          sessionStore.saveTerminalEnvelope(task.taskId, run, event).flatMap { ref =>
+                            store
+                              .completeRun(
+                                task.parentSessionId,
+                                task.taskId,
+                                run,
+                                "finished",
+                                resultRef = Some(ref),
+                                notificationId = Some(s"${task.taskId}#$run")
+                              )
+                              .void
+                          }
+                        case None => IO.unit
+                      }
                   case _ => IO.unit
                 }
-              }
-            case _ => IO.unit
-          }
+              case _ => IO.unit
+            }
+            .handleErrorWith(e =>
+              logger.warn(s"[startup-recovery] terminal envelope recovery failed for ${task.taskId}: ${e.getMessage}")
+            )
+        }
+      )
+    val markUnresolved = store
+      .findAllTasks()
+      .flatMap(_.filter(isReconciliationRow).traverse_ { row =>
+        (rs.executionProtection(row.taskId), rs.agentRegistry.get).tupled.flatMap {
+          case (nebflow.shared.ExecutionProtection.Unprotected, registry) if !registry.contains(row.taskId) =>
+            val mayMark =
+              if row.executionStatus.contains("interrupted") then
+                row.runId.fold(IO.pure(false)) { run =>
+                  sessionStore
+                    .loadTerminalEnvelope(row.taskId, run)
+                    .map(_.exists(event => event.eventType == "completed" && validTerminalEnvelope(row, run, event)))
+                }
+              else IO.pure(true)
+            mayMark.flatMap { yes =>
+              if !yes then IO.unit
+              else
+                store.markSuspectedLostTerminal(row).flatMap { marked =>
+                  if marked then
+                    logger
+                      .warn(s"[suspected-lost-terminal] ${row.parentSessionId}/${row.taskId}: manual review required")
+                  else IO.unit
+                }
+            }
+          case _ => IO.unit
+        }
+      })
+    repairCommittedProjections(
+      store,
+      rs.executionCommitPort
+    ) *> recoverDeliveredLegacy *> recoverActiveEnvelopes *> markUnresolved *> store
+      .findAllTasks()
+      .flatMap(
+        _.filter(t => t.executor.contains("nebflow") && t.runId.nonEmpty && t.notificationId.nonEmpty).traverse_ {
+          task =>
+            rs.executionProtection(task.taskId).flatMap {
+              case nebflow.shared.ExecutionProtection.Unprotected if task.notificationPending.contains(true) =>
+                sessionStore.loadTerminalEnvelope(task.taskId, task.runId.get).flatMap { saved =>
+                  val fallback = Option.when(
+                    task.executionStatus.exists(Set("failed", "cancelled").contains) &&
+                      task.resultRef.isEmpty && task.terminalReason.nonEmpty
+                  )(
+                    AgentCommand.ExternalEvent(
+                      task.source,
+                      task.status,
+                      task.terminalReason.get,
+                      JsonObject("taskId" -> task.taskId.asJson, "runId" -> task.runId.asJson),
+                      Some(task.taskId)
+                    )
+                  )
+                  saved
+                    .filter(validTerminalEnvelope(task, task.runId.get, _))
+                    .orElse(Option.when(saved.isEmpty)(fallback).flatten)
+                    .fold(IO.unit) { event =>
+                      val identity = task.notificationId.get
+                      MailboxProducer
+                        .deliver(
+                          rs,
+                          task.parentSessionId,
+                          event,
+                          identity,
+                          "delegate-terminal",
+                          coalesce = false,
+                          producer = "task-lifecycle-recovery"
+                        )
+                        .flatMap {
+                          case nebflow.core.mail.SessionMailbox.MailResult.Failed(_) => IO.unit
+                          case _ =>
+                            store
+                              .acknowledgeNotification(task.parentSessionId, task.taskId, task.runId.get, identity)
+                              .void
+                        }
+                    }
+                }
+              case nebflow.shared.ExecutionProtection.Protected(List(run))
+                  if task.runId.contains(run) &&
+                    task.executionStatus.contains("finished") && task.notificationId.contains(s"${task.taskId}#$run") =>
+                val encoded = java.util.Base64.getUrlEncoder
+                  .withoutPadding()
+                  .encodeToString(run.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                val expected = sessionStore.executionAuthorityRoot.toAbsolutePath
+                  .normalize()
+                  .resolve(task.taskId)
+                  .resolve(s"terminal-$encoded.json")
+                  .toString
+                if !task.resultRef.contains(expected) then IO.unit
+                else
+                  rs.executionCommitPort.committedTerminal(task.taskId, run).flatMap {
+                    case Left(_) => IO.unit
+                    case Right(confirmed) =>
+                      sessionStore.loadTerminalEnvelope(task.taskId, run).flatMap {
+                        case Some(event)
+                            if validTerminalEnvelope(task, run, event) && Json.obj(
+                              "source" -> event.source.asJson,
+                              "eventType" -> event.eventType.asJson,
+                              "payload" -> event.payload.asJson,
+                              "metadata" -> Json.fromJsonObject(event.metadata),
+                              "correlationId" -> event.correlationId.asJson,
+                              "blocks" -> event.blocks.asJson
+                            ) == confirmed =>
+                          MailboxProducer
+                            .deliver(
+                              rs,
+                              task.parentSessionId,
+                              event,
+                              task.notificationId.get,
+                              "delegate-terminal",
+                              coalesce = false,
+                              producer = "task-lifecycle-recovery"
+                            )
+                            .flatMap {
+                              case nebflow.core.mail.SessionMailbox.MailResult.Failed(_) => IO.unit
+                              case nebflow.core.mail.SessionMailbox.MailResult.AlreadyPresent =>
+                                val identity = task.notificationId.get
+                                (
+                                  nebflow.core.mail.SessionMailbox.scanPending(task.parentSessionId),
+                                  nebflow.core.mail.SessionMailbox.scanTaken(task.parentSessionId),
+                                  nebflow.core.mail.SessionMailbox
+                                    .deliveredContains(task.parentSessionId, Set(identity))
+                                ).tupled.flatMap { case (pending, taken, delivered) =>
+                                  val matches = (pending ++ taken).filter(_.identity == identity)
+                                  if matches.exists(_.event != event) then
+                                    logger.warn(
+                                      s"[startup-recovery] conflicting protected terminal mailbox identity for ${task.taskId}"
+                                    )
+                                  else if matches.nonEmpty || delivered.contains(identity) then
+                                    store.acknowledgeNotification(task.parentSessionId, task.taskId, run, identity).void
+                                  else
+                                    logger.warn(
+                                      s"[startup-recovery] protected terminal mailbox receipt unavailable for ${task.taskId}"
+                                    )
+                                }
+                              case _ =>
+                                store
+                                  .acknowledgeNotification(
+                                    task.parentSessionId,
+                                    task.taskId,
+                                    run,
+                                    task.notificationId.get
+                                  )
+                                  .void
+                            }
+                        case Some(event) if !validTerminalEnvelope(task, run, event) =>
+                          store.markInvalidTerminalEnvelope(task).flatMap { marked =>
+                            if marked then
+                              logger.warn(
+                                s"[startup-recovery] invalid protected terminal identity for ${task.taskId}; manual review required"
+                              )
+                            else IO.unit
+                          }
+                        case _ => IO.unit
+                      }
+                  }
+                end if
+              case _ => IO.unit
+            }
         }
       )
   }
@@ -924,12 +1114,16 @@ object SubAgentStartupRecovery:
     resources: Option[SharedResources] = None
   ): IO[List[String]] =
     resources match
-      case Some(rs) => watchdogSweepWithAuthority(store, agentRegistry, sessionStore, stallMs, resources, rs.executionCommitPort)
-      case None => sessionStore.installedExecutionAuthority match
-        case Some(authority) => watchdogSweepWithAuthority(store, agentRegistry, sessionStore, stallMs, resources, authority)
-        case None => ExecutionCommitStore.resource(sessionStore.executionAuthorityRoot).use { authority =>
-          watchdogSweepWithAuthority(store, agentRegistry, sessionStore, stallMs, resources, authority)
-        }
+      case Some(rs) =>
+        watchdogSweepWithAuthority(store, agentRegistry, sessionStore, stallMs, resources, rs.executionCommitPort)
+      case None =>
+        sessionStore.installedExecutionAuthority match
+          case Some(authority) =>
+            watchdogSweepWithAuthority(store, agentRegistry, sessionStore, stallMs, resources, authority)
+          case None =>
+            ExecutionCommitStore.resource(sessionStore.executionAuthorityRoot).use { authority =>
+              watchdogSweepWithAuthority(store, agentRegistry, sessionStore, stallMs, resources, authority)
+            }
 
   private def watchdogSweepWithAuthority(
     store: SubAgentTaskStore,

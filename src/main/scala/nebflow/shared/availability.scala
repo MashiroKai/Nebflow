@@ -58,7 +58,11 @@ object ModelAvailability:
     windows.exists(covers(_, now, zone))
 
   /** 当前时刻命中的窗口描述串（"14:00-18:00"；多条取首条命中的即可读性）。 */
-  def activeWindowDesc(windows: List[UnavailableWindow], now: Long, zone: ZoneId = ZoneId.systemDefault()): Option[String] =
+  def activeWindowDesc(
+    windows: List[UnavailableWindow],
+    now: Long,
+    zone: ZoneId = ZoneId.systemDefault()
+  ): Option[String] =
     windows.find(covers(_, now, zone)).map(describeWindow)
 
   /** 单条窗口的可读形态（"14:00-18:00"；days 非全周时附 "(周6,周7)"）。 */
@@ -89,7 +93,7 @@ final class ModelScheduleRestrictedError(
   val restricted: List[String],
   val windowsDesc: String
 ) extends RuntimeException(
-    s"当前时段（$windowsDesc）全部候选模型受限：${restricted.mkString("、")} — " +
-      "所有候选都在其不可用时段内，已按规则跳过（不静默降级）。可等待窗口结束后自动恢复，" +
-      "或在 设置→服务商 中调整 unavailableWindows。"
-  )
+      s"当前时段（$windowsDesc）全部候选模型受限：${restricted.mkString("、")} — " +
+        "所有候选都在其不可用时段内，已按规则跳过（不静默降级）。可等待窗口结束后自动恢复，" +
+        "或在 设置→服务商 中调整 unavailableWindows。"
+    )

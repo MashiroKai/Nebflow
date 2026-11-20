@@ -14,7 +14,18 @@ import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, PathUtil, StreamChunk, ThinkingConfig, SubAgentTask}
+import nebflow.shared.{
+  FallbackAttempt,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  Message,
+  MessageRole,
+  PathUtil,
+  StreamChunk,
+  ThinkingConfig,
+  SubAgentTask
+}
 
 import scala.concurrent.duration.*
 
@@ -131,15 +142,19 @@ class CompletionChannelGenerationPinSpec extends CatsEffectSuite:
   private def waitUntil(timeout: FiniteDuration, every: Long = 20L)(cond: IO[Boolean]): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
-          if System.currentTimeMillis() >= deadline then IO.raiseError(new AssertionError("waitUntil: condition not met in time"))
+          if System.currentTimeMillis() >= deadline then
+            IO.raiseError(new AssertionError("waitUntil: condition not met in time"))
           else IO.sleep(every.millis) >> go(deadline)
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def pendingMail(parentSid: String): IO[List[SessionMailbox.Entry]] =
-    SessionMailbox.scanPending(parentSid).map(_.filter(_.kind == "delegate-terminal")).handleErrorWith(_ => IO.pure(Nil))
+    SessionMailbox
+      .scanPending(parentSid)
+      .map(_.filter(_.kind == "delegate-terminal"))
+      .handleErrorWith(_ => IO.pure(Nil))
 
   private def mkProbeBehavior(record: Ref[IO, List[AgentCommand]]): Behavior[AgentCommand] =
     def loop: Behavior[AgentCommand] =
@@ -201,8 +216,15 @@ class CompletionChannelGenerationPinSpec extends CatsEffectSuite:
       _ <- waitUntil(15.seconds)(pendingMail(parentSid).map(_.nonEmpty))
       round1 <- pendingMail(parentSid)
       _ = assertEquals(round1.size, 1, "exactly one terminal entry for round 1")
-      _ = assertEquals(clue(round1.head.identity), s"$childSid#$gen1", "terminal identity carries the durable generation")
-      _ = assert(clue(round1.head.event.payload).contains("round one final report"), "round-1 payload is the real report")
+      _ = assertEquals(
+        clue(round1.head.identity),
+        s"$childSid#$gen1",
+        "terminal identity carries the durable generation"
+      )
+      _ = assert(
+        clue(round1.head.event.payload).contains("round one final report"),
+        "round-1 payload is the real report"
+      )
       // ── 消费腿（AgentIdle 注入同点）：take → unlink 落墓碑 → 可靠 ACK 清债 ──
       _ <- SessionMailbox.take(parentSid, round1)
       _ <- SessionMailbox.unlinkTaken(parentSid, round1.map(_.identity))
@@ -222,10 +244,18 @@ class CompletionChannelGenerationPinSpec extends CatsEffectSuite:
     yield
       assertEquals(clue(round2.size), 1, "round-2 terminal is delivered — NOT swallowed by the round-1 tombstone")
       assertEquals(clue(round2.head.identity), s"$childSid#$gen2", "round-2 identity carries the NEW generation")
-      assert(clue(round2.head.event.payload).contains("round two continuation report"), "round-2 payload is the continuation report")
-      assertEquals(clue(round2.head.event.metadata("completionGeneration").flatMap(_.asString)), Some(gen2), "event metadata carries the same generation")
+      assert(
+        clue(round2.head.event.payload).contains("round two continuation report"),
+        "round-2 payload is the continuation report"
+      )
+      assertEquals(
+        clue(round2.head.event.metadata("completionGeneration").flatMap(_.asString)),
+        Some(gen2),
+        "event metadata carries the same generation"
+      )
       assert(clue(tombstone).nonEmpty, "round-1 tombstone still records the consumed generation")
       assert(!clue(tombstone).contains(s"$childSid#$gen2"), "the unconsumed round-2 generation must NOT be tombstoned")
+    end for
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -247,7 +277,9 @@ class CompletionChannelGenerationPinSpec extends CatsEffectSuite:
       child = s"delegate-pin-sweep-$name"
       _ <- taskStore.saveTasks(
         s"pin-parent-$name",
-        List(mkTask(s"pin-parent-$name", child).copy(status = "completed", completedAt = Some(System.currentTimeMillis())))
+        List(
+          mkTask(s"pin-parent-$name", child).copy(status = "completed", completedAt = Some(System.currentTimeMillis()))
+        )
       )
       _ <- MailboxBootSweep.run(taskStore, sessionStore) // 播种 boot 纪元（空窗）
     yield (taskStore, sessionStore, s"pin-parent-$name", child)
@@ -280,7 +312,11 @@ class CompletionChannelGenerationPinSpec extends CatsEffectSuite:
       report <- MailboxBootSweep.run(taskStore, sessionStore)
       pend <- SessionMailbox.scanPending(parentSid)
     yield
-      assertEquals(clue(report.synthesized), Nil, "gen-bearing tombstone = accounted; no re-synthesis of a consumed terminal")
+      assertEquals(
+        clue(report.synthesized),
+        Nil,
+        "gen-bearing tombstone = accounted; no re-synthesis of a consumed terminal"
+      )
       assertEquals(clue(pend), Nil)
   }
 

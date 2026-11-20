@@ -42,6 +42,8 @@ class StatusCommandSpec extends FunSuite:
     try f(port)
     finally server.stop(0)
 
+  end withHttpServer
+
   private def withTempRoot(f: => Unit): Unit =
     val original = PathUtil.dataRoot
     val tmp = os.temp.dir(prefix = "status-spec-")
@@ -71,7 +73,7 @@ class StatusCommandSpec extends FunSuite:
 
   private def asExit(r: CliResult): (Int, String) = r match
     case CliResult.Exit(code, output) => (code, output)
-    case other                        => fail(s"expected CliResult.Exit, got $other")
+    case other => fail(s"expected CliResult.Exit, got $other")
 
   test("running instance with launcher meta: full JSON face + exit 0") {
     withTempRoot {

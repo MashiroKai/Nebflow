@@ -48,37 +48,49 @@ object ExternalOpenPolicy:
   // 预算（数值即决定，理由随常量，改动请连同理由一起改）
   // ────────────────────────────────────────────────────────────────────────
 
-  /** 落盘根目录名（`<dataRoot>/external-fetch`）。HTML viewer 的严格 sandbox 也按
-    * 这个路径段识别「远程拉来的主动内容」（viewers/html.js），改名要两处同改。 */
+  /**
+   * 落盘根目录名（`<dataRoot>/external-fetch`）。HTML viewer 的严格 sandbox 也按
+   * 这个路径段识别「远程拉来的主动内容」（viewers/html.js），改名要两处同改。
+   */
   val StorageDirName: String = "external-fetch"
 
-  /** 单个 URL 拉取的字节上限 = 32 MiB。
-    *
-    * 理由：①这篇面服务的是「看一份文档 / 一张图」，不是搬运素材——32 MiB 覆盖
-    * 典型 PDF（10–20 MiB）、原图（≤30 MiB）与全部文本类；②它同时是**单次拉取的
-    * 内存/磁盘上限**：一次拉取最多占 32 MiB 临时盘 + 64 KiB 内存头缓冲，网关
-    * （与生产实例共用进程模型）不会被一次远程拉取拖成 OOM；③超过它的正当需求
-    * （大视频）走既有「Pop 卡片 + 本机路径」面，不该由远程 URL 承担。
-    * 超限 = 413 `too-large`，**边下边判**，不会先收完再拒。 */
+  /**
+   * 单个 URL 拉取的字节上限 = 32 MiB。
+   *
+   * 理由：①这篇面服务的是「看一份文档 / 一张图」，不是搬运素材——32 MiB 覆盖
+   * 典型 PDF（10–20 MiB）、原图（≤30 MiB）与全部文本类；②它同时是**单次拉取的
+   * 内存/磁盘上限**：一次拉取最多占 32 MiB 临时盘 + 64 KiB 内存头缓冲，网关
+   * （与生产实例共用进程模型）不会被一次远程拉取拖成 OOM；③超过它的正当需求
+   * （大视频）走既有「Pop 卡片 + 本机路径」面，不该由远程 URL 承担。
+   * 超限 = 413 `too-large`，**边下边判**，不会先收完再拒。
+   */
   val MaxUrlBytes: Long = 32L * 1024 * 1024
 
-  /** 连接超时（毫秒）。8s：公网 TLS 首包在慢链路上也够用，又不会让一个黑洞 IP
-    * 占住路由线程到用户以为页面卡死。 */
+  /**
+   * 连接超时（毫秒）。8s：公网 TLS 首包在慢链路上也够用，又不会让一个黑洞 IP
+   * 占住路由线程到用户以为页面卡死。
+   */
   val UrlConnectTimeoutMs: Int = 8000
 
   /** 单次 read 的 socket 超时（毫秒）。20s：允许慢速源，stall 即断。 */
   val UrlReadTimeoutMs: Int = 20000
 
-  /** 整条拉取（含全部跳）的总时限 = 60s。理由：socket 超时只管「单次读不前进」，
-    * 一个每秒吐 1 字节的源可以永远不触发它；总时限是这类 slow-loris 形态的上界。 */
+  /**
+   * 整条拉取（含全部跳）的总时限 = 60s。理由：socket 超时只管「单次读不前进」，
+   * 一个每秒吐 1 字节的源可以永远不触发它；总时限是这类 slow-loris 形态的上界。
+   */
   val UrlTotalDeadlineMs: Long = 60000
 
-  /** 最多跟随的重定向数。3：http→https、规范化尾斜杠、CDN 一跳，够用且让
-    * 「跳板到私网」的链条长度受控（每一跳都重判闸）。 */
+  /**
+   * 最多跟随的重定向数。3：http→https、规范化尾斜杠、CDN 一跳，够用且让
+   * 「跳板到私网」的链条长度受控（每一跳都重判闸）。
+   */
   val MaxRedirects: Int = 3
 
-  /** 落盘存活期 = 24h。理由：拉一次是为了「看一眼」，24h 足够跨一次会话/刷新复用，
-    * 又不至于让「随手拉过的所有东西」永久堆在数据根里（清账见 [[expiredDirs]]）。 */
+  /**
+   * 落盘存活期 = 24h。理由：拉一次是为了「看一眼」，24h 足够跨一次会话/刷新复用，
+   * 又不至于让「随手拉过的所有东西」永久堆在数据根里（清账见 [[expiredDirs]]）。
+   */
   val FetchTtlMillis: Long = 24L * 60 * 60 * 1000
 
   /** 嗅探/响应头读取的缓冲上限。 */
@@ -105,8 +117,10 @@ object ExternalOpenPolicy:
     "metadata.goog"
   )
 
-  /** 保留/特殊用途后缀：`.localhost`（RFC 6761）、`.local`（mDNS 广播域）、
-    * `.internal`（私有内部域名惯例）。全族拒绝，防「名字看着公网、解析落在内网」。 */
+  /**
+   * 保留/特殊用途后缀：`.localhost`（RFC 6761）、`.local`（mDNS 广播域）、
+   * `.internal`（私有内部域名惯例）。全族拒绝，防「名字看着公网、解析落在内网」。
+   */
   val BlockedHostSuffixes: List[String] = List(".localhost", ".local", ".internal", ".home.arpa")
 
   def normalizeHost(raw: String): String =
@@ -116,19 +130,19 @@ object ExternalOpenPolicy:
     val h = normalizeHost(host)
     h.isEmpty || BlockedHostNames.contains(h) || BlockedHostSuffixes.exists(h.endsWith)
 
-  /** 地址判据：环回 / 私网 / CGNAT / 链路本地 / 组播 / 保留段一律 `true`。
-    *
-    * 覆盖（IPv4）：`0/8`、`10/8`、`100.64/10`、`127/8`、`169.254/16`、`172.16/12`、
-    * `192.0.0/24`、`192.0.2/24`、`192.168/16`、`198.18/15`、`198.51.100/24`、
-    * `203.0.113/24`、`224/4`（组播）、`240/4`（保留）、`255.255.255.255`。
-    * 覆盖（IPv6）：`::`、`::1`、`fc00::/7`（ULA）、`fe80::/10`（链路本地）、
-    * `ff00::/8`（组播）、`2002::/16`（6to4，内嵌 v4 不可信）、`64:ff9b::/96`
-    * （NAT64，内嵌 v4 判）、以及 `::ffff:a.b.c.d` 映射形态（取内嵌 v4 复判）。
-    */
+  /**
+   * 地址判据：环回 / 私网 / CGNAT / 链路本地 / 组播 / 保留段一律 `true`。
+   *
+   * 覆盖（IPv4）：`0/8`、`10/8`、`100.64/10`、`127/8`、`169.254/16`、`172.16/12`、
+   * `192.0.0/24`、`192.0.2/24`、`192.168/16`、`198.18/15`、`198.51.100/24`、
+   * `203.0.113/24`、`224/4`（组播）、`240/4`（保留）、`255.255.255.255`。
+   * 覆盖（IPv6）：`::`、`::1`、`fc00::/7`（ULA）、`fe80::/10`（链路本地）、
+   * `ff00::/8`（组播）、`2002::/16`（6to4，内嵌 v4 不可信）、`64:ff9b::/96`
+   * （NAT64，内嵌 v4 判）、以及 `::ffff:a.b.c.d` 映射形态（取内嵌 v4 复判）。
+   */
   def addressBlocked(addr: InetAddress): Boolean =
     if addr == null then true
-    else if
-      addr.isAnyLocalAddress || addr.isLoopbackAddress || addr.isLinkLocalAddress ||
+    else if addr.isAnyLocalAddress || addr.isLoopbackAddress || addr.isLinkLocalAddress ||
       addr.isMulticastAddress || addr.isSiteLocalAddress
     then true
     else
@@ -232,23 +246,64 @@ object ExternalOpenPolicy:
             Left(Refusal(403, "url-private-address", s"'$host' is a local / metadata host name"))
           else judgeAddresses(host, resolve(host)).map { addrs => (uri, host, addrs) }
     }
+  end gateUrl
 
   // ────────────────────────────────────────────────────────────────────────
   // ② 内容嗅探（按内容，不按扩展名）
   // ────────────────────────────────────────────────────────────────────────
 
-  /** 主动内容（会被浏览器执行的形态）：远程拉来的 HTML 一律不得进 console 同源
-    * iframe——viewers/html.js 对 `external-fetch/` 路径下的文档改用无
-    * `allow-same-origin` 的 sandbox（脚本可见、事件可用，但拿不到 console 的
-    * DOM / localStorage / 同源 fetch 凭据）。 */
+  /**
+   * 主动内容（会被浏览器执行的形态）：远程拉来的 HTML 一律不得进 console 同源
+   * iframe——viewers/html.js 对 `external-fetch/` 路径下的文档改用无
+   * `allow-same-origin` 的 sandbox（脚本可见、事件可用，但拿不到 console 的
+   * DOM / localStorage / 同源 fetch 凭据）。
+   */
   val ActiveExtensions: Set[String] = Set("html", "htm", "xhtml", "shtml", "js", "mjs", "css", "xml")
 
-  /** 文本族扩展名白名单：只有当 URL 自己的扩展名在此表内、且内容确实是文本时，
-    * 才按 URL 扩展名服务；否则一律 `txt`（禁「内容与扩展名不一致照样按扩展名渲染」）。 */
+  /**
+   * 文本族扩展名白名单：只有当 URL 自己的扩展名在此表内、且内容确实是文本时，
+   * 才按 URL 扩展名服务；否则一律 `txt`（禁「内容与扩展名不一致照样按扩展名渲染」）。
+   */
   val TextExtensions: Set[String] = Set(
-    "txt", "md", "markdown", "json", "yaml", "yml", "csv", "tsv", "log", "toml", "ini",
-    "html", "htm", "xhtml", "shtml", "xml", "js", "mjs", "css", "scss", "less",
-    "sh", "zsh", "bash", "py", "rb", "go", "rs", "java", "kt", "c", "h", "cpp", "ts", "tsx", "jsx", "sql", "diff", "patch"
+    "txt",
+    "md",
+    "markdown",
+    "json",
+    "yaml",
+    "yml",
+    "csv",
+    "tsv",
+    "log",
+    "toml",
+    "ini",
+    "html",
+    "htm",
+    "xhtml",
+    "shtml",
+    "xml",
+    "js",
+    "mjs",
+    "css",
+    "scss",
+    "less",
+    "sh",
+    "zsh",
+    "bash",
+    "py",
+    "rb",
+    "go",
+    "rs",
+    "java",
+    "kt",
+    "c",
+    "h",
+    "cpp",
+    "ts",
+    "tsx",
+    "jsx",
+    "sql",
+    "diff",
+    "patch"
   )
 
   private def startsWith(head: Array[Byte], magic: Int*): Boolean =
@@ -258,8 +313,10 @@ object ExternalOpenPolicy:
     val bytes = text.getBytes(StandardCharsets.US_ASCII)
     head.length >= offset + bytes.length && bytes.indices.forall(i => head(offset + i) == bytes(i))
 
-  /** ZIP 容器的**内部**判定（OOXML / EPUB）：读头 64 KiB 内的第一/第二个条目名。
-    * 读不出结论时回落 `zip`（→ 下载兜底，绝不猜成 docx）。 */
+  /**
+   * ZIP 容器的**内部**判定（OOXML / EPUB）：读头 64 KiB 内的第一/第二个条目名。
+   * 读不出结论时回落 `zip`（→ 下载兜底，绝不猜成 docx）。
+   */
   private def sniffZip(head: Array[Byte]): String =
     try
       val zin = new ZipInputStream(new ByteArrayInputStream(head))
@@ -356,12 +413,14 @@ object ExternalOpenPolicy:
     val base0 =
       val dot = decoded.lastIndexOf('.')
       val stemRaw = if dot > 0 then decoded.substring(0, dot) else decoded
-      val cleaned = stemRaw.replaceAll("[^A-Za-z0-9._-]", "-").replaceAll("-{2,}", "-").stripPrefix("-").stripSuffix("-")
+      val cleaned =
+        stemRaw.replaceAll("[^A-Za-z0-9._-]", "-").replaceAll("-{2,}", "-").stripPrefix("-").stripSuffix("-")
       if cleaned.isEmpty then "download" else cleaned
     val suffix = if ext.isEmpty then "" else "." + ext
     val room = math.max(1, MaxFileNameLength - suffix.length)
     val base = if base0.length > room then base0.take(room) else base0
     base + suffix
+  end fileNameFor
 
   // ────────────────────────────────────────────────────────────────────────
   // ③ 落盘路径 + 清账
@@ -377,8 +436,10 @@ object ExternalOpenPolicy:
   def storagePath(dataRoot: Path, sha256Hex: String, fileName: String): Path =
     storageDir(dataRoot, sha256Hex).resolve(fileName)
 
-  /** TTL 清账清单：`external-fetch/` 下一次一级目录里 mtime 早于 `now - ttl` 的。
-    * 只列不删——删除是 route 的副作用面（可测之处在清单）。 */
+  /**
+   * TTL 清账清单：`external-fetch/` 下一次一级目录里 mtime 早于 `now - ttl` 的。
+   * 只列不删——删除是 route 的副作用面（可测之处在清单）。
+   */
   def expiredDirs(root: Path, now: Long, ttlMillis: Long = FetchTtlMillis): List[Path] =
     if !Files.isDirectory(root) then Nil
     else
@@ -399,5 +460,6 @@ object ExternalOpenPolicy:
       finally
         try stream.close()
         catch case _: Throwable => ()
+      end try
 
 end ExternalOpenPolicy

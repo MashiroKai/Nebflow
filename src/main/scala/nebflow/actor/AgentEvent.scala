@@ -30,6 +30,7 @@ import nebflow.shared.*
  */
 enum InteractionKind:
   case Permission, AskUser, McpPermission
+
   /**
    * Unified **model-unavailable** card (model-fallback-card batch, author ruling
    * 2026-11-18 14:37): ONE card kind for EVERY model slot (`small-llm` / `kernel`
@@ -69,6 +70,8 @@ object InteractionReply:
    */
   final case class ModelUnavailableReply(deferred: cats.effect.Deferred[IO, nebflow.shared.ModelUnavailableAnswer])
       extends InteractionReply
+
+end InteractionReply
 
 /**
  * Unified interaction request (P2). ForwardPermission/ForwardAskUser are gone:

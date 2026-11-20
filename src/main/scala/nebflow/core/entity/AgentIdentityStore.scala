@@ -72,7 +72,10 @@ object AgentIdentityStore:
       val parsed: Option[io.circe.Json] =
         if !os.exists(jsonPath) then None
         else io.circe.parser.parse(os.read(jsonPath)).toOption
-      val dn = parsed.flatMap(_.hcursor.downField("displayName").as[Option[String]].toOption.flatten).map(_.trim).filter(_.nonEmpty)
+      val dn = parsed
+        .flatMap(_.hcursor.downField("displayName").as[Option[String]].toOption.flatten)
+        .map(_.trim)
+        .filter(_.nonEmpty)
       val stamp = parsed.flatMap(_.hcursor.downField(UpdatedAtKey).as[Option[Long]].toOption.flatten).getOrElse(0L)
       val p = avatarPath(agent)
       val sha = if os.exists(p) && os.isFile(p) then Some(sha256Hex(os.read.bytes(p))) else None
@@ -93,8 +96,7 @@ object AgentIdentityStore:
       os.makeDir.all(dir)
       val jsonPath = agentJsonPath(agent)
       val existing =
-        if os.exists(jsonPath) then
-          io.circe.parser.parse(os.read(jsonPath)).toOption.getOrElse(io.circe.Json.obj())
+        if os.exists(jsonPath) then io.circe.parser.parse(os.read(jsonPath)).toOption.getOrElse(io.circe.Json.obj())
         else io.circe.Json.obj()
       val base =
         if agent == nebflow.actor.RootAgentIdentity.Name && !existing.asObject.exists(_.contains("name"))
@@ -178,6 +180,7 @@ object AgentIdentityStore:
             val p = avatarPath(rec.agent)
             if os.exists(p) then os.remove(p)
         true
+      end if
     }
 
   // ── 提示词自我认知面（PromptSections order-396 段的渲染源）────────────────
@@ -192,15 +195,21 @@ object AgentIdentityStore:
    */
   def selfSectionText(agentName: String, displayName: Option[String], avatarSha: Option[String]): String =
     val lines = scala.collection.mutable.ListBuffer.empty[String]
-    displayName.map(_.trim).filter(_.nonEmpty).filter(_ != agentName).foreach(dn =>
-      lines += s"- Display name: \"$dn\" (the name the user gave you; \"$agentName\" stays your mechanism address)"
-    )
+    displayName
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .filter(_ != agentName)
+      .foreach(dn =>
+        lines += s"- Display name: \"$dn\" (the name the user gave you; \"$agentName\" stays your mechanism address)"
+      )
     avatarSha.foreach { sha =>
       lines += s"- Avatar: a custom avatar image is set (shown next to your messages in the panel; content sha256 ${sha.take(8)}…)"
     }
     lines.toList match
       case Nil => ""
       case nonEmpty => nonEmpty.mkString("\n")
+
+  end selfSectionText
 
   /** 从磁盘现读一个 agent 的 Self 段体（AgentSessionExecution 每 turn 调用点）。 */
   def readSelfSection(agentName: String, displayName: Option[String]): IO[String] = IO.blocking {
@@ -237,21 +246,22 @@ object AgentIdentityStore:
         val soul = MemoryStore.soulMemoryPath
         if !os.exists(soul) then None
         else
-          val nameLine = s"- 名字：${displayName.map(_.trim).filter(_.nonEmpty).getOrElse(nebflow.actor.RootAgentIdentity.Name)}"
+          val nameLine =
+            s"- 名字：${displayName.map(_.trim).filter(_.nonEmpty).getOrElse(nebflow.actor.RootAgentIdentity.Name)}"
           val avatarLine = if avatarSet then "- 头像：已设置（面板会话头展示）" else "- 头像：未设置（面板展示首字母圆牌）"
           val original = os.read(soul)
           val updated = rewriteSoulSection(original, nameLine, avatarLine)
           Option.when(updated != original)(updated)
       }.flatMap {
-      case None => IO.pure(false)
-      case Some(updated) =>
-        // 预算闸拒绝（超软/硬线）= IO 错误通道；此处 WARN + 放弃，不外抛。
-        MemoryStore.saveSoulMemory(updated).attempt.flatMap {
-          case Right(_) => IO.pure(true)
-          case Left(e) =>
-            logger.warn(s"Soul identity section update refused/failed: ${e.getMessage}").as(false)
-        }
-    }
+        case None => IO.pure(false)
+        case Some(updated) =>
+          // 预算闸拒绝（超软/硬线）= IO 错误通道；此处 WARN + 放弃，不外抛。
+          MemoryStore.saveSoulMemory(updated).attempt.flatMap {
+            case Right(_) => IO.pure(true)
+            case Left(e) =>
+              logger.warn(s"Soul identity section update refused/failed: ${e.getMessage}").as(false)
+          }
+      }
 
   /**
    * `## 自我认知` 段的名字行/头像行 replace-in-place（纯函数，spec 直测）。
@@ -283,5 +293,7 @@ object AgentIdentityStore:
           val at = body1.indexWhere(_.startsWith("- 名字：")) + 1
           body1.patch(at, Seq(avatarLine), 0)
       (head ++ body2 ++ tail).mkString("\n") + (if tail.nonEmpty || body2.nonEmpty then "\n" else "")
+    end if
+  end rewriteSoulSection
 
 end AgentIdentityStore

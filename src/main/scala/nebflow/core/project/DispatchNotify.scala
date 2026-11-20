@@ -259,8 +259,7 @@ final class DispatchNotify(
               failedDoc <- db.recoverNotifyGuardConservative(failedGuardSource, now)
               cancelledDoc <- db.recoverNotifyGuardConservative(cancelledGuardSource, now)
               _ <- failedGuard.set(FailedGuardState(failedDoc.failedAt, failedDoc.cooldownUntil))
-              _ <- cancelledGuard.set(
-                CancelledGuardState(cancelledDoc.failedAt, cancelledDoc.cooldownUntil))
+              _ <- cancelledGuard.set(CancelledGuardState(cancelledDoc.failedAt, cancelledDoc.cooldownUntil))
             yield ()
           case None => IO.unit
         hydrate *> guardsLoaded.set(true)
@@ -270,13 +269,16 @@ final class DispatchNotify(
   private def persistGuard(source: String, windowAt: List[Long], cooldownUntil: Long): IO[Unit] =
     guardDb match
       case Some(db) =>
-        db.writeNotifyGuard(GuardDocs.NotifyGuardDoc(
-          version = 1, source = source, failedAt = windowAt,
-          cooldownUntil = cooldownUntil, updatedAt = System.currentTimeMillis()))
-          .handleErrorWith(e =>
-            logger.warn(s"dispatch-notify guard persist failed ($source): ${e.getMessage}"))
+        db.writeNotifyGuard(
+          GuardDocs.NotifyGuardDoc(
+            version = 1,
+            source = source,
+            failedAt = windowAt,
+            cooldownUntil = cooldownUntil,
+            updatedAt = System.currentTimeMillis()
+          )
+        ).handleErrorWith(e => logger.warn(s"dispatch-notify guard persist failed ($source): ${e.getMessage}"))
       case None => IO.unit
-
 
   /** cancelled 预算耗尽 single-flight（与 completion/failed 三方分账）。 */
   private val cancelledBudgetEscalated: Ref[IO, Boolean] = Ref.unsafe[IO, Boolean](false)
@@ -395,7 +397,8 @@ final class DispatchNotify(
             val send: IO[Boolean] = deliveryTarget match
               case Some(t) =>
                 val text = mergedText(entries.map(_._2))
-                val versions = nodes.sortBy(_.id).map(n => s"${n.id}:${n.gen}:${n.blockCount}:${n.completedAt}").mkString("|")
+                val versions =
+                  nodes.sortBy(_.id).map(n => s"${n.id}:${n.gen}:${n.blockCount}:${n.completedAt}").mkString("|")
                 val identity = nebflow.core.mail.ProducerInput.identity(projectName, key, versions, text)
                 t.deliverIdentified.fold(t.deliver(text))(f => f(text, identity)).handleErrorWith { e =>
                   logger
@@ -453,9 +456,7 @@ final class DispatchNotify(
                         DispatchNotify.ParkedEventType,
                         DispatchNotify.deliverySummary(t.label, node.id, "parked")
                       )
-                      .handleErrorWith(e =>
-                        logger.warn(s"dispatch-notify-parked audit append failed: ${e.getMessage}")
-                      )
+                      .handleErrorWith(e => logger.warn(s"dispatch-notify-parked audit append failed: ${e.getMessage}"))
                   ) *>
                     logger.warn(
                       s"Project '$projectName' dispatch-notify PARKED: target=${deliveryTarget.map(_.label).getOrElse("-")} " +
@@ -614,57 +615,58 @@ final class DispatchNotify(
    */
   private def failedAttempt(node: NodeDef): IO[Unit] =
     loadGuardsOnce *> // db 接线：首用前重水合（None 时为 no-op）
-    failedGuard
-      .modify { g =>
-        val now = System.currentTimeMillis()
-        val recent = g.failedAt.filter(t => now - t <= failedWindowMs) :+ now
-        if now < g.cooldownUntil then (g.copy(failedAt = recent), (g.copy(failedAt = recent), FailedWindowVerdict.Suppress))
-        else if recent.size >= failedWindowThreshold then
-          val ng = g.copy(failedAt = recent, cooldownUntil = now + failedCooldownMs)
-          (ng, (ng, FailedWindowVerdict.CooldownOn))
-        else (g.copy(failedAt = recent), (g.copy(failedAt = recent), FailedWindowVerdict.Proceed))
-      }
-      .flatTap { (ng, _) => persistGuard(failedGuardSource, ng.failedAt, ng.cooldownUntil) } // 写穿 db guard 档
-      .flatMap { (_, verdict) =>
-        verdict match
-          case FailedWindowVerdict.Proceed =>
-            // 触发前现读等待者清单（E-③）：停等下游随通知告知分发器
-            // （补投扫描路径同此口，清单一致）。Q4：文本在入队时成型，投递与预算
-            // 计数在窗口结束时由 [[flushBatch]] 单点完成。
-            // 文本成形前现读抑制态——抑制态 ⇒ 抑制变体（改劝），其余逐字不变。
-            for
-              waiters <- waitingSuccessors(node.id)
-              suppressedBy <- userCancelSuppression(node)
-              text = suppressedBy match
-                case Some(up) => suppressedFailedNotifyTaskText(node, waiters, up)
-                case None => failedNotifyTaskText(node, waiters)
-              _ <- enqueueNotify(NotifyReason.Failed, node, text)
-            yield ()
-          case FailedWindowVerdict.Suppress =>
-            // 冷却期内：不触发、不 markSent——节点留在 redeliver 候选集，冷却结束后下轮
-            // 扫描自然补投（延迟触发而非永久丢失，设计 §3）。
-            logger.warn(
-              s"Project '$projectName' node '${node.name}' (${node.id}) failed during failure-notify cooldown — suppressed (unmarked; redelivered after cooldown)"
-            )
-          case FailedWindowVerdict.CooldownOn =>
-            // 窗口阈值触达：合并单条升级（含最新失败信息，FeedbackRouter §3.2 同语义）+
-            // 置 cooldown；本次不触发分发器、不 markSent（冷却结束补投）。
-            val text =
-              s"[dispatch-notify] 项目「$projectName」${failedWindowMs / 60000} 分钟内节点失败通知达 $failedWindowThreshold 次——进入 ${failedCooldownMs / 60000} 分钟冷却：" +
-                s"期间 failed 通知暂停触发分发器（未通知节点保持未标记，冷却结束自动补投），冷却结束自动恢复。\n" +
-                s"最新失败节点「${node.name}」(${node.id})：${node.result.map(_.take(300)).getOrElse("(无错误文本)")}"
-            FlowMapEventLog.append(
-              workspace,
-              projectName,
-              node.id,
-              "dispatch-notify",
-              s"failure window threshold ($failedWindowThreshold in ${failedWindowMs / 60000}min) → cooldown ${failedCooldownMs / 60000}min on, dispatcher notify paused, supervisor notice (merged, latest node '${node.name}')"
-            ) *>
-              escalate(text, node.name) *>
+      failedGuard
+        .modify { g =>
+          val now = System.currentTimeMillis()
+          val recent = g.failedAt.filter(t => now - t <= failedWindowMs) :+ now
+          if now < g.cooldownUntil then
+            (g.copy(failedAt = recent), (g.copy(failedAt = recent), FailedWindowVerdict.Suppress))
+          else if recent.size >= failedWindowThreshold then
+            val ng = g.copy(failedAt = recent, cooldownUntil = now + failedCooldownMs)
+            (ng, (ng, FailedWindowVerdict.CooldownOn))
+          else (g.copy(failedAt = recent), (g.copy(failedAt = recent), FailedWindowVerdict.Proceed))
+        }
+        .flatTap { (ng, _) => persistGuard(failedGuardSource, ng.failedAt, ng.cooldownUntil) } // 写穿 db guard 档
+        .flatMap { (_, verdict) =>
+          verdict match
+            case FailedWindowVerdict.Proceed =>
+              // 触发前现读等待者清单（E-③）：停等下游随通知告知分发器
+              // （补投扫描路径同此口，清单一致）。Q4：文本在入队时成型，投递与预算
+              // 计数在窗口结束时由 [[flushBatch]] 单点完成。
+              // 文本成形前现读抑制态——抑制态 ⇒ 抑制变体（改劝），其余逐字不变。
+              for
+                waiters <- waitingSuccessors(node.id)
+                suppressedBy <- userCancelSuppression(node)
+                text = suppressedBy match
+                  case Some(up) => suppressedFailedNotifyTaskText(node, waiters, up)
+                  case None => failedNotifyTaskText(node, waiters)
+                _ <- enqueueNotify(NotifyReason.Failed, node, text)
+              yield ()
+            case FailedWindowVerdict.Suppress =>
+              // 冷却期内：不触发、不 markSent——节点留在 redeliver 候选集，冷却结束后下轮
+              // 扫描自然补投（延迟触发而非永久丢失，设计 §3）。
               logger.warn(
-                s"Project '$projectName' failure-notify window threshold reached (${failedWindowThreshold}/${failedWindowMs / 60000}min) — cooldown ${failedCooldownMs / 60000}min on, merged supervisor notice sent (latest node '${node.name}' ${node.id})"
+                s"Project '$projectName' node '${node.name}' (${node.id}) failed during failure-notify cooldown — suppressed (unmarked; redelivered after cooldown)"
               )
-      }
+            case FailedWindowVerdict.CooldownOn =>
+              // 窗口阈值触达：合并单条升级（含最新失败信息，FeedbackRouter §3.2 同语义）+
+              // 置 cooldown；本次不触发分发器、不 markSent（冷却结束补投）。
+              val text =
+                s"[dispatch-notify] 项目「$projectName」${failedWindowMs / 60000} 分钟内节点失败通知达 $failedWindowThreshold 次——进入 ${failedCooldownMs / 60000} 分钟冷却：" +
+                  s"期间 failed 通知暂停触发分发器（未通知节点保持未标记，冷却结束自动补投），冷却结束自动恢复。\n" +
+                  s"最新失败节点「${node.name}」(${node.id})：${node.result.map(_.take(300)).getOrElse("(无错误文本)")}"
+              FlowMapEventLog.append(
+                workspace,
+                projectName,
+                node.id,
+                "dispatch-notify",
+                s"failure window threshold ($failedWindowThreshold in ${failedWindowMs / 60000}min) → cooldown ${failedCooldownMs / 60000}min on, dispatcher notify paused, supervisor notice (merged, latest node '${node.name}')"
+              ) *>
+                escalate(text, node.name) *>
+                logger.warn(
+                  s"Project '$projectName' failure-notify window threshold reached (${failedWindowThreshold}/${failedWindowMs / 60000}min) — cooldown ${failedCooldownMs / 60000}min on, merged supervisor notice sent (latest node '${node.name}' ${node.id})"
+                )
+        }
 
   /**
    * 补投扫描（TtlTick 30s 周期挂点）：扫「completion 候选 = notifyDispatcher ∧
@@ -799,50 +801,51 @@ final class DispatchNotify(
    */
   private def cancelledAttempt(node: NodeDef): IO[Unit] =
     loadGuardsOnce *> // db 接线：首用前重水合（None 时为 no-op）
-    cancelledGuard
-      .modify { g =>
-        val now = System.currentTimeMillis()
-        val recent = g.cancelledAt.filter(t => now - t <= cancelledWindowMs) :+ now
-        if now < g.cooldownUntil then
-          val ng = g.copy(cancelledAt = recent)
-          (ng, (ng, CancelledWindowVerdict.Suppress))
-        else if recent.size >= cancelledWindowThreshold then
-          val ng = g.copy(cancelledAt = recent, cooldownUntil = now + cancelledCooldownMs)
-          (ng, (ng, CancelledWindowVerdict.CooldownOn))
-        else
-          val ng = g.copy(cancelledAt = recent)
-          (ng, (ng, CancelledWindowVerdict.Proceed))
-      }
-      .flatTap { (ng, _) => persistGuard(cancelledGuardSource, ng.cancelledAt, ng.cooldownUntil) } // 写穿 db guard 档
-      .flatMap { (_, verdict) =>
-        verdict match
-          case CancelledWindowVerdict.Proceed =>
-            // Q4：同一 reason 的件在窗口内合并为一次注入（预算按一次注入计）。
-            // 文本构建改为 IO（需现读链归属链 id）——入队与去重链逐字不变。
-            waitingSuccessors(node.id).flatMap(waiters =>
-              cancelledNotifyTaskText(node, waiters).flatMap(text => enqueueNotify(NotifyReason.Cancelled, node, text))
-            )
-          case CancelledWindowVerdict.Suppress =>
-            logger.warn(
-              s"Project '$projectName' node '${node.name}' (${node.id}) cancelled during cancel-notify cooldown — suppressed (unmarked; redelivered after cooldown)"
-            )
-          case CancelledWindowVerdict.CooldownOn =>
-            val text =
-              s"[dispatch-notify] 项目「$projectName」${cancelledWindowMs / 60000} 分钟内节点取消通知达 $cancelledWindowThreshold 次——进入 ${cancelledCooldownMs / 60000} 分钟冷却：" +
-                s"期间 cancelled 通知暂停触发分发器（未通知节点保持未标记，冷却结束自动补投），冷却结束自动恢复。\n" +
-                s"最新取消节点「${node.name}」(${node.id})：${node.result.map(_.take(300)).getOrElse("(无取消原因)")}"
-            FlowMapEventLog.append(
-              workspace,
-              projectName,
-              node.id,
-              "dispatch-notify",
-              s"cancel window threshold ($cancelledWindowThreshold in ${cancelledWindowMs / 60000}min) → cooldown ${cancelledCooldownMs / 60000}min on, dispatcher notify paused, supervisor notice (merged, latest node '${node.name}')"
-            ) *>
-              escalate(text, node.name) *>
-              logger.warn(
-                s"Project '$projectName' cancel-notify window threshold reached (${cancelledWindowThreshold}/${cancelledWindowMs / 60000}min) — cooldown ${cancelledCooldownMs / 60000}min on, merged supervisor notice sent (latest node '${node.name}' ${node.id})"
+      cancelledGuard
+        .modify { g =>
+          val now = System.currentTimeMillis()
+          val recent = g.cancelledAt.filter(t => now - t <= cancelledWindowMs) :+ now
+          if now < g.cooldownUntil then
+            val ng = g.copy(cancelledAt = recent)
+            (ng, (ng, CancelledWindowVerdict.Suppress))
+          else if recent.size >= cancelledWindowThreshold then
+            val ng = g.copy(cancelledAt = recent, cooldownUntil = now + cancelledCooldownMs)
+            (ng, (ng, CancelledWindowVerdict.CooldownOn))
+          else
+            val ng = g.copy(cancelledAt = recent)
+            (ng, (ng, CancelledWindowVerdict.Proceed))
+        }
+        .flatTap { (ng, _) => persistGuard(cancelledGuardSource, ng.cancelledAt, ng.cooldownUntil) } // 写穿 db guard 档
+        .flatMap { (_, verdict) =>
+          verdict match
+            case CancelledWindowVerdict.Proceed =>
+              // Q4：同一 reason 的件在窗口内合并为一次注入（预算按一次注入计）。
+              // 文本构建改为 IO（需现读链归属链 id）——入队与去重链逐字不变。
+              waitingSuccessors(node.id).flatMap(waiters =>
+                cancelledNotifyTaskText(node, waiters)
+                  .flatMap(text => enqueueNotify(NotifyReason.Cancelled, node, text))
               )
-      }
+            case CancelledWindowVerdict.Suppress =>
+              logger.warn(
+                s"Project '$projectName' node '${node.name}' (${node.id}) cancelled during cancel-notify cooldown — suppressed (unmarked; redelivered after cooldown)"
+              )
+            case CancelledWindowVerdict.CooldownOn =>
+              val text =
+                s"[dispatch-notify] 项目「$projectName」${cancelledWindowMs / 60000} 分钟内节点取消通知达 $cancelledWindowThreshold 次——进入 ${cancelledCooldownMs / 60000} 分钟冷却：" +
+                  s"期间 cancelled 通知暂停触发分发器（未通知节点保持未标记，冷却结束自动补投），冷却结束自动恢复。\n" +
+                  s"最新取消节点「${node.name}」(${node.id})：${node.result.map(_.take(300)).getOrElse("(无取消原因)")}"
+              FlowMapEventLog.append(
+                workspace,
+                projectName,
+                node.id,
+                "dispatch-notify",
+                s"cancel window threshold ($cancelledWindowThreshold in ${cancelledWindowMs / 60000}min) → cooldown ${cancelledCooldownMs / 60000}min on, dispatcher notify paused, supervisor notice (merged, latest node '${node.name}')"
+              ) *>
+                escalate(text, node.name) *>
+                logger.warn(
+                  s"Project '$projectName' cancel-notify window threshold reached (${cancelledWindowThreshold}/${cancelledWindowMs / 60000}min) — cooldown ${cancelledCooldownMs / 60000}min on, merged supervisor notice sent (latest node '${node.name}' ${node.id})"
+                )
+        }
 
   /**
    * cancelled 预算耗尽（与 [[escalateFailedBudgetExhausted]] 同构、single-flight
@@ -968,9 +971,9 @@ final class DispatchNotify(
    * D5 停等等待者清单（E-③）：因本节点 failed 而停等的下游。
    * 判定（status ∈ {pending, wiring} 的停等态）：in-barrier 等待 = in 引用本节点 ∧
    * 未收到其投递（deliveredTo 无此键——与 startNode barrier 闸门同构）；deps 等待 =
- * deps 引用本节点（depsSatisfied 只认 completed，failed 永不满足）。合并节点例外：
- * 下游保持停等（D5 零结算），停等可见性由 barrier-blocked / chain-wedged 监督面
- * 承担，不在本停等清单重复入列。
+   * deps 引用本节点（depsSatisfied 只认 completed，failed 永不满足）。合并节点例外：
+   * 下游保持停等（D5 零结算），停等可见性由 barrier-blocked / chain-wedged 监督面
+   * 承担，不在本停等清单重复入列。
    *
    * cancelled 侧扩展（R1/R4）：被取消节点在**引擎自动摘除**后
    * 已不在下游的 `in` 里（镜像 prune），改以 `pendingSuccession`（「待承接」标）

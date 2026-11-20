@@ -31,9 +31,11 @@ object AskSessions:
   /** 会话 id 前缀单点——工具面/提示词/spawn 判据全部经本判据，禁写第二份。 */
   val Prefix = "ask-"
 
-  /** Only these tools are stripped from non-Ask roles; shared lookup tools and Bash are not exclusive.
+  /**
+   * Only these tools are stripped from non-Ask roles; shared lookup tools and Bash are not exclusive.
    * canvas-inline-diff-review（2026-11-16）：ask_edit/ask_write = 直接落盘的受限编辑
-   * （仅绑定文件；落盘即入账，canvas 原文档内联 diff 逐块审阅）。 */
+   * （仅绑定文件；落盘即入账，canvas 原文档内联 diff 逐块审阅）。
+   */
   val AskExclusiveTools: Set[String] =
     // PDF note/ask 批（2026-11-18）：PdfPage = 绑定 PDF 的按需取页件（只读缓存
     // 条目，不整篇载入；答案引用页码的取数面）。ask 专属同 ask_edit。
@@ -48,8 +50,16 @@ object AskSessions:
     // 进本集即同时得到两件事：① 授权面由 GitVizAllowedTools 带上；② 由
     // buildAllowedToolSet 尾段的 `-- AskExclusiveTools` 从其余一切身份剥净；
     // 工具内侧另有 isGitVizSession 身份闸（双保险，PdfPage 同款）。
-    Set("message_record_search", "send_message_to_main_chat", "ask_edit", "ask_write", "PdfPage", "Card",
-      "gitviz_graph", "gitviz_handoff")
+    Set(
+      "message_record_search",
+      "send_message_to_main_chat",
+      "ask_edit",
+      "ask_write",
+      "PdfPage",
+      "Card",
+      "gitviz_graph",
+      "gitviz_handoff"
+    )
 
   /** Closed Ask face, independent of Subagent and returned before any other role grants. */
   val AllowedTools: Set[String] =
@@ -164,9 +174,11 @@ object AskSessions:
   def isGitVizSession(sessionId: Option[String]): Boolean =
     sessionId.exists(isGitVizSession)
 
-  /** 会话 id 形状闸（gitviz）：`ask-gv-` + 8..16 hex。前端是 id 生成方（确定性键 =
+  /**
+   * 会话 id 形状闸（gitviz）：`ask-gv-` + 8..16 hex。前端是 id 生成方（确定性键 =
    *  同项目同会话），后端只校验形状、拒绝夹带任意字符的 id（会话键会进
-   *  `<dataRoot>/ask/index.json` 与日志，不做形状闸等于放行任意键）。 */
+   *  `<dataRoot>/ask/index.json` 与日志，不做形状闸等于放行任意键）。
+   */
   def isGitVizSessionIdShape(sessionId: String): Boolean =
     isGitVizSession(sessionId) &&
       sessionId.drop(GitVizPrefix.length).matches("[0-9a-f]{8,16}")
@@ -308,7 +320,10 @@ final class AskSessionRegistry(dataRoot: os.Path):
                       n <- item.hcursor.downField("fileName").as[String].toOption
                       c <- item.hcursor.downField("createdAt").as[Long].toOption
                       m = item.hcursor.downField("mainSessionId").as[String].toOption.getOrElse("")
-                      k = item.hcursor.downField("kind").as[String].toOption
+                      k = item.hcursor
+                        .downField("kind")
+                        .as[String]
+                        .toOption
                         .filter(AskBinding.KindGitViz == _)
                         .getOrElse(AskBinding.KindFile)
                     yield AskBinding(id, f, n, c, m, k)
@@ -343,12 +358,19 @@ final class AskSessionRegistry(dataRoot: os.Path):
       AtomicJson.writeSync(file, json.spaces2)
     catch case NonFatal(e) => logger.warn(s"ask index persist failed (non-fatal): ${e.getMessage}")
 
-  /** 幂等绑定：同文件恒同会话 id（askOpen/askQuestion 前置调用）。
+  /**
+   * 幂等绑定：同文件恒同会话 id（askOpen/askQuestion 前置调用）。
    *
    *  gitviz 分支管理问答批（2026-11-19 第二轮）：`explicitId` 存在时用它当会话键
    *  （前端是 gitviz 域的 id 生成方 —— 确定性键让「同项目重开 = 同一会话」两侧一致），
-   *  `kind` 标出绑定域；两者缺省 = 既有文件 ask 语义逐字不变。 */
-  def bind(canonicalFile: String, fileName: String, explicitId: String = "", kind: String = AskBinding.KindFile): IO[AskBinding] =
+   *  `kind` 标出绑定域；两者缺省 = 既有文件 ask 语义逐字不变。
+   */
+  def bind(
+    canonicalFile: String,
+    fileName: String,
+    explicitId: String = "",
+    kind: String = AskBinding.KindFile
+  ): IO[AskBinding] =
     val id = if explicitId.trim.nonEmpty then explicitId else AskSessions.sessionIdFor(canonicalFile)
     IO {
       bindingsRef.get.get(id) match

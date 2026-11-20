@@ -57,11 +57,15 @@ object AskEditTools:
   private[tools] def pushAppliedFrame(review: nebflow.core.ask.AskEditReview, ctx: ToolContext): IO[Unit] =
     ctx.wsSend match
       case Some(send) =>
-        send(Json.obj(
-          "type" -> "askEditApplied".asJson,
-          "sessionId" -> review.changes.lastOption.map(_.sessionId).getOrElse("").asJson,
-          "changeId" -> review.changes.lastOption.map(_.id).getOrElse("").asJson
-        ).deepMerge(reviewJson(review))).handleError(_ => ())
+        send(
+          Json
+            .obj(
+              "type" -> "askEditApplied".asJson,
+              "sessionId" -> review.changes.lastOption.map(_.sessionId).getOrElse("").asJson,
+              "changeId" -> review.changes.lastOption.map(_.id).getOrElse("").asJson
+            )
+            .deepMerge(reviewJson(review))
+        ).handleError(_ => ())
       case None => IO.unit
 
   /** 落盘成功后给模型的回话（两件共用）：编辑已生效，审阅在 canvas。 */
@@ -69,7 +73,9 @@ object AskEditTools:
     val hunks = review.hunks
     val added = hunks.map(_.added).sum
     val removed = hunks.map(_.removed).sum
-    s"OK:APPLIED $action on ${review.path} (+$added -$removed lines in ${hunks.length} block${if hunks.length == 1 then "" else "s"} pending review). " +
+    s"OK:APPLIED $action on ${review.path} (+$added -$removed lines in ${hunks.length} block${
+        if hunks.length == 1 then "" else "s"
+      } pending review). " +
       "The file on disk is ALREADY updated — the user reviews it as an inline diff in the canvas file tab " +
       "(per-block accept / reject, or accept-all / reject-all; rejecting reverts). " +
       "Tell the user briefly that the change is in place and can be reviewed in canvas."
@@ -134,33 +140,54 @@ object AskEditTool extends Tool:
     val newStr = input("new_str").flatMap(_.asString).getOrElse("")
     val replaceAll = input("replace_all").flatMap(_.asBoolean).getOrElse(false)
 
-    if !AskSessions.isAskSession(sid) then
-      IO.pure(Left(ToolError(AskEditTools.ForbiddenMessage)))
+    if !AskSessions.isAskSession(sid) then IO.pure(Left(ToolError(AskEditTools.ForbiddenMessage)))
     else if oldStr.isEmpty then
-      IO.pure(Left(ToolError("ask_edit: `old_str` must be a non-empty string (the ask face cannot create files — the bound file already exists).")))
+      IO.pure(
+        Left(
+          ToolError(
+            "ask_edit: `old_str` must be a non-empty string (the ask face cannot create files — the bound file already exists)."
+          )
+        )
+      )
     else if oldStr == newStr then
       IO.pure(Left(ToolError("ask_edit: `old_str` and `new_str` are identical — no change to apply.")))
     else
-      AskEditTools.bindingFor(sid).flatMap {
-        case None =>
-          IO.pure(Left(ToolError("ask_edit: this ask session has no file binding — open the file card in canvas first. (ASK_EDIT_NO_BINDING)")))
-        case Some(binding) =>
-          def transform(snapshot: String): Either[String, String] =
-            val count = occurrences(snapshot, oldStr)
-            if count == 0 then
-              Left("ask_edit refused: old_str not found in the bound file — re-read the file and match it exactly (whitespace included).")
-            else if count > 1 && !replaceAll then
-              Left(s"ask_edit refused: old_str matches $count locations — add surrounding context to make it unique, or set replace_all=true.")
-            else if replaceAll then Right(snapshot.replace(oldStr, newStr))
-            else
-              val i = snapshot.indexOf(oldStr)
-              Right(snapshot.substring(0, i) + newStr + snapshot.substring(i + oldStr.length))
-          AskEditReviews.applyChange(sid, binding, path, "ask_edit", transform).flatMap {
-            case Left(why) => IO.pure(Left(ToolError(why)))
-            case Right(review) =>
-              AskEditTools.pushAppliedFrame(review, ctx).as(Right(AskEditTools.appliedReply("edit", review)))
-          }
-      }.handleErrorWith(e => IO.pure(Left(ToolError(s"ask_edit failed: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"))))
+      AskEditTools
+        .bindingFor(sid)
+        .flatMap {
+          case None =>
+            IO.pure(
+              Left(
+                ToolError(
+                  "ask_edit: this ask session has no file binding — open the file card in canvas first. (ASK_EDIT_NO_BINDING)"
+                )
+              )
+            )
+          case Some(binding) =>
+            def transform(snapshot: String): Either[String, String] =
+              val count = occurrences(snapshot, oldStr)
+              if count == 0 then
+                Left(
+                  "ask_edit refused: old_str not found in the bound file — re-read the file and match it exactly (whitespace included)."
+                )
+              else if count > 1 && !replaceAll then
+                Left(
+                  s"ask_edit refused: old_str matches $count locations — add surrounding context to make it unique, or set replace_all=true."
+                )
+              else if replaceAll then Right(snapshot.replace(oldStr, newStr))
+              else
+                val i = snapshot.indexOf(oldStr)
+                Right(snapshot.substring(0, i) + newStr + snapshot.substring(i + oldStr.length))
+            AskEditReviews.applyChange(sid, binding, path, "ask_edit", transform).flatMap {
+              case Left(why) => IO.pure(Left(ToolError(why)))
+              case Right(review) =>
+                AskEditTools.pushAppliedFrame(review, ctx).as(Right(AskEditTools.appliedReply("edit", review)))
+            }
+        }
+        .handleErrorWith(e =>
+          IO.pure(Left(ToolError(s"ask_edit failed: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}")))
+        )
+    end if
   end call
 
   private def occurrences(haystack: String, needle: String): Int =
@@ -209,18 +236,29 @@ object AskWriteTool extends Tool:
     val path = input("path").flatMap(_.asString).getOrElse("")
     val content = input("content").flatMap(_.asString).getOrElse("")
 
-    if !AskSessions.isAskSession(sid) then
-      IO.pure(Left(ToolError(AskEditTools.ForbiddenMessage)))
+    if !AskSessions.isAskSession(sid) then IO.pure(Left(ToolError(AskEditTools.ForbiddenMessage)))
     else
-      AskEditTools.bindingFor(sid).flatMap {
-        case None =>
-          IO.pure(Left(ToolError("ask_write: this ask session has no file binding — open the file card in canvas first. (ASK_EDIT_NO_BINDING)")))
-        case Some(binding) =>
-          AskEditReviews.applyChange(sid, binding, path, "ask_write", _ => Right(content)).flatMap {
-            case Left(why) => IO.pure(Left(ToolError(why)))
-            case Right(review) =>
-              AskEditTools.pushAppliedFrame(review, ctx).as(Right(AskEditTools.appliedReply("rewrite", review)))
-          }
-      }.handleErrorWith(e => IO.pure(Left(ToolError(s"ask_write failed: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"))))
+      AskEditTools
+        .bindingFor(sid)
+        .flatMap {
+          case None =>
+            IO.pure(
+              Left(
+                ToolError(
+                  "ask_write: this ask session has no file binding — open the file card in canvas first. (ASK_EDIT_NO_BINDING)"
+                )
+              )
+            )
+          case Some(binding) =>
+            AskEditReviews.applyChange(sid, binding, path, "ask_write", _ => Right(content)).flatMap {
+              case Left(why) => IO.pure(Left(ToolError(why)))
+              case Right(review) =>
+                AskEditTools.pushAppliedFrame(review, ctx).as(Right(AskEditTools.appliedReply("rewrite", review)))
+            }
+        }
+        .handleErrorWith(e =>
+          IO.pure(Left(ToolError(s"ask_write failed: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}")))
+        )
+    end if
   end call
 end AskWriteTool

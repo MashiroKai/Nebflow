@@ -54,7 +54,7 @@ object BgTaskLiveness:
 
   private[tools] def probeRemote(jobId: String): IO[Verdict] =
     RemoteExecutor.current match
-      case None       => IO.pure(Unknown)
+      case None => IO.pure(Unknown)
       case Some(exec) => exec.bgWaitAlive(jobId).map(if _ then Alive else Dead("remote wait leg gone"))
 
   private[tools] def probeLocal(row: BgTaskRegistry.ActiveTask, nowMs: Long): IO[Verdict] =
@@ -78,6 +78,8 @@ object BgTaskLiveness:
               if ageMs >= 0L && ageMs < Defaults.BgDeathWatchHandleGraceMs then Alive
               else Dead("handle never landed")
             case Some(p) if !p.alive => Dead("process dead")
-            case _                   => Alive
+            case _ => Alive
           }
     }
+  end probeLocal
+end BgTaskLiveness

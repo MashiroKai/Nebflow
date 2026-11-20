@@ -60,8 +60,12 @@ final case class PdfIndex(
     "schema" -> PdfIndex.Schema.asJson,
     "markdown_version" -> markdownVersion.asJson,
     "page_count" -> pageCount.asJson,
-    "terms" -> Json.fromJsonObject(JsonObject.fromIterable(terms.toList.sortBy(_._1).map { case (k, v) => k -> v.asJson }))
+    "terms" -> Json.fromJsonObject(JsonObject.fromIterable(terms.toList.sortBy(_._1).map { case (k, v) =>
+      k -> v.asJson
+    }))
   )
+
+end PdfIndex
 
 object PdfIndex:
 
@@ -85,8 +89,7 @@ object PdfIndex:
 
   /** Tokens of a text as the index stores them (shared vocabulary with the ask). */
   def tokenize(text: String): Set[String] =
-    text
-      .toLowerCase
+    text.toLowerCase
       .split("[^\\p{L}\\p{N}]+")
       .iterator
       .map(_.trim)
@@ -114,5 +117,6 @@ object PdfIndex:
             yield PdfIndex(pages, terms, mv)
             fields match
               case Some(idx) if idx.pageCount < 0 => Left("index.json declares a negative page_count")
-              case Some(idx)                      => Right(idx)
-              case None                           => Left("index.json is missing required fields")
+              case Some(idx) => Right(idx)
+              case None => Left("index.json is missing required fields")
+end PdfIndex

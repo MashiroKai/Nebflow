@@ -51,11 +51,11 @@ class ScheduledTaskFiringKeySpec extends munit.FunSuite:
       val fired1 = 1000L
       val fired2 = 3600000L
       // 身份键**全部走生产函数**（firingKey）——生产若回退成裸任务 id，本测即红。
-      val first  = ev(Some(ScheduledTaskService.firingKey("b65f1355", fired1)))
+      val first = ev(Some(ScheduledTaskService.firingKey("b65f1355", fired1)))
       val second = ev(Some(ScheduledTaskService.firingKey("b65f1355", fired2)))
       val io = for
         a1 <- DeliveredReceiptLedger.intakeAccepts(sid, Nil, first)
-        _  <- DeliveredReceiptLedger.markDelivered(sid, DeliveredReceiptLedger.identityKeys(first))
+        _ <- DeliveredReceiptLedger.markDelivered(sid, DeliveredReceiptLedger.identityKeys(first))
         a2 <- DeliveredReceiptLedger.intakeAccepts(sid, Nil, second)
         aReplay <- DeliveredReceiptLedger.intakeAccepts(sid, Nil, first)
         // 病灶锚：模拟修前落盘的已投标记（裸任务 id），看旧键形如何被吞
@@ -78,6 +78,7 @@ class ScheduledTaskFiringKeySpec extends munit.FunSuite:
     finally
       PathUtil.setDataRoot(prev)
       os.remove.all(tmp)
+    end try
   }
 
   test("③ mergedFiringKey: 同窗任务集 + 触发时刻；跨窗必不同、同窗重复恒同") {

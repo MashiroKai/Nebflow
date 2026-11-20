@@ -75,12 +75,14 @@ const RE_CALLSITE =
 const RE_ORDER = /slotChainOf\([\s\S]*?\)\s*\.orElse\(agentModelWithPin\(freshDef\.model, effectivePin\)\)/;
 
 // ── T6: the spec pins the contract ─────────────────────────────────────────
+// 换行不敏感（全仓格式化批 2026-11-21）：scalafmt 把 `slotOfDelegateMode(Some("kernel")),
+// Some("kernel")` 折成两行，判据必须允许换行 —— 否则红的是排版而不是规范行为。
 const SPEC_MARKERS = [
   ['four-word mode table', /DelegateModeWires\.map\(_\._1\)/],
-  ['mode=kernel case', /slotOfDelegateMode\(Some\("kernel"\)\), Some\("kernel"\)/],
-  ['mode=node case', /slotOfDelegateMode\(Some\("node"\)\), Some\("node"\)/],
+  ['mode=kernel case', /slotOfDelegateMode\(Some\("kernel"\)\),\s*Some\("kernel"\)/],
+  ['mode=node case', /slotOfDelegateMode\(Some\("node"\)\),\s*Some\("node"\)/],
   ['mode=dispatcher case', /slotOfDelegateMode\(Some\("dispatcher"\)\),\s*Some\("project-dispatcher"\)/],
-  ['mode=subagent case', /slotOfDelegateMode\(Some\("subagent"\)\), Some\("subagent"\)/],
+  ['mode=subagent case', /slotOfDelegateMode\(Some\("subagent"\)\),\s*Some\("subagent"\)/],
   ['unknown-mode fallback case', /delegateSlotUnresolvedReason\(sid, Some\("merger"\)\)/],
   ['retired prefix rule asserted', /delegate- 前缀本身不再声明任何类/],
   ['never-stuff-into-subagent assertion', /兜底绝不静默塞进 subagent 槽/],

@@ -84,6 +84,7 @@ class ScheduledTaskStore(
                 case Left(why) =>
                   logger.warnSync(s"db shadow restore unavailable for $sessionId: $why")
                   Nil
+    end if
   }
 
   /** 坏档 db 恢复读（同步腿，只在 loadUnlocked 的 blocking 区内调用）。 */
@@ -91,7 +92,7 @@ class ScheduledTaskStore(
     import cats.effect.unsafe.implicits.global
     try
       h.liveScheduleTasks(sessionId).unsafeRunSync() match
-        case ReadResult.Absent()       => Left("db 面无该会话调度流")
+        case ReadResult.Absent() => Left("db 面无该会话调度流")
         case ReadResult.Corrupt(k, ev) => Left(s"db 面 Corrupt($k, $ev)")
         case ReadResult.Present(rows) =>
           val tasks = rows.flatMap(_.taskDef.as[ScheduledTask].toOption)
@@ -103,16 +104,18 @@ class ScheduledTaskStore(
    * loadUnlocked 的隔离/恢复腿负责，这里静默取空基线），与 new 列表做差量写穿。
    */
   private def saveUnlocked(sessionId: String, tasks: List[ScheduledTask]): IO[Unit] =
-    ensureBaseDir *> IO.blocking {
-      val f = sessionFile(sessionId)
-      val before =
-        if os.exists(f) then decode[List[ScheduledTask]](os.read(f)).getOrElse(Nil)
-        else Nil
-      nebflow.core.AtomicJson.writeSync(f, tasks.asJson.noSpaces)
-      before
-    }.flatMap { before =>
-      shadowDiff(sessionId, before, tasks)
-    }
+    ensureBaseDir *> IO
+      .blocking {
+        val f = sessionFile(sessionId)
+        val before =
+          if os.exists(f) then decode[List[ScheduledTask]](os.read(f)).getOrElse(Nil)
+          else Nil
+        nebflow.core.AtomicJson.writeSync(f, tasks.asJson.noSpaces)
+        before
+      }
+      .flatMap { before =>
+        shadowDiff(sessionId, before, tasks)
+      }
 
   // ------------------------------------------------------------------
   // db 影子写（C6）—— 写穿 best-effort：任何 db 故障 ⇒ WARN + 跳过，绝不阻断主链
@@ -163,7 +166,10 @@ class ScheduledTaskStore(
         case None => IO.pure(None)
         case Some(current) =>
           val changed = f(current).copy(
-            id = current.id, sessionId = current.sessionId, createdAt = current.createdAt, source = current.source,
+            id = current.id,
+            sessionId = current.sessionId,
+            createdAt = current.createdAt,
+            source = current.source,
             revision = current.revision
           )
           val updated =
@@ -172,11 +178,16 @@ class ScheduledTaskStore(
           val rows = sessions.find(_._1 == current.sessionId).get._2
           val target = rows.map(t => if t.id == taskId then updated else t)
           (if target == rows then IO.unit else saveUnlocked(current.sessionId, target)) *>
-            sessions.filter { case (sid, stored) => sid != current.sessionId && stored.exists(_.id == taskId) }
+            sessions
+              .filter { case (sid, stored) => sid != current.sessionId && stored.exists(_.id == taskId) }
               .traverse_ { case (sid, stored) =>
                 saveUnlocked(sid, stored.filterNot(_.id == taskId))
-                  .handleErrorWith(e => logger.warn(s"task update left a stale copy in $sid (id=$taskId): ${e.getMessage}"))
-              }.as(Some(updated))
+                  .handleErrorWith(e =>
+                    logger.warn(s"task update left a stale copy in $sid (id=$taskId): ${e.getMessage}")
+                  )
+              }
+              .as(Some(updated))
+      end match
     }
 
   private def addUnlocked(task: ScheduledTask): IO[Unit] =
@@ -191,37 +202,41 @@ class ScheduledTaskStore(
     owner: Option[String],
     legacyOwner: ScheduledTask => Boolean,
     excludeId: String = ""
-  ): IO[List[ScheduledTask]] = IO.blocking {
-    if !os.exists(baseDir) then Nil
-    else
-      val removed = List.newBuilder[ScheduledTask]
-      val matchKind = kind.getOrElse(ScheduledTask.KindTask)
-      os.list(baseDir)
-        .filter(_.last.endsWith(".json"))
-        .toList
-        .foreach { f =>
-          decode[List[ScheduledTask]](os.read(f)) match
-            case Right(list) =>
-              // Ownership must be explicit or PROVEN by a legacy marker; a record whose
-              // origin cannot be shown is kept, never guessed away. An unreadable file is
-              // likewise left byte-for-byte untouched.
-              val (drop, keep) =
-                list.partition(t =>
-                  t.id != excludeId && t.name.contains(name) && ScheduledTask.sameKind(t.kind, Some(matchKind)) &&
-                    owner.isDefined && (t.source == owner || (t.source.isEmpty && legacyOwner(t)))
-                )
-              if drop.nonEmpty then
-                removed ++= drop
-                nebflow.core.AtomicJson.writeSync(f, keep.asJson.noSpaces)
-            case Left(_) => () // unreadable: leave untouched (source unknown ⇒ never delete)
+  ): IO[List[ScheduledTask]] = IO
+    .blocking {
+      if !os.exists(baseDir) then Nil
+      else
+        val removed = List.newBuilder[ScheduledTask]
+        val matchKind = kind.getOrElse(ScheduledTask.KindTask)
+        os.list(baseDir)
+          .filter(_.last.endsWith(".json"))
+          .toList
+          .foreach { f =>
+            decode[List[ScheduledTask]](os.read(f)) match
+              case Right(list) =>
+                // Ownership must be explicit or PROVEN by a legacy marker; a record whose
+                // origin cannot be shown is kept, never guessed away. An unreadable file is
+                // likewise left byte-for-byte untouched.
+                val (drop, keep) =
+                  list.partition(t =>
+                    t.id != excludeId && t.name.contains(name) && ScheduledTask.sameKind(t.kind, Some(matchKind)) &&
+                      owner.isDefined && (t.source == owner || (t.source.isEmpty && legacyOwner(t)))
+                  )
+                if drop.nonEmpty then
+                  removed ++= drop
+                  nebflow.core.AtomicJson.writeSync(f, keep.asJson.noSpaces)
+              case Left(_) => () // unreadable: leave untouched (source unknown ⇒ never delete)
+          }
+        removed.result()
+    }
+    .flatMap { dropped =>
+      // db 影子：跨会话整名清理 ⇒ 逐个 tombstone（各自 sessionId）
+      dropped
+        .foldLeft(IO.unit) { (acc, t) =>
+          acc *> shadowTombstone(t.sessionId, t.id)
         }
-      removed.result()
-  }.flatMap { dropped =>
-    // db 影子：跨会话整名清理 ⇒ 逐个 tombstone（各自 sessionId）
-    dropped.foldLeft(IO.unit) { (acc, t) =>
-      acc *> shadowTombstone(t.sessionId, t.id)
-    }.as(dropped)
-  }
+        .as(dropped)
+    }
 
   /** 单行 tombstone 影子腿（句柄 None ⇒ no-op；失败 WARN 不抛）。 */
   private def shadowTombstone(sessionId: String, taskId: String): IO[Unit] =
@@ -270,7 +285,8 @@ class ScheduledTaskStore(
   def addTask(task: ScheduledTask): IO[Unit] =
     storeLock.lock.surround(addUnlocked(task))
 
-  /** Idempotent user-create retry, scoped to one session and exact requested fields.
+  /**
+   * Idempotent user-create retry, scoped to one session and exact requested fields.
    *
    * `triggerAt`/`completedAt` are deliberately NOT part of the identity: a retry recomputes
    * `nextTodoSurfaceAt` and the user may have completed the row since the lost receipt, so
@@ -281,9 +297,11 @@ class ScheduledTaskStore(
     storeLock.lock.surround {
       loadUnlocked(task.sessionId).flatMap { existing =>
         existing.find(_.id == task.id) match
-          case Some(old) if old.source.contains("user") && old.isTodo &&
-              old.content == task.content && old.name == task.name && old.detail == task.detail &&
-              old.project == task.project && old.priority == task.priority => IO.pure(old)
+          case Some(old)
+              if old.source.contains("user") && old.isTodo &&
+                old.content == task.content && old.name == task.name && old.detail == task.detail &&
+                old.project == task.project && old.priority == task.priority =>
+            IO.pure(old)
           case Some(_) => IO.raiseError(new IllegalArgumentException("create identity conflict"))
           case None => saveUnlocked(task.sessionId, existing :+ task).as(task)
       }
@@ -298,7 +316,8 @@ class ScheduledTaskStore(
   def deleteTask(sessionId: String, taskId: String): IO[Unit] =
     cancelTask(taskId).void
 
-  /** Explicit cancellation needs no authoritative payload. Return all removed copies so
+  /**
+   * Explicit cancellation needs no authoritative payload. Return all removed copies so
    * callers can distinguish absence and notify every affected session without guessing.
    */
   def cancelTask(taskId: String): IO[List[ScheduledTask]] =
@@ -306,7 +325,8 @@ class ScheduledTaskStore(
       sessionIdsUnlocked.flatMap(_.traverse(sid => loadUnlocked(sid).map(sid -> _))).flatMap { sessions =>
         val copies = sessions.flatMap(_._2).filter(_.id == taskId)
         // Remove stale rows first. A failed cleanup must not leave only an obsolete due row.
-        sessions.filter(_._2.exists(_.id == taskId))
+        sessions
+          .filter(_._2.exists(_.id == taskId))
           .sortBy { case (sid, rows) => (rows.filter(_.id == taskId).map(_.revision).max, sid) }
           .traverse_ { case (sid, rows) => saveUnlocked(sid, rows.filterNot(_.id == taskId)) }
           .as(copies)
@@ -322,7 +342,8 @@ class ScheduledTaskStore(
   def rescheduleTask(sessionId: String, taskId: String, nextTriggerAt: Long): IO[Unit] =
     updateTask(sessionId, taskId)(_.copy(triggered = false, triggeredAt = None, triggerAt = nextTriggerAt)).void
 
-  /** Resolve authority BEFORE any state/time predicate; rearm may move the time either way.
+  /**
+   * Resolve authority BEFORE any state/time predicate; rearm may move the time either way.
    * Equal-version replicas may differ only in location. Conflicting legacy payloads have no
    * provable ordering: preserve them, warn, and refuse to fire until cancelled or rearmed.
    * Raw scans remain available to rearm/cleanup so no stored copy is hidden from repair.
@@ -333,11 +354,12 @@ class ScheduledTaskStore(
       val copies = byId(id)
       val revision = copies.map(_.revision).max
       val newest = copies.filter(_.revision == revision)
-      if newest.map(_.copy(sessionId = "")).distinct.size == 1 then
-        newest.sortBy(_.sessionId).headOption
+      if newest.map(_.copy(sessionId = "")).distinct.size == 1 then newest.sortBy(_.sessionId).headOption
       else
-        logger.warnSync(s"scheduled task authority conflict: id=$id revision=${newest.head.revision} " +
-          s"sessions=${newest.map(_.sessionId).sorted.mkString(",")}; reads suppressed until cancel or rearm")
+        logger.warnSync(
+          s"scheduled task authority conflict: id=$id revision=${newest.head.revision} " +
+            s"sessions=${newest.map(_.sessionId).sorted.mkString(",")}; reads suppressed until cancel or rearm"
+        )
         None
     }
 
@@ -484,70 +506,87 @@ class ScheduledTaskStore(
       case None => addTask(task).as(Rearm(task, Nil))
       case Some(n) =>
         storeLock.lock.surround {
-          scanUnlocked(t => t.name.contains(n) && ScheduledTask.sameKind(t.kind, task.kind), sort = false).flatMap { candidates =>
-            val owner = task.source
-            val (owned, unknown) =
-              if owner.isEmpty then (candidates.filter(_.source.isEmpty), Nil)
-              else
-                val legacy = candidates.filter(_.source.isEmpty)
-                (candidates.filter(t => owner.isDefined && t.source == owner) ++ legacy.filter(legacyOwner),
-                  legacy.filterNot(legacyOwner))
-            if unknown.nonEmpty then
-              IO.raiseError(
-                new IllegalStateException(
-                  s"legacy task ownership is unknown; rearm refused (name=$n kind=${task.kind.getOrElse(ScheduledTask.KindTask)} " +
-                    s"unknown=${unknown.map(t => s"${t.id}@${t.sessionId}").mkString(",")})"
+          scanUnlocked(t => t.name.contains(n) && ScheduledTask.sameKind(t.kind, task.kind), sort = false).flatMap {
+            candidates =>
+              val owner = task.source
+              val (owned, unknown) =
+                if owner.isEmpty then (candidates.filter(_.source.isEmpty), Nil)
+                else
+                  val legacy = candidates.filter(_.source.isEmpty)
+                  (
+                    candidates.filter(t => owner.isDefined && t.source == owner) ++ legacy.filter(legacyOwner),
+                    legacy.filterNot(legacyOwner)
+                  )
+              if unknown.nonEmpty then
+                IO.raiseError(
+                  new IllegalStateException(
+                    s"legacy task ownership is unknown; rearm refused (name=$n kind=${task.kind.getOrElse(ScheduledTask.KindTask)} " +
+                      s"unknown=${unknown.map(t => s"${t.id}@${t.sessionId}").mkString(",")})"
+                  )
                 )
-              )
-            else
-              val canonical =
-                owned.find(_.sessionId == task.sessionId)
-                  .orElse(owned.sortBy(t => (t.createdAt, t.id)).headOption)
-              canonical match
-                case None =>
-                  loadUnlocked(task.sessionId).flatMap { existing =>
-                    if existing.exists(_.id == task.id) then IO.raiseError(new IllegalArgumentException("duplicate task id"))
-                    else saveUnlocked(task.sessionId, existing :+ task).as(Rearm(task, Nil))
-                  }
-                case Some(old) =>
-                  // Stable identity: keep the id and creation time the record already has;
-                  // the request only supplies the new fields and the destination session.
-                  val persisted =
-                    task.copy(id = old.id, sessionId = task.sessionId, createdAt = old.createdAt, source = owner,
-                      revision = Math.addExact(owned.map(_.revision).max, 1L))
-                  loadUnlocked(task.sessionId).flatMap { targetRows =>
-                    val sameSessionIds = owned.filter(_.sessionId == task.sessionId).map(_.id).toSet
-                    val target = targetRows.filterNot(t => t.id == persisted.id || sameSessionIds.contains(t.id)) :+ persisted
-                    // Step 1 (atomic, single file): the destination has the new record before
-                    // any source copy is dropped, so a failure here cannot lose it.
-                    saveUnlocked(task.sessionId, target).flatMap { _ =>
-                      // Step 2 (recoverable): drop the old/duplicate copies. A failure only
-                      // leaves the same id in two files; the next rearm converges it.
-                      owned
-                        .filter(_.sessionId != task.sessionId)
-                        .groupBy(_.sessionId)
-                        .toList
-                        .sortBy(_._1)
-                        .foldLeft(IO.unit) { case (acc, (sid, rows)) =>
-                          val ids = rows.map(_.id).toSet
-                          acc *> loadUnlocked(sid)
-                            .flatMap(current => saveUnlocked(sid, current.filterNot(t => ids.contains(t.id))))
-                            .handleErrorWith(e =>
-                              logger.warn(s"rearm left a duplicate in session $sid (ids=${ids.mkString(",")}): ${e.getMessage}")
-                            )
-                        }
-                        .as(Rearm(persisted, owned))
+              else
+                val canonical =
+                  owned
+                    .find(_.sessionId == task.sessionId)
+                    .orElse(owned.sortBy(t => (t.createdAt, t.id)).headOption)
+                canonical match
+                  case None =>
+                    loadUnlocked(task.sessionId).flatMap { existing =>
+                      if existing.exists(_.id == task.id) then
+                        IO.raiseError(new IllegalArgumentException("duplicate task id"))
+                      else saveUnlocked(task.sessionId, existing :+ task).as(Rearm(task, Nil))
                     }
-                  }
+                  case Some(old) =>
+                    // Stable identity: keep the id and creation time the record already has;
+                    // the request only supplies the new fields and the destination session.
+                    val persisted =
+                      task.copy(
+                        id = old.id,
+                        sessionId = task.sessionId,
+                        createdAt = old.createdAt,
+                        source = owner,
+                        revision = Math.addExact(owned.map(_.revision).max, 1L)
+                      )
+                    loadUnlocked(task.sessionId).flatMap { targetRows =>
+                      val sameSessionIds = owned.filter(_.sessionId == task.sessionId).map(_.id).toSet
+                      val target =
+                        targetRows.filterNot(t => t.id == persisted.id || sameSessionIds.contains(t.id)) :+ persisted
+                      // Step 1 (atomic, single file): the destination has the new record before
+                      // any source copy is dropped, so a failure here cannot lose it.
+                      saveUnlocked(task.sessionId, target).flatMap { _ =>
+                        // Step 2 (recoverable): drop the old/duplicate copies. A failure only
+                        // leaves the same id in two files; the next rearm converges it.
+                        owned
+                          .filter(_.sessionId != task.sessionId)
+                          .groupBy(_.sessionId)
+                          .toList
+                          .sortBy(_._1)
+                          .foldLeft(IO.unit) { case (acc, (sid, rows)) =>
+                            val ids = rows.map(_.id).toSet
+                            acc *> loadUnlocked(sid)
+                              .flatMap(current => saveUnlocked(sid, current.filterNot(t => ids.contains(t.id))))
+                              .handleErrorWith(e =>
+                                logger.warn(
+                                  s"rearm left a duplicate in session $sid (ids=${ids.mkString(",")}): ${e.getMessage}"
+                                )
+                              )
+                          }
+                          .as(Rearm(persisted, owned))
+                      }
+                    }
+                end match
+              end if
           }
         }
 
 end ScheduledTaskStore
 
 object ScheduledTaskStore:
-  /** Production default storage directory (SharedResources assembly point; the default-root
+  /**
+   * Production default storage directory (SharedResources assembly point; the default-root
    *  discriminator baseline). `def` rather than `val`: PathUtil.dataRoot is the test root seam,
-   *  so it must be evaluated per call. */
+   *  so it must be evaluated per call.
+   */
   def defaultBaseDir: os.Path = PathUtil.dataRoot / "scheduled-tasks"
 
   /**
@@ -572,3 +611,4 @@ object ScheduledTaskStore:
    */
   val toolOwnsLegacyNamedTask: ScheduledTask => Boolean =
     t => ScheduledTask.sameKind(t.kind, Some(ScheduledTask.KindTask)) && t.name.exists(_.nonEmpty)
+end ScheduledTaskStore

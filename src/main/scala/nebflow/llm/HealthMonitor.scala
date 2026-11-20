@@ -42,7 +42,7 @@ object ProviderHealthMonitor:
   // 作者令（本批判据 B）：「健康表只许延迟、不许否决」——长期 DOWN 的候选也
   // 必须按退避被**真实试一次**（真实失败才继续跳过），不能凭一条历史记录永久
   // 排除。同族已合入修正 = FreezeAlertSweep 的 `shouldAttemptResume`
-  //（健康表只延迟续跑，到窗口强制放行）。
+  // （健康表只延迟续跑，到窗口强制放行）。
   //
   // 阶梯（trials = 自本次 Down 以来已放行的试探次数）：
   //   0 → 60s，1 → 120s，2 → 240s，3 → 480s，4+ → 600s（封顶）
@@ -76,6 +76,8 @@ object ProviderHealthMonitor:
    */
   final case class HalfOpenTrial(at: Long, trials: Int)
 
+end ProviderHealthMonitor
+
 /**
  * Tracks the health of every provider+model in the candidate chain.
  *
@@ -107,8 +109,7 @@ object ProviderHealthMonitor:
  * 令测试 JVM 开真实数据根，禁；boot 序已验证 sessionStore:547 生产根自开先于
  * createLlm:555 ⇒ peek 稳定命中）。
  */
-final class ProviderHealthMonitor(registry: ProviderRegistry, db: Option[DbHandle] = None)
-    extends ProviderHealthPort:
+final class ProviderHealthMonitor(registry: ProviderRegistry, db: Option[DbHandle] = None) extends ProviderHealthPort:
   private val logger = NebflowLogger.forName("nebflow.llm.health")
 
   /**
@@ -161,8 +162,10 @@ final class ProviderHealthMonitor(registry: ProviderRegistry, db: Option[DbHandl
           keys <- candidates.map(_.map(c => key(c.providerId, c.model)).distinct)
           doc <- h.recoverAvoidGuardConservative(now, keys, Defaults.QuotaAvoidWindowMs)
           _ <- avoidUntilRef.update(m =>
-            m ++ doc.avoidUntil.filter((_, until) => until > System.currentTimeMillis())
-              .filterNot((k, _) => m.contains(k)))
+            m ++ doc.avoidUntil
+              .filter((_, until) => until > System.currentTimeMillis())
+              .filterNot((k, _) => m.contains(k))
+          )
           existing <- statesRef.get
           // 只有「本次新回填」的 Down 才初始化半开账本：已存在（含 Up）的键不动。
           newlyDown = doc.down.filterNot((k, _) => existing.contains(k))
@@ -170,16 +173,18 @@ final class ProviderHealthMonitor(registry: ProviderRegistry, db: Option[DbHandl
             doc.down.foldLeft(s) { (acc, kv) =>
               acc.get(kv._1) match
                 case Some(HealthState.Down(_, _)) | Some(HealthState.Up) => acc
-                case None => acc.updated(kv._1, HealthState.Down(
-                  s"recovered from guard (persisted down since ${kv._2})", kv._2))
-            })
+                case None =>
+                  acc.updated(kv._1, HealthState.Down(s"recovered from guard (persisted down since ${kv._2})", kv._2))
+            }
+          )
           // 回填的 Down 必须等自己的退避窗才被真实试一次：没有 trials 账目时
           // filterCandidatesDetailed 会把它当「窗已到」立刻放回链（观测面还会报可用），
           // 等于把第 60s 的退避直接跳过——首用即补一条 trial(now, 0)。
           _ <- halfOpenRef.update(m =>
             newlyDown.foldLeft(m) { case (acc, (k, _)) =>
               if acc.contains(k) then acc else acc.updated(k, ProviderHealthMonitor.HalfOpenTrial(now, 0))
-            })
+            }
+          )
         yield ()).handleErrorWith { e =>
           logger.warn(s"provider-avoid guard hydration failed (degrade to in-memory): ${e.getMessage}")
         }
@@ -196,18 +201,22 @@ final class ProviderHealthMonitor(registry: ProviderRegistry, db: Option[DbHandl
           for
             now <- IO(System.currentTimeMillis())
             avoids <- avoidUntilRef.get.map(_.filter((_, until) => until > now))
-            downs <- statesRef.get.map(_.collect {
-              case (k, HealthState.Down(_, since)) => k -> since
+            downs <- statesRef.get.map(_.collect { case (k, HealthState.Down(_, since)) =>
+              k -> since
             })
-            _ <- h.writeAvoidGuard(GuardDocs.AvoidGuardDoc(
-              version = 1,
-              source = nebflow.db.Db.AvoidGuardSource,
-              avoidUntil = avoids,
-              updatedAt = now,
-              down = downs
-            )).handleErrorWith { e =>
-              logger.warn(s"provider-avoid guard persist failed: ${e.getMessage}")
-            }
+            _ <- h
+              .writeAvoidGuard(
+                GuardDocs.AvoidGuardDoc(
+                  version = 1,
+                  source = nebflow.db.Db.AvoidGuardSource,
+                  avoidUntil = avoids,
+                  updatedAt = now,
+                  down = downs
+                )
+              )
+              .handleErrorWith { e =>
+                logger.warn(s"provider-avoid guard persist failed: ${e.getMessage}")
+              }
           yield ()
         }
 
@@ -303,22 +312,25 @@ final class ProviderHealthMonitor(registry: ProviderRegistry, db: Option[DbHandl
   def markDown(providerId: String, model: String, reason: String): IO[Unit] =
     val k = key(providerId, model)
     val now = System.currentTimeMillis()
-    ensureGuards *> statesRef.get.flatMap { states =>
-      states.get(k) match
-        case Some(HealthState.Down(_, since)) =>
-          statesRef
-            .set(states.updated(k, HealthState.Down(reason, since)))
-            .*>(logger.warn(s"Provider $k still DOWN (fresh reason): $reason"))
-        case _ =>
-          statesRef
-            .set(states.updated(k, HealthState.Down(reason, now)))
-            .*>(
-              halfOpenRef.update(m =>
-                if m.contains(k) then m - k else m + (k -> ProviderHealthMonitor.HalfOpenTrial(now, 0))
+    ensureGuards *> statesRef.get
+      .flatMap { states =>
+        states.get(k) match
+          case Some(HealthState.Down(_, since)) =>
+            statesRef
+              .set(states.updated(k, HealthState.Down(reason, since)))
+              .*>(logger.warn(s"Provider $k still DOWN (fresh reason): $reason"))
+          case _ =>
+            statesRef
+              .set(states.updated(k, HealthState.Down(reason, now)))
+              .*>(
+                halfOpenRef
+                  .update(m => if m.contains(k) then m - k else m + (k -> ProviderHealthMonitor.HalfOpenTrial(now, 0)))
               )
-            )
-            .*>(logger.warn(s"Provider $k marked DOWN: $reason"))
-    }.flatTap(_ => persistGuardDoc())
+              .*>(logger.warn(s"Provider $k marked DOWN: $reason"))
+      }
+      .flatTap(_ => persistGuardDoc())
+
+  end markDown
 
   /** Mark a candidate as Up and wake waiters. No-op if already Up. Persisted（B2）. */
   def markUp(providerId: String, model: String): IO[Unit] =
@@ -330,15 +342,19 @@ final class ProviderHealthMonitor(registry: ProviderRegistry, db: Option[DbHandl
     // 从第一档 60s 重新起步（阶梯是「本次故障」的账，不是终身黑历史）。
     val clearLedgers = halfOpenRef.update(m => if m.contains(k) then m - k else m) *>
       probeFailSigRef.update(m => if m.contains(k) then m - k else m)
-    ensureGuards *> statesRef.get.flatMap { states =>
-      states.get(k) match
-        case Some(HealthState.Down(_, _)) =>
-          clearStrikes *> clearLedgers *> statesRef
-            .set(states.updated(k, HealthState.Up))
-            .*>(logger.info(s"Provider $k recovered (UP)"))
-            .*>(signalRecovery())
-        case _ => clearStrikes *> clearLedgers
-    }.flatTap(_ => persistGuardDoc())
+    ensureGuards *> statesRef.get
+      .flatMap { states =>
+        states.get(k) match
+          case Some(HealthState.Down(_, _)) =>
+            clearStrikes *> clearLedgers *> statesRef
+              .set(states.updated(k, HealthState.Up))
+              .*>(logger.info(s"Provider $k recovered (UP)"))
+              .*>(signalRecovery())
+          case _ => clearStrikes *> clearLedgers
+      }
+      .flatTap(_ => persistGuardDoc())
+
+  end markUp
 
   /**
    * 5xx 冷却（5xx 归批 2026-11-05，作者令「deepseek 抖一下不能把 agent 冻掉」）：
@@ -363,12 +379,15 @@ final class ProviderHealthMonitor(registry: ProviderRegistry, db: Option[DbHandl
         .*>(
           avoidUntilRef
             .update(_.updated(k, System.currentTimeMillis() + windowMs))
-            .*>(logger.warn(
-              s"Provider $k cooled down for ${windowMs}ms ($detail — strike $strikes/" +
-                s"${UpstreamUnavailable.CooldownMaxStrikes}, NOT evicted, no probe; half-open on expiry)"
-            ))
+            .*>(
+              logger.warn(
+                s"Provider $k cooled down for ${windowMs}ms ($detail — strike $strikes/" +
+                  s"${UpstreamUnavailable.CooldownMaxStrikes}, NOT evicted, no probe; half-open on expiry)"
+              )
+            )
         )
     }
+  end coolDown
 
   /** 当前连续 5xx 计数（观测 / spec 断言用）。 */
   private[llm] def getCooldownStrikes: IO[Map[String, Int]] = strikesRef.get
@@ -414,9 +433,8 @@ final class ProviderHealthMonitor(registry: ProviderRegistry, db: Option[DbHandl
     // `claim = false` ⇒ **不消费**半开试探名额。否则一次面板刷新会把退避窗内的
     // 候选放回链又被别人跳过，或者反过来把「本次该被真实试一次」的名额提前烧掉
     // （→ 下一个真实请求反而被跳过）。只有真正要发请求的调用点才 claim。
-    ensureGuards *> filterCandidatesDetailed(candidates, claim = false).map {
-      case (eligible, skipped) =>
-        (eligible, skipped.collect { case (c, CandidateSkipCause.HealthDown(_)) => c })
+    ensureGuards *> filterCandidatesDetailed(candidates, claim = false).map { case (eligible, skipped) =>
+      (eligible, skipped.collect { case (c, CandidateSkipCause.HealthDown(_)) => c })
     }
 
   /**
@@ -510,12 +528,18 @@ final class ProviderHealthMonitor(registry: ProviderRegistry, db: Option[DbHandl
                           .as(None)
                       case false => skipOf(c, reason, k) // 别人刚领走这次试探
                     }
+                end if
               case _ => IO.pure(None)
+        end match
       }
       skipped = ready.flatten
       skipKeys = skipped.map { case (c, _) => key(c.providerId, c.model) }.toSet
       eligible = candidates.filterNot(c => skipKeys.contains(key(c.providerId, c.model)))
     yield (eligible, skipped)
+
+    end for
+
+  end filterCandidatesDetailed
 
   /**
    * Block until at least one of the given candidates is Up again.
@@ -582,7 +606,13 @@ final class ProviderHealthMonitor(registry: ProviderRegistry, db: Option[DbHandl
    */
   private[llm] def ageHalfOpenForTest(providerId: String, model: String, ms: Long): IO[Unit] =
     halfOpenRef.update(m =>
-      m.updated(key(providerId, model), ProviderHealthMonitor.HalfOpenTrial(System.currentTimeMillis() - ms, m.get(key(providerId, model)).map(_.trials).getOrElse(0)))
+      m.updated(
+        key(providerId, model),
+        ProviderHealthMonitor.HalfOpenTrial(
+          System.currentTimeMillis() - ms,
+          m.get(key(providerId, model)).map(_.trials).getOrElse(0)
+        )
+      )
     )
 
   /**
@@ -596,7 +626,9 @@ final class ProviderHealthMonitor(registry: ProviderRegistry, db: Option[DbHandl
    */
   private[llm] def gcUnresolvableDown(): IO[Unit] =
     statesRef.get.flatMap { states =>
-      states.collect { case (k, HealthState.Down(_, _)) => k }.toList
+      states
+        .collect { case (k, HealthState.Down(_, _)) => k }
+        .toList
         .traverse(k => registry.getCandidateForRef(k).map(k -> _.isDefined))
         .flatMap { resolved =>
           val ghosts = resolved.collect { case (k, false) => k }
@@ -617,7 +649,7 @@ final class ProviderHealthMonitor(registry: ProviderRegistry, db: Option[DbHandl
     statesRef.update(s =>
       s.get(k) match
         case Some(HealthState.Down(_, since)) => s.updated(k, HealthState.Down(detail, since))
-        case _                                => s
+        case _ => s
     )
 
   /**

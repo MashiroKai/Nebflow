@@ -6,11 +6,23 @@ import munit.CatsEffectSuite
 class CanvasTabOperationSpec extends CatsEffectSuite:
   private def j(s: String): Json = parser.parse(s).toOption.get
   private val now = 1794888000000L
-  private def op(id: String, opened: String = "[]", closed: String = "[]", reopened: String = "[]", active: String = "null", time: Long = now): Json =
-    j(s"""{"operationId":"$id","issuedAt":$time,"baseVersion":0,"opened":$opened,"closed":$closed,"reopened":$reopened,"activeTabId":$active}""")
+
+  private def op(
+    id: String,
+    opened: String = "[]",
+    closed: String = "[]",
+    reopened: String = "[]",
+    active: String = "null",
+    time: Long = now
+  ): Json =
+    j(
+      s"""{"operationId":"$id","issuedAt":$time,"baseVersion":0,"opened":$opened,"closed":$closed,"reopened":$reopened,"activeTabId":$active}"""
+    )
   private val a = """[{"id":"a","title":"A","type":"generic"}]"""
   private val b = """[{"id":"b","title":"B","type":"generic"}]"""
-  private def ids(x: Json): Vector[String] = x.hcursor.get[Vector[Json]]("tabs").toOption.get.map(_.hcursor.get[String]("id").toOption.get)
+
+  private def ids(x: Json): Vector[String] =
+    x.hcursor.get[Vector[Json]]("tabs").toOption.get.map(_.hcursor.get[String]("id").toOption.get)
   private def fixture() = new CanvasTabStore(os.temp.dir() / "tabs.json")
 
   test("atomic operations preserve concurrent opens, update metadata and apply active in arrival order") {
@@ -70,3 +82,4 @@ class CanvasTabOperationSpec extends CatsEffectSuite:
       assertEquals(ids(x.toOption.get._1), Vector.empty)
       assertEquals(ids(y.toOption.get._1), Vector("a"))
   }
+end CanvasTabOperationSpec

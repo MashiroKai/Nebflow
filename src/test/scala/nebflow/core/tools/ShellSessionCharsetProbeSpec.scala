@@ -47,18 +47,19 @@ class ShellSessionCharsetProbeSpec extends FunSuite:
   /** available 恒 0、read 永久阻塞——「永不出字」流（旧裸 read 的埋死形态）。 */
   private final class NeverYieldsStream extends java.io.InputStream:
     override def available(): Int = 0
+
     override def read(): Int =
       val lock = new Object
       lock.synchronized(lock.wait()) // 无 notify ⇒ 永久阻塞
       -1
 
   /** 全部字节在 delay 后一次性可读（available 如实报告），EOF 正常。 */
-  private final class DelayedBurstStream(bytes: Array[Byte], delayMs: Long)
-      extends java.io.InputStream:
+  private final class DelayedBurstStream(bytes: Array[Byte], delayMs: Long) extends java.io.InputStream:
     private val readyAt = System.currentTimeMillis() + delayMs
     private var served = 0
     private def ready: Boolean = System.currentTimeMillis() >= readyAt
     override def available(): Int = if ready then bytes.length - served else 0
+
     override def read(): Int =
       if served >= bytes.length then -1
       else
@@ -74,9 +75,11 @@ class ShellSessionCharsetProbeSpec extends FunSuite:
     private var served = 0
     private val total = first.length + second.length
     private def secondReady: Boolean = System.currentTimeMillis() >= readyAt
+
     override def available(): Int =
       val released = if secondReady then total else first.length
       math.max(0, released - served)
+
     override def read(): Int =
       if served >= total then -1
       else
@@ -85,6 +88,8 @@ class ShellSessionCharsetProbeSpec extends FunSuite:
           (if served < first.length then first(served) else second(served - first.length)) & 0xff
         served += 1
         b
+
+  end SplitBurstStream
 
   /** 在独立线程跑 body，deadline 内不返回即判挂死（daemon，泄漏不阻 JVM 退出）。 */
   private def runBounded(label: String, deadlineMs: Long)(body: => Unit): Long =
@@ -96,8 +101,7 @@ class ShellSessionCharsetProbeSpec extends FunSuite:
     thread.setDaemon(true)
     thread.start()
     thread.join(deadlineMs)
-    if thread.isAlive then
-      fail(s"[$label] ${deadlineMs}ms 内未返回——探测挂死复现（预算窗未放行）")
+    if thread.isAlive then fail(s"[$label] ${deadlineMs}ms 内未返回——探测挂死复现（预算窗未放行）")
     System.currentTimeMillis() - start
 
   private def drain(is: java.io.InputStream): Array[Byte] = is.readAllBytes()
@@ -153,8 +157,8 @@ class ShellSessionCharsetProbeSpec extends FunSuite:
   test("切片切半多字节字符：尾部半字回推原始字节，判 UTF-8 不误判 GBK"):
     // 「你」= E4 BD A0：第一片只给 E4 BD（前半），A0 与「好」在 200ms 后到——
     // 50ms 静默窗先于第二片到期，探测必须带着半字定案为 UTF-8
-    val first = Array[Byte](0xE4.toByte, 0xBD.toByte)
-    val second = (Array[Byte](0xA0.toByte) ++ "好".getBytes(StandardCharsets.UTF_8))
+    val first = Array[Byte](0xe4.toByte, 0xbd.toByte)
+    val second = (Array[Byte](0xa0.toByte) ++ "好".getBytes(StandardCharsets.UTF_8))
     val (stream, charset) =
       session.probeCharset(new SplitBurstStream(first, second, delayMs = 200L), () => false)
     assertEquals(charset, StandardCharsets.UTF_8, "半字尾是切半不是坏字节，不得误判 GBK")

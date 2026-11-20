@@ -102,7 +102,10 @@ class R1CancelTombstoneSpec extends FunSuite:
       source = "delegate"
     )
     val verdict = DelegateRevival.eligibility(sessionStore, task).unsafeRunSync()
-    assert(verdict.exists(_.contains("cancel tombstone")), s"revival must be refused by the tombstone gate, got: $verdict")
+    assert(
+      verdict.exists(_.contains("cancel tombstone")),
+      s"revival must be refused by the tombstone gate, got: $verdict"
+    )
     os.remove.all(parentSession)
     os.remove.all(seat)
   }

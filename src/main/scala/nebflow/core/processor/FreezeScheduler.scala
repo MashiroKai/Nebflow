@@ -55,11 +55,13 @@ object FreezeScheduler:
         nebflow.core.delegate.DelegateFreeze
           .dormantSweep(resources, wsSend)
           .handleErrorWith(e => logger.warn(s"FreezeScheduler dormant sweep failed: ${e.getMessage}")) *>
-        tailSweep.getOrElse(IO.unit).handleErrorWith(e =>
-          logger.warn(s"FreezeScheduler tail sweep failed: ${e.getMessage}")
-        ) *>
+        tailSweep
+          .getOrElse(IO.unit)
+          .handleErrorWith(e => logger.warn(s"FreezeScheduler tail sweep failed: ${e.getMessage}")) *>
         IO.sleep(interval) >> loop
     loop
+
+  end run
 
   /**
    * 单轮扫描：向所有 Frozen 态 agent 发 CheckFreezeGate；v2 升级链（§5.2）——

@@ -25,6 +25,7 @@ object PluginExecutionGateProbe extends AgentCore:
 class DynamicToolLoadWiringSpec extends FunSuite:
 
   private object CoreProbe extends AgentCore:
+
     def planFor(defn: AgentDef, isFlowNode: Boolean = false): nebflow.llm.DynamicToolLoad.Plan =
       buildToolPlan(defn, isFlowNode = isFlowNode)
 
@@ -83,6 +84,8 @@ class DynamicToolLoadWiringSpec extends FunSuite:
       assert(!none.wireTools.exists(_.name == probe))
       assertEquals(none.advertisedTools, Nil)
     finally ToolRegistry.unregisterTool(probe)
+
+    end try
 
   test("撤权竞态：通告不是授权——旧通告仍在场，执行门已撤权 ⇒ 门拒绝（防发现后撤销）"):
     register()

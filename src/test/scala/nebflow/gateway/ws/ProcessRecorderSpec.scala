@@ -78,7 +78,13 @@ class ProcessRecorderSpec extends CatsEffectSuite:
     }
 
   private def textFrame(nsid: String, delta: String): Json =
-    Json.obj("type" -> "agentTextDelta".asJson, "agentId" -> "nebflow/general".asJson, "nodeSessionId" -> nsid.asJson, "delta" -> delta.asJson)
+    Json.obj(
+      "type" -> "agentTextDelta".asJson,
+      "agentId" -> "nebflow/general".asJson,
+      "nodeSessionId" -> nsid.asJson,
+      "delta" -> delta.asJson
+    )
+
   private def thinkingFrame(nsid: String, delta: String): Json =
     Json.obj("type" -> "agentThinking".asJson, "nodeSessionId" -> nsid.asJson, "delta" -> delta.asJson)
 
@@ -205,7 +211,16 @@ class ProcessRecorderSpec extends CatsEffectSuite:
       // root 帧序列（改前 wrapper 同序列的落盘形态：Ai(冲刷) + Tool + 终态 Ai）。
       _ <- send(Json.obj("type" -> "textDelta".asJson, "delta" -> "root text ".asJson))
       _ <- send(Json.obj("type" -> "toolStart".asJson))
-      _ <- send(Json.obj("type" -> "toolEnd".asJson, "label" -> "Bash".asJson, "summary" -> "".asJson, "content" -> "ok".asJson, "isError" -> false.asJson, "input" -> Json.Null))
+      _ <- send(
+        Json.obj(
+          "type" -> "toolEnd".asJson,
+          "label" -> "Bash".asJson,
+          "summary" -> "".asJson,
+          "content" -> "ok".asJson,
+          "isError" -> false.asJson,
+          "input" -> Json.Null
+        )
+      )
       _ <- send(Json.obj("type" -> "textDelta".asJson, "delta" -> "root final".asJson))
       _ <- send(Json.obj("type" -> "done".asJson, "model" -> "claude-x".asJson))
       // recorder 对 root 帧零动作（帧无 nodeSessionId ⇒ 忽略）。
@@ -219,7 +234,11 @@ class ProcessRecorderSpec extends CatsEffectSuite:
       assertEquals(counts.get("tool"), Some(1))
       val last = rows(2).hcursor
       assertEquals(last.downField("text").as[String].toOption, Some("root final"))
-      assertEquals(last.downField("terminal").as[Option[Boolean]].toOption.flatten, Some(true), "root done 仍落 terminal=true（零漂移）")
+      assertEquals(
+        last.downField("terminal").as[Option[Boolean]].toOption.flatten,
+        Some(true),
+        "root done 仍落 terminal=true（零漂移）"
+      )
     }
   }
 
@@ -248,7 +267,11 @@ class ProcessRecorderSpec extends CatsEffectSuite:
       assertEquals(swept, 1, "超限 ⇒ 收殓 1 会话")
       assertEquals(after._1.get("ai"), Some(1), "残余文本冲刷成一行 Ai")
       assertEquals(after._2.head.hcursor.downField("text").as[String].toOption, Some("residual text"))
-      assertEquals(after._2.head.hcursor.downField("terminal").as[Option[Boolean]].toOption.flatten, None, "轮未完成 ⇒ 不写 terminal")
+      assertEquals(
+        after._2.head.hcursor.downField("terminal").as[Option[Boolean]].toOption.flatten,
+        None,
+        "轮未完成 ⇒ 不写 terminal"
+      )
       assertEquals(again, 0, "清除后幂等")
     }
   }

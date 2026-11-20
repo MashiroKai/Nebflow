@@ -25,25 +25,30 @@ object BgInboxBackstop:
         val sid = sessionId.trim
         if sid.isEmpty then IO.unit
         else
-          CompactionQueueStore.load(sid).flatMap { existing =>
-            val already =
-              existing.exists(_.events.exists(_.correlationId.contains(event.correlationId.getOrElse(""))))
-            if already then IO.unit
-            else
-              // 会话在场判据 = [[SessionLiveness]]（活体 actor ∪ 索引/盘上会话记录）。
-              // 改前只读会话索引 ⇒ delegate/subagent 等后台收件方恒判「已删」，兜底
-              // 写箱永不发生（OWNER-GONE 误判修复批 2026-11-06 同因）。
-              SessionLiveness.alive(resources, sid).flatMap { alive =>
-                if !alive then IO.unit
-                else
-                  val q = existing.getOrElse(CompactionQueueStore.PersistedQueues())
-                  CompactionQueueStore.save(sid, q.copy(events = q.events :+ event))
-              }
-          }.handleErrorWith(e =>
-            nebflow.shared.NebflowLogger
-              .forName("nebflow.bg-notify")
-              .warn(s"[bg-notify-inbox] append failed for session '$sid': ${e.getMessage}")
-          )
+          CompactionQueueStore
+            .load(sid)
+            .flatMap { existing =>
+              val already =
+                existing.exists(_.events.exists(_.correlationId.contains(event.correlationId.getOrElse(""))))
+              if already then IO.unit
+              else
+                // 会话在场判据 = [[SessionLiveness]]（活体 actor ∪ 索引/盘上会话记录）。
+                // 改前只读会话索引 ⇒ delegate/subagent 等后台收件方恒判「已删」，兜底
+                // 写箱永不发生（OWNER-GONE 误判修复批 2026-11-06 同因）。
+                SessionLiveness.alive(resources, sid).flatMap { alive =>
+                  if !alive then IO.unit
+                  else
+                    val q = existing.getOrElse(CompactionQueueStore.PersistedQueues())
+                    CompactionQueueStore.save(sid, q.copy(events = q.events :+ event))
+                }
+            }
+            .handleErrorWith(e =>
+              nebflow.shared.NebflowLogger
+                .forName("nebflow.bg-notify")
+                .warn(s"[bg-notify-inbox] append failed for session '$sid': ${e.getMessage}")
+            )
+        end if
+      end append
   end face
 
 end BgInboxBackstop

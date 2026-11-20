@@ -140,8 +140,11 @@ class SessionStore(
    */
   dbOverride: Option[DbHandle] = None
 ) extends SessionStorePort:
-  /** 与 ExecutionCommitStore 挂载根同型 canonical 化（macOS /var → /private/var），
-    * 否则 resultRef 与期望路径的字符串对账跨形态落空。 */
+
+  /**
+   * 与 ExecutionCommitStore 挂载根同型 canonical 化（macOS /var → /private/var），
+   * 否则 resultRef 与期望路径的字符串对账跨形态落空。
+   */
   def executionAuthorityRoot: java.nio.file.Path =
     val p = sessionsDir.toNIO.toAbsolutePath.normalize()
     if java.nio.file.Files.exists(p, java.nio.file.LinkOption.NOFOLLOW_LINKS) then p.toRealPath() else p
@@ -167,20 +170,29 @@ class SessionStore(
         IO.raiseError(new IllegalStateException("execution-authority-unavailable"))
       case None =>
         IO.blocking {
-          require(sessionId.nonEmpty && sessionId != "." && sessionId != ".." &&
-            !sessionId.contains('/') && !sessionId.contains('\\'), "Invalid session id")
+          require(
+            sessionId.nonEmpty && sessionId != "." && sessionId != ".." &&
+              !sessionId.contains('/') && !sessionId.contains('\\'),
+            "Invalid session id"
+          )
           val root = sessionsDir.toNIO
           val session = root.resolve(sessionId)
           val marker = session.resolve("executions")
           def attributes(path: java.nio.file.Path) =
-            try Some(java.nio.file.Files.readAttributes(path, classOf[java.nio.file.attribute.BasicFileAttributes],
-              java.nio.file.LinkOption.NOFOLLOW_LINKS))
+            try
+              Some(
+                java.nio.file.Files.readAttributes(
+                  path,
+                  classOf[java.nio.file.attribute.BasicFileAttributes],
+                  java.nio.file.LinkOption.NOFOLLOW_LINKS
+                )
+              )
             catch case _: java.nio.file.NoSuchFileException => None
           val rootAttrs = attributes(root)
           val sessionAttrs = attributes(session)
           if rootAttrs.exists(a => !a.isDirectory || a.isSymbolicLink) ||
-              sessionAttrs.exists(a => !a.isDirectory || a.isSymbolicLink) || attributes(marker).nonEmpty then
-            throw new IllegalStateException("protected-or-unknown-execution")
+            sessionAttrs.exists(a => !a.isDirectory || a.isSymbolicLink) || attributes(marker).nonEmpty
+          then throw new IllegalStateException("protected-or-unknown-execution")
         } *> effect
 
   private val logger = nebflow.shared.NebflowLogger.forName("nebflow.session")
@@ -894,8 +906,10 @@ class SessionStore(
       val now = System.currentTimeMillis()
       val updated = sessions.map(s => if s.id == activeId then s.copy(updatedAt = now) else s)
       messageWriteGate.flatMap(_.permit.use { _ =>
-        withLegacyWrite(activeId)(saveSessionMessagesLocked(activeId, msgs) *>
-          activeMessagesRef.set(msgs) *> indexRef.set((activeId, updated, folders)))
+        withLegacyWrite(activeId)(
+          saveSessionMessagesLocked(activeId, msgs) *>
+            activeMessagesRef.set(msgs) *> indexRef.set((activeId, updated, folders))
+        )
       }) *> notifySessionChanged(activeId)
     // Don't save index on every message to reduce disk writes — save periodically or on switch
     }
@@ -912,17 +926,19 @@ class SessionStore(
   def saveMessagesForSession(targetId: String, msgs: List[Message]): IO[Unit] =
     val now = System.currentTimeMillis()
     messageWriteGate.flatMap(_.permit.use { _ =>
-      withLegacyWrite(targetId)(indexRef
-        .modify { case (activeId, sessions, folders) =>
-          val updated = sessions.map(s => if s.id == targetId then s.copy(updatedAt = now) else s)
-          ((activeId, updated, folders), activeId)
-        }
-        .flatMap { activeId =>
-          val updateRef = if targetId == activeId then activeMessagesRef.set(msgs) else IO.unit
-          updateRef *>
-            pendingMsgs.update(_.updated(targetId, msgs)) *>
-            dirtyMsgSessions.update(_ + targetId)
-        })
+      withLegacyWrite(targetId)(
+        indexRef
+          .modify { case (activeId, sessions, folders) =>
+            val updated = sessions.map(s => if s.id == targetId then s.copy(updatedAt = now) else s)
+            ((activeId, updated, folders), activeId)
+          }
+          .flatMap { activeId =>
+            val updateRef = if targetId == activeId then activeMessagesRef.set(msgs) else IO.unit
+            updateRef *>
+              pendingMsgs.update(_.updated(targetId, msgs)) *>
+              dirtyMsgSessions.update(_ + targetId)
+          }
+      )
     }) *> notifySessionChanged(targetId) *> scheduleMsgFlush
   end saveMessagesForSession
 
@@ -972,32 +988,34 @@ class SessionStore(
    * Read/write failures propagate without publishing an unpersisted snapshot.
    */
   def appendDurableMessage(targetId: String, message: Message): IO[Boolean] =
-    messageWriteGate.flatMap(_.permit.use { _ =>
-      withLegacyWrite(targetId)(IO.uncancelable { _ =>
-        pendingMsgs.get.flatMap { pending =>
-          val current = pending.get(targetId) match
-            case Some(msgs) => IO.pure(msgs)
-            case None =>
-              IO.blocking {
-                val file = sessionFile(targetId)
-                if !os.exists(file) then Nil
-                else decode[List[Message]](os.read(file)).fold(throw _, identity)
+    messageWriteGate
+      .flatMap(_.permit.use { _ =>
+        withLegacyWrite(targetId)(IO.uncancelable { _ =>
+          pendingMsgs.get.flatMap { pending =>
+            val current = pending.get(targetId) match
+              case Some(msgs) => IO.pure(msgs)
+              case None =>
+                IO.blocking {
+                  val file = sessionFile(targetId)
+                  if !os.exists(file) then Nil
+                  else decode[List[Message]](os.read(file)).fold(throw _, identity)
+                }
+            current.flatMap { msgs =>
+              val duplicate = message.messageId.exists { id =>
+                msgs.exists(m => m.messageId.contains(id) && m.runId == message.runId)
               }
-          current.flatMap { msgs =>
-            val duplicate = message.messageId.exists { id =>
-              msgs.exists(m => m.messageId.contains(id) && m.runId == message.runId)
+              if duplicate then
+                // A pending duplicate must reach disk before acknowledging it.
+                if pending.contains(targetId) then durableSwapMessagesLocked(targetId, msgs).as((false, true))
+                else IO.pure((false, false))
+              else durableSwapMessagesLocked(targetId, msgs :+ message).as((true, true))
             }
-            if duplicate then
-              // A pending duplicate must reach disk before acknowledging it.
-              if pending.contains(targetId) then durableSwapMessagesLocked(targetId, msgs).as((false, true))
-              else IO.pure((false, false))
-            else durableSwapMessagesLocked(targetId, msgs :+ message).as((true, true))
           }
-        }
+        })
       })
-    }).flatMap { case (added, changed) =>
-      (if changed then notifySessionChanged(targetId) else IO.unit).as(added)
-    }
+      .flatMap { case (added, changed) =>
+        (if changed then notifySessionChanged(targetId) else IO.unit).as(added)
+      }
   end appendDurableMessage
 
   private def terminalEnvelopeFile(sessionId: String, runId: String): os.Path =
@@ -1255,20 +1273,23 @@ class SessionStore(
         else
           for
             currentMsgs <- activeMessagesRef.get
-            _ <- if currentId.isEmpty then IO.unit
-                 else withLegacyWrite(currentId)(saveSessionMessagesLocked(currentId, currentMsgs))
+            _ <-
+              if currentId.isEmpty then IO.unit
+              else withLegacyWrite(currentId)(saveSessionMessagesLocked(currentId, currentMsgs))
             newMsgs <- loadSessionMessages(id)
             result <- IO.uncancelable { _ =>
-              indexRef.modify { case (active, currentSessions, folders) =>
-                if active != currentId || !currentSessions.exists(_.id == id) then
-                  ((active, currentSessions, folders), false)
-                else
-                  val updated = currentSessions.map(s => if s.id == id then s.copy(hasUnread = false) else s)
-                  ((id, updated, folders), true)
-              }.flatMap {
-                case false => IO.raiseError(new IllegalStateException("Session changed during switch"))
-                case true => activeMessagesRef.set(newMsgs) *> saveIndex.as(newMsgs)
-              }
+              indexRef
+                .modify { case (active, currentSessions, folders) =>
+                  if active != currentId || !currentSessions.exists(_.id == id) then
+                    ((active, currentSessions, folders), false)
+                  else
+                    val updated = currentSessions.map(s => if s.id == id then s.copy(hasUnread = false) else s)
+                    ((id, updated, folders), true)
+                }
+                .flatMap {
+                  case false => IO.raiseError(new IllegalStateException("Session changed during switch"))
+                  case true => activeMessagesRef.set(newMsgs) *> saveIndex.as(newMsgs)
+                }
             }
           yield result
       }

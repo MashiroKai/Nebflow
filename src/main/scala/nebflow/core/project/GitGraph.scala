@@ -26,13 +26,15 @@ import io.circe.Json
 import io.circe.syntax.*
 
 import java.security.MessageDigest
-import java.time.{ Instant, ZoneId }
+import java.time.{Instant, ZoneId}
 import java.util.concurrent.TimeUnit
 
-/** 可见性 = `private[nebflow]`（第二轮 2026-11-19 放宽，原 `private[gateway]`）：
+/**
+ * 可见性 = `private[nebflow]`（第二轮 2026-11-19 放宽，原 `private[gateway]`）：
  *  分支管理问答的只读取数件 `core/tools/GitVizGraphTool` 必须走**同一个** `build`
  *  （作者令「数据面沿用只读子命令白名单」——白名单在下面一张表里，绝不能出现第二份
- *  实现）。放宽到 `nebflow` 包内 = core 可见、包外仍不可见；本文件仍是唯一取数口。 */
+ *  实现）。放宽到 `nebflow` 包内 = core 可见、包外仍不可见；本文件仍是唯一取数口。
+ */
 private[nebflow] object GitGraph:
 
   /** 允许调用的 git 子命令（唯一取用口 = [[git]]；不在表内一律拒绝）。 */
@@ -69,6 +71,8 @@ private[nebflow] object GitGraph:
           else Right(new String(outBytes, java.nio.charset.StandardCharsets.UTF_8))
         finally proc.destroy()
       catch case e: Exception => Left(s"git $head failed: ${e.getMessage}")
+    end if
+  end git
 
   private def gitOk(root: String, args: List[String]): String = git(root, args).getOrElse("")
 
@@ -83,9 +87,14 @@ private[nebflow] object GitGraph:
       .flatMap { line =>
         val parts = line.split(FieldSep).map(_.trim)
         if parts.length < 3 then Nil
-        else List(RefRow(parts(0), parts(1), parts(2).toLongOption.map(_ * 1000L).getOrElse(0L), parts.lift(3).contains("*")))
+        else
+          List(
+            RefRow(parts(0), parts(1), parts(2).toLongOption.map(_ * 1000L).getOrElse(0L), parts.lift(3).contains("*"))
+          )
       }
       .toList
+
+  end localBranches
 
   /** 提交 sha → 全部 ref 名（本支 + 远端支 + tag）。 */
   private def refLabels(root: String): Map[String, List[String]] =
@@ -113,21 +122,24 @@ private[nebflow] object GitGraph:
     val zone = ZoneId.systemDefault()
     val today = java.time.LocalDate.now(zone)
     val from = today.minusDays(days.toLong - 1)
-    val counts = gitOk(root, List("log", "--all", s"--since=${from.toString}", "--date=short", "--pretty=%ad", "--no-merges"))
-      .split("\n")
-      .iterator
-      .map(_.trim)
-      .filter(_.nonEmpty)
-      .toList
-      .groupBy(identity)
-      .view
-      .mapValues(_.size)
-      .toMap
+    val counts =
+      gitOk(root, List("log", "--all", s"--since=${from.toString}", "--date=short", "--pretty=%ad", "--no-merges"))
+        .split("\n")
+        .iterator
+        .map(_.trim)
+        .filter(_.nonEmpty)
+        .toList
+        .groupBy(identity)
+        .view
+        .mapValues(_.size)
+        .toMap
     val list = (0 until days).toList.reverse.map { back =>
       val d = today.minusDays(back.toLong).toString
       d -> counts.getOrElse(d, 0)
     }
     (list, list.map(_._2.toLong).sum, list.map(_._2).maxOption.getOrElse(0))
+
+  end heatmap
 
   private def parseLog(out: String): List[Commit] =
     out
@@ -139,13 +151,15 @@ private[nebflow] object GitGraph:
         val parts = rec.split(FieldSep)
         if parts.length < 5 then Nil
         else
-          List(Commit(
-            sha = parts(0),
-            parents = parts(1).split(" ").iterator.filter(_.nonEmpty).toList,
-            ts = parts(2).toLongOption.getOrElse(0L) * 1000L,
-            author = parts(3),
-            subject = parts.drop(4).mkString(String.valueOf(FieldSep)),
-          ))
+          List(
+            Commit(
+              sha = parts(0),
+              parents = parts(1).split(" ").iterator.filter(_.nonEmpty).toList,
+              ts = parts(2).toLongOption.getOrElse(0L) * 1000L,
+              author = parts(3),
+              subject = parts.drop(4).mkString(String.valueOf(FieldSep))
+            )
+          )
       }
       .toList
 
@@ -167,7 +181,7 @@ private[nebflow] object GitGraph:
         "state" -> "not-a-repo".asJson,
         "project" -> project.asJson,
         "root" -> workspace.asJson,
-        "message" -> "不是 git 工作树（只读探针 git rev-parse --is-inside-work-tree 未通过）".asJson,
+        "message" -> "不是 git 工作树（只读探针 git rev-parse --is-inside-work-tree 未通过）".asJson
       )
     else
       val branches = localBranches(workspace)
@@ -182,13 +196,17 @@ private[nebflow] object GitGraph:
 
       val logFmt = s"--pretty=format:%H$FieldSep%P$FieldSep%at$FieldSep%an$FieldSep%s$RecordSep"
       // 不带 `--`：路径分隔符会把 ref 当路径，log 变空。
-      val walked = if refArgs.isEmpty then Nil else parseLog(gitOk(workspace, List("log", "--date-order", "-n", lim.toString, logFmt) ++ refArgs))
+      val walked =
+        if refArgs.isEmpty then Nil
+        else parseLog(gitOk(workspace, List("log", "--date-order", "-n", lim.toString, logFmt) ++ refArgs))
       val byShaAll = scala.collection.mutable.LinkedHashMap.empty[String, Commit]
       walked.foreach(c => byShaAll.getOrElseUpdate(c.sha, c))
       // 逐个 tip 兜底补取（见文件头 ③）。
       val missingTips = drawn.map(_.tip).filter(t => t.nonEmpty && !byShaAll.contains(t))
       missingTips.foreach { t =>
-        parseLog(gitOk(workspace, List("log", "-n", "1", logFmt, t))).headOption.foreach(c => byShaAll.getOrElseUpdate(c.sha, c))
+        parseLog(gitOk(workspace, List("log", "-n", "1", logFmt, t))).headOption.foreach(c =>
+          byShaAll.getOrElseUpdate(c.sha, c)
+        )
       }
       val missingSet = missingTips.toSet
       val commits = byShaAll.values.toList
@@ -208,7 +226,9 @@ private[nebflow] object GitGraph:
           if !claimed.contains(sha) && inWindow.contains(sha) then
             claimed += sha
             laneBySha.update(sha, lane)
-            byShaAll.get(sha).foreach(c => c.parents.filter(p => !claimed.contains(p) && inWindow.contains(p)).foreach(stack.push))
+            byShaAll
+              .get(sha)
+              .foreach(c => c.parents.filter(p => !claimed.contains(p) && inWindow.contains(p)).foreach(stack.push))
       }
       commits.foreach(c => laneBySha.getOrElseUpdate(c.sha, 0))
 
@@ -227,7 +247,7 @@ private[nebflow] object GitGraph:
           "subject" -> c.subject.asJson,
           "parents" -> c.parents.filter(laneMap.contains).asJson,
           "refs" -> labels.getOrElse(c.sha, Nil).asJson,
-          "isTip" -> labels.getOrElse(c.sha, Nil).exists(laneOf.contains).asJson,
+          "isTip" -> labels.getOrElse(c.sha, Nil).exists(laneOf.contains).asJson
         )
       }
 
@@ -240,7 +260,7 @@ private[nebflow] object GitGraph:
               "fromLane" -> laneMap.getOrElse(c.sha, 0).asJson,
               "toLane" -> laneMap.getOrElse(p, 0).asJson,
               "fromRow" -> rowBySha.getOrElse(c.sha, 0).asJson,
-              "toRow" -> prow.asJson,
+              "toRow" -> prow.asJson
             )
           }
         }
@@ -252,7 +272,9 @@ private[nebflow] object GitGraph:
           else if b.tip == headSha then (Some(0), Some(0))
           else
             git(workspace, List("rev-list", "--left-right", "--count", s"$headSha...${b.tip}")).toOption
-              .flatMap(_.trim.split("\\s+") match { case Array(l, r) => Some((r.toIntOption, l.toIntOption)); case _ => None })
+              .flatMap(_.trim.split("\\s+") match
+                case Array(l, r) => Some((r.toIntOption, l.toIntOption));
+                case _ => None)
               .map { case (a, bh) => (a, bh) }
               .getOrElse((None, None))
         val mergeBase =
@@ -270,7 +292,7 @@ private[nebflow] object GitGraph:
           "ahead" -> ahead.asJson,
           "behind" -> behind.asJson,
           "mergeBase" -> mergeBase.asJson,
-          "inGraph" -> rowBySha.contains(b.tip).asJson,
+          "inGraph" -> rowBySha.contains(b.tip).asJson
         )
       }
 
@@ -295,7 +317,10 @@ private[nebflow] object GitGraph:
           "total" -> heatTotal.asJson,
           "max" -> heatMax.asJson,
           "from" -> heatDaysList.headOption.map(_._1).getOrElse("").asJson,
-          "to" -> heatDaysList.lastOption.map(_._1).getOrElse("").asJson,
+          "to" -> heatDaysList.lastOption.map(_._1).getOrElse("").asJson
         ),
-        "digest" -> digestOf(drawn, commits.length).asJson,
+        "digest" -> digestOf(drawn, commits.length).asJson
       )
+    end if
+  end build
+end GitGraph

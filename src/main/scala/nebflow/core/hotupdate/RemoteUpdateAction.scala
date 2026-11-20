@@ -119,6 +119,7 @@ object RemoteUpdateAction:
                     "missing — falling back to the legacy install path (no staged-jar verification)"
                 )
                 IO.pure(Right(None))
+        end match
     }
 
   /** 拉 jar 到临时文件 + sizeBytes/sha256 逐项校验；任一不过 ⇒ Left（临时件即删）。 */
@@ -152,6 +153,7 @@ object RemoteUpdateAction:
           try os.remove(target)
           catch case _: Throwable => ()
           Left(s"artifact fetch failed for $url: ${Option(t.getMessage).getOrElse(t.toString)}")
+      end try
     }
 
   /** 流式 sha256（64MB 级 jar 不进内存）。 */
@@ -203,5 +205,7 @@ object RemoteUpdateAction:
           case 0 => IO.pure(Right("Update installed, restarting..."))
           case code => IO.pure(Left(s"Install script failed (exit code: $code)"))
         }.handleErrorWith(e => IO.pure(Left(s"Install error: ${e.getMessage}")))
+    end match
+  end runScript
 
 end RemoteUpdateAction

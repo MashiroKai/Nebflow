@@ -76,8 +76,7 @@ class CommandRiskSpec extends FunSuite:
       "cat /home/u/.stand/secrets/token" -> Set(CommandRisk.CredentialAccess),
       "rm ~/.aws/credentials" -> Set(CommandRisk.Delete, CommandRisk.CredentialAccess)
     )
-    for (command, classes) <- expected do
-      assertEquals(CommandRisk.classify(command), classes, command)
+    for (command, classes) <- expected do assertEquals(CommandRisk.classify(command), classes, command)
 
   test("substring look-alikes are not mistaken for risk primitives"):
     for command <- List("echo curling", "ssh-keygen -t ed25519 -f /tmp/k", "ls rmfile.txt", "cat README.md.rm") do

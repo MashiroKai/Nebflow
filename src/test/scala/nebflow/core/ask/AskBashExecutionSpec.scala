@@ -18,19 +18,21 @@ final class AskBashExecutionSpec extends CatsEffectSuite:
   override def munitIOTimeout: FiniteDuration = 45.seconds
 
   private def fixture: Resource[IO, os.Path] =
-    Resource.make(IO.blocking {
-      val originalRoot = PathUtil.dataRoot
-      val root = os.Path(os.temp.dir(prefix = "ask-bash-").toNIO.toRealPath())
-      os.makeDir.all(root / "agents")
-      os.write(root / nebflow.shared.Branding.configFileName, "{}")
-      PathUtil.setDataRoot(root)
-      (root, originalRoot)
-    }) { case (root, originalRoot) =>
-      IO.blocking {
-        PathUtil.setDataRoot(originalRoot)
-        os.remove.all(root)
+    Resource
+      .make(IO.blocking {
+        val originalRoot = PathUtil.dataRoot
+        val root = os.Path(os.temp.dir(prefix = "ask-bash-").toNIO.toRealPath())
+        os.makeDir.all(root / "agents")
+        os.write(root / nebflow.shared.Branding.configFileName, "{}")
+        PathUtil.setDataRoot(root)
+        (root, originalRoot)
+      }) { case (root, originalRoot) =>
+        IO.blocking {
+          PathUtil.setDataRoot(originalRoot)
+          os.remove.all(root)
+        }
       }
-    }.map(_._1)
+      .map(_._1)
 
   test("Ask cwd uses only its registered file directory") {
     fixture.use { root =>
@@ -114,15 +116,16 @@ final class AskBashExecutionSpec extends CatsEffectSuite:
                 val idx = n - 1
                 val (cmd, _) = all(idx)
                 Stream(
-                  StreamChunk.ToolCallChunk(ToolCall(
-                    s"c$idx",
-                    "Bash",
-                    JsonObject("command" -> cmd.asJson, "run_in_background" -> false.asJson)
-                  )),
+                  StreamChunk.ToolCallChunk(
+                    ToolCall(
+                      s"c$idx",
+                      "Bash",
+                      JsonObject("command" -> cmd.asJson, "run_in_background" -> false.asJson)
+                    )
+                  ),
                   StreamChunk.Done(None, None)
                 )
-              else
-                Stream(StreamChunk.TextDelta("done"), StreamChunk.Done(None, None))
+              else Stream(StreamChunk.TextDelta("done"), StreamChunk.Done(None, None))
             }
           // 请求序号靠 messages 里工具结果计数（无并发竞态：单轮顺序流）。
           private def requestsGetCount(req: LlmRequest): Int =
@@ -135,8 +138,10 @@ final class AskBashExecutionSpec extends CatsEffectSuite:
           AgentActor(
             agentDef = AgentDef(name = "ask", description = "ask refusal fixture", tools = List("*")),
             resources = resources,
-            wsSend = json => events.update(_ :+ json) *>
-              (if json.hcursor.get[String]("type").toOption.contains("done") then done.complete(()).void else IO.unit),
+            wsSend = json =>
+              events.update(_ :+ json) *>
+                (if json.hcursor.get[String]("type").toOption.contains("done") then done.complete(()).void
+                 else IO.unit),
             depth = 0,
             sessionId = Some(sessionId),
             projectRoot = Some(root.toString),
@@ -163,7 +168,10 @@ final class AskBashExecutionSpec extends CatsEffectSuite:
               )
             else
               assert(!error.contains(true), s"[$cmd] must run, got: ${content.take(160)}")
-              assert(content.contains("ASK-BASH-EVIDENCE"), s"[$cmd] must return real output, got: ${content.take(160)}")
+              assert(
+                content.contains("ASK-BASH-EVIDENCE"),
+                s"[$cmd] must return real output, got: ${content.take(160)}"
+              )
           }
           // 拒绝发生在执行前：受害者与泄漏文件全部在场。
           (victims :+ "victim-rm.md").foreach(v =>
@@ -209,40 +217,50 @@ final class AskBashExecutionSpec extends CatsEffectSuite:
               } + 1
               if n == 1 then
                 Stream(
-                  StreamChunk.ToolCallChunk(ToolCall(
-                    toolId,
-                    "Bash",
-                    JsonObject(
-                      // cwd = 绑定文件目录：-r 让输出回显 ./notes.md 路径——
-                      // 裸相对名命中即 cwd 证据（查询面绿样本）。
-                      "command" -> s"grep -rn $marker .".asJson,
-                      "run_in_background" -> false.asJson
+                  StreamChunk.ToolCallChunk(
+                    ToolCall(
+                      toolId,
+                      "Bash",
+                      JsonObject(
+                        // cwd = 绑定文件目录：-r 让输出回显 ./notes.md 路径——
+                        // 裸相对名命中即 cwd 证据（查询面绿样本）。
+                        "command" -> s"grep -rn $marker .".asJson,
+                        "run_in_background" -> false.asJson
+                      )
                     )
-                  )),
+                  ),
                   StreamChunk.Done(None, None)
                 )
               else if n == 2 then
                 Stream(
-                  StreamChunk.ToolCallChunk(ToolCall(
-                    "ask-printf",
-                    "Bash",
-                    JsonObject("command" -> "printf '%s' PWD".asJson, "run_in_background" -> false.asJson)
-                  )),
+                  StreamChunk.ToolCallChunk(
+                    ToolCall(
+                      "ask-printf",
+                      "Bash",
+                      JsonObject("command" -> "printf '%s' PWD".asJson, "run_in_background" -> false.asJson)
+                    )
+                  ),
                   StreamChunk.Done(None, None)
                 )
               else
-                val result = req.messages.flatMap(_.content.toOption.toList.flatten).collectFirst {
-                  case ContentBlock.ToolResult(`toolId`, content, _) => content
-                }.getOrElse("missing Bash result")
+                val result = req.messages
+                  .flatMap(_.content.toOption.toList.flatten)
+                  .collectFirst { case ContentBlock.ToolResult(`toolId`, content, _) =>
+                    content
+                  }
+                  .getOrElse("missing Bash result")
                 Stream(StreamChunk.TextDelta(s"Ask query result: $result"), StreamChunk.Done(None, None))
+              end if
             }
         resources <- SpecResources.mkResources(system, root, llm)
         actor <- system.spawn(
           AgentActor(
             agentDef = AgentDef(name = "ask", description = "Ask shell fixture", tools = List("*")),
             resources = resources,
-            wsSend = json => events.update(_ :+ json) *>
-              (if json.hcursor.get[String]("type").toOption.contains("done") then done.complete(()).void else IO.unit),
+            wsSend = json =>
+              events.update(_ :+ json) *>
+                (if json.hcursor.get[String]("type").toOption.contains("done") then done.complete(()).void
+                 else IO.unit),
             depth = 0,
             sessionId = Some(sessionId),
             projectRoot = Some(root.toString),
@@ -262,12 +280,14 @@ final class AskBashExecutionSpec extends CatsEffectSuite:
           val results = captured.last.messages
             .flatMap(_.content.toOption.toList.flatten)
             .collect { case ContentBlock.ToolResult(id, content, error) => (id, content, error) }
-          val (_, out1, err1) = results.collectFirst { case (i, c, e) if i == toolId => (i, c, e) }
+          val (_, out1, err1) = results
+            .collectFirst { case (i, c, e) if i == toolId => (i, c, e) }
             .getOrElse(fail("Ask must receive the allowlisted Bash result"))
           assert(!err1.contains(true), out1)
           assert(out1.contains(marker), out1)
           assert(out1.contains("notes.md"), s"cwd must be the bound file directory: $out1")
-          val (_, out2, err2) = results.collectFirst { case (i, c, e) if i == "ask-printf" => (i, c, e) }
+          val (_, out2, err2) = results
+            .collectFirst { case (i, c, e) if i == "ask-printf" => (i, c, e) }
             .getOrElse(fail("Ask must receive the printf result"))
           assert(err2.contains(true), s"printf must be refused on the query-only face: $out2")
           assert(out2.toLowerCase.contains("refus"), out2)

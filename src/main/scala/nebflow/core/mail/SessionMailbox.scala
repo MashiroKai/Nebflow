@@ -110,6 +110,7 @@ object SessionMailbox:
   )
 
   object Entry:
+
     given Encoder[Entry] = Encoder.instance { e =>
       Json.obj(
         "seq" -> e.seq.asJson,
@@ -122,6 +123,7 @@ object SessionMailbox:
         "event" -> e.event.asJson
       )
     }
+
     given Decoder[Entry] = Decoder.instance { c =>
       for
         seq <- c.downField("seq").as[Long]
@@ -147,13 +149,17 @@ object SessionMailbox:
 
   /** mailOnce 结果（生产者职责止于 Enqueued/Coalesced；Failed = 显式失败）。 */
   sealed trait MailResult extends Product with Serializable
+
   object MailResult:
     /** 条目已落盘（写成功=必达）。 */
     final case class Enqueued(entry: Entry) extends MailResult
+
     /** 同 identity 条目已在 pending（非合条模式）——幂等 no-op。 */
     case object AlreadyPresent extends MailResult
+
     /** 合条模式：载荷已原位并入既有条目（suppressedCount+1，序不变）。 */
     final case class Coalesced(entry: Entry) extends MailResult
+
     /** 落盘失败（磁盘面）——生产者必须显式处置（重试/响亮 WARN），绝不静默。 */
     final case class Failed(cause: String) extends MailResult
   end MailResult
@@ -172,6 +178,7 @@ object SessionMailbox:
 
   private def pendingFileOf(sid: String, e: Entry): os.Path =
     pendingDir(sid) / s"${seqOf(e)}-${safeId(e.identity)}.json"
+
   private def takenFileOf(sid: String, e: Entry): os.Path =
     takenDir(sid) / s"${seqOf(e)}-${safeId(e.identity)}.json"
   private def seqOf(e: Entry): String = f"${e.seq}%012d"
@@ -226,50 +233,52 @@ object SessionMailbox:
                 "the earlier copy was already delivered/consumed; a new round must carry a NEW generation identity, not reuse this one"
             )
             MailResult.AlreadyPresent
-          else existingPending(recipientSid, identity) match
-            case Some(e) if !coalesce =>
-              logger.info(
-                s"SessionMailbox: duplicate enqueue suppressed for '$recipientSid' identity '$identity' (pending) — " +
-                  "an unconsumed copy of this identity is already in the box"
-              )
-              MailResult.AlreadyPresent
-            case Some(e) =>
-              // 原位合条：同文件名（seq 不变）重写载荷；压制计数累加。放行条目
-              // 携带「已合条 N 条」摘要（设计 §2.5/§4.5：风暴的代价被合条吸收，
-              // 一条不丢且风暴规模父侧可感知）。
-              val mergedCount = e.suppressedCount + 1
-              val annotated = event.copy(
-                payload = event.payload +
-                  s"\n[escalation-notify: $mergedCount same-cause notice(s) coalesced into this entry — nothing dropped]"
-              )
-              val merged = e.copy(event = annotated, enqueuedAt = now, suppressedCount = mergedCount)
-              AtomicJson.writeSync(pendingFileOf(recipientSid, merged), merged.asJson.noSpaces)
-              MailResult.Coalesced(merged)
-            case None =>
-              // 闸口只读 depth、只拦「新条目」。三句口径（作者裁定，不可改）：
-              // ① 本闸是**爆炸保护，不是流量控制**：默认 10000 极高，只在极端
-              //    积压时拒绝，绝不在常规积压下改变投递行为；
-              // ② 头部「积压零墙钟、一件不丢」**仍成立**：无 TTL、无自动丢弃、
-              //    无常态限流——被拒条目**不在盘上**（显式 Failed，绝不静默吞），
-              //    生产者腿按既有 Failed 分支响亮处置；
-              // ③ 常规积压（depth < 上限）与今日行为**完全一致**：Enqueued 路径
-              //    逐字节未变，仅多一次目录计数。
-              // 已存在条目的 AlreadyPresent / Coalesced 两条分支在闸之前返回，
-              // **闸不误伤**：满箱时合条仍照常合条（合条不增条目 = 不增爆炸压力）。
-              // 接缝（P3 批合入时）：保留本闸，只读 depth、不参与投递消费语义。
-              if pendingDepthSync(recipientSid) >= maxPending then
-                logger.warn(
-                  s"SessionMailbox: pending depth reached explosion guard for '$recipientSid' " +
-                    s"(limit=$maxPending) — entry '$identity' REJECTED as mailbox-full " +
-                    "(not queued; producer must handle the explicit failure; no TTL, no silent drop)"
+          else
+            existingPending(recipientSid, identity) match
+              case Some(e) if !coalesce =>
+                logger.info(
+                  s"SessionMailbox: duplicate enqueue suppressed for '$recipientSid' identity '$identity' (pending) — " +
+                    "an unconsumed copy of this identity is already in the box"
                 )
-                MailResult.Failed("mailbox-full")
-              else
-                val seq = nextSeq(recipientSid)
-                val e = Entry(seq, identity, kind, coalesce, now, producer, 0, event)
-                os.makeDir.all(pendingDir(recipientSid))
-                AtomicJson.writeSync(pendingFileOf(recipientSid, e), e.asJson.noSpaces)
-                MailResult.Enqueued(e)
+                MailResult.AlreadyPresent
+              case Some(e) =>
+                // 原位合条：同文件名（seq 不变）重写载荷；压制计数累加。放行条目
+                // 携带「已合条 N 条」摘要（设计 §2.5/§4.5：风暴的代价被合条吸收，
+                // 一条不丢且风暴规模父侧可感知）。
+                val mergedCount = e.suppressedCount + 1
+                val annotated = event.copy(
+                  payload = event.payload +
+                    s"\n[escalation-notify: $mergedCount same-cause notice(s) coalesced into this entry — nothing dropped]"
+                )
+                val merged = e.copy(event = annotated, enqueuedAt = now, suppressedCount = mergedCount)
+                AtomicJson.writeSync(pendingFileOf(recipientSid, merged), merged.asJson.noSpaces)
+                MailResult.Coalesced(merged)
+              case None =>
+                // 闸口只读 depth、只拦「新条目」。三句口径（作者裁定，不可改）：
+                // ① 本闸是**爆炸保护，不是流量控制**：默认 10000 极高，只在极端
+                //    积压时拒绝，绝不在常规积压下改变投递行为；
+                // ② 头部「积压零墙钟、一件不丢」**仍成立**：无 TTL、无自动丢弃、
+                //    无常态限流——被拒条目**不在盘上**（显式 Failed，绝不静默吞），
+                //    生产者腿按既有 Failed 分支响亮处置；
+                // ③ 常规积压（depth < 上限）与今日行为**完全一致**：Enqueued 路径
+                //    逐字节未变，仅多一次目录计数。
+                // 已存在条目的 AlreadyPresent / Coalesced 两条分支在闸之前返回，
+                // **闸不误伤**：满箱时合条仍照常合条（合条不增条目 = 不增爆炸压力）。
+                // 接缝（P3 批合入时）：保留本闸，只读 depth、不参与投递消费语义。
+                if pendingDepthSync(recipientSid) >= maxPending then
+                  logger.warn(
+                    s"SessionMailbox: pending depth reached explosion guard for '$recipientSid' " +
+                      s"(limit=$maxPending) — entry '$identity' REJECTED as mailbox-full " +
+                      "(not queued; producer must handle the explicit failure; no TTL, no silent drop)"
+                  )
+                  MailResult.Failed("mailbox-full")
+                else
+                  val seq = nextSeq(recipientSid)
+                  val e = Entry(seq, identity, kind, coalesce, now, producer, 0, event)
+                  os.makeDir.all(pendingDir(recipientSid))
+                  AtomicJson.writeSync(pendingFileOf(recipientSid, e), e.asJson.noSpaces)
+                  MailResult.Enqueued(e)
+          end if
         }
       }.handleErrorWith(e => IO.pure(MailResult.Failed(Option(e.getMessage).getOrElse(e.getClass.getSimpleName))))
 
@@ -367,9 +376,10 @@ object SessionMailbox:
    */
   def take(sid: String, entries: List[Entry]): IO[List[Entry]] =
     if entries.isEmpty then IO.pure(Nil)
-    else IO.blocking(takeSync(sid, entries)).handleErrorWith { e =>
-      logger.warn(s"SessionMailbox: take failed for '$sid' (${e.getMessage}) — entries stay pending").as(Nil)
-    }
+    else
+      IO.blocking(takeSync(sid, entries)).handleErrorWith { e =>
+        logger.warn(s"SessionMailbox: take failed for '$sid' (${e.getMessage}) — entries stay pending").as(Nil)
+      }
 
   /** [[take]] 的同步面（行为体 val 位消费；本地小目录，DeviceResultOutbox.pendingSync 同款先例）。 */
   def takeSync(sid: String, entries: List[Entry]): List[Entry] =
@@ -417,9 +427,10 @@ object SessionMailbox:
             if clean.contains(e.identity) && os.exists(path) then os.remove(path)
           }
         }
-      }.void.handleErrorWith(e =>
-        logger.warn(s"SessionMailbox: unlinkTaken failed for '$sid': ${e.getMessage}").void
-      )
+      }.void
+        .handleErrorWith(e => logger.warn(s"SessionMailbox: unlinkTaken failed for '$sid': ${e.getMessage}").void)
+    end if
+  end unlinkTaken
 
   // ── 消费墓碑（boot 对账真源；零墙钟不设 TTL——开放决策⑤）────────────────
 
@@ -427,8 +438,10 @@ object SessionMailbox:
   val MaxDeliveredEntries: Int = 1024
 
   final case class Delivered(v: Int = 1, ids: List[String] = Nil)
+
   object Delivered:
     given Encoder[Delivered] = Encoder.instance(d => Json.obj("v" -> d.v.asJson, "ids" -> d.ids.asJson))
+
     given Decoder[Delivered] = Decoder.instance { c =>
       for v <- c.get[Option[Int]]("v"); ids <- c.get[Option[List[String]]]("ids")
       yield Delivered(v.getOrElse(1), ids.getOrElse(Nil))
@@ -436,9 +449,11 @@ object SessionMailbox:
   end Delivered
 
   private def askHostReceiptFile(sid: String, identity: String): os.Path =
-    val digest = java.security.MessageDigest.getInstance("SHA-256")
+    val digest = java.security.MessageDigest
+      .getInstance("SHA-256")
       .digest(identity.getBytes(java.nio.charset.StandardCharsets.UTF_8))
-      .map(b => f"${b & 0xff}%02x").mkString
+      .map(b => f"${b & 0xff}%02x")
+      .mkString
     boxDir(sid) / "askhost-receipts" / s"$digest.json"
 
   private def deliveredFile(sid: String): os.Path = boxDir(sid) / "delivered.json"
@@ -465,9 +480,10 @@ object SessionMailbox:
   private def deliveredContainsSync(sid: String, identities: Set[String]): Set[String] =
     val f = deliveredFile(sid)
     if !os.exists(f) then Set.empty[String]
-    else decode[Delivered](os.read(f)) match
-      case Right(d) => d.ids.toSet.intersect(identities)
-      case Left(_) => Set.empty[String]
+    else
+      decode[Delivered](os.read(f)) match
+        case Right(d) => d.ids.toSet.intersect(identities)
+        case Left(_) => Set.empty[String]
 
   /**
    * 墓碑前缀查询（#2178 generation 身份面）：真实终态入箱身份为 `taskId#gen`，
@@ -475,11 +491,12 @@ object SessionMailbox:
    */
   def deliveredContainsPrefix(sid: String, prefix: String): IO[Boolean] =
     if prefix.trim.isEmpty then IO.pure(false)
-    else IO.blocking {
-      val f = deliveredFile(sid)
-      if !os.exists(f) then false
-      else decode[Delivered](os.read(f)).fold(_ => false, d => d.ids.exists(_.startsWith(prefix)))
-    }.handleErrorWith(_ => IO.pure(false))
+    else
+      IO.blocking {
+        val f = deliveredFile(sid)
+        if !os.exists(f) then false
+        else decode[Delivered](os.read(f)).fold(_ => false, d => d.ids.exists(_.startsWith(prefix)))
+      }.handleErrorWith(_ => IO.pure(false))
 
   // ── 内部扫描（同步面）────────────────────────────────────────────────
 
@@ -502,6 +519,8 @@ object SessionMailbox:
                 None
           }
     (entries, quarantined.toList)
+
+  end scanDirWithQuarantine
 
   /** (好形条目按名字序, 所在路径)——unlink 类精确清除用。 */
   private def scanDir(sid: String, dir: os.Path): List[(Entry, os.Path)] =
@@ -535,12 +554,13 @@ object SessionMailbox:
           if !os.exists(pend) then Nil
           else
             val tmps = os.list(pend).toList.filter(_.last.endsWith(".tmp"))
-            tmps.foreach(t => try os.remove(t) catch case _: Throwable => ())
+            tmps.foreach(t =>
+              try os.remove(t)
+              catch case _: Throwable => ()
+            )
             tmps.map(_.last)
         }
-    }.handleErrorWith(e =>
-      logger.warn(s"SessionMailbox: tmp sweep failed (${e.getMessage})").as(Nil)
-    )
+    }.handleErrorWith(e => logger.warn(s"SessionMailbox: tmp sweep failed (${e.getMessage})").as(Nil))
 
   /** 测试/运维清空（正常路径绝不调用——零删除纪律）。 */
   def clearAll(sid: String): IO[Unit] =

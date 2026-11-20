@@ -54,6 +54,7 @@ class WeixinOutboundRetrySpec extends CatsEffectSuite:
   /** 计数 + 可编排的 stub：第 n 次请求返回 `answers(n)`（超出用最后一个）。 */
   private final class ScriptedHandler(answers: List[(Int, String)]) extends HttpHandler:
     val hits = new AtomicInteger(0)
+
     def handle(exchange: HttpExchange): Unit =
       exchange.getRequestBody.readAllBytes() // drain
       val n = hits.incrementAndGet()
@@ -153,8 +154,10 @@ class WeixinOutboundRetrySpec extends CatsEffectSuite:
         assertEquals(r.ok, false)
         assertEquals(handler.hits.get, 3, "有界退避：3 次尝试真的发出去了")
         assertEquals(fired.length, 3, s"每次失败一条 ERROR（作者铁律②），got $fired")
-        assert(fired.head.contains("attempts=1") && fired(1).contains("attempts=2") && fired(2).contains("attempts=3"),
-          s"attempts= 是真实序号：$fired")
+        assert(
+          fired.head.contains("attempts=1") && fired(1).contains("attempts=2") && fired(2).contains("attempts=3"),
+          s"attempts= 是真实序号：$fired"
+        )
         assert(fired.forall(_.contains("channel=weixin-ilink")), "每条都带渠道")
         assert(fired.forall(_.contains("to=wx_alice")), "每条都带收件人")
         assert(fired.forall(_.contains("sendmessage ret=-2")), "iLink ret 明细原样保留")
@@ -221,8 +224,7 @@ class WeixinOutboundRetrySpec extends CatsEffectSuite:
         val r = WeixinIlinkBridgePlugin.DefaultSend(root)("wx_alice", "生产默认").unsafeRunSync()
         val fired = newFailures(appender, before)
         assertEquals(r.ok, false)
-        assertEquals(handler.hits.get, RetryPolicy.Bounded.maxAttempts,
-          "生产默认 = 有界退避（3 次），不是一次即弃")
+        assertEquals(handler.hits.get, RetryPolicy.Bounded.maxAttempts, "生产默认 = 有界退避（3 次），不是一次即弃")
         assertEquals(fired.length, RetryPolicy.Bounded.maxAttempts, s"got $fired")
         assert(fired.last.contains(s"attempts=${RetryPolicy.Bounded.maxAttempts}"), fired.last)
       }

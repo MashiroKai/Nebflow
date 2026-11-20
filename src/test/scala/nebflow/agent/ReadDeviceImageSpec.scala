@@ -163,11 +163,15 @@ class ReadDeviceImageSpec extends CatsEffectSuite:
         ctx = ToolContext(projectRoot = tmpDir.toString)
         targets = List("local", "LOCAL", id.deviceName, id.deviceId, id.deviceId.take(8))
         results <- targets.traverse { target =>
-          val call = ToolCall("self-bash", "Bash", JsonObject(
-            "command" -> "printf self-routing-ok".asJson,
-            "device" -> target.asJson,
-            "timeout" -> 10000.asJson
-          ))
+          val call = ToolCall(
+            "self-bash",
+            "Bash",
+            JsonObject(
+              "command" -> "printf self-routing-ok".asJson,
+              "device" -> target.asJson,
+              "timeout" -> 10000.asJson
+            )
+          )
           new TestCore().exec(call, ctx).map(target -> _)
         }
       yield results.foreach { (target, result) =>
@@ -184,11 +188,15 @@ class ReadDeviceImageSpec extends CatsEffectSuite:
         ms <- NeblinkService.create(0, dispatcher)
         _ <- IO(RemoteExecutor.initialize(ms, dispatcher, None))
         ctx = ToolContext(projectRoot = tmpDir.toString)
-        call = ToolCall("unknown-bash", "Bash", JsonObject(
-          "command" -> "printf must-not-run".asJson,
-          "device" -> "definitely-no-such-device-7f93".asJson,
-          "timeout" -> 10000.asJson
-        ))
+        call = ToolCall(
+          "unknown-bash",
+          "Bash",
+          JsonObject(
+            "command" -> "printf must-not-run".asJson,
+            "device" -> "definitely-no-such-device-7f93".asJson,
+            "timeout" -> 10000.asJson
+          )
+        )
         result <- new TestCore().exec(call, ctx)
       yield
         println(s"unknown-route error=${result.content}")

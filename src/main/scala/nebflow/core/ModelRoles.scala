@@ -162,6 +162,7 @@ object ModelRoles:
         else if lower.startsWith(nebflow.core.ask.AskSessions.Prefix) then MainWire
         else if lower.startsWith("kernel-") then KernelWire
         else ""
+        end if
       }
       .filter(_.nonEmpty)
     wire.flatMap(w => Slots.find(_._1 == w).map(_._3))
@@ -244,6 +245,10 @@ object ModelRoles:
               s"(conservative: never silently fold an unknown mode into the subagent slot)"
       )
 
+    end if
+
+  end delegateSlotUnresolvedReason
+
   /**
    * 未归槽原因落日志（**单点记录**，同一会话一条 WARN）。口径同
    * `SchemePolicy.smallLlmModel` 的 WARN（「回落必须可观测」）；消费点 = [[slotChainOf]]
@@ -305,6 +310,8 @@ object ModelRoles:
         )
       }
     }
+
+  end slotChainOf
 
   /**
    * 组合面（语义同 `slotChainOf(sid, mode).orElse(base)`）：槽已配置 ⇒ 槽链（类粒度

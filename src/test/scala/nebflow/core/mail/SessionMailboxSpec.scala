@@ -260,15 +260,25 @@ class SessionMailboxSpec extends CatsEffectSuite:
       r1 <- enqueue("", "task-a", "x")
       r2 <- enqueue("s12", "", "x")
     yield
-      assertEquals(clue(r1), SessionMailbox.MailResult.Failed("recipient session id is empty"): SessionMailbox.MailResult)
+      assertEquals(
+        clue(r1),
+        SessionMailbox.MailResult.Failed("recipient session id is empty"): SessionMailbox.MailResult
+      )
       assertEquals(clue(r2), SessionMailbox.MailResult.Failed("entry identity is empty"): SessionMailbox.MailResult)
   }
+
   test("producer retry while a message is taken does not enqueue another copy") {
     for
       _ <- SessionMailbox.mailOnce("taken-retry", evt("finished"), "terminal", "result-1", deduplicateReceipts = true)
       pending <- SessionMailbox.scanPending("taken-retry")
       _ <- SessionMailbox.take("taken-retry", pending)
-      retried <- SessionMailbox.mailOnce("taken-retry", evt("finished"), "terminal", "result-1", deduplicateReceipts = true)
+      retried <- SessionMailbox.mailOnce(
+        "taken-retry",
+        evt("finished"),
+        "terminal",
+        "result-1",
+        deduplicateReceipts = true
+      )
       remaining <- SessionMailbox.scanPending("taken-retry")
       taken <- SessionMailbox.scanTaken("taken-retry")
     yield
@@ -279,11 +289,23 @@ class SessionMailboxSpec extends CatsEffectSuite:
 
   test("producer retry after consumption remains deduplicated from durable receipt") {
     for
-      _ <- SessionMailbox.mailOnce("consumed-retry", evt("finished"), "terminal", "result-1", deduplicateReceipts = true)
+      _ <- SessionMailbox.mailOnce(
+        "consumed-retry",
+        evt("finished"),
+        "terminal",
+        "result-1",
+        deduplicateReceipts = true
+      )
       pending <- SessionMailbox.scanPending("consumed-retry")
       _ <- SessionMailbox.take("consumed-retry", pending)
       _ <- SessionMailbox.unlinkTaken("consumed-retry", List("result-1"))
-      retried <- SessionMailbox.mailOnce("consumed-retry", evt("finished"), "terminal", "result-1", deduplicateReceipts = true)
+      retried <- SessionMailbox.mailOnce(
+        "consumed-retry",
+        evt("finished"),
+        "terminal",
+        "result-1",
+        deduplicateReceipts = true
+      )
       newResult <- enqueue("consumed-retry", "result-2", "next round")
       remaining <- SessionMailbox.scanPending("consumed-retry")
     yield

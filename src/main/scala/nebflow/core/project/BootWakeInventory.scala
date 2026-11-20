@@ -173,9 +173,8 @@ object BootWakeInventory:
     // 直方图枚举面 = 全部合法生命周期 + legacy blocked token（no-blocked-semantics 一期：
     // blocked 已退役，但存量行仍须计数——「不得漏报」判据对存量行有效，缺列会让带
     // blocked 行的项目直方图悄悄对不上活动区总数）。
-    val histogram = (NodeLifecycle.All + NodeLifecycle.Blocked).toList.map(s =>
-      s -> all.values.count(_.status == s)
-    ).toMap
+    val histogram =
+      (NodeLifecycle.All + NodeLifecycle.Blocked).toList.map(s => s -> all.values.count(_.status == s)).toMap
     val items = all.values.toList
       .sortBy(n => (n.createdAt, n.id))
       .flatMap(n => itemFor(n, all, nebflowDir, sessionsDir, nowMs))

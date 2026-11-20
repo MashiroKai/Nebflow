@@ -62,7 +62,10 @@ class FleetRosterSpec extends FunSuite:
     assert(out.contains("KAI (40742cd4) [online · v2026.10.26-beta.1 · windows]"), out)
     assert(out.contains("- 主力机"), out)
     assert(out.contains("caps: git,node"), "caps listed as sorted KEYS (never values)")
-    assert(!out.contains("node.exe") && !out.contains("git.exe"), "capability VALUES (absolute paths) must not leak into the roster")
+    assert(
+      !out.contains("node.exe") && !out.contains("git.exe"),
+      "capability VALUES (absolute paths) must not leak into the roster"
+    )
 
   // 意图变更（2026-11-02「local 展示面退场」批）：原意图 = 「本机行必须带 local 徽标」；
   // 新意图 = 「本机行与对端行同形态——同一 [状态 · …平台] 括号语法、无任何 local 字样，
@@ -71,7 +74,10 @@ class FleetRosterSpec extends FunSuite:
     val out = FleetRoster.render(Some(local), List(mac), Nil, Map.empty, now, enforce = false)
     val rows = out.linesIterator.toList
     val localLine = rows.head
-    assert(localLine.startsWith("KAI (40742cd4) "), s"local row must be the FIRST row (order carries 'this machine'): $out")
+    assert(
+      localLine.startsWith("KAI (40742cd4) "),
+      s"local row must be the FIRST row (order carries 'this machine'): $out"
+    )
     assert(!localLine.contains("local"), s"local row must carry no 'local' wording: $localLine")
     assert(localLine.contains("[online · v2026.10.26-beta.1 · windows]"), localLine)
     // 同形态判据：两行的括号段都由「状态 · 平台」构成，只是本机多一段版本（对端 wire 不带版本）
@@ -98,7 +104,11 @@ class FleetRosterSpec extends FunSuite:
       now,
       enforce = false
     )
-    assertEquals(out.linesIterator.count(_.contains("Mac (")), 1, "presence-present device must not repeat as offline row")
+    assertEquals(
+      out.linesIterator.count(_.contains("Mac (")),
+      1,
+      "presence-present device must not repeat as offline row"
+    )
     assert(out.contains("OldBox (aaaabbbb) [offline · linux]"), out)
 
   test("render: profile summary still rides the peer row (existing DeviceProfile face unchanged)"):
@@ -125,7 +135,9 @@ class FleetRosterSpec extends FunSuite:
   test("render: hint line OFF-state is the existing verbatim copy"):
     val out = FleetRoster.render(Some(local), List(mac), Nil, Map.empty, now, enforce = false)
     assert(
-      out.contains("\nRead/Write/Edit/Glob/Grep/Bash accept a `device` parameter to run on another machine; every other tool always runs locally."),
+      out.contains(
+        "\nRead/Write/Edit/Glob/Grep/Bash accept a `device` parameter to run on another machine; every other tool always runs locally."
+      ),
       out
     )
 

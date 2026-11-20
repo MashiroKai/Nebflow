@@ -18,24 +18,32 @@ object FlowNodeOwnership:
   /** Best-effort durable registration. Invalid IDs are ignored rather than creating unsafe paths. */
   def register(sessionId: String, parentSessionId: String): Unit =
     if validId(sessionId) && validId(parentSessionId) then
-      AtomicJson.writeSync(fileOf(sessionId), Json.obj(
-        "sessionId" -> io.circe.Json.fromString(sessionId),
-        "parentSessionId" -> io.circe.Json.fromString(parentSessionId)
-      ).noSpaces)
+      AtomicJson.writeSync(
+        fileOf(sessionId),
+        Json
+          .obj(
+            "sessionId" -> io.circe.Json.fromString(sessionId),
+            "parentSessionId" -> io.circe.Json.fromString(parentSessionId)
+          )
+          .noSpaces
+      )
 
   /** Corrupt/unreadable edges degrade to absence; caller marks the observable aggregate partial. */
   def list(): List[Edge] =
     try
       if !os.exists(dir) then Nil
       else
-        os.list(dir).filter(_.ext == "json").flatMap { path =>
-          Try(parse(os.read(path)).toOption.flatMap { json =>
-            for
-              sessionId <- json.hcursor.get[String]("sessionId").toOption
-              parentSessionId <- json.hcursor.get[String]("parentSessionId").toOption
-              if validId(sessionId) && validId(parentSessionId)
-            yield Edge(sessionId, parentSessionId)
-          }).toOption.flatten
-        }.toList
+        os.list(dir)
+          .filter(_.ext == "json")
+          .flatMap { path =>
+            Try(parse(os.read(path)).toOption.flatMap { json =>
+              for
+                sessionId <- json.hcursor.get[String]("sessionId").toOption
+                parentSessionId <- json.hcursor.get[String]("parentSessionId").toOption
+                if validId(sessionId) && validId(parentSessionId)
+              yield Edge(sessionId, parentSessionId)
+            }).toOption.flatten
+          }
+          .toList
     catch case _: Throwable => Nil
 end FlowNodeOwnership

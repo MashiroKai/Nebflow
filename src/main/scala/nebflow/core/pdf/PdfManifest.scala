@@ -76,6 +76,8 @@ final case class PdfManifest(
     "image_count" -> imageCount.asJson
   )
 
+end PdfManifest
+
 object PdfManifest:
 
   /** Manifest schema version (the envelope), independent of the Markdown shape. */
@@ -140,3 +142,4 @@ object PdfManifest:
               case (_, Some(m)) if m.pageCount != m.pageNames.length =>
                 Left(s"meta.json is inconsistent: page_count=${m.pageCount} but ${m.pageNames.length} page names")
               case (_, Some(m)) => Right(m)
+end PdfManifest

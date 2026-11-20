@@ -44,23 +44,33 @@ final class AskGateSpec extends munit.FunSuite:
 
   test("G2a 四扩展名放行（小写/大写/混合大小写，大小写不敏感同 FileTypeRegistry 口径）") {
     val yes = List(
-      "/vault/笔记.md", "/vault/笔记.MD", "/vault/笔记.Md",
-      "/vault/a.markdown", "/vault/a.MARKDOWN",
-      "/vault/page.html", "/vault/page.HTML",
-      "/vault/page.htm", "/vault/page.HTM",
-      "/vault/paper.pdf", "/vault/paper.PDF",
-      "相对/路径.md", "/无目录.md"
+      "/vault/笔记.md",
+      "/vault/笔记.MD",
+      "/vault/笔记.Md",
+      "/vault/a.markdown",
+      "/vault/a.MARKDOWN",
+      "/vault/page.html",
+      "/vault/page.HTML",
+      "/vault/page.htm",
+      "/vault/page.HTM",
+      "/vault/paper.pdf",
+      "/vault/paper.PDF",
+      "相对/路径.md",
+      "/无目录.md"
     )
     yes.foreach(p => assert(AskSessions.isAskable(p), clue(p)))
   }
 
   test("G2b 白名单外一律拒（其余类型/伪扩展/无扩展名/空/null）") {
     val no = List(
-      "/vault/notes.txt", "/vault/code.scala",
-      "/vault/pic.png", "/vault/data.json", "/vault/noext",
-      "/vault/doc.mdx",      // 伪扩展：endsWith(".md") 不得误放
-      "/vault/xmd",          // 无点裸名不得误放
-      "/vault/a.htm2",       // 前缀相似扩展不得误放
+      "/vault/notes.txt",
+      "/vault/code.scala",
+      "/vault/pic.png",
+      "/vault/data.json",
+      "/vault/noext",
+      "/vault/doc.mdx", // 伪扩展：endsWith(".md") 不得误放
+      "/vault/xmd", // 无点裸名不得误放
+      "/vault/a.htm2", // 前缀相似扩展不得误放
       ""
     )
     no.foreach(p => assert(!AskSessions.isAskable(p), clue(p)))
@@ -73,17 +83,17 @@ final class AskGateSpec extends munit.FunSuite:
       "/vault/笔记.md?tab=1",
       "/vault/笔记.md#^anchor",
       "/vault/笔记.md?x=1#frag",
-      "/vault/笔记.md#frag?notquery",   // # 先到 → 截在 #
+      "/vault/笔记.md#frag?notquery", // # 先到 → 截在 #
       "/vault/page.html?project=alpha",
       "/workspace/docs/README.MD?v=2",
-      "  /vault/笔记.markdown#frag  "   // 前后空白
+      "  /vault/笔记.markdown#frag  " // 前后空白
     )
     yes.foreach(p => assert(MdHtmlGate.isMdHtml(p), clue(p)))
     // 白名单外后挂 query/锚点，仍必须拒。
     val no = List(
       "/vault/notes.txt?tab=1",
       "/vault/paper.pdf#page=3",
-      "/vault/readme?tab=1",           // 无扩展名 + query 不得被 query 伪装成扩展名
+      "/vault/readme?tab=1", // 无扩展名 + query 不得被 query 伪装成扩展名
       "/vault/noext#frag"
     )
     no.foreach(p => assert(!MdHtmlGate.isMdHtml(p), clue(p)))
@@ -160,7 +170,7 @@ final class AskGateSpec extends munit.FunSuite:
     os.makeDir.all(root / "ask")
     // 手工构造「闸前时代」的存量绑定表（.txt + .md 各一）。
     val legacyTxtId = AskSessions.sessionIdFor("/vault/旧笔记.txt")
-    val legacyMdId  = AskSessions.sessionIdFor("/vault/笔记.md")
+    val legacyMdId = AskSessions.sessionIdFor("/vault/笔记.md")
     val json =
       s"""{
          |  "bindings": [

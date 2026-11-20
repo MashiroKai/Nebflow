@@ -80,7 +80,8 @@ class WikiTermsRoutesSpec extends CatsEffectSuite:
     // 一个本地工程 + 根 vault（`GET /wiki/term` 的索引腿要有得扫）
     val ws = tempRoot / "termsroute-ws"
     os.makeDir.all(ws / "docs")
-    os.write.over(ws / "docs" / "glossary.md",
+    os.write.over(
+      ws / "docs" / "glossary.md",
       """---
         |type: glossary
         |status: current
@@ -89,13 +90,17 @@ class WikiTermsRoutesSpec extends CatsEffectSuite:
         |# 词汇表
         |
         |GCR（银河宇宙线） — 来自银河系的高能粒子流。 #proj/stand #topic/term-index #ctx/engine ^gcr
-        |""".stripMargin)
+        |""".stripMargin
+    )
     val name = "termsroute"
     os.makeDir.all(tempRoot / "projects" / name)
     val w = ws.toString.replace("\\", "\\\\")
-    os.write.over(tempRoot / "projects" / name / "project.json",
-      s"""{"name":"$name","workspace":"$w","agentFile":"$w/AGENTS.md","createdAt":1}""")
+    os.write.over(
+      tempRoot / "projects" / name / "project.json",
+      s"""{"name":"$name","workspace":"$w","agentFile":"$w/AGENTS.md","createdAt":1}"""
+    )
     PathUtil.setDataRoot(tempRoot)
+  end beforeAll
 
   override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
 
@@ -132,10 +137,14 @@ class WikiTermsRoutesSpec extends CatsEffectSuite:
       val term = lst[Json](body, "terms").head
       assertEquals(str(term, "name"), Some("图谱投影（graph projection）"))
       assertEquals(str(term, "anchor"), Some("#^term-graph-projection"))
-      assertEquals(term.hcursor.downField("tags").downField("topic").as[List[String]].toOption,
-        Some(List("graph", "term-index")))
-      assertEquals(term.hcursor.downField("tags").downField("extra").as[List[String]].toOption,
-        Some(List("ctx/engine")))
+      assertEquals(
+        term.hcursor.downField("tags").downField("topic").as[List[String]].toOption,
+        Some(List("graph", "term-index"))
+      )
+      assertEquals(
+        term.hcursor.downField("tags").downField("extra").as[List[String]].toOption,
+        Some(List("ctx/engine"))
+      )
       assertEquals(term.hcursor.get[Int]("ref_count").toOption, Some(1))
       val doc = term.hcursor.downField("doc")
       assertEquals(doc.downField("project").as[String].toOption, Some("stand"))
@@ -169,8 +178,7 @@ class WikiTermsRoutesSpec extends CatsEffectSuite:
       assertEquals(body.hcursor.get[Int]("count").toOption, Some(1))
       val hit = lst[Json](body, "results").head
       assertEquals(str(hit, "name"), Some("图谱投影（graph projection）"))
-      assertEquals(lst[Json](hit, "refs").map(r => str(r, "from_rel")), List(Some("index.md")),
-        "别名命中也要带回引用位置")
+      assertEquals(lst[Json](hit, "refs").map(r => str(r, "from_rel")), List(Some("index.md")), "别名命中也要带回引用位置")
     } *> call("/wiki/terms/lookup?name=%E6%B2%A1%E8%BF%99%E4%B8%AA").map { case (status, body) =>
       assertEquals(status, Status.NotFound)
       assertEquals(body.hcursor.get[Boolean]("available").toOption, Some(true), "库可用才敢报 404")
@@ -186,9 +194,11 @@ class WikiTermsRoutesSpec extends CatsEffectSuite:
       assertEquals(body.hcursor.get[Int]("documents").toOption, Some(2))
       assertEquals(body.hcursor.get[Int]("terms").toOption, Some(3))
       assertEquals(str(body, "schema_version"), Some("1"))
-      assertEquals(lst[Json](body, "projects")
-        .map(p => (str(p, "project"), p.hcursor.get[Int]("documents").toOption)),
-        List((Some("stand"), Some(2))))
+      assertEquals(
+        lst[Json](body, "projects")
+          .map(p => (str(p, "project"), p.hcursor.get[Int]("documents").toOption)),
+        List((Some("stand"), Some(2)))
+      )
     }
   }
 
@@ -201,8 +211,14 @@ class WikiTermsRoutesSpec extends CatsEffectSuite:
       val term: Json = body.hcursor.downField("term").as[Json].toOption.getOrElse(Json.Null)
       assertEquals(str(term, "name"), Some("GCR（银河宇宙线）"))
       assertEquals(term.hcursor.downField("tags").downField("project").as[List[String]].toOption, Some(List("stand")))
-      assertEquals(term.hcursor.downField("tags").downField("topic").as[List[String]].toOption, Some(List("term-index")))
-      assertEquals(term.hcursor.downField("tags").downField("extra").as[List[String]].toOption, Some(List("ctx/engine")))
+      assertEquals(
+        term.hcursor.downField("tags").downField("topic").as[List[String]].toOption,
+        Some(List("term-index"))
+      )
+      assertEquals(
+        term.hcursor.downField("tags").downField("extra").as[List[String]].toOption,
+        Some(List("ctx/engine"))
+      )
     }
   }
 
@@ -219,3 +235,4 @@ class WikiTermsRoutesSpec extends CatsEffectSuite:
       assertEquals(tags.downField("extra").as[List[String]].toOption, Some(List("ctx/engine")))
     }
   }
+end WikiTermsRoutesSpec

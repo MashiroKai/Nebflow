@@ -37,23 +37,27 @@ class OutputBlockChannelWireSpec extends CatsEffectSuite:
 
   /** Minimal recording BridgeContext (routes rebuild reads listSessions). */
   private final class Ctx(sessions: List[SessionMeta]) extends BridgeContext:
+
     def injectMessage(
-        sessionId: String,
-        content: String,
-        senderId: Option[String],
-        origin: Option[nebflow.bridge.BridgeOrigin] = None
+      sessionId: String,
+      content: String,
+      senderId: Option[String],
+      origin: Option[nebflow.bridge.BridgeOrigin] = None
     ): IO[Unit] = IO.unit
+
     override def injectMessageWithMedia(
-        sessionId: String,
-        content: String,
-        senderId: Option[String],
-        origin: Option[nebflow.bridge.BridgeOrigin] = None,
-        attachments: List[nebflow.bridge.BridgeAttachment] = Nil
+      sessionId: String,
+      content: String,
+      senderId: Option[String],
+      origin: Option[nebflow.bridge.BridgeOrigin] = None,
+      attachments: List[nebflow.bridge.BridgeAttachment] = Nil
     ): IO[Unit] = IO.unit
     def interruptAgent(sessionId: String): IO[Unit] = IO.unit
     def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
     def listSessions: IO[List[SessionMeta]] = IO.pure(sessions)
     def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit] = IO.unit
+
+  end Ctx
 
   private def wxMeta(id: String, senderId: String): SessionMeta =
     SessionMeta(
@@ -80,8 +84,9 @@ class OutputBlockChannelWireSpec extends CatsEffectSuite:
   /** Recording weixin text send seam — captures every (to, payload). */
   private def wxSeam(): (os.Path => WeixinIlinkBridgePlugin.Send, Ref[IO, List[(String, String)]]) =
     val calls = Ref.unsafe[IO, List[(String, String)]](Nil)
-    val factory: os.Path => WeixinIlinkBridgePlugin.Send = _ => (to, text) =>
-      calls.update(_ :+ ((to, text))).as(WeixinOutboundAdapter.SendResult(true, true, Some("m1"), 200, "delivered"))
+    val factory: os.Path => WeixinIlinkBridgePlugin.Send = _ =>
+      (to, text) =>
+        calls.update(_ :+ ((to, text))).as(WeixinOutboundAdapter.SendResult(true, true, Some("m1"), 200, "delivered"))
     (factory, calls)
 
   /** Recording feishu text send seam — captures every (receiveId, payload). */
@@ -96,8 +101,10 @@ class OutputBlockChannelWireSpec extends CatsEffectSuite:
   private def delta(sessionId: String, text: String): Json =
     Json.obj("type" -> "textDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> text.asJson)
 
-  /** A textDelta carrying the emitting actor's stamped identity (the production
-   *  frame shape: `AgentActor.stampSourceIdentity` adds `isRoot`). */
+  /**
+   * A textDelta carrying the emitting actor's stamped identity (the production
+   *  frame shape: `AgentActor.stampSourceIdentity` adds `isRoot`).
+   */
   private def deltaStamped(sessionId: String, text: String, isRoot: Boolean): Json =
     Json.obj(
       "type" -> "textDelta".asJson,
@@ -112,7 +119,9 @@ class OutputBlockChannelWireSpec extends CatsEffectSuite:
   // ── weixin iLink: the turn pipeline strips to the join (gate ON) / ships raw (gate OFF) ──
 
   Gates.foreach { gate =>
-    test(s"WX-OB1 multi-block turn ⇒ gated: ONLY the blank-line block join; ungated: full raw passthrough (root=$gate)") {
+    test(
+      s"WX-OB1 multi-block turn ⇒ gated: ONLY the blank-line block join; ungated: full raw passthrough (root=$gate)"
+    ) {
       val (factory, calls) = wxSeam()
       val ctx = new Ctx(List(wxMeta("s1", "wx_alice")))
       val p = new WeixinIlinkBridgePlugin(
@@ -131,12 +140,15 @@ class OutputBlockChannelWireSpec extends CatsEffectSuite:
         got <- calls.get
       yield
         if gate then assertEquals(got, List(("wx_alice", "A\n\nB")), "the wire carries only the block-inner join")
-        else assertEquals(got, List(("wx_alice", raw)), "non-root session: the wire carries the full raw text, verbatim")
+        else
+          assertEquals(got, List(("wx_alice", raw)), "non-root session: the wire carries the full raw text, verbatim")
     }
   }
 
   Gates.foreach { gate =>
-    test(s"WX-OB2 a mid-block segment flush: gated = HELD then ships the join once closed; ungated = raw passthrough (root=$gate)") {
+    test(
+      s"WX-OB2 a mid-block segment flush: gated = HELD then ships the join once closed; ungated = raw passthrough (root=$gate)"
+    ) {
       val (factory, calls) = wxSeam()
       val ctx = new Ctx(List(wxMeta("s1", "wx_alice")))
       val p = new WeixinIlinkBridgePlugin(
@@ -165,11 +177,14 @@ class OutputBlockChannelWireSpec extends CatsEffectSuite:
             "non-root session: raw passthrough per segment, no hold, tags verbatim"
           )
           assertEquals(bufAtEnd.get("s1"), None, "the turn buffer is consumed at done")
+      end for
     }
   }
 
   Gates.foreach { gate =>
-    test(s"WX-OB3 narration-only segments: gated = strip (narration gone, block ships); ungated = raw passthrough (root=$gate)") {
+    test(
+      s"WX-OB3 narration-only segments: gated = strip (narration gone, block ships); ungated = raw passthrough (root=$gate)"
+    ) {
       val (factory, calls) = wxSeam()
       val ctx = new Ctx(List(wxMeta("s1", "wx_alice")))
       val p = new WeixinIlinkBridgePlugin(
@@ -193,6 +208,7 @@ class OutputBlockChannelWireSpec extends CatsEffectSuite:
             List(("wx_alice", "这一段纯工具过程叙述，块外。"), ("wx_alice", "<report>可见结论</report>")),
             "non-root session: every segment ships raw, narration included"
           )
+      end for
     }
   }
 
@@ -242,7 +258,9 @@ class OutputBlockChannelWireSpec extends CatsEffectSuite:
   }
 
   Gates.foreach { gate =>
-    test(s"FS-OB2 the mid-block segment flush: gated = HELD then ships the join; ungated = raw passthrough (root=$gate)") {
+    test(
+      s"FS-OB2 the mid-block segment flush: gated = HELD then ships the join; ungated = raw passthrough (root=$gate)"
+    ) {
       val (fn, calls) = fsSeam()
       val ctx = new Ctx(List(fsMeta("s1", "oc_bound")))
       val p = new FeishuBridgePlugin(
@@ -266,11 +284,14 @@ class OutputBlockChannelWireSpec extends CatsEffectSuite:
             List(("oc_bound", "<report>第一"), ("oc_bound", "半</report>")),
             "non-root session: raw passthrough per segment, no hold, tags verbatim"
           )
+      end for
     }
   }
 
   Gates.foreach { gate =>
-    test(s"FS-OB3 a feishu turn with NO output block: gated = NO text (never a fallback); ungated = full raw (root=$gate)") {
+    test(
+      s"FS-OB3 a feishu turn with NO output block: gated = NO text (never a fallback); ungated = full raw (root=$gate)"
+    ) {
       val (fn, calls) = fsSeam()
       val ctx = new Ctx(List(fsMeta("s1", "oc_bound")))
       val p = new FeishuBridgePlugin(
@@ -316,9 +337,7 @@ class OutputBlockChannelWireSpec extends CatsEffectSuite:
       _ <- p.onAgentEvent("s2", deltaStamped("s2", raw, isRoot = false))
       _ <- p.onAgentEvent("s2", doneEv("s2"))
       got <- calls.get
-    yield
-      assertEquals(got, List(("oc_bound", "可见正文"), ("oc_other", raw)),
-        "root 帧摘块内，非 root 帧原样直出——判据是帧上的源头标记")
+    yield assertEquals(got, List(("oc_bound", "可见正文"), ("oc_other", raw)), "root 帧摘块内，非 root 帧原样直出——判据是帧上的源头标记")
   }
 
   test("⑥ an unbound session is never delivered, however it is stamped (binding filter still governs)") {
@@ -362,6 +381,7 @@ class OutputBlockChannelWireSpec extends CatsEffectSuite:
             _ <- p.onAgentEvent("s1", doneEv("s1"))
             got <- calls.get
           yield got.map(_._2)
+        end wxRun
         def fsRun(isRoot: Boolean): IO[List[String]] =
           val (fn, calls) = fsSeam()
           val ctx = new Ctx(List(fsMeta("s1", "oc_bound")))
@@ -377,21 +397,25 @@ class OutputBlockChannelWireSpec extends CatsEffectSuite:
             _ <- p.onAgentEvent("s1", doneEv("s1"))
             got <- calls.get
           yield got.map(_._2)
+        end fsRun
         for
           wxRoot <- wxRun(true)
           wxPlain <- wxRun(false)
           fsRoot <- fsRun(true)
           fsPlain <- fsRun(false)
         yield
-          val body = io.circe.Json.obj(
-            "source_text" -> raw.asJson,
-            "weixin_root" -> wxRoot.asJson,
-            "weixin_nonroot" -> wxPlain.asJson,
-            "feishu_root" -> fsRoot.asJson,
-            "feishu_nonroot" -> fsPlain.asJson
-          ).spaces2
+          val body = io.circe.Json
+            .obj(
+              "source_text" -> raw.asJson,
+              "weixin_root" -> wxRoot.asJson,
+              "weixin_nonroot" -> wxPlain.asJson,
+              "feishu_root" -> fsRoot.asJson,
+              "feishu_nonroot" -> fsPlain.asJson
+            )
+            .spaces2
           os.write.over(os.Path(target), body, createFolders = true)
           ()
+        end for
   }
 
 end OutputBlockChannelWireSpec

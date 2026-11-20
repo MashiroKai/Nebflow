@@ -50,7 +50,8 @@ class RestApiRoutes(
    * 缺省 = 全放行实例（既有测试构造点零改动）；生产由 GatewayMain 注入实配。
    */
   connGuard: ConnGuard = ConnGuard.disabled,
-  canvasTakeover: ConsoleTakeover = new ConsoleTakeover((_, _) => IO.unit, nebflow.shared.NebflowLogger.forName("nebflow.canvas-writer"))
+  canvasTakeover: ConsoleTakeover =
+    new ConsoleTakeover((_, _) => IO.unit, nebflow.shared.NebflowLogger.forName("nebflow.canvas-writer"))
 ):
   private val logger = nebflow.shared.NebflowLogger.forName("nebflow.rest-api")
 

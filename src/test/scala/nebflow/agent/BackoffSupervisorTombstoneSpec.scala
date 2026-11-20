@@ -15,7 +15,16 @@ import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, ToolContext}
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, SubAgentTask, ThinkingConfig}
+import nebflow.shared.{
+  FallbackAttempt,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  PathUtil,
+  StreamChunk,
+  SubAgentTask,
+  ThinkingConfig
+}
 
 import scala.concurrent.duration.*
 
@@ -55,7 +64,7 @@ class BackoffSupervisorTombstoneSpec extends CatsEffectSuite:
     def loop: Behavior[AgentCommand] =
       Behaviors.receiveMessage:
         case _: AgentCommand.Stop => IO.pure(Behaviors.stopped)
-        case _                    => IO.pure(loop)
+        case _ => IO.pure(loop)
     loop
 
   /** 恒哑的 AgentEvent 收件箱（doRestart 前置的 supervisorRef 占位——本测不经 actor 链）。 */
@@ -161,8 +170,8 @@ class BackoffSupervisorTombstoneSpec extends CatsEffectSuite:
         supervisor <- system.spawn(
           BackoffSupervisor(
             childRef = childRef,
-            childSpawnFn = (_, _) =>
-              spawnCalls.update(_ + 1) *> system.spawn(mkStopOnStopProbe, s"tomb-child-respawn-1"),
+            childSpawnFn =
+              (_, _) => spawnCalls.update(_ + 1) *> system.spawn(mkStopOnStopProbe, s"tomb-child-respawn-1"),
             childName = childSid,
             parentRef = Some(parentRef),
             description = "tombstone test task",
@@ -247,8 +256,8 @@ class BackoffSupervisorTombstoneSpec extends CatsEffectSuite:
         supervisor <- system.spawn(
           BackoffSupervisor(
             childRef = childRef,
-            childSpawnFn = (_, _) =>
-              spawnCalls.update(_ + 1) *> system.spawn(mkStopOnStopProbe, s"tomb-child-respawn-2"),
+            childSpawnFn =
+              (_, _) => spawnCalls.update(_ + 1) *> system.spawn(mkStopOnStopProbe, s"tomb-child-respawn-2"),
             childName = childSid,
             parentRef = Some(parentRef),
             description = "tombstone test task",

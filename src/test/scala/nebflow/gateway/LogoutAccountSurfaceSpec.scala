@@ -195,19 +195,21 @@ class LogoutAccountSurfaceSpec extends CatsEffectSuite:
   private def withFakeLiveInstance[A](port: Int)(inner: IO[A]): IO[A] =
     IO.blocking {
       val s = com.sun.net.httpserver.HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0)
-      s.createContext("/api/health", exchange => {
-        val body =
-          s"""{"product":"${Branding.lowerName}","status":"ok","version":"logout-fin-spec"}""".getBytes(
-            java.nio.charset.StandardCharsets.UTF_8
-          )
-        exchange.getResponseHeaders.add("Content-Type", "application/json")
-        exchange.sendResponseHeaders(200, body.length.toLong)
-        val out = exchange.getResponseBody
-        try out.write(body)
-        finally
-          out.close()
-          exchange.close()
-      })
+      s.createContext(
+        "/api/health",
+        exchange =>
+          val body =
+            s"""{"product":"${Branding.lowerName}","status":"ok","version":"logout-fin-spec"}""".getBytes(
+              java.nio.charset.StandardCharsets.UTF_8
+            )
+          exchange.getResponseHeaders.add("Content-Type", "application/json")
+          exchange.sendResponseHeaders(200, body.length.toLong)
+          val out = exchange.getResponseBody
+          try out.write(body)
+          finally
+            out.close()
+            exchange.close()
+      )
       s.setExecutor(null)
       s.start()
       s
@@ -219,26 +221,28 @@ class LogoutAccountSurfaceSpec extends CatsEffectSuite:
     Dispatcher.parallel[IO].use { dispatcher =>
       startMockServer.flatMap { (server, url) =>
         GatewaySessionStore.create().flatMap { sessions =>
-          mkStack(url, dispatcher, sessions).flatMap { st =>
-            for
-              dirA <- IO(seedSignedInAs(os.Path(tmpDir, os.pwd), SubA, "a@example.com"))
-              sessA <- sessions.create(SubA, GatewaySessionStore.OriginRelayMint, "net-1")
-              sessB <- sessions.create(SubB, GatewaySessionStore.OriginRelayMint, "net-1")
-              _ <- st.client.login("d1", "dev", "macos", Nil)
-              resp <- st.routes.routes(logoutRequest).value.map(_.getOrElse(fail("route fell through")))
-              pointerAfter <- IO(AccountRoot.readPointer(os.Path(tmpDir, os.pwd)))
-              sessAAfter <- sessions.verifyAndTouch(sessA.sessionId)
-              sessBAfter <- sessions.verifyAndTouch(sessB.sessionId)
-              entries <- IO(outboxEntries)
-            yield
-              assertEquals(resp.status, Status.Ok)
-              assertEquals(pointerAfter, None, "登出后机器层 active-account 指针必须清空（现状残留 = T3 红）")
-              assertEquals(sessAAfter, None, "被登出账号的控制台会话必须吊销（现状仍活 = T3 红）")
-              assert(sessBAfter.isDefined, "他账号的控制台会话不受累 —— 按账号吊销，不是全清")
-              assert(os.isDir(dirA), "登出 ≠ 删数据：账号目录必须保留（设计 §3.5）")
-              assertEquals(entries.length, 1, "设备登出确认不等于账号域确认，必须保留账号通知")
-              assert(entries.head.contains(SubA), "账号通知必须带已登出账号")
-          }.guarantee(IO.blocking(server.stop(0)))
+          mkStack(url, dispatcher, sessions)
+            .flatMap { st =>
+              for
+                dirA <- IO(seedSignedInAs(os.Path(tmpDir, os.pwd), SubA, "a@example.com"))
+                sessA <- sessions.create(SubA, GatewaySessionStore.OriginRelayMint, "net-1")
+                sessB <- sessions.create(SubB, GatewaySessionStore.OriginRelayMint, "net-1")
+                _ <- st.client.login("d1", "dev", "macos", Nil)
+                resp <- st.routes.routes(logoutRequest).value.map(_.getOrElse(fail("route fell through")))
+                pointerAfter <- IO(AccountRoot.readPointer(os.Path(tmpDir, os.pwd)))
+                sessAAfter <- sessions.verifyAndTouch(sessA.sessionId)
+                sessBAfter <- sessions.verifyAndTouch(sessB.sessionId)
+                entries <- IO(outboxEntries)
+              yield
+                assertEquals(resp.status, Status.Ok)
+                assertEquals(pointerAfter, None, "登出后机器层 active-account 指针必须清空（现状残留 = T3 红）")
+                assertEquals(sessAAfter, None, "被登出账号的控制台会话必须吊销（现状仍活 = T3 红）")
+                assert(sessBAfter.isDefined, "他账号的控制台会话不受累 —— 按账号吊销，不是全清")
+                assert(os.isDir(dirA), "登出 ≠ 删数据：账号目录必须保留（设计 §3.5）")
+                assertEquals(entries.length, 1, "设备登出确认不等于账号域确认，必须保留账号通知")
+                assert(entries.head.contains(SubA), "账号通知必须带已登出账号")
+            }
+            .guarantee(IO.blocking(server.stop(0)))
         }
       }
     }
@@ -247,16 +251,18 @@ class LogoutAccountSurfaceSpec extends CatsEffectSuite:
     Dispatcher.parallel[IO].use { dispatcher =>
       startMockServer.flatMap { (server, url) =>
         GatewaySessionStore.create().flatMap { sessions =>
-          mkStack(url, dispatcher, sessions).flatMap { st =>
-            for
-              _ <- IO(seedSignedInAs(os.Path(tmpDir, os.pwd), SubA, "a@example.com"))
-              resp <- st.routes.routes(logoutRequest).value.map(_.getOrElse(fail("route fell through")))
-              entries <- IO(outboxEntries)
-            yield
-              assertEquals(resp.status, Status.Ok)
-              assertEquals(entries.length, 1)
-              assert(entries.head.contains(SubA))
-          }.guarantee(IO.blocking(server.stop(0)))
+          mkStack(url, dispatcher, sessions)
+            .flatMap { st =>
+              for
+                _ <- IO(seedSignedInAs(os.Path(tmpDir, os.pwd), SubA, "a@example.com"))
+                resp <- st.routes.routes(logoutRequest).value.map(_.getOrElse(fail("route fell through")))
+                entries <- IO(outboxEntries)
+              yield
+                assertEquals(resp.status, Status.Ok)
+                assertEquals(entries.length, 1)
+                assert(entries.head.contains(SubA))
+            }
+            .guarantee(IO.blocking(server.stop(0)))
         }
       }
     }
@@ -281,6 +287,8 @@ class LogoutAccountSurfaceSpec extends CatsEffectSuite:
       _ = assertEquals(hit, None)
       _ = restored.shutdown()
     yield ()
+
+    end for
 
   test("损坏指针不能确定账号时撤销全部本地控制台会话"):
     val root = os.Path(tmpDir, os.pwd)

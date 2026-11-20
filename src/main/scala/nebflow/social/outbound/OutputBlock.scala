@@ -44,11 +44,13 @@ object OutputBlock:
     if rootSession then extract(text) else Extracted(text)
 
   private val OpenTag = "<report>"
-  private val TagRe   = "</?report>".r
+  private val TagRe = "</?report>".r
 
-  /** The fence-mask char: NUL — never occurs in engine text, never matches the
-    * tag regex; the mask preserves offsets 1:1 so pair bodies slice off the
-    * ORIGINAL text. */
+  /**
+   * The fence-mask char: NUL — never occurs in engine text, never matches the
+   * tag regex; the mask preserves offsets 1:1 so pair bodies slice off the
+   * ORIGINAL text.
+   */
   private val MaskChar = '\u0000'
 
   /**
@@ -72,8 +74,8 @@ object OutputBlock:
    */
   sealed trait Verdict
   final case class Extracted(inner: String) extends Verdict
-  case object NoBlocks      extends Verdict
-  case object Unbalanced    extends Verdict
+  case object NoBlocks extends Verdict
+  case object Unbalanced extends Verdict
 
   /**
    * The one extraction entry. The balance walk is the console rule verbatim:
@@ -89,8 +91,8 @@ object OutputBlock:
     else
       // console _outputTagsBalanced walk, on the masked text.
       var open = false
-      var saw  = false
-      var ok   = true
+      var saw = false
+      var ok = true
       val it = tags.iterator
       while ok && it.hasNext do
         val m = it.next()
@@ -106,7 +108,7 @@ object OutputBlock:
         // Balanced: pair up and slice the original text. Every close here has
         // a matching open (the walk just proved it).
         val parts = List.newBuilder[String]
-        var from  = -1
+        var from = -1
         val it2 = tags.iterator
         while it2.hasNext do
           val m = it2.next()
@@ -115,6 +117,10 @@ object OutputBlock:
             parts += text.substring(from, m.start).trim
             from = -1
         Extracted(parts.result().mkString("\n\n"))
+
+    end if
+
+  end extract
 
   /**
    * Same-length copy of `text` with every ``` fenced region replaced by NUL
@@ -155,8 +161,12 @@ object OutputBlock:
           else
             sb.append(line(i))
             i += 1
+      end if
       if index < lines.length - 1 then sb.append('\n')
+    end for
     sb.toString
+
+  end maskFences
 
   /** Append `line` char-for-char masked (length preserved). */
   private def appendMask(sb: StringBuilder, line: String): Unit =

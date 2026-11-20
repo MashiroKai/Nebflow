@@ -53,6 +53,7 @@ object RouteTriStateMeasureMain:
         "budgetMs" -> TailnetProbe.ProcessBudgetMs.asJson
       )
     )
+  end realProbe
 
   // ---- ② 缓存：连续 N 次只探测 1 次 ----
 
@@ -96,6 +97,7 @@ object RouteTriStateMeasureMain:
         "sameVerdict" -> (first.verdict == second.verdict).asJson
       )
     )
+  end cacheEvidence
 
   // ---- ③ 三态：改前 vs 改后 ----
 
@@ -153,7 +155,8 @@ object RouteTriStateMeasureMain:
       )
     }
     // LAN 直拨零回归：tailscale 停时 LAN 候选照旧被拨（via=direct）。
-    val lanPlan = DirectRoute.planSync("KAI", List(TailnetCandidate, LanCandidate), TailnetProbe.stub(Parse.parse(stoppedJson)))
+    val lanPlan =
+      DirectRoute.planSync("KAI", List(TailnetCandidate, LanCandidate), TailnetProbe.stub(Parse.parse(stoppedJson)))
     emit(
       "tristate_lan_regression",
       io.circe.Json.obj(
@@ -162,14 +165,15 @@ object RouteTriStateMeasureMain:
         "reasons" -> lanPlan.reasons.asJson
       )
     )
+  end triState
 
   // ---- ④ IPv6 真机读数见 nebflow.neblink.LocalEndpointReadoutMain ----
 
   // ---- 工具 ----
 
   private def describe(r: Either[Throwable, Option[String]]): String = r match
-    case Left(e)       => s"error:${e.getClass.getSimpleName}"
-    case Right(None)   => "no-answer"
+    case Left(e) => s"error:${e.getClass.getSimpleName}"
+    case Right(None) => "no-answer"
     case Right(Some(w)) => s"winner:$w"
 
   private def emit(name: String, json: io.circe.Json): Unit =
@@ -189,3 +193,4 @@ object RouteTriStateMeasureMain:
        |        "TailscaleIPs":["100.127.149.106","fd7a:115c:a1e0::1"]},
        |"Peer":{"nodekey:aaaa":{"HostName":"kai","Online":$peerOnline,
        |        "TailscaleIPs":["100.65.49.141","fd7a:115c:a1e0::2"]}}}""".stripMargin
+end RouteTriStateMeasureMain

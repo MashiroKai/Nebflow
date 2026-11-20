@@ -44,13 +44,14 @@ object CacheAttribution:
   private val salt: Long = scala.util.Random.nextLong()
 
   // ── 有界常量 ──────────────────────────────────────────────────────────
-  private val DomainCap        = 1024 // (session, provider, model) 域表封顶
-  private val MissRing         = 512  // 最近归因记录
+  private val DomainCap = 1024 // (session, provider, model) 域表封顶
+  private val MissRing = 512 // 最近归因记录
   private val MaxHistoryBlocks = 2048 // 块指纹向量封顶（超额只记总数）
 
-  /** 命中带阈值：read/input ≥ 0.5 记正常带（不做归因）；< 0.5 进归因。
-    * 口径声明：这是观测阈值不是供应商契约（补充令一：不拿命中率当远端契约）。
-    */
+  /**
+   * 命中带阈值：read/input ≥ 0.5 记正常带（不做归因）；< 0.5 进归因。
+   * 口径声明：这是观测阈值不是供应商契约（补充令一：不拿命中率当远端契约）。
+   */
   private val MissThreshold = 0.5
 
   // ── 指纹结构 ──────────────────────────────────────────────────────────
@@ -68,7 +69,7 @@ object CacheAttribution:
     systemFp: Long,
     systemChars: Long,
     historyBlockFps: Vector[Long], // 封顶 MaxHistoryBlocks
-    historyBlocks: Int,            // 未封顶总数
+    historyBlocks: Int, // 未封顶总数
     historyChars: Long,
     breakpointIdx: Int, // 持久区内的断点块位（-1 = 无）
     ephemeralBlocks: Int,
@@ -81,16 +82,35 @@ object CacheAttribution:
   sealed trait MissCategory:
     def name: String
 
-  case object NewSession        extends MissCategory { val name = "new-session" }
-  case object DomainSwitched    extends MissCategory { val name = "domain-switched" }
-  case object ConfigChanged     extends MissCategory { val name = "config-changed" }
-  case object HistoryChanged    extends MissCategory { val name = "history-changed" }
-  case object CompactionRebuild extends MissCategory { val name = "compaction-rebuild" }
-  case object EphemeralMarkerMisplaced      extends MissCategory { val name = "ephemeral-marker-misplaced" }
-  case object PersistentBreakpointMissing   extends MissCategory { val name = "persistent-breakpoint-missing" }
-  case object PersistentBreakpointMisplaced extends MissCategory { val name = "persistent-breakpoint-misplaced" }
-  case object UsageMissing      extends MissCategory { val name = "usage-missing" }
-  case object Unknown           extends MissCategory { val name = "unknown" }
+  case object NewSession extends MissCategory:
+    val name = "new-session"
+
+  case object DomainSwitched extends MissCategory:
+    val name = "domain-switched"
+
+  case object ConfigChanged extends MissCategory:
+    val name = "config-changed"
+
+  case object HistoryChanged extends MissCategory:
+    val name = "history-changed"
+
+  case object CompactionRebuild extends MissCategory:
+    val name = "compaction-rebuild"
+
+  case object EphemeralMarkerMisplaced extends MissCategory:
+    val name = "ephemeral-marker-misplaced"
+
+  case object PersistentBreakpointMissing extends MissCategory:
+    val name = "persistent-breakpoint-missing"
+
+  case object PersistentBreakpointMisplaced extends MissCategory:
+    val name = "persistent-breakpoint-misplaced"
+
+  case object UsageMissing extends MissCategory:
+    val name = "usage-missing"
+
+  case object Unknown extends MissCategory:
+    val name = "unknown"
 
   /** 一条归因记录（无正文——只有类别/位置/计数/域身份）。 */
   final case class MissRecord(
@@ -115,6 +135,7 @@ object CacheAttribution:
     outputTokens: Long = 0L
   ):
     def hitPct: Double = if inputTokens <= 0 then 0.0 else cacheRead * 100.0 / inputTokens
+
     def plus(u: TokenUsage): TokenTotals =
       TokenTotals(
         requests + 1,
@@ -123,6 +144,8 @@ object CacheAttribution:
         cacheWrite + u.cacheWriteTokens.getOrElse(0).toLong,
         outputTokens + u.outputTokens.toLong
       )
+
+  end TokenTotals
 
   final case class Snapshot(
     business: TokenTotals,
@@ -136,11 +159,11 @@ object CacheAttribution:
 
   /** 每域最近两发指纹（0=prev，1=cur；observeWire 先落 cur，usage 时比对）。 */
   private val recentByDomain = mutable.LinkedHashMap.empty[String, mutable.ArrayDeque[WireFingerprint]]
-  private val missRing       = mutable.ArrayDeque.empty[MissRecord]
+  private val missRing = mutable.ArrayDeque.empty[MissRecord]
   private var businessTotals = TokenTotals()
-  private var warmupTotals   = TokenTotals()
-  private val domainTotals   = mutable.Map.empty[String, TokenTotals]
-  private val missCounts     = mutable.Map.empty[String, Int]
+  private var warmupTotals = TokenTotals()
+  private val domainTotals = mutable.Map.empty[String, TokenTotals]
+  private val missCounts = mutable.Map.empty[String, Int]
 
   private def domainKey(sessionId: String, providerId: String, model: String): String =
     s"$sessionId|$providerId|$model"
@@ -183,11 +206,12 @@ object CacheAttribution:
 
   // ── 采集点（最终 wire 装配点；sessionId 缺省的辅助面跳过）────────────
 
-  /** @param face          协议面（"anthropic" | "openai"）
-    * @param providerId    真实候选腿的 providerId（adapter 内部名是协议名，域分列以腿为准）
-    * @param persistedWire 持久历史段的 wire 消息（断点应对它的尾块）
-    * @param ephemeralWire 临时尾段（REQUEST-ONLY 提醒 + systemDynamic）的 wire 形态
-    */
+  /**
+   * @param face          协议面（"anthropic" | "openai"）
+   * @param providerId    真实候选腿的 providerId（adapter 内部名是协议名，域分列以腿为准）
+   * @param persistedWire 持久历史段的 wire 消息（断点应对它的尾块）
+   * @param ephemeralWire 临时尾段（REQUEST-ONLY 提醒 + systemDynamic）的 wire 形态
+   */
   def observeWire(
     face: String,
     params: SendMessageParams,
@@ -198,8 +222,8 @@ object CacheAttribution:
     params.sessionId match
       case None => () // 辅助面（probe/judge/allocator）无缓存连续性，零采集
       case Some(sid) =>
-        val blocks        = blocksOf(persistedWire)
-        val ephemeralBlk  = blocksOf(ephemeralWire)
+        val blocks = blocksOf(persistedWire)
+        val ephemeralBlk = blocksOf(ephemeralWire)
         val breakpointIdx = blocks.lastIndexWhere(_.hcursor.downField("cache_control").focus.isDefined)
         val fp = WireFingerprint(
           face = face,
@@ -209,7 +233,9 @@ object CacheAttribution:
           agentId = params.agentId.getOrElse(""),
           streaming = false, // wire 形状与流式无关（stream 是 body 顶层键）；两面一致
           thinkingFp = params.thinking.filter(!_.isNull).map(hashJson).getOrElse(0L),
-          toolsFp = params.tools.map(ts => hashJson(Json.fromValues(ts.map(t => Json.fromJsonObject(t.inputSchema))))).getOrElse(0L),
+          toolsFp = params.tools
+            .map(ts => hashJson(Json.fromValues(ts.map(t => Json.fromJsonObject(t.inputSchema)))))
+            .getOrElse(0L),
           toolsCount = params.tools.foldLeft(0)(_ + _.size),
           systemFp = params.systemStable.map(hashString).getOrElse(0L),
           systemChars = params.systemStable.map(_.length.toLong).getOrElse(0L),
@@ -226,18 +252,18 @@ object CacheAttribution:
 
   private def recordFingerprint(fp: WireFingerprint): Unit = synchronized {
     val key = domainKey(fp.sessionId, fp.providerId, fp.model)
-    val dq  = recentByDomain.getOrElseUpdate(key, mutable.ArrayDeque.empty[WireFingerprint])
+    val dq = recentByDomain.getOrElseUpdate(key, mutable.ArrayDeque.empty[WireFingerprint])
     dq.addOne(fp)
     while dq.length > 2 do dq.removeHead() // 只留 prev/cur
     recentByDomain.remove(key)
     recentByDomain.update(key, dq) // LRU touch
-    while recentByDomain.size > DomainCap do
-      recentByDomain.remove(recentByDomain.keys.iterator.next())
+    while recentByDomain.size > DomainCap do recentByDomain.remove(recentByDomain.keys.iterator.next())
   }
 
-  /** usage 落账（与 CacheStats.record 同点位调用）。kind="business"|"warmup" 分列。
-    * 返回归因记录（正常命中带/保温腿返回 None）。
-    */
+  /**
+   * usage 落账（与 CacheStats.record 同点位调用）。kind="business"|"warmup" 分列。
+   * 返回归因记录（正常命中带/保温腿返回 None）。
+   */
   def observeUsage(
     sessionId: String,
     providerId: String,
@@ -254,7 +280,17 @@ object CacheAttribution:
           if kind == "business" then
             Some(
               bump(
-                MissRecord(UsageMissing, sessionId, providerId, model, None, "usage absent in completed response", 0, 0, nowMs)
+                MissRecord(
+                  UsageMissing,
+                  sessionId,
+                  providerId,
+                  model,
+                  None,
+                  "usage absent in completed response",
+                  0,
+                  0,
+                  nowMs
+                )
                   .copy(requestId = requestId)
               )
             )
@@ -264,6 +300,7 @@ object CacheAttribution:
           val ratio = if u.inputTokens <= 0 then 1.0 else u.cacheReadTokens.getOrElse(0).toDouble / u.inputTokens
           if ratio >= MissThreshold then None // 正常命中带
           else Some(classify(prevAndCur, sessionId, providerId, model, u, nowMs, requestId))
+      end match
     }
     usage.foreach { u =>
       synchronized {
@@ -284,6 +321,8 @@ object CacheAttribution:
       )
     }
     record
+
+  end observeUsage
 
   private def bump(r: MissRecord): MissRecord =
     missRing.addOne(r)
@@ -308,63 +347,182 @@ object CacheAttribution:
       case None =>
         // 本域无上一发：同会话换域（failover/换凭据）⇒ DomainSwitched；否则新会话
         val switched = recentByDomain.keys.iterator.exists { k =>
-          val seg      = k.split("\\|")
+          val seg = k.split("\\|")
           val sameSess = seg.headOption.contains(sessionId)
           val otherDom = seg.length >= 3 && !(seg(1) == providerId && seg(2) == model)
           sameSess && otherDom
         }
         val cat = if switched then DomainSwitched else NewSession
-        remember(MissRecord(cat, sessionId, providerId, model, None,
-          if switched then "same session, different provider/model domain" else "no prior fingerprint in this cache domain",
-          inTok, readTok, nowMs))
+        remember(
+          MissRecord(
+            cat,
+            sessionId,
+            providerId,
+            model,
+            None,
+            if switched then "same session, different provider/model domain"
+            else "no prior fingerprint in this cache domain",
+            inTok,
+            readTok,
+            nowMs
+          )
+        )
       case Some((p, cur)) =>
         // ① 分开报告线上的三个不同形状；空历史（0 块）不判（首轮前无历史可钉）。
         if cur.ephemeralMarked then
-          remember(MissRecord(EphemeralMarkerMisplaced, sessionId, providerId, model, Some(cur.breakpointIdx),
-            s"cache marker present in ephemeral blocks: persistedIdx=${cur.breakpointIdx} blocks=${cur.historyBlocks}",
-            inTok, readTok, nowMs))
+          remember(
+            MissRecord(
+              EphemeralMarkerMisplaced,
+              sessionId,
+              providerId,
+              model,
+              Some(cur.breakpointIdx),
+              s"cache marker present in ephemeral blocks: persistedIdx=${cur.breakpointIdx} blocks=${cur.historyBlocks}",
+              inTok,
+              readTok,
+              nowMs
+            )
+          )
         else if cur.historyBlocks > 0 && cur.breakpointIdx < 0 then
-          remember(MissRecord(PersistentBreakpointMissing, sessionId, providerId, model, Some(cur.breakpointIdx),
-            s"persistent history has no cache marker: persistedIdx=${cur.breakpointIdx} blocks=${cur.historyBlocks}",
-            inTok, readTok, nowMs))
+          remember(
+            MissRecord(
+              PersistentBreakpointMissing,
+              sessionId,
+              providerId,
+              model,
+              Some(cur.breakpointIdx),
+              s"persistent history has no cache marker: persistedIdx=${cur.breakpointIdx} blocks=${cur.historyBlocks}",
+              inTok,
+              readTok,
+              nowMs
+            )
+          )
         else if cur.historyBlocks > 0 && cur.breakpointIdx != cur.historyBlocks - 1 then
-          remember(MissRecord(PersistentBreakpointMisplaced, sessionId, providerId, model, Some(cur.breakpointIdx),
-            s"persistent cache marker is not at history tail: persistedIdx=${cur.breakpointIdx} blocks=${cur.historyBlocks}",
-            inTok, readTok, nowMs))
+          remember(
+            MissRecord(
+              PersistentBreakpointMisplaced,
+              sessionId,
+              providerId,
+              model,
+              Some(cur.breakpointIdx),
+              s"persistent cache marker is not at history tail: persistedIdx=${cur.breakpointIdx} blocks=${cur.historyBlocks}",
+              inTok,
+              readTok,
+              nowMs
+            )
+          )
         // ② 配置面变化（tools/system/thinking 任一轴——首个变化轴即报）
         else if cur.toolsFp != p.toolsFp || cur.toolsCount != p.toolsCount then
-          remember(MissRecord(ConfigChanged, sessionId, providerId, model, None, "tools schema/order fingerprint changed", inTok, readTok, nowMs))
+          remember(
+            MissRecord(
+              ConfigChanged,
+              sessionId,
+              providerId,
+              model,
+              None,
+              "tools schema/order fingerprint changed",
+              inTok,
+              readTok,
+              nowMs
+            )
+          )
         else if cur.systemFp != p.systemFp then
-          remember(MissRecord(ConfigChanged, sessionId, providerId, model, None, "system fingerprint changed", inTok, readTok, nowMs))
+          remember(
+            MissRecord(
+              ConfigChanged,
+              sessionId,
+              providerId,
+              model,
+              None,
+              "system fingerprint changed",
+              inTok,
+              readTok,
+              nowMs
+            )
+          )
         else if cur.thinkingFp != p.thinkingFp then
-          remember(MissRecord(ConfigChanged, sessionId, providerId, model, None, "thinking config fingerprint changed", inTok, readTok, nowMs))
+          remember(
+            MissRecord(
+              ConfigChanged,
+              sessionId,
+              providerId,
+              model,
+              None,
+              "thinking config fingerprint changed",
+              inTok,
+              readTok,
+              nowMs
+            )
+          )
         // ③ 历史内容变化
         else
-          val shared    = cur.historyBlockFps.zip(p.historyBlockFps).takeWhile { case (a, b) => a == b }.length
+          val shared = cur.historyBlockFps.zip(p.historyBlockFps).takeWhile { case (a, b) => a == b }.length
           val minBlocks = math.min(cur.historyBlocks, p.historyBlocks)
           val firstDiff = if shared < minBlocks then Some(shared) else None
           if firstDiff.isEmpty && cur.historyBlocks >= p.historyBlocks then
             // 纯追加 + 指纹全同仍 miss ⇒ 客户端未观测到变化（不谎称驱逐）
-            remember(MissRecord(Unknown, sessionId, providerId, model, None,
-              "no client-observed change; provider-side (not claimed as eviction)", inTok, readTok, nowMs))
+            remember(
+              MissRecord(
+                Unknown,
+                sessionId,
+                providerId,
+                model,
+                None,
+                "no client-observed change; provider-side (not claimed as eviction)",
+                inTok,
+                readTok,
+                nowMs
+              )
+            )
           else if firstDiff.contains(0) && cur.historyBlocks < p.historyBlocks then
-            remember(MissRecord(CompactionRebuild, sessionId, providerId, model, firstDiff,
-              "front rebuilt and shrunk (compaction/lifecycle signature)", inTok, readTok, nowMs))
+            remember(
+              MissRecord(
+                CompactionRebuild,
+                sessionId,
+                providerId,
+                model,
+                firstDiff,
+                "front rebuilt and shrunk (compaction/lifecycle signature)",
+                inTok,
+                readTok,
+                nowMs
+              )
+            )
           else
-            remember(MissRecord(HistoryChanged, sessionId, providerId, model, firstDiff,
-              s"history content/order changed at block ${firstDiff.getOrElse(-1)} (persisted=${cur.historyBlocks} prev=${p.historyBlocks})",
-              inTok, readTok, nowMs))
+            remember(
+              MissRecord(
+                HistoryChanged,
+                sessionId,
+                providerId,
+                model,
+                firstDiff,
+                s"history content/order changed at block ${firstDiff.getOrElse(-1)} (persisted=${cur.historyBlocks} prev=${p.historyBlocks})",
+                inTok,
+                readTok,
+                nowMs
+              )
+            )
 
-  /** Account only after normal stream completion. Match AgentStreamPipelines' selection:
-    * first positive-input usage, otherwise the first Done's usage. Done frames pass through unchanged.
-    *
-    * kernel-spec 批（2026-11-19）：`kind` 参数化（缺省 "business" 与批前逐字一致）——
-    * 统一内核（`LlmKernel.stream`）的探针腿走 "warmup"（探针是恢复机制的微量探测，
-    * 不进业务 miss 归因），主腿不变。
-    */
+          end if
+
+    end match
+
+  end classify
+
+  /**
+   * Account only after normal stream completion. Match AgentStreamPipelines' selection:
+   * first positive-input usage, otherwise the first Done's usage. Done frames pass through unchanged.
+   *
+   * kernel-spec 批（2026-11-19）：`kind` 参数化（缺省 "business" 与批前逐字一致）——
+   * 统一内核（`LlmKernel.stream`）的探针腿走 "warmup"（探针是恢复机制的微量探测，
+   * 不进业务 miss 归因），主腿不变。
+   */
   private[llm] def accountStream(
     source: fs2.Stream[cats.effect.IO, StreamChunk],
-    sessionId: String, providerId: String, model: String, requestId: Option[String],
+    sessionId: String,
+    providerId: String,
+    model: String,
+    requestId: Option[String],
     kind: String = "business"
   ): fs2.Stream[cats.effect.IO, StreamChunk] =
     fs2.Stream.eval(cats.effect.IO.ref((false, Option.empty[TokenUsage], Option.empty[TokenUsage]))).flatMap { state =>
@@ -374,14 +532,16 @@ object CacheAttribution:
             (true, if seen then first else usage, positive.orElse(usage.filter(_.inputTokens > 0)))
           }
         case _ => cats.effect.IO.unit
-      } ++ fs2.Stream.eval(state.get.flatMap { case (seen, first, positive) =>
-        cats.effect.IO {
-          if seen then
-            val usage = positive.orElse(first)
-            CacheStats.record(providerId, model, usage)
-            observeUsage(sessionId, providerId, model, usage, kind = kind, requestId = requestId)
-        }.void
-      }).drain
+      } ++ fs2.Stream
+        .eval(state.get.flatMap { case (seen, first, positive) =>
+          cats.effect.IO {
+            if seen then
+              val usage = positive.orElse(first)
+              CacheStats.record(providerId, model, usage)
+              observeUsage(sessionId, providerId, model, usage, kind = kind, requestId = requestId)
+          }.void
+        })
+        .drain
     }
 
   // ── 读数面 ────────────────────────────────────────────────────────────

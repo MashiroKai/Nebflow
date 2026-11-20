@@ -249,7 +249,10 @@ class EndpointPreferenceSpec extends CatsEffectSuite:
             "k",
             "KAI",
             "macos",
-            List(NeblinkEndpoint("192.168.1.145", 8080, "lan"), NeblinkEndpoint("fd7a:115c:a1e0::2", 6138, "tailscale")),
+            List(
+              NeblinkEndpoint("192.168.1.145", 8080, "lan"),
+              NeblinkEndpoint("fd7a:115c:a1e0::2", 6138, "tailscale")
+            ),
             online = true
           )
         )

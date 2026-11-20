@@ -155,9 +155,15 @@ class OutputBlockSpec extends FunSuite:
       // The compatibility reader is gone from the object surface — the verdict is
       // a pure function of (text, rootSession), so no config file can change it.
       os.write.over(cfg, """{"outputBlock":{"enabled":false}}""", createFolders = true)
-      val offVerdict = (OutputBlock.extractGated("前 <report>块内</report> 后", rootSession = true), OutputBlock.extractGated("前 <report>块内</report> 后", rootSession = false))
+      val offVerdict = (
+        OutputBlock.extractGated("前 <report>块内</report> 后", rootSession = true),
+        OutputBlock.extractGated("前 <report>块内</report> 后", rootSession = false)
+      )
       os.write.over(cfg, """{"outputBlock":{"enabled":true}}""")
-      val onVerdict = (OutputBlock.extractGated("前 <report>块内</report> 后", rootSession = true), OutputBlock.extractGated("前 <report>块内</report> 后", rootSession = false))
+      val onVerdict = (
+        OutputBlock.extractGated("前 <report>块内</report> 后", rootSession = true),
+        OutputBlock.extractGated("前 <report>块内</report> 后", rootSession = false)
+      )
       assertEquals(onVerdict, offVerdict, "config flips must not move the channel verdict (no full-text-leak fallback)")
       assertEquals(offVerdict._1, OutputBlock.Extracted("块内"), "root still ships the block body")
       assertEquals(
@@ -169,6 +175,7 @@ class OutputBlockSpec extends FunSuite:
     finally
       os.remove.all(home)
       nebflow.shared.PathUtil.setDataRoot(prev)
+    end try
   }
 
 end OutputBlockSpec

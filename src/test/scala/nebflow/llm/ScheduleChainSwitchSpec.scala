@@ -77,7 +77,10 @@ class ScheduleChainSwitchSpec extends CatsEffectSuite:
     }
 
   private def hhmm(instant: java.time.Instant): String =
-    instant.atZone(java.time.ZoneId.systemDefault()).toLocalTime.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
+    instant
+      .atZone(java.time.ZoneId.systemDefault())
+      .toLocalTime
+      .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
 
   /** 「当前时刻 ±10 分钟」窗口（作者实测令形态）。 */
   private def windowAroundNow(): UnavailableWindow =

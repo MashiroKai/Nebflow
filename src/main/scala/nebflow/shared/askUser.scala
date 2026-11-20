@@ -37,7 +37,7 @@ case class AskPreviewMedia(
  * 渲染（零回归），因此解析保持宽松透传、由前端裁决。
  *
  * 四种形态（**严格向后兼容**——前两种是改前既有形态，字段/语义逐字不变）：
- *   ① `type = "swatch"` + `colors`：1~5 条色带（既有）。 
+ *   ① `type = "swatch"` + `colors`：1~5 条色带（既有）。
  *   ② `type = "image"`  + `src`：单张图片缩略（既有）。
  *   ③ `type = "video"`  + `src` [+ `poster`]：单段视频（静帧 + 可播放）。
  *   ④ `type = "media"`  + `items`：**媒体组**——≥2 件时以**叠卡**呈现（前一张

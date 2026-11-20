@@ -79,6 +79,7 @@ object LogoutNotifyOutbox:
   )
 
   object Entry:
+
     given Encoder[Entry] = Encoder.instance { e =>
       Json.obj(
         "id" -> e.id.asJson,
@@ -89,14 +90,15 @@ object LogoutNotifyOutbox:
         "attempts" -> e.attempts.asJson
       )
     }
+
     given Decoder[Entry] = Decoder.instance { c =>
       for
-        id         <- c.downField("id").as[String]
+        id <- c.downField("id").as[String]
         accountSub <- c.downField("accountSub").as[String]
-        email      <- c.downField("email").as[String]
-        reason     <- c.downField("reason").as[String]
+        email <- c.downField("email").as[String]
+        reason <- c.downField("reason").as[String]
         enqueuedAt <- c.downField("enqueuedAt").as[Long]
-        attempts   <- c.downField("attempts").as[Option[Int]]
+        attempts <- c.downField("attempts").as[Option[Int]]
       yield Entry(id, accountSub, email, reason, enqueuedAt, attempts.getOrElse(0))
     }
   end Entry
@@ -165,12 +167,20 @@ object LogoutNotifyOutbox:
   private def pendingSync(): List[Entry] =
     if !os.exists(dir) then Nil
     else
-      os.list(dir).filter(_.ext == "json").toList.map { p =>
-        val entry = decode[Entry](os.read(p)).fold(throw _, e => e)
-        if fileOf(entry) != p then throw new IllegalStateException(s"outbox entry filename mismatch: ${p.last}")
-        entry
-      }.sortBy(e => (if e.id.matches("[0-9]{20}-[0-9a-f-]{36}-.*") then 1 else 0,
-        if e.id.matches("[0-9]{20}-[0-9a-f-]{36}-.*") then e.id else f"${e.enqueuedAt}%020d-${e.id}"))
+      os.list(dir)
+        .filter(_.ext == "json")
+        .toList
+        .map { p =>
+          val entry = decode[Entry](os.read(p)).fold(throw _, e => e)
+          if fileOf(entry) != p then throw new IllegalStateException(s"outbox entry filename mismatch: ${p.last}")
+          entry
+        }
+        .sortBy(e =>
+          (
+            if e.id.matches("[0-9]{20}-[0-9a-f-]{36}-.*") then 1 else 0,
+            if e.id.matches("[0-9]{20}-[0-9a-f-]{36}-.*") then e.id else f"${e.enqueuedAt}%020d-${e.id}"
+          )
+        )
 
   /** 补投成功 ⇒ 删除该件（幂等：不存在即 no-op）。 */
   def delivered(id: String): IO[Unit] =
@@ -185,9 +195,10 @@ object LogoutNotifyOutbox:
     IO.blocking {
       val updated = e.copy(attempts = e.attempts + 1)
       AtomicJson.writeSyncRestricted(fileOf(updated), updated.asJson.noSpaces)
-    }.void.handleErrorWith(err =>
-      logger.warn(s"LogoutNotifyOutbox: attempt counter write failed for ${e.id}: ${err.getMessage}").void
-    )
+    }.void
+      .handleErrorWith(err =>
+        logger.warn(s"LogoutNotifyOutbox: attempt counter write failed for ${e.id}: ${err.getMessage}").void
+      )
 
   /** 补投结果读数。 */
   final case class DrainReport(replayed: List[String] = Nil, kept: List[(String, String)] = Nil)
@@ -207,8 +218,15 @@ object LogoutNotifyOutbox:
         if lock == null then throw new IllegalStateException("outbox drain already running in another process")
         (channel, lock)
       catch
-        case scala.util.control.NonFatal(e) => channel.close(); throw e
-    }) { case (channel, lock) => IO.blocking { try lock.release() finally channel.close() } }
+        case scala.util.control.NonFatal(e) =>
+          channel.close()
+          throw e
+    }) { case (channel, lock) =>
+      IO.blocking {
+        try lock.release()
+        finally channel.close()
+      }
+    }
     processLock.use { _ =>
       def replay(entries: List[Entry], report: DrainReport): IO[DrainReport] = entries match
         case Nil => IO.pure(report)
@@ -216,8 +234,12 @@ object LogoutNotifyOutbox:
           (send(e) *> delivered(e.id)).attempt.flatMap {
             case Right(_) => replay(rest, report.copy(replayed = report.replayed :+ e.id))
             case Left(t) =>
-              bumpAttempt(e).as(report.copy(kept = report.kept :+
-                (e.id, Option(t.getMessage).getOrElse(t.getClass.getSimpleName))))
+              bumpAttempt(e).as(
+                report.copy(kept =
+                  report.kept :+
+                    (e.id, Option(t.getMessage).getOrElse(t.getClass.getSimpleName))
+                )
+              )
           }
       pending.flatMap(entries => replay(entries, DrainReport()))
     }
@@ -225,7 +247,8 @@ object LogoutNotifyOutbox:
 
   /** 清空（运维/spec 用；正常路径绝不调用 —— 零删除纪律）。 */
   def clear(): IO[Unit] =
-    IO.blocking(if os.exists(dir) then os.remove.all(dir)).void
+    IO.blocking(if os.exists(dir) then os.remove.all(dir))
+      .void
       .handleErrorWith(e => logger.warn(s"LogoutNotifyOutbox.clear failed: ${e.getMessage}").void)
 
 end LogoutNotifyOutbox

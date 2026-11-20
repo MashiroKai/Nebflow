@@ -57,12 +57,15 @@ class CancelCascadeSpec extends CatsEffectSuite:
       def registry = reg.get
       def tombstoned = tombstones.get
       def cancelChild(r: AgentRecord, why: String) = FakePort.this.cancelChild(r, why).as(Right(()))
+
     def cancelChild(r: AgentRecord, reason: String) =
       stopped.update(_ :+ r.sessionId) *> reg.update(_ - r.sessionId) *>
         tombstones.update(_ + r.sessionId)
     def settleTaskRow(r: AgentRecord, reason: String) = rows.update(_ :+ r.sessionId)
     def notifyRoot(r: AgentRecord, text: String) = notifies.update(_ :+ text)
     override def audit(values: Map[String, String]) = audits.update(_ :+ values)
+
+  end FakePort
 
   private def mkPort(initial: Map[String, AgentRecord]): IO[(FakePort, Ref[IO, Map[String, AgentRecord]])] =
     for
@@ -128,11 +131,15 @@ class CancelCascadeSpec extends CatsEffectSuite:
     for
       port <- mkPort(Map("kid" -> rec("kid", "father")))
       (fake, _) = port
-      steps <- CancelCascade.cascade(new CancelCascade.Port:
-        def registry = fake.registry
-        def tombstoned = IO.pure(Set("kid"))
-        def cancelChild(r: AgentRecord, why: String) = IO.raiseError(new RuntimeException("must not cancel a tombstoned child"))
-      , "father")
+      steps <- CancelCascade.cascade(
+        new CancelCascade.Port:
+          def registry = fake.registry
+          def tombstoned = IO.pure(Set("kid"))
+          def cancelChild(r: AgentRecord, why: String) =
+            IO.raiseError(new RuntimeException("must not cancel a tombstoned child"))
+        ,
+        "father"
+      )
       reg <- fake.registry
       stopped <- fake.stopped.get
     yield
@@ -158,8 +165,7 @@ class CancelCascadeSpec extends CatsEffectSuite:
         def cancelChild(r: AgentRecord, reason: String) = fake.cancelChild(r, reason)
         def settleTaskRow(r: AgentRecord, reason: String) = fake.settleTaskRow(r, reason)
         def notifyRoot(r: AgentRecord, text: String) = fake.notifyRoot(r, text)
-        override def audit(values: Map[String, String]) = fake.audit(values)
-      )
+        override def audit(values: Map[String, String]) = fake.audit(values))
       reg <- fake.registry
       audits <- fake.audits.get
       notifies <- fake.notifies.get
@@ -184,8 +190,14 @@ class CancelCascadeSpec extends CatsEffectSuite:
       )
       (fake, _) = port
       parent = DelegateRegistry.Record(
-        id = "parent", executor = "nebflow", cwd = "/tmp/spec", project = None,
-        taskId = None, parentSessionId = "root-x", title = "parent", createdAt = 1L,
+        id = "parent",
+        executor = "nebflow",
+        cwd = "/tmp/spec",
+        project = None,
+        taskId = None,
+        parentSessionId = "root-x",
+        title = "parent",
+        createdAt = 1L,
         archivedAt = Some(2L)
       )
       terminal = CancelCascade.terminalParents(List(parent))
@@ -212,8 +224,14 @@ class CancelCascadeSpec extends CatsEffectSuite:
       port <- mkPort(Map("child" -> rec("child", "parent")))
       (fake, _) = port
       parent = DelegateRegistry.Record(
-        id = "parent", executor = "nebflow", cwd = "/tmp/spec", project = None,
-        taskId = None, parentSessionId = "root-x", title = "parent", createdAt = 1L,
+        id = "parent",
+        executor = "nebflow",
+        cwd = "/tmp/spec",
+        project = None,
+        taskId = None,
+        parentSessionId = "root-x",
+        title = "parent",
+        createdAt = 1L,
         cancelRequestedAt = Some(2L)
       )
       steps <- ChildOrphanWatch.scan(new ChildOrphanWatch.Port:
@@ -221,8 +239,7 @@ class CancelCascadeSpec extends CatsEffectSuite:
         def tombstonedParents = IO.pure(CancelCascade.terminalParents(List(parent)))
         def cancelChild(r: AgentRecord, reason: String) = fake.cancelChild(r, reason)
         def settleTaskRow(r: AgentRecord, reason: String) = fake.settleTaskRow(r, reason)
-        def notifyRoot(r: AgentRecord, text: String) = fake.notifyRoot(r, text)
-      )
+        def notifyRoot(r: AgentRecord, text: String) = fake.notifyRoot(r, text))
       stopped <- fake.stopped.get
     yield
       assertEquals(steps.map(_.sessionId), List("child"))
@@ -249,10 +266,10 @@ class CancelCascadeSpec extends CatsEffectSuite:
         ChildOrphanWatch.scan(new ChildOrphanWatch.Port:
           def registry = fake.registry
           def tombstonedParents = IO.pure(Set("dead-parent"))
-          def cancelChild(r: AgentRecord, reason: String) = IO.raiseError(new RuntimeException("must not cancel in report mode"))
+          def cancelChild(r: AgentRecord, reason: String) =
+            IO.raiseError(new RuntimeException("must not cancel in report mode"))
           def settleTaskRow(r: AgentRecord, reason: String) = fake.settleTaskRow(r, reason)
-          def notifyRoot(r: AgentRecord, text: String) = fake.notifyRoot(r, text)
-        )
+          def notifyRoot(r: AgentRecord, text: String) = fake.notifyRoot(r, text))
       }
       reg <- fake.registry
       notifies <- fake.notifies.get
@@ -262,12 +279,16 @@ class CancelCascadeSpec extends CatsEffectSuite:
       assert(notifies.nonEmpty, s"root still notified: $notifies")
   }
 
-  /** 在 IO 内设置 sys prop 并在结束后复原（munit 的 test body 构造 = 先于执行，绝不能在
-    * 构造期设 prop 再在 finally 复原：执行时已还原，判定走错分支）。 */
+  /**
+   * 在 IO 内设置 sys prop 并在结束后复原（munit 的 test body 构造 = 先于执行，绝不能在
+   * 构造期设 prop 再在 finally 复原：执行时已还原，判定走错分支）。
+   */
   private def setPropIo[A](key: String, value: String)(body: => IO[A]): IO[A] =
     val prev = sys.props.get(key)
     IO(sys.props(key) = value) *> body.guarantee(
-      IO(prev match { case Some(v) => sys.props(key) = v; case None => sys.props.remove(key) }).void
+      IO(prev match
+        case Some(v) => sys.props(key) = v;
+        case None => sys.props.remove(key)).void
     )
 
 end CancelCascadeSpec

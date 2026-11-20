@@ -88,7 +88,11 @@ object GenerateImageTool extends Tool:
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] = IO.defer {
     if !ctx.isRootAgent then
-      IO.pure(Left(ToolError("GenerateImage is Nebula-only (IMAGEGEN_ROOT_ONLY) — delegates use the imagegen plugin instead.")))
+      IO.pure(
+        Left(
+          ToolError("GenerateImage is Nebula-only (IMAGEGEN_ROOT_ONLY) — delegates use the imagegen plugin instead.")
+        )
+      )
     else
       val prompt = input("prompt").flatMap(_.asString).map(_.trim).getOrElse("")
       if prompt.isEmpty then IO.pure(Left(ToolError("prompt must be a non-empty string (IMAGEGEN_PROMPT)")))
@@ -107,13 +111,19 @@ object GenerateImageTool extends Tool:
             // 阻塞语义：job 体在当前调用内 awaited——回合零并发推进（旧形态此处为
             // run.start 立即返回句柄，双渲染病灶之源，整腿退役）。
             runJobBlocking(jobId, req, ctx, prompt)
+      end if
   }
 
   /**
    * 阻塞 job 体：生成 → 落盘 → 台账 → Pop 载荷结果。失败统一收束为
    * `Left(ToolError)`（台账同步翻 Failed）——模型在回合内直接看到原因。
    */
-  private def runJobBlocking(jobId: String, req: ImageGenRequest, ctx: ToolContext, prompt: String): IO[Either[ToolError, String]] =
+  private def runJobBlocking(
+    jobId: String,
+    req: ImageGenRequest,
+    ctx: ToolContext,
+    prompt: String
+  ): IO[Either[ToolError, String]] =
     IO.delay(ImageGenJobs.register(jobId, ctx.sessionId, prompt)) *>
       ImageGenService
         .generate(req)
@@ -126,14 +136,17 @@ object GenerateImageTool extends Tool:
               .flatMap {
                 case Right(path) =>
                   IO.delay(ImageGenJobs.complete(jobId, path)) *>
-                    logger.info(s"imagegen job $jobId completed -> $path", "sessionId" -> ctx.sessionId.getOrElse("")) *>
+                    logger.info(
+                      s"imagegen job $jobId completed -> $path",
+                      "sessionId" -> ctx.sessionId.getOrElse("")
+                    ) *>
                     IO.pure(Right(popResult(jobId, path)))
                 case Left(e) =>
                   val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
                   failJob(jobId, ctx, s"save failed: $msg")
               }
           case Right(Left(err)) => failJob(jobId, ctx, err.message)
-          case Left(e)          => failJob(jobId, ctx, Option(e.getMessage).getOrElse(e.getClass.getSimpleName))
+          case Left(e) => failJob(jobId, ctx, Option(e.getMessage).getOrElse(e.getClass.getSimpleName))
         }
 
   private def failJob(jobId: String, ctx: ToolContext, message: String): IO[Either[ToolError, String]] =
@@ -150,7 +163,9 @@ object GenerateImageTool extends Tool:
   private def popResult(jobId: String, path: String): String =
     val name = path.split('/').lastOption.getOrElse(jobId)
     val ext = name.split('.').lastOption.getOrElse("png")
-    val size = try Files.size(java.nio.file.Paths.get(path)) catch case _: Exception => -1L
+    val size =
+      try Files.size(java.nio.file.Paths.get(path))
+      catch case _: Exception => -1L
     val payload = Json.obj(
       "fileRefs" -> Json.obj(
         "inlined" -> 0.asJson,

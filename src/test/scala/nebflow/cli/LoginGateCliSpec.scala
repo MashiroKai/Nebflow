@@ -42,6 +42,7 @@ class LoginGateCliSpec extends FunSuite:
   /** 注入 bundle：捕获出站 + 脚本化应答（与 LoginCommandSpec 同款独立副本）。 */
   private class PostFake(replies: PartialFunction[(String, Json), Either[Throwable, Json]]):
     val calls = ListBuffer.empty[(String, Json)]
+
     def post: (String, Json) => IO[Either[Throwable, Json]] = (path, body) =>
       IO {
         calls += ((path, body))
@@ -49,7 +50,7 @@ class LoginGateCliSpec extends FunSuite:
       }
 
   private val happyReply: PartialFunction[(String, Json), Either[Throwable, Json]] = {
-    case (p, _) if p == LoginFlow.LoginPath  => Right(json("""{"ok":true}"""))
+    case (p, _) if p == LoginFlow.LoginPath => Right(json("""{"ok":true}"""))
   }
 
   private val statusJson =
@@ -100,30 +101,36 @@ class LoginGateCliSpec extends FunSuite:
     val fake = PostFake(happyReply)
     val gate: String => IO[Either[Refusal, Unit]] = _ => IO.pure(Right(()))
     val result = LoginFlow
-      .signInWith(CliContext.offline(), fake.post, IO.pure(Some(TargetAccount)), IO.pure(Some(password)), gate,
-        () => IO.pure(Right(json(statusJson))))
+      .signInWith(
+        CliContext.offline(),
+        fake.post,
+        IO.pure(Some(TargetAccount)),
+        IO.pure(Some(password)),
+        gate,
+        () => IO.pure(Right(json(statusJson)))
+      )
       .unsafeRunSync()
     assertEquals(fake.calls.map(_._1).toList, List(LoginFlow.LoginPath), "放行 ⇒ 登录 POST 照常")
     result match
       case CliResult.Text(lines) => assertEquals(lines, List("Signed in as b@example.com."))
-      case other                 => fail(s"expected H3 text, got $other")
+      case other => fail(s"expected H3 text, got $other")
 
   test("T1: 输入校验先于前置门（空账号/空密码 ⇒ no_input 且门零调用、零出站）"):
     val fake = PostFake(happyReply)
     var gateCalls = 0
-    val gate: String => IO[Either[Refusal, Unit]] = { _ =>
+    val gate: String => IO[Either[Refusal, Unit]] = _ =>
       gateCalls += 1
       IO.pure(gateRefusal)
-    }
     for (a, p) <- List[(Option[String], Option[String])](
-      (Some(""), Some(password)),
-      (None, Some(password)),
-      (Some(TargetAccount), Some("")),
-      (Some(TargetAccount), None)
-    ) do
+        (Some(""), Some(password)),
+        (None, Some(password)),
+        (Some(TargetAccount), Some("")),
+        (Some(TargetAccount), None)
+      )
+    do
       LoginFlow.signInWith(CliContext.offline(), fake.post, IO.pure(a), IO.pure(p), gate).unsafeRunSync() match
         case CliResult.Error(msg, 1) => assert(msg.contains("(code: no_input)"), msg)
-        case other                   => fail(s"expected no_input, got $other")
+        case other => fail(s"expected no_input, got $other")
     assertEquals(gateCalls, 0, "输入没给绝不让端口探测白跑（1.5s 连接超时）")
     assertEquals(fake.calls.size, 0)
 

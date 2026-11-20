@@ -26,6 +26,7 @@ import nebflow.shared.{NebflowLogger, PathUtil, SubAgentTask}
 class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
 
   private val logger = NebflowLogger.forName("nebflow.subagent-task.store")
+
   def installExecutionAuthority(authority: nebflow.core.ExecutionCommitPort): Unit =
     SubAgentTaskStore.installAuthority(baseDir, authority)
 
@@ -275,6 +276,7 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
         )
         writeTasksSync(parentSessionId, rows.filterNot(_.taskId == taskId) :+ updated)
         Right(updated)
+    end match
   }.flatMap {
     case Left(reason) => IO.pure(Left(reason))
     case Right(row) => fireWriteHook(row).as(Right(row))
@@ -311,21 +313,28 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
         )
         writeTasksSync(parentSessionId, rows.map(t => if t.taskId == taskId then updated else t))
         Right(updated)
+    end match
   }.flatMap {
     case Left(reason) => IO.pure(Left(reason))
     case Right(row) => fireWriteHook(row).as(Right(row))
   }
 
-  /** Lock order is row lock → debtLock; CompletionDebtStore must never acquire a row lock.
-    * Only current, active managed runs may persist their first completion evidence.
-    */
-  def recordManagedCompletionDebt(parent: String, task: String, run: String,
-    messages: List[nebflow.shared.Message]): IO[Boolean] = withLock {
+  /**
+   * Lock order is row lock → debtLock; CompletionDebtStore must never acquire a row lock.
+   * Only current, active managed runs may persist their first completion evidence.
+   */
+  def recordManagedCompletionDebt(
+    parent: String,
+    task: String,
+    run: String,
+    messages: List[nebflow.shared.Message]
+  ): IO[Boolean] = withLock {
     readTasksSync(parent).find(_.taskId == task) match
-      case Some(row) if Set("subtask", "subagent").contains(row.source) && row.runId.contains(run) && row.status == "running" &&
-          !row.executionStatus.exists(terminalExecutions.contains) =>
-        nebflow.core.mail.CompletionDebtStore.recordManagedSync(
-          nebflow.core.mail.CompletionDebtStore.ManagedDebt(parent, task, run, row.source, messages))
+      case Some(row)
+          if Set("subtask", "subagent").contains(row.source) && row.runId.contains(run) && row.status == "running" &&
+            !row.executionStatus.exists(terminalExecutions.contains) =>
+        nebflow.core.mail.CompletionDebtStore
+          .recordManagedSync(nebflow.core.mail.CompletionDebtStore.ManagedDebt(parent, task, run, row.source, messages))
       case _ => false
   }
 
@@ -378,8 +387,14 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
         }
     }
 
-  private[agent] def projectProtectedTerminalSync(parent: String, taskId: String, runId: String,
-    resultRef: String): Either[String, SubAgentTask] =
+  end completeRun
+
+  private[agent] def projectProtectedTerminalSync(
+    parent: String,
+    taskId: String,
+    runId: String,
+    resultRef: String
+  ): Either[String, SubAgentTask] =
     lock.lock()
     try
       val rows = readTasksSync(parent)
@@ -393,19 +408,38 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
           if row.executionStatus.exists(terminalExecutions.contains) && !compatible then Left("terminal-run-conflict")
           else
             val now = System.currentTimeMillis()
-            val updated = if compatible then row else row.copy(status = "completed", executionStatus = Some("finished"),
-              statusAt = Some(now), completedAt = Some(now), terminalReason = None, lastError = None,
-              resultRef = Some(resultRef), incomplete = Some(false), notificationId = Some(notification),
-              notificationPending = Some(true), committedRevision = Some(nextRevision(row)))
+            val updated =
+              if compatible then row
+              else
+                row.copy(
+                  status = "completed",
+                  executionStatus = Some("finished"),
+                  statusAt = Some(now),
+                  completedAt = Some(now),
+                  terminalReason = None,
+                  lastError = None,
+                  resultRef = Some(resultRef),
+                  incomplete = Some(false),
+                  notificationId = Some(notification),
+                  notificationPending = Some(true),
+                  committedRevision = Some(nextRevision(row))
+                )
             if !compatible then writeTasksSync(parent, rows.map(t => if t.taskId == taskId then updated else t))
-            val file = java.nio.channels.FileChannel.open(sessionFile(parent).toNIO, java.nio.file.StandardOpenOption.READ)
+            val file =
+              java.nio.channels.FileChannel.open(sessionFile(parent).toNIO, java.nio.file.StandardOpenOption.READ)
             try file.force(true)
             finally file.close()
             val dir = java.nio.channels.FileChannel.open(baseDir.toNIO, java.nio.file.StandardOpenOption.READ)
             try dir.force(true)
             finally dir.close()
             Right(updated)
+          end if
+      end match
     finally lock.unlock()
+
+    end try
+
+  end projectProtectedTerminalSync
 
   /** Acknowledges durable mailbox enqueue, not recipient consumption. */
   override def acknowledgeNotification(
@@ -632,12 +666,19 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
         case Some(row) if Set("completed", "failed", "cancelled").contains(row.status) => Left("already-terminal")
         case Some(row) =>
           val now = System.currentTimeMillis()
-          val updated = row.copy(status = "failed", executionStatus = Some("failed"),
-            lastError = Some(reason), terminalReason = Some(s"[manual force-terminalize] $reason"),
-            incomplete = Some(true), completedAt = Some(now), statusAt = Some(now),
-            committedRevision = Some(nextRevision(row)))
+          val updated = row.copy(
+            status = "failed",
+            executionStatus = Some("failed"),
+            lastError = Some(reason),
+            terminalReason = Some(s"[manual force-terminalize] $reason"),
+            incomplete = Some(true),
+            completedAt = Some(now),
+            statusAt = Some(now),
+            committedRevision = Some(nextRevision(row))
+          )
           writeTasksSync(parent, rows.map(t => if t.taskId == taskId then updated else t))
           Right(updated)
+      end match
     }.flatMap {
       case Left(reason) => IO.pure(Left(reason))
       case Right(row) => fireWriteHook(row).as(Right(row))
@@ -647,8 +688,9 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
   def markInvalidTerminalEnvelope(observed: SubAgentTask): IO[Boolean] = withLock {
     val rows = readTasksSync(observed.parentSessionId)
     rows.find(_.taskId == observed.taskId) match
-      case Some(row) if row.runId == observed.runId && row.committedRevision == observed.committedRevision &&
-          row.executionStatus.contains("finished") && !row.suspectedLostTerminal.contains(true) =>
+      case Some(row)
+          if row.runId == observed.runId && row.committedRevision == observed.committedRevision &&
+            row.executionStatus.contains("finished") && !row.suspectedLostTerminal.contains(true) =>
         val updated = row.copy(suspectedLostTerminal = Some(true), committedRevision = Some(nextRevision(row)))
         writeTasksSync(row.parentSessionId, rows.map(t => if t.taskId == row.taskId then updated else t))
         Some(updated)
@@ -662,8 +704,9 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
   def markSuspectedLostTerminal(observed: SubAgentTask): IO[Boolean] = withLock {
     val rows = readTasksSync(observed.parentSessionId)
     rows.find(_.taskId == observed.taskId) match
-      case Some(row) if row.runId == observed.runId && row.committedRevision == observed.committedRevision &&
-          Set("running", "pending-recovery").contains(row.status) && !row.suspectedLostTerminal.contains(true) =>
+      case Some(row)
+          if row.runId == observed.runId && row.committedRevision == observed.committedRevision &&
+            Set("running", "pending-recovery").contains(row.status) && !row.suspectedLostTerminal.contains(true) =>
         val updated = row.copy(suspectedLostTerminal = Some(true), committedRevision = Some(nextRevision(row)))
         writeTasksSync(row.parentSessionId, rows.map(t => if t.taskId == row.taskId then updated else t))
         Some(updated)
@@ -678,14 +721,21 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
     withLock {
       val rows = readTasksSync(parent)
       rows.find(_.taskId == taskId) match
-        case Some(row) if row.source == "subagent" && row.runId.isEmpty &&
-            Set("running", "pending-recovery").contains(row.status) && row.toolCallId.contains(toolCallId) =>
+        case Some(row)
+            if row.source == "subagent" && row.runId.isEmpty &&
+              Set("running", "pending-recovery").contains(row.status) && row.toolCallId.contains(toolCallId) =>
           val now = System.currentTimeMillis()
-          val updated = row.copy(status = "completed", completedAt = Some(now), statusAt = Some(now),
-            suspectedLostTerminal = None, committedRevision = Some(nextRevision(row)))
+          val updated = row.copy(
+            status = "completed",
+            completedAt = Some(now),
+            statusAt = Some(now),
+            suspectedLostTerminal = None,
+            committedRevision = Some(nextRevision(row))
+          )
           writeTasksSync(parent, rows.map(t => if t.taskId == taskId then updated else t))
           Some(updated)
         case _ => None
+      end match
     }.flatMap {
       case Some(row) => fireWriteHook(row).as(true)
       case None => IO.pure(false)

@@ -117,6 +117,7 @@ class McpManager private (
       }
       _ <- serversRef.update(_ + (id -> (client, wrapped)))
     yield ()
+    end for
 
   end connectWithTransport
 

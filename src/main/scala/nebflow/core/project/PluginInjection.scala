@@ -122,8 +122,8 @@ object PluginInjection:
                           val ref = nebflow.core.SchemePolicy.smallLlmModel().preferred.getOrElse("")
                           val (pid, mid) = ref.split("/", 2).toList match
                             case p :: m :: Nil => (p, m)
-                            case p :: Nil      => (p, "")
-                            case _             => ("", "")
+                            case p :: Nil => (p, "")
+                            case _ => ("", "")
                           Some(
                             ModelUnavailableCard.reportFor(
                               slot = nebflow.core.ModelRoles.SmallLlmWire,
@@ -136,49 +136,51 @@ object PluginInjection:
                         case _ => None
                   )
                   .flatMap { result =>
-                  // 归因精确化批（2026-10-29 作者追问）：LLM 兜底腿的两类可恢复
-                  // 失败各归各词（llm-error=调用层/候选链耗尽；parse-fail=回文不可
-                  // 用），fail-open 只留「无可尝试之物」的结构态——四态此前混记
-                  // fail-open 一词，台账无法区分可恢复与真故障。
-                  val (mode, names) = result.allocation match
-                    case JevAllocation.Allocated(ns) =>
-                      result.via.map(_.wire).getOrElse("jev") -> ns
-                    case JevAllocation.FellBack(JevFallbackKind.Off, _)       => ("off", Nil)
-                    case JevAllocation.FellBack(JevFallbackKind.LlmError, _)  => ("llm-error", Nil)
-                    case JevAllocation.FellBack(JevFallbackKind.ParseFail, _) => ("parse-fail", Nil)
-                    case JevAllocation.FellBack(_, _)                         => ("fail-open", Nil)
-                  logDuty(subject, result)
-                  if InertModes.contains(mode) then
-                    IO.pure(Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, mode)))
-                  else if FailureModes.contains(mode) then
-                    // 缺陷①（2026-11-02）：分配失败**不再**静默成 plugins=[]。
-                    // fail-closed（缺省）= 显式 Left，派发失败并点名模式词 + 真因；
-                    // `plugins.failOpenOnAllocationError=true` 才回到旧语义（空集照派，
-                    // 但至少留一条 WARN，不再无声无息）。
-                    val reason = failureReason(result.allocation)
-                    PluginsConfig.failOpenOnAllocationError.flatMap {
-                      case true =>
-                        logger
-                          .warn(
-                            s"plugin allocation '$subject': $mode — fail-open OPTED IN " +
-                              "(plugins.failOpenOnAllocationError=true), dispatch continues with an EMPTY plugin set. " +
-                              s"Reason: $reason"
+                    // 归因精确化批（2026-10-29 作者追问）：LLM 兜底腿的两类可恢复
+                    // 失败各归各词（llm-error=调用层/候选链耗尽；parse-fail=回文不可
+                    // 用），fail-open 只留「无可尝试之物」的结构态——四态此前混记
+                    // fail-open 一词，台账无法区分可恢复与真故障。
+                    val (mode, names) = result.allocation match
+                      case JevAllocation.Allocated(ns) =>
+                        result.via.map(_.wire).getOrElse("jev") -> ns
+                      case JevAllocation.FellBack(JevFallbackKind.Off, _) => ("off", Nil)
+                      case JevAllocation.FellBack(JevFallbackKind.LlmError, _) => ("llm-error", Nil)
+                      case JevAllocation.FellBack(JevFallbackKind.ParseFail, _) => ("parse-fail", Nil)
+                      case JevAllocation.FellBack(_, _) => ("fail-open", Nil)
+                    logDuty(subject, result)
+                    if InertModes.contains(mode) then
+                      IO.pure(Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, mode)))
+                    else if FailureModes.contains(mode) then
+                      // 缺陷①（2026-11-02）：分配失败**不再**静默成 plugins=[]。
+                      // fail-closed（缺省）= 显式 Left，派发失败并点名模式词 + 真因；
+                      // `plugins.failOpenOnAllocationError=true` 才回到旧语义（空集照派，
+                      // 但至少留一条 WARN，不再无声无息）。
+                      val reason = failureReason(result.allocation)
+                      PluginsConfig.failOpenOnAllocationError.flatMap {
+                        case true =>
+                          logger
+                            .warn(
+                              s"plugin allocation '$subject': $mode — fail-open OPTED IN " +
+                                "(plugins.failOpenOnAllocationError=true), dispatch continues with an EMPTY plugin set. " +
+                                s"Reason: $reason"
+                            )
+                            .as(Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, mode)))
+                        case false =>
+                          IO.pure(
+                            Left(
+                              s"plugin allocation failed ($mode) for '$subject' — the capability set is unknown, " +
+                                "refusing to dispatch with an empty plugin set (no silent degradation). " +
+                                s"Reason: $reason. " +
+                                "Fix the allocator model/provider, or set plugins.failOpenOnAllocationError=true " +
+                                "in stand.json to restore the old empty-set behaviour."
+                            )
                           )
-                          .as(Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, mode)))
-                      case false =>
-                        IO.pure(
-                          Left(
-                            s"plugin allocation failed ($mode) for '$subject' — the capability set is unknown, " +
-                              "refusing to dispatch with an empty plugin set (no silent degradation). " +
-                              s"Reason: $reason. " +
-                              "Fix the allocator model/provider, or set plugins.failOpenOnAllocationError=true " +
-                              "in stand.json to restore the old empty-set behaviour."
-                          )
-                        )
-                    }
-                  else if names.isEmpty then IO.pure(Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, mode)))
-                  else resolvePreparation(names).map(_.map(prep => (prep, AllocatedSet(names, mode))))
-                }
+                      }
+                    else if names.isEmpty then
+                      IO.pure(Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, mode)))
+                    else resolvePreparation(names).map(_.map(prep => (prep, AllocatedSet(names, mode))))
+                    end if
+                  }
             }
         }
     }
@@ -298,6 +300,8 @@ object PluginInjection:
             )
           )
       }
+
+  end injectedPluginBlock
 
   /**
    * duty 记账（INFO 单行；判定 = [[JevDeclarationDuty.evaluate]] 单点）：分配动作

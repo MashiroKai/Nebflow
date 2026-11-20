@@ -31,7 +31,11 @@ class ShellEnvCordonSpec extends FunSuite:
     val parent = Map("NEBFLOW_GATEWAY_PORT" -> "6138", "PATH" -> "/usr/bin")
     val c = ShellEnvCordon.decide(parent.keySet, "STAND", "6138")
     val sessionEnv = parent -- c.removals ++ c.additions
-    assertEquals(sessionEnv.get("NEBFLOW_GATEWAY_PORT"), None, s"session env must not leak the cross-brand port: $sessionEnv")
+    assertEquals(
+      sessionEnv.get("NEBFLOW_GATEWAY_PORT"),
+      None,
+      s"session env must not leak the cross-brand port: $sessionEnv"
+    )
     assertEquals(sessionEnv.get("STAND_GATEWAY_PORT"), Some("6138"))
     assertEquals(sessionEnv.get("PATH"), Some("/usr/bin"), "unrelated env is untouched")
   }

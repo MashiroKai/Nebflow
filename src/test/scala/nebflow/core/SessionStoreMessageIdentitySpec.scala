@@ -15,10 +15,12 @@ class SessionStoreMessageIdentitySpec extends CatsEffectSuite:
   override def munitIOTimeout: FiniteDuration = 15.seconds
 
   private def fixture: Resource[IO, (os.Path, SessionStore)] =
-    Resource.make(IO.blocking(os.temp.dir(prefix = "session-message-identity-"))) { root =>
-      // Let the store's existing one-shot debounce timer finish before removing its root.
-      IO.sleep(2100.millis) *> IO.blocking(os.remove.all(root))
-    }.map(root => (root, SessionStore(root / "sessions", root / "tasks")))
+    Resource
+      .make(IO.blocking(os.temp.dir(prefix = "session-message-identity-"))) { root =>
+        // Let the store's existing one-shot debounce timer finish before removing its root.
+        IO.sleep(2100.millis) *> IO.blocking(os.remove.all(root))
+      }
+      .map(root => (root, SessionStore(root / "sessions", root / "tasks")))
 
   private def message(id: Option[String] = Some("message-1"), run: Option[String] = Some("run-1")): Message =
     Message(MessageRole.User, Left("same text"), 42L, Some("subtask"), id, run)
@@ -59,8 +61,11 @@ class SessionStoreMessageIdentitySpec extends CatsEffectSuite:
         meta <- store.createSession("identity")
         _ <- store.switchSession(meta.id)
         observed <- Ref.of[IO, List[(List[Message], List[Message])]](Nil)
-        _ <- IO(store.setSessionChangedHook(id =>
-          (disk(root, id), store.getActiveMessages).tupled.flatMap(snapshot => observed.update(_ :+ snapshot))))
+        _ <- IO(
+          store.setSessionChangedHook(id =>
+            (disk(root, id), store.getActiveMessages).tupled.flatMap(snapshot => observed.update(_ :+ snapshot))
+          )
+        )
         added <- store.appendDurableMessage(meta.id, message())
         persisted <- disk(root, meta.id)
         snapshots <- observed.get
@@ -177,6 +182,7 @@ class SessionStoreMessageIdentitySpec extends CatsEffectSuite:
           assertEquals(persisted, old :+ message())
         ).guarantee(release.complete(()).void *> IO { store.beforeDirtyMessageWrite = _ => IO.unit })
       yield ()
+      end for
     }
   }
 
@@ -191,27 +197,29 @@ class SessionStoreMessageIdentitySpec extends CatsEffectSuite:
         notifications <- Ref.of[IO, Int](0)
         _ <- IO(store.setSessionChangedHook(_ => notifications.update(_ + 1)))
         file = root / "sessions" / s"${meta.id}.json"
-        failed <- Resource.make(IO.blocking {
-          os.remove(file)
-          os.makeDir(file)
-          os.write(file / "keep", "old")
-        })(_ => IO.blocking(os.remove.all(file))).use { _ =>
-          for
-            failed <- store.appendDurableMessage(meta.id, message()).attempt
-            preserved <- store.loadMessagesForSession(meta.id)
-            active <- store.getActiveMessages
-            afterMeta <- store.getSessionMeta(meta.id)
-            count <- notifications.get
-            evidence <- IO.blocking(os.read(file / "keep"))
-          yield
-            assert(failed.isLeft)
-            assertEquals(preserved, pending)
-            assertEquals(active, pending)
-            assertEquals(afterMeta, beforeMeta)
-            assertEquals(count, 0)
-            assertEquals(evidence, "old")
-            failed
-        }
+        failed <- Resource
+          .make(IO.blocking {
+            os.remove(file)
+            os.makeDir(file)
+            os.write(file / "keep", "old")
+          })(_ => IO.blocking(os.remove.all(file)))
+          .use { _ =>
+            for
+              failed <- store.appendDurableMessage(meta.id, message()).attempt
+              preserved <- store.loadMessagesForSession(meta.id)
+              active <- store.getActiveMessages
+              afterMeta <- store.getSessionMeta(meta.id)
+              count <- notifications.get
+              evidence <- IO.blocking(os.read(file / "keep"))
+            yield
+              assert(failed.isLeft)
+              assertEquals(preserved, pending)
+              assertEquals(active, pending)
+              assertEquals(afterMeta, beforeMeta)
+              assertEquals(count, 0)
+              assertEquals(evidence, "old")
+              failed
+          }
         retried <- store.appendDurableMessage(meta.id, message())
         persisted <- disk(root, meta.id)
         count <- notifications.get
@@ -260,6 +268,7 @@ class SessionStoreMessageIdentitySpec extends CatsEffectSuite:
         assertEquals(raw, "[broken")
         assertEquals(evidence, "evidence")
         assertEquals(files, Set("corrupt.json", "unreadable.json"))
+      end for
     }
   }
 
@@ -309,7 +318,8 @@ class SessionStoreMessageIdentitySpec extends CatsEffectSuite:
     fixture.use { case (root, store) =>
       val sid = "external-test-pages"
       val history = (1 to 2000).toList.map(i =>
-        message(id = Some(s"old-$i")).copy(role = MessageRole.Assistant, content = Left(s"answer-$i")))
+        message(id = Some(s"old-$i")).copy(role = MessageRole.Assistant, content = Left(s"answer-$i"))
+      )
       def rows(from: Int, end: Int): List[UiMessage] =
         (from to end).toList.map(i => UiMessage.Ai(s"answer-$i", timestamp = 42L))
       for
@@ -321,8 +331,10 @@ class SessionStoreMessageIdentitySpec extends CatsEffectSuite:
         previous <- store.getHistoryPage(sid, 2, Some(latest._3))
         first <- store.getUiMessages(sid, 0, 2)
         all <- store.getUiMessages(sid, 0, 0)
-        _ <- store.appendDurableMessage(sid, message(id = Some("last")).copy(
-          role = MessageRole.Assistant, content = Left("answer-2001")))
+        _ <- store.appendDurableMessage(
+          sid,
+          message(id = Some("last")).copy(role = MessageRole.Assistant, content = Left("answer-2001"))
+        )
         updated <- store.getHistoryPage(sid, 2, None)
       yield
         assertEquals(latest, (rows(1999, 2000), 2000, 1998, true))
@@ -330,6 +342,7 @@ class SessionStoreMessageIdentitySpec extends CatsEffectSuite:
         assertEquals(first, (rows(1, 2), 2000))
         assertEquals(all._1.size, 2000)
         assertEquals(updated, (rows(2000, 2001), 2001, 1999, true))
+      end for
     }
   }
 
@@ -376,6 +389,7 @@ class SessionStoreMessageIdentitySpec extends CatsEffectSuite:
         assert(ref != otherRef)
         assertEquals(os.Path(ref) / os.up, root / "sessions" / "terminal-test")
         assertEquals(history, Nil)
+      end for
     }
   }
 
@@ -387,7 +401,9 @@ class SessionStoreMessageIdentitySpec extends CatsEffectSuite:
         before <- IO.blocking(os.read.bytes(os.Path(ref)).toList)
         sameRef <- store.saveTerminalEnvelope("terminal-test", "run", event)
         afterRetry <- IO.blocking(os.read.bytes(os.Path(ref)).toList)
-        conflict <- store.saveTerminalEnvelope("terminal-test", "run", event.copy(payload = "conflicting result")).attempt
+        conflict <- store
+          .saveTerminalEnvelope("terminal-test", "run", event.copy(payload = "conflicting result"))
+          .attempt
         afterConflict <- IO.blocking(os.read.bytes(os.Path(ref)).toList)
         restored <- store.loadTerminalEnvelope("terminal-test", "run")
       yield
@@ -396,6 +412,7 @@ class SessionStoreMessageIdentitySpec extends CatsEffectSuite:
         assert(conflict.isLeft)
         assertEquals(afterConflict, before)
         assertEquals(restored, Some(event))
+      end for
     }
   }
 
@@ -424,6 +441,7 @@ class SessionStoreMessageIdentitySpec extends CatsEffectSuite:
         assertEquals(evidence, "evidence")
         assertEquals(restored, Some(event))
         assert(invalid.isLeft)
+      end for
     }
   }
 

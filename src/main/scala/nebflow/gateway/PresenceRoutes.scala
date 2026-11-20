@@ -648,14 +648,14 @@ private[gateway] object PresenceRoutes:
               .handleErrorWith(_ => IO.pure((Nil, Map.empty[String, String])))
               .flatMap { case (taskRows, statuses) =>
                 nebflow.core.delegate.DelegateLiveness.adopted(sharedResources.actorSystem, reg).flatMap { adopted =>
-                ChainsReadFace.rowsJson(reg, archived, statuses, taskRows, adopted).flatMap { body =>
-                  // M2 缓存语义小刀（v2 §3.1 ① · 链集合行）：ETag = 载荷内容寻址。
-                  // 行投影由不可变事实流组成（DelegateRegistry 落盘记录 × 台账判词行 ×
-                  // 任务状态读数）——`live` 只是 {status:"running"}|null 的活性提示位
-                  // （ChainsReadFace delegateJson 同源），无逐秒漂移字段 ⇒ 内容 hash
-                  // 稳定（服务端本无 gen 计数器——flowMapTab.bumpGen 是前端概念）。
-                  HttpCache.conditionalOk(req, body, HttpCache.ofJson(body))
-                }
+                  ChainsReadFace.rowsJson(reg, archived, statuses, taskRows, adopted).flatMap { body =>
+                    // M2 缓存语义小刀（v2 §3.1 ① · 链集合行）：ETag = 载荷内容寻址。
+                    // 行投影由不可变事实流组成（DelegateRegistry 落盘记录 × 台账判词行 ×
+                    // 任务状态读数）——`live` 只是 {status:"running"}|null 的活性提示位
+                    // （ChainsReadFace delegateJson 同源），无逐秒漂移字段 ⇒ 内容 hash
+                    // 稳定（服务端本无 gen 计数器——flowMapTab.bumpGen 是前端概念）。
+                    HttpCache.conditionalOk(req, body, HttpCache.ofJson(body))
+                  }
                 }
               }
           }
@@ -1013,17 +1013,17 @@ private[gateway] object PresenceRoutes:
               .handleErrorWith(_ => IO.pure((Nil, Map.empty[String, String])))
               .flatMap { case (taskRows, statuses) =>
                 nebflow.core.delegate.DelegateLiveness.adopted(sharedResources.actorSystem, reg).flatMap { adopted =>
-                ChainsReadFace
-                  .delegatesJson(
-                    reg,
-                    archived,
-                    statuses,
-                    project,
-                    sharedResources.subAgentTaskStore.findByParent,
-                    taskRows,
-                    adopted
-                  )
-                  .flatMap(body => HttpCache.conditionalOk(req, body, HttpCache.ofJson(body)))
+                  ChainsReadFace
+                    .delegatesJson(
+                      reg,
+                      archived,
+                      statuses,
+                      project,
+                      sharedResources.subAgentTaskStore.findByParent,
+                      taskRows,
+                      adopted
+                    )
+                    .flatMap(body => HttpCache.conditionalOk(req, body, HttpCache.ofJson(body)))
                 }
               }
           }
@@ -1043,26 +1043,26 @@ private[gateway] object PresenceRoutes:
             sharedResources.agentRegistry.get.flatMap { reg =>
               sharedResources.subAgentTaskStore.findByParent(id).flatMap { children =>
                 nebflow.core.delegate.DelegateLiveness.adopted(sharedResources.actorSystem, reg).flatMap { adopted =>
-                ChainsReadFace.delegateJson(id, reg, children.size, adopted).flatMap {
-                  case None =>
-                    NotFound(Json.obj("error" -> s"no delegate record for id '$id'".asJson))
-                  case Some(core) =>
-                    nebflow.core.executor.ExternalOutputStore.read(id, 0L).flatMap {
-                      case None =>
-                        HttpCache.conditionalOk(
-                          req,
-                          core.deepMerge(Json.obj("output" -> Json.Null)),
-                          HttpCache.ofJson(core.deepMerge(Json.obj("output" -> Json.Null)))
-                        )
-                      case Some(o) =>
-                        val body = core.deepMerge(Json.obj("output" -> externalOutputJson(o)))
-                        // M2 缓存语义小刀（v2 §3.1 ① · 台账行）：ETag = 载荷内容寻址。
-                        // 台账 = 不可变事实流（TaskLedger/ChainStore 条目只增不改；
-                        // output 为留存首窗只增）⇒ 未追加时载荷逐字节稳定。`live` 同
-                        // `/api/chains` 行（{status:"running"}|null，无逐秒漂移）。
-                        HttpCache.conditionalOk(req, body, HttpCache.ofJson(body))
-                    }
-                }
+                  ChainsReadFace.delegateJson(id, reg, children.size, adopted).flatMap {
+                    case None =>
+                      NotFound(Json.obj("error" -> s"no delegate record for id '$id'".asJson))
+                    case Some(core) =>
+                      nebflow.core.executor.ExternalOutputStore.read(id, 0L).flatMap {
+                        case None =>
+                          HttpCache.conditionalOk(
+                            req,
+                            core.deepMerge(Json.obj("output" -> Json.Null)),
+                            HttpCache.ofJson(core.deepMerge(Json.obj("output" -> Json.Null)))
+                          )
+                        case Some(o) =>
+                          val body = core.deepMerge(Json.obj("output" -> externalOutputJson(o)))
+                          // M2 缓存语义小刀（v2 §3.1 ① · 台账行）：ETag = 载荷内容寻址。
+                          // 台账 = 不可变事实流（TaskLedger/ChainStore 条目只增不改；
+                          // output 为留存首窗只增）⇒ 未追加时载荷逐字节稳定。`live` 同
+                          // `/api/chains` 行（{status:"running"}|null，无逐秒漂移）。
+                          HttpCache.conditionalOk(req, body, HttpCache.ofJson(body))
+                      }
+                  }
                 }
               }
             }
@@ -1164,28 +1164,35 @@ private[gateway] object PresenceRoutes:
                   IO.blocking(nebflow.core.delegate.DelegateRegistry.clearDisposition(id)).flatMap {
                     case Left(err) => NotFound(Json.obj("error" -> err.asJson))
                     case Right(_) =>
-                      Ok(Json.obj(
-                        "id" -> id.asJson,
-                        "disposition" -> Json.Null,
-                        "dispositionAt" -> Json.Null,
-                        "visibility" -> visibilityWord(id).asJson
-                      ))
+                      Ok(
+                        Json.obj(
+                          "id" -> id.asJson,
+                          "disposition" -> Json.Null,
+                          "dispositionAt" -> Json.Null,
+                          "visibility" -> visibilityWord(id).asJson
+                        )
+                      )
                   }
                 else if !nebflow.core.delegate.DelegateRegistry.isDispositionWord(value) then
-                  BadRequest(Json.obj(
-                    "error" -> s"unknown disposition '$value' (expected ${nebflow.core.delegate.DelegateRegistry.DispositionWords.toList.sorted.mkString(", ")} or an empty value to clear)".asJson
-                  ))
+                  BadRequest(
+                    Json.obj(
+                      "error" -> s"unknown disposition '$value' (expected ${nebflow.core.delegate.DelegateRegistry.DispositionWords.toList.sorted.mkString(", ")} or an empty value to clear)".asJson
+                    )
+                  )
                 else
                   IO.blocking(nebflow.core.delegate.DelegateRegistry.setDisposition(id, value)).flatMap {
                     case Left(err) => NotFound(Json.obj("error" -> err.asJson))
                     case Right(at) =>
-                      Ok(Json.obj(
-                        "id" -> id.asJson,
-                        "disposition" -> value.asJson,
-                        "dispositionAt" -> at.asJson,
-                        "visibility" -> visibilityWord(id).asJson
-                      ))
+                      Ok(
+                        Json.obj(
+                          "id" -> id.asJson,
+                          "disposition" -> value.asJson,
+                          "dispositionAt" -> at.asJson,
+                          "visibility" -> visibilityWord(id).asJson
+                        )
+                      )
                   }
+                end if
             }
         }
 
@@ -1437,47 +1444,47 @@ private[gateway] object PresenceRoutes:
                             // Followers read the slot on their next turn. Explicit session
                             // pins, both in memory and on disk, are never changed here.
                             locally {
-                                val persistedLeg = IO.unit
-                                // config-single-source batch (2026-11-05): the Nebula
-                                // primary chain IS the global chain, and its single
-                                // source is `llm.fallback` in the config file. Mirror the
-                                // write there so the panel edit is visible/editable in
-                                // `stand.json` and the engine (which reads the file
-                                // first) never serves a stale order. Failure is loud but
-                                // non-fatal for the sidecar write that already landed.
-                                val configLeg =
-                                  if slotName != nebflow.core.SchemePolicy.NebulaName then IO.unit
-                                  else
-                                    // fallback 废除批：镜像进 llm.fallback 的链只带 preferred
-                                    // （该段已退役为「全局默认模型」面，fallbacks 不再被读——
-                                    // 不再往盘上写死数据）。
-                                    nebflow.service.ConfigService
-                                      .setFallbackChain(own.map(c => c.copy(fallbacks = Nil)))
-                                      .attempt
-                                      .flatMap {
-                                        case Right(_) =>
-                                          sharedResources.providerRegistry.setGlobalModel(
-                                            own.map(_.copy(fallbacks = Nil))
-                                          )
-                                        case Left(e) =>
-                                          IO.delay(
-                                            nebflow.shared.NebflowLogger
-                                              .forName("nebflow.config.fallback")
-                                              .warnSync(
-                                                s"[fallback-chain] mirroring the Nebula chain into llm.fallback failed: ${e.getMessage}"
-                                              )
-                                          )
-                                      }
-                                configLeg *> persistedLeg *> Ok(
-                                  Json.obj(
-                                    "updated" -> true.asJson,
-                                    "mode" -> mode.asJson,
-                                    "chain" -> own.asJson,
-                                    "effectiveChain" -> effective.asJson,
-                                    "resolvedFrom" -> resolvedFrom.asJson
-                                  )
+                              val persistedLeg = IO.unit
+                              // config-single-source batch (2026-11-05): the Nebula
+                              // primary chain IS the global chain, and its single
+                              // source is `llm.fallback` in the config file. Mirror the
+                              // write there so the panel edit is visible/editable in
+                              // `stand.json` and the engine (which reads the file
+                              // first) never serves a stale order. Failure is loud but
+                              // non-fatal for the sidecar write that already landed.
+                              val configLeg =
+                                if slotName != nebflow.core.SchemePolicy.NebulaName then IO.unit
+                                else
+                                  // fallback 废除批：镜像进 llm.fallback 的链只带 preferred
+                                  // （该段已退役为「全局默认模型」面，fallbacks 不再被读——
+                                  // 不再往盘上写死数据）。
+                                  nebflow.service.ConfigService
+                                    .setFallbackChain(own.map(c => c.copy(fallbacks = Nil)))
+                                    .attempt
+                                    .flatMap {
+                                      case Right(_) =>
+                                        sharedResources.providerRegistry.setGlobalModel(
+                                          own.map(_.copy(fallbacks = Nil))
+                                        )
+                                      case Left(e) =>
+                                        IO.delay(
+                                          nebflow.shared.NebflowLogger
+                                            .forName("nebflow.config.fallback")
+                                            .warnSync(
+                                              s"[fallback-chain] mirroring the Nebula chain into llm.fallback failed: ${e.getMessage}"
+                                            )
+                                        )
+                                    }
+                              configLeg *> persistedLeg *> Ok(
+                                Json.obj(
+                                  "updated" -> true.asJson,
+                                  "mode" -> mode.asJson,
+                                  "chain" -> own.asJson,
+                                  "effectiveChain" -> effective.asJson,
+                                  "resolvedFrom" -> resolvedFrom.asJson
                                 )
-                              }
+                              )
+                            }
                           case false =>
                             InternalServerError(Json.obj("error" -> "Failed to write agent.json".asJson))
                         }
@@ -2371,34 +2378,41 @@ private[gateway] object PresenceRoutes:
               checkHttpBaseUrl(baseUrl) match
                 case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
                 case Right(base) =>
-                  configRef.get.flatMap { cfg =>
-                    val stored = name
-                      .flatMap(n => cfg.llm.providers.get(n))
-                      .orElse(cfg.llm.providers.values.find(_.baseUrl.replaceAll("/+$", "") == base))
-                    val face =
-                      if protocol == "openai" then LlmProtocol.OpenAI
-                      else if protocol == "anthropic" then LlmProtocol.Anthropic
-                      else stored.map(_.protocol).getOrElse(LlmProtocol.Anthropic)
-                    val rawKey = body.hcursor.downField("apiKey").as[String].toOption.map(_.trim).getOrElse("")
-                    val apiKey =
-                      // Masked key from the edit dialog — fall back to the stored one.
-                      if rawKey.nonEmpty && rawKey != "***" then rawKey
-                      else stored.map(p => nebflow.core.secrets.ConfigCredentialStore.resolveManaged(
-                        nebflow.shared.PathUtil.dataRoot, p.apiKey, "provider-model-list")).getOrElse("")
-                    ModelListFaces.models(face, base) match
-                      case Nil => BadGateway(Json.obj("error" -> ModelListFaces.noEndpointMessage(face).asJson))
-                      case urls =>
-                        ProviderProbe.fetchProviderModels(urls, apiKey, face.name).flatMap {
-                          case Right(models) => Ok(Json.obj("models" -> models.asJson))
-                          case Left(err) => BadGateway(Json.obj("error" -> err.asJson))
-                        }
-                  }.handleErrorWith {
-                    case e: IllegalStateException if e.getMessage == "Credential reference is missing" =>
-                      BadRequest(Json.obj("error" -> "Credential reference is missing".asJson))
-                    case e: IllegalStateException if e.getMessage == "Credential reference is unreadable" =>
-                      BadRequest(Json.obj("error" -> "Credential reference is unreadable".asJson))
-                    case e => IO.raiseError(e)
-                  }
+                  configRef.get
+                    .flatMap { cfg =>
+                      val stored = name
+                        .flatMap(n => cfg.llm.providers.get(n))
+                        .orElse(cfg.llm.providers.values.find(_.baseUrl.replaceAll("/+$", "") == base))
+                      val face =
+                        if protocol == "openai" then LlmProtocol.OpenAI
+                        else if protocol == "anthropic" then LlmProtocol.Anthropic
+                        else stored.map(_.protocol).getOrElse(LlmProtocol.Anthropic)
+                      val rawKey = body.hcursor.downField("apiKey").as[String].toOption.map(_.trim).getOrElse("")
+                      val apiKey =
+                        // Masked key from the edit dialog — fall back to the stored one.
+                        if rawKey.nonEmpty && rawKey != "***" then rawKey
+                        else
+                          stored
+                            .map(p =>
+                              nebflow.core.secrets.ConfigCredentialStore
+                                .resolveManaged(nebflow.shared.PathUtil.dataRoot, p.apiKey, "provider-model-list")
+                            )
+                            .getOrElse("")
+                      ModelListFaces.models(face, base) match
+                        case Nil => BadGateway(Json.obj("error" -> ModelListFaces.noEndpointMessage(face).asJson))
+                        case urls =>
+                          ProviderProbe.fetchProviderModels(urls, apiKey, face.name).flatMap {
+                            case Right(models) => Ok(Json.obj("models" -> models.asJson))
+                            case Left(err) => BadGateway(Json.obj("error" -> err.asJson))
+                          }
+                    }
+                    .handleErrorWith {
+                      case e: IllegalStateException if e.getMessage == "Credential reference is missing" =>
+                        BadRequest(Json.obj("error" -> "Credential reference is missing".asJson))
+                      case e: IllegalStateException if e.getMessage == "Credential reference is unreadable" =>
+                        BadRequest(Json.obj("error" -> "Credential reference is unreadable".asJson))
+                      case e => IO.raiseError(e)
+                    }
             end if
           }
         }
@@ -2438,31 +2452,35 @@ private[gateway] object PresenceRoutes:
             else if protocolDecoded.isLeft then
               BadRequest(Json.obj("error" -> protocolDecoded.swap.toOption.get.asJson))
             else
-              configRef.get.flatMap { cfg =>
-                val stored = cfg.llm.providers.get(name).map { p =>
-                  p.copy(apiKey = nebflow.core.secrets.ConfigCredentialStore.resolveManaged(
-                    nebflow.shared.PathUtil.dataRoot, p.apiKey, "provider-probe"))
+              configRef.get
+                .flatMap { cfg =>
+                  val stored = cfg.llm.providers.get(name).map { p =>
+                    p.copy(apiKey =
+                      nebflow.core.secrets.ConfigCredentialStore
+                        .resolveManaged(nebflow.shared.PathUtil.dataRoot, p.apiKey, "provider-probe")
+                    )
+                  }
+                  (baseUrlOv, stored) match
+                    case (None, None) =>
+                      NotFound(Json.obj("error" -> s"unknown provider '$name'".asJson))
+                    case (None, Some(p)) =>
+                      if !p.models.exists(_.id == model) then
+                        NotFound(Json.obj("error" -> s"provider '$name' has no model '$model'".asJson))
+                      else runProviderTest(p.protocol, p.baseUrl, p.apiKey, model, List(p.apiKey))
+                    case (Some(base), _) =>
+                      // 覆写腿（provider 配置页测试未保存表单值）：协议缺省 openai
+                      // （编辑弹窗协议下拉的通用兜底同源）；stored key 并入脱敏池。
+                      val proto = protocolDecoded.toOption.flatten.getOrElse(LlmProtocol.OpenAI)
+                      val key = apiKeyOv.getOrElse(stored.map(_.apiKey).getOrElse(""))
+                      runProviderTest(proto, base, key, model, List(key) ++ stored.map(_.apiKey).toList)
                 }
-                (baseUrlOv, stored) match
-                  case (None, None) =>
-                    NotFound(Json.obj("error" -> s"unknown provider '$name'".asJson))
-                  case (None, Some(p)) =>
-                    if !p.models.exists(_.id == model) then
-                      NotFound(Json.obj("error" -> s"provider '$name' has no model '$model'".asJson))
-                    else runProviderTest(p.protocol, p.baseUrl, p.apiKey, model, List(p.apiKey))
-                  case (Some(base), _) =>
-                    // 覆写腿（provider 配置页测试未保存表单值）：协议缺省 openai
-                    // （编辑弹窗协议下拉的通用兜底同源）；stored key 并入脱敏池。
-                    val proto = protocolDecoded.toOption.flatten.getOrElse(LlmProtocol.OpenAI)
-                    val key = apiKeyOv.getOrElse(stored.map(_.apiKey).getOrElse(""))
-                    runProviderTest(proto, base, key, model, List(key) ++ stored.map(_.apiKey).toList)
-              }.handleErrorWith {
-                case e: IllegalStateException if e.getMessage == "Credential reference is missing" =>
-                  BadRequest(Json.obj("error" -> "Credential reference is missing".asJson))
-                case e: IllegalStateException if e.getMessage == "Credential reference is unreadable" =>
-                  BadRequest(Json.obj("error" -> "Credential reference is unreadable".asJson))
-                case e => IO.raiseError(e)
-              }
+                .handleErrorWith {
+                  case e: IllegalStateException if e.getMessage == "Credential reference is missing" =>
+                    BadRequest(Json.obj("error" -> "Credential reference is missing".asJson))
+                  case e: IllegalStateException if e.getMessage == "Credential reference is unreadable" =>
+                    BadRequest(Json.obj("error" -> "Credential reference is unreadable".asJson))
+                  case e => IO.raiseError(e)
+                }
             end if
           }
         }

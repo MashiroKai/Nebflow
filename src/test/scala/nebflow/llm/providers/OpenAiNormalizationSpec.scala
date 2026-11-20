@@ -123,3 +123,4 @@ class OpenAiNormalizationSpec extends FunSuite:
     assert(text.contains("provider=cmdcode"), text)
     assert(text.contains("model=deepseek/deepseek-v4.1-flash"), text)
   }
+end OpenAiNormalizationSpec

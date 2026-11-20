@@ -55,11 +55,13 @@ final class PerceptionEngineLeg(enginePort: Int, token: String):
       val resp = http.send(req, HttpResponse.BodyHandlers.ofString())
       if resp.statusCode() == 200 then io.circe.parser.parse(resp.body()).toOption
       else None
-    }.attempt.map(_.toOption.flatten)
+    }.attempt
+      .map(_.toOption.flatten)
 
   /** 投递出域（见类注）。永不抛——任何传输失败都按「引擎不可达」返回 false。 */
   def deliver(env: DeliveryEnvelope, dedupKey: String): IO[Boolean] =
-    call("/api/perception/internal/deliver",
+    call(
+      "/api/perception/internal/deliver",
       Json.obj(
         "text" -> env.text.asJson,
         "priority" -> env.priority.asJson,
@@ -76,14 +78,18 @@ final class PerceptionEngineLeg(enginePort: Int, token: String):
           case Some(_) => IO.unit
           case None =>
             if n >= 3 then
-              logger.warn(
-                s"perception broadcast dropped after 3 attempts: " +
-                  s"${json.hcursor.downField("type").as[String].getOrElse("?")}"
-              ).void
+              logger
+                .warn(
+                  s"perception broadcast dropped after 3 attempts: " +
+                    s"${json.hcursor.downField("type").as[String].getOrElse("?")}"
+                )
+                .void
             else IO.sleep((1L << (n - 1)).seconds) *> attempt(n + 1)
         }
       }
     attempt(1)
+
+  end broadcast
 
   /** L1 判定 transport（见类注）。None = 引擎不可达（judge 侧按 Unavailable 搁置 spool）。 */
   def llmJudge(mail: IncomingMail): IO[Option[String]] =
@@ -102,12 +108,13 @@ object PerceptionEngineLeg:
   def judgeViaEngine(leg: PerceptionEngineLeg): MailIncomingJudge =
     if PerceptionService.LlmJudgeEnabled then
       Some { (mail: IncomingMail) =>
-        leg.llmJudge(mail)
+        leg
+          .llmJudge(mail)
           .timeout(MailImportanceJudge.TimeoutSec.seconds)
           .attempt
           .map {
             case Right(Some(reply)) => MailImportanceJudge.parseVerdict(reply)
-            case _                  => L1Verdict.Unavailable
+            case _ => L1Verdict.Unavailable
           }
       }
     else None

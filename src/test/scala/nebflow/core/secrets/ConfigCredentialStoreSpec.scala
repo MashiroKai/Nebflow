@@ -6,6 +6,7 @@ import scala.jdk.CollectionConverters.*
 import munit.FunSuite
 
 class ConfigCredentialStoreSpec extends FunSuite:
+
   test("mint and managed resolution repeat twenty times without exposing the value in the reference") {
     val root = os.temp.dir(prefix = "config-credential-")
     try
@@ -15,20 +16,29 @@ class ConfigCredentialStoreSpec extends FunSuite:
         assert(ref.startsWith("secret:config-"))
         assert(!ref.contains(value))
         val file = root / "secrets" / ref.stripPrefix("secret:")
-        assertEquals(Files.getPosixFilePermissions(file.toNIO).asScala.toSet,
-          Set(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE))
+        assertEquals(
+          Files.getPosixFilePermissions(file.toNIO).asScala.toSet,
+          Set(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)
+        )
         var events = List.empty[(String, String)]
-        val resolved = ConfigCredentialStore.resolve(root, ref, "test-reader", (who, key) => events = events :+ (who -> key))
+        val resolved =
+          ConfigCredentialStore.resolve(root, ref, "test-reader", (who, key) => events = events :+ (who -> key))
         assertEquals(resolved, value)
         assertEquals(events, List("test-reader" -> ref))
-        assertEquals(ConfigCredentialStore.resolve(root, value, "test-reader", (_, _) => fail("inline read audited")), value)
+        assertEquals(
+          ConfigCredentialStore.resolve(root, value, "test-reader", (_, _) => fail("inline read audited")),
+          value
+        )
     finally os.remove.all(root)
+    end try
   }
 
   test("invalid config references fail closed") {
     val root = os.temp.dir(prefix = "config-credential-invalid-")
-    try intercept[IllegalArgumentException] {
-      ConfigCredentialStore.resolve(root, "secret:config-../../escape", "test-reader", (_, _) => ())
-    }
+    try
+      intercept[IllegalArgumentException] {
+        ConfigCredentialStore.resolve(root, "secret:config-../../escape", "test-reader", (_, _) => ())
+      }
     finally os.remove.all(root)
   }
+end ConfigCredentialStoreSpec

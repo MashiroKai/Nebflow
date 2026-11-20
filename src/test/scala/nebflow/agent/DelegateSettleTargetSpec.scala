@@ -32,6 +32,7 @@ class DelegateSettleTargetSpec extends CatsEffectSuite:
   private final class RecordingSup(seed: Ref[IO, List[AgentEvent]]) extends ActorRef[AgentEvent]:
     val path: ActorPath = ActorPath("recording-sup", Nil)
     def !(msg: AgentEvent): IO[Unit] = seed.update(_ :+ msg)
+
     def ?[Reply](makeMsg: ActorRef[Reply] => AgentEvent, timeout: Option[FiniteDuration]): IO[Reply] =
       IO.raiseError(new UnsupportedOperationException("spec recording ref does not answer asks"))
 
@@ -39,6 +40,7 @@ class DelegateSettleTargetSpec extends CatsEffectSuite:
   private final class DeadChild extends ActorRef[AgentCommand]:
     val path: ActorPath = ActorPath("dead-child", Nil)
     def !(msg: AgentCommand): IO[Unit] = IO.unit
+
     def ?[Reply](makeMsg: ActorRef[Reply] => AgentCommand, timeout: Option[FiniteDuration]): IO[Reply] =
       IO.raiseError(new UnsupportedOperationException("spec child ref does not answer asks"))
 
@@ -68,11 +70,13 @@ class DelegateSettleTargetSpec extends CatsEffectSuite:
     val a: ActorRef[AgentEvent] = new ActorRef[AgentEvent]:
       val path = ActorPath("a", Nil)
       def !(m: AgentEvent) = IO.unit
-      def ?[R](f: ActorRef[R] => AgentEvent, t: Option[FiniteDuration]) = IO.raiseError(new UnsupportedOperationException)
+      def ?[R](f: ActorRef[R] => AgentEvent, t: Option[FiniteDuration]) =
+        IO.raiseError(new UnsupportedOperationException)
     val b: ActorRef[AgentEvent] = new ActorRef[AgentEvent]:
       val path = ActorPath("b", Nil)
       def !(m: AgentEvent) = IO.unit
-      def ?[R](f: ActorRef[R] => AgentEvent, t: Option[FiniteDuration]) = IO.raiseError(new UnsupportedOperationException)
+      def ?[R](f: ActorRef[R] => AgentEvent, t: Option[FiniteDuration]) =
+        IO.raiseError(new UnsupportedOperationException)
     assertEquals(AgentFinishTurn.pickSettleTargets(List(a), Some(b)), List(a))
     assertEquals(got.get(), 0)
   }
@@ -82,7 +86,8 @@ class DelegateSettleTargetSpec extends CatsEffectSuite:
     val sup: ActorRef[AgentEvent] = new ActorRef[AgentEvent]:
       val path = ActorPath("sup", Nil)
       def !(m: AgentEvent) = IO.unit
-      def ?[R](f: ActorRef[R] => AgentEvent, t: Option[FiniteDuration]) = IO.raiseError(new UnsupportedOperationException)
+      def ?[R](f: ActorRef[R] => AgentEvent, t: Option[FiniteDuration]) =
+        IO.raiseError(new UnsupportedOperationException)
     assertEquals(AgentFinishTurn.pickSettleTargets(Nil, Some(sup)), List(sup))
   }
 
@@ -103,8 +108,8 @@ class DelegateSettleTargetSpec extends CatsEffectSuite:
   test("resolveSettleTargets: 根会话 / 未注册会话 ⇒ 目标仍为空（无监督者不得凭空造一个）") {
     for
       rootReg <- Ref.of[IO, Map[String, AgentRecord]](
-                   Map("root-session" -> record("root-session", AgentKind.Root, None))
-                 )
+        Map("root-session" -> record("root-session", AgentKind.Root, None))
+      )
       asRoot <- AgentFinishTurn.resolveSettleTargets(rootReg, Some("root-session"), Nil)
       _ = assertEquals(asRoot, List.empty[ActorRef[AgentEvent]])
       unknownReg <- Ref.of[IO, Map[String, AgentRecord]](Map.empty)
@@ -113,3 +118,4 @@ class DelegateSettleTargetSpec extends CatsEffectSuite:
       noSid <- AgentFinishTurn.resolveSettleTargets(unknownReg, None, Nil)
     yield assertEquals(noSid, List.empty[ActorRef[AgentEvent]])
   }
+end DelegateSettleTargetSpec

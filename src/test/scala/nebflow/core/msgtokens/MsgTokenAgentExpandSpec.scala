@@ -58,6 +58,7 @@ class MsgTokenAgentExpandSpec extends CatsEffectSuite:
         out2 <- reg.resolveForAgent(s"引 ${m.get.token}")
         _ = assert(out2.contains(s"[引用 · 消息 $core"), s"裸牌抬头：$out2")
       yield ()
+      end for
     }
   }
 
@@ -85,7 +86,7 @@ class MsgTokenAgentExpandSpec extends CatsEffectSuite:
   test("③ 解析失败显式（缺 msg: 前缀）：替换为 [引用未能解析：…]，原串不泄漏在标记之外") {
     withRegistry() { (reg, _) =>
       val core = s"${reg.shortCode(Sid)}-000101"
-      val bad = s"{{$core}}"                       // 作者现场写法：少了 msg:
+      val bad = s"{{$core}}" // 作者现场写法：少了 msg:
       for
         m <- reg.mint(Some(Sid), "真实消息")
         out <- reg.resolveForAgent(s"请看 $bad 这条")
@@ -121,6 +122,7 @@ class MsgTokenAgentExpandSpec extends CatsEffectSuite:
         _ = assert(!crossOut.contains("另一实例里的消息"), "跨实例牌不得被外部数据命中")
         _ = os.remove.all(otherTmp)
       yield ()
+      end for
     }
   }
 
@@ -128,20 +130,20 @@ class MsgTokenAgentExpandSpec extends CatsEffectSuite:
     withRegistry() { (reg, _) =>
       val core8 = s"${reg.shortCode(Sid)}-000001"
       val cases = List(
-        s"{{msg:${reg.shortCode(Sid)}-001}}" -> "核心格式不符",     // 3 位序号
-        s"{{MSG:$core8}}" -> "核心格式不符",                        // 大写前缀（正则严格小写）
-        "{{msg:}}" -> "核心为空",                                   // 空核心
-        s"{{ msg:$core8 }}" -> "核心格式不符"                        // 多余空格
+        s"{{msg:${reg.shortCode(Sid)}-001}}" -> "核心格式不符", // 3 位序号
+        s"{{MSG:$core8}}" -> "核心格式不符", // 大写前缀（正则严格小写）
+        "{{msg:}}" -> "核心为空", // 空核心
+        s"{{ msg:$core8 }}" -> "核心格式不符" // 多余空格
       )
       for
         outs <- cases.map { case (raw, expect) =>
-                  reg.resolveForAgent(s"x$raw y").map(out => (raw, expect, out))
-                }.sequence
+          reg.resolveForAgent(s"x$raw y").map(out => (raw, expect, out))
+        }.sequence
         _ = outs.foreach { case (raw, expect, out) =>
-              assert(out.contains(s"[引用未能解析：$raw]"), s"须显式标记：$raw → $out")
-              assert(out.contains(expect), s"诊断原因须命中「$expect」：$out")
-              assert(!out.replace(s"[引用未能解析：$raw]", "").contains(raw), s"标记外不许残留：$out")
-            }
+          assert(out.contains(s"[引用未能解析：$raw]"), s"须显式标记：$raw → $out")
+          assert(out.contains(expect), s"诊断原因须命中「$expect」：$out")
+          assert(!out.replace(s"[引用未能解析：$raw]", "").contains(raw), s"标记外不许残留：$out")
+        }
         _ = assertEquals(reg.malformedSeen, cases.size.toLong)
       yield ()
     }
@@ -177,8 +179,8 @@ class MsgTokenAgentExpandSpec extends CatsEffectSuite:
   test("多腿复消解幂等：同一文本过两遍解析器（Mail node: 腿 = MailTool + NodeDelivery 两次）结果不变") {
     withRegistry() { (reg, _) =>
       val core = s"${reg.shortCode(Sid)}-000101"
-      val bad = s"{{$core}}"                                   // 缺 msg: 前缀
-      val ghost = "{{msg:deadbeef-000001}}"                    // 映射缺失
+      val bad = s"{{$core}}" // 缺 msg: 前缀
+      val ghost = "{{msg:deadbeef-000001}}" // 映射缺失
       for
         m <- reg.mint(Some(Sid), "要被引用的原文")
         once <- reg.resolveForAgent(s"A ${m.get.token} B $bad C $ghost D")
@@ -204,3 +206,4 @@ class MsgTokenAgentExpandSpec extends CatsEffectSuite:
       yield ()
     }
   }
+end MsgTokenAgentExpandSpec

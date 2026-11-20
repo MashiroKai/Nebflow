@@ -94,7 +94,11 @@ class AskSecretChannelSpec extends FunSuite:
     )
     assertEquals(WeixinAskLeg.parseReply("1", views), Left(WeixinAskLeg.SecretReject), "裸编号打头题 = secret")
     assertEquals(WeixinAskLeg.parseReply("1.1", views), Left(WeixinAskLeg.SecretReject), "问.编 寻址 secret 题")
-    assertEquals(WeixinAskLeg.parseReply("0 my-otp-code", views), Left(WeixinAskLeg.SecretReject), "0+文本 自由输入打 secret 题")
+    assertEquals(
+      WeixinAskLeg.parseReply("0 my-otp-code", views),
+      Left(WeixinAskLeg.SecretReject),
+      "0+文本 自由输入打 secret 题"
+    )
     assertEquals(WeixinAskLeg.parseReply("他 my-otp-code", views), Left(WeixinAskLeg.SecretReject), "他 前缀同拒")
     // 拒绝线单一来源
     assertEquals(WeixinAskLeg.SecretReject.line, AskPromptCodec.SecretRefuseLine)
@@ -115,7 +119,10 @@ class AskSecretChannelSpec extends FunSuite:
       "secret 卡零作答入口（无 action 容器 = 无按钮）"
     )
     val contents = elements.flatMap(_.hcursor.downField("text").downField("content").as[String].toOption)
-    assert(contents.exists(_.contains("→ " + AskPromptCodec.secretGuideLine(0, 1, Rid))), "引导 section = secretGuideLine 单一来源")
+    assert(
+      contents.exists(_.contains("→ " + AskPromptCodec.secretGuideLine(0, 1, Rid))),
+      "引导 section = secretGuideLine 单一来源"
+    )
   }
 
   test("C8 renderText（文本降级腿）：secret 题渲染引导短形") {

@@ -46,12 +46,14 @@ class PluginAllocatorFallbackSpec extends CatsEffectSuite:
   /** 按 providerId 记账的脚本化 adapter：模型名命中 failOn 即抛，否则按脚本回文。 */
   private class ScriptedAdapter(failOn: Set[String], answer: String, attempts: TrieMap[String, String])
       extends nebflow.llm.ProviderAdapter[IO]:
+
     def sendMessage(params: SendMessageParams): IO[nebflow.llm.AdapterResponse] =
       IO {
         attempts.update(params.model, "hit")
         if failOn.contains(params.model) then throw new RuntimeException(s"transport down for ${params.model}")
         nebflow.llm.AdapterResponse(reply = answer, toolCalls = Nil)
       }
+
     def sendMessageStream(params: SendMessageParams): fs2.Stream[IO, nebflow.shared.StreamChunk] =
       fs2.Stream.raiseError[IO](new RuntimeException("stream face not expected in this spec"))
 
@@ -60,10 +62,12 @@ class PluginAllocatorFallbackSpec extends CatsEffectSuite:
     adapters: Map[String, nebflow.llm.ProviderAdapter[IO]],
     candidates: List[ModelCandidate]
   ) extends nebflow.llm.ProviderRegistry(null, null):
+
     override def getAdapter(providerId: String): IO[nebflow.llm.ProviderAdapter[IO]] =
       adapters.get(providerId) match
         case Some(a) => IO.pure(a)
-        case None    => IO.raiseError(new RuntimeException(s"unknown provider: $providerId"))
+        case None => IO.raiseError(new RuntimeException(s"unknown provider: $providerId"))
+
     override def getCandidatesForAgent(model: Option[nebflow.shared.AgentModelConfig]): IO[List[ModelCandidate]] =
       IO.pure(candidates)
 
@@ -75,7 +79,8 @@ class PluginAllocatorFallbackSpec extends CatsEffectSuite:
     m: DecisionHealthMonitor,
     registry: FaceRegistry
   ): IO[(DecisionHealth, Map[String, DecisionHealth], PluginAllocator.PluginAllocationResult)] =
-    PluginAllocatorMachine.face(registry, health = Some(m))
+    PluginAllocatorMachine
+      .face(registry, health = Some(m))
       .allocatePlugins("delegate-x", "task", catalog)
       .flatMap(r => (m.getDecisionHealth, m.legs).mapN((h, l) => (h, l, r)))
 
@@ -85,10 +90,13 @@ class PluginAllocatorFallbackSpec extends CatsEffectSuite:
     withTempDataRoot { _ =>
       DecisionHealthMonitor.create
         .flatMap { m =>
-          runAllocation(m, new FaceRegistry(
-            Map("p" -> ScriptedAdapter(Set.empty, """{"plugins":["backend-dev","visual-report"]}""", TrieMap.empty)),
-            List(cand("p", "util-1"))
-          ))
+          runAllocation(
+            m,
+            new FaceRegistry(
+              Map("p" -> ScriptedAdapter(Set.empty, """{"plugins":["backend-dev","visual-report"]}""", TrieMap.empty)),
+              List(cand("p", "util-1"))
+            )
+          )
         }
         .map { case (channel, legs, result) =>
           assertEquals(result.via, Some(PluginAllocator.AllocationVia.LlmFallback))
@@ -106,7 +114,10 @@ class PluginAllocatorFallbackSpec extends CatsEffectSuite:
     withTempDataRoot { _ =>
       DecisionHealthMonitor.create
         .flatMap { m =>
-          runAllocation(m, new FaceRegistry(Map("p" -> ScriptedAdapter(Set("util-1"), "", TrieMap.empty)), List(cand("p", "util-1"))))
+          runAllocation(
+            m,
+            new FaceRegistry(Map("p" -> ScriptedAdapter(Set("util-1"), "", TrieMap.empty)), List(cand("p", "util-1")))
+          )
         }
         .map { case (channel, legs, result) =>
           assertEquals(result.via, None, "fail-open: no via when the leg failed")
@@ -131,10 +142,10 @@ class PluginAllocatorFallbackSpec extends CatsEffectSuite:
           assertEquals(result.allocation, JevAllocation.FellBack(JevFallbackKind.Failure, "small model unavailable"))
           channel match
             case DecisionHealth.Down(reason, _) => assert(reason.contains("small model unavailable"))
-            case other                          => fail(s"expected Down, got: $other")
+            case other => fail(s"expected Down, got: $other")
           legs.get("llm") match
             case Some(DecisionHealth.Down(_, _)) => ()
-            case other                           => fail(s"expected a Down llm leg, got: $other")
+            case other => fail(s"expected a Down llm leg, got: $other")
         }
     }
   }
@@ -146,7 +157,13 @@ class PluginAllocatorFallbackSpec extends CatsEffectSuite:
       DecisionHealthMonitor.create
         .flatMap { m =>
           PluginAllocatorMachine
-            .face(new FaceRegistry(Map("p" -> ScriptedAdapter(Set("util-1"), "", TrieMap.empty)), List(cand("p", "util-1"))), health = Some(m))
+            .face(
+              new FaceRegistry(
+                Map("p" -> ScriptedAdapter(Set("util-1"), "", TrieMap.empty)),
+                List(cand("p", "util-1"))
+              ),
+              health = Some(m)
+            )
             .allocatePlugins("delegate-x", "task", catalog) *> m.toJson
         }
         .map { json =>

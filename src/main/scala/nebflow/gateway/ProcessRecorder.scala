@@ -76,8 +76,8 @@ class ProcessRecorder(sessionStore: SessionStore):
 
   // ── 耗时读数（R1：listener 内联，警戒 p99 > 1ms；挂载点 /api/health 邻位留作者裁）──
   private val framesHandled = new java.util.concurrent.atomic.AtomicLong(0)
-  private val totalNanos    = new java.util.concurrent.atomic.AtomicLong(0)
-  private val maxNanos      = new java.util.concurrent.atomic.AtomicLong(0)
+  private val totalNanos = new java.util.concurrent.atomic.AtomicLong(0)
+  private val maxNanos = new java.util.concurrent.atomic.AtomicLong(0)
 
   def stats: IO[ProcessRecorder.Stats] = IO.delay(
     ProcessRecorder.Stats(framesHandled.get(), totalNanos.get(), maxNanos.get())
@@ -96,7 +96,7 @@ class ProcessRecorder(sessionStore: SessionStore):
   def apply(json: Json): IO[Unit] =
     json.hcursor.downField("type").as[String].getOrElse("") match
       case "agentTextDelta" | "agentThinking" | "agentToolEnd" | "agentDone" => record(json)
-      case _                                                                 => IO.unit
+      case _ => IO.unit
 
   /**
    * 在册四帧的落盘语义——**逐字**迁自 `makeRecordingWsSend` 的 agent* 分支（单一
@@ -207,7 +207,16 @@ class ProcessRecorder(sessionStore: SessionStore):
                             // replay-terminal 批（2026-10-28，案一「A 根治」）：
                             // agentDone = 节点会话轮终态——terminal=true 与
                             // durationMs 同批落盘（弹窗回放腿同判据）。
-                            List(UiMessage.Ai(text, durationMs, model, thinkingOpt, System.currentTimeMillis(), terminal = Some(true)))
+                            List(
+                              UiMessage.Ai(
+                                text,
+                                durationMs,
+                                model,
+                                thinkingOpt,
+                                System.currentTimeMillis(),
+                                terminal = Some(true)
+                              )
+                            )
                           )
                         else
                           // No text (flushed earlier by agentToolEnd) — backfill
@@ -238,9 +247,7 @@ class ProcessRecorder(sessionStore: SessionStore):
       case _ => IO.unit
 
     // 触碰读数 + 耗时读数 + 失败纪律（吞错只 WARN，绝不反噬广播——wrapper :3146 同律）。
-    nodeSessionId.fold(IO.unit)(nsid =>
-      lastTouchMs.update(m => m.updated(nsid, System.currentTimeMillis()))
-    ) *> {
+    nodeSessionId.fold(IO.unit)(nsid => lastTouchMs.update(m => m.updated(nsid, System.currentTimeMillis()))) *> {
       val t0 = System.nanoTime()
       record0
         .handleErrorWith(e =>
@@ -258,35 +265,39 @@ class ProcessRecorder(sessionStore: SessionStore):
    * 返回被收殓的会话数。
    */
   def sweepOrphans(maxIdleMs: Long, nowMs: Long = System.currentTimeMillis()): IO[Int] =
-    lastTouchMs.modify { m =>
-      val stale = m.collect { case (id, ts) if nowMs - ts > maxIdleMs => id }.toList
-      (m -- stale, stale)
-    }.flatMap { stale =>
-      if stale.isEmpty then IO.pure(0)
-      else
-        turnStarts.update(_ -- stale) *>
-          stale.traverse_ { id =>
-            for
-              text <- textBuffers.modify(m => (m - id, m.getOrElse(id, "")))
-              thinking <- thinkingBuffers.modify(m => (m - id, m.getOrElse(id, "")))
-              _ <-
-                if text.nonEmpty || thinking.nonEmpty then
-                  sessionStore.appendUiMessages(
-                    id,
-                    List(
-                      UiMessage.Ai(
-                        text,
-                        None,
-                        None,
-                        Option.when(thinking.nonEmpty)(thinking),
-                        System.currentTimeMillis()
+    lastTouchMs
+      .modify { m =>
+        val stale = m.collect { case (id, ts) if nowMs - ts > maxIdleMs => id }.toList
+        (m -- stale, stale)
+      }
+      .flatMap { stale =>
+        if stale.isEmpty then IO.pure(0)
+        else
+          turnStarts.update(_ -- stale) *>
+            stale
+              .traverse_ { id =>
+                for
+                  text <- textBuffers.modify(m => (m - id, m.getOrElse(id, "")))
+                  thinking <- thinkingBuffers.modify(m => (m - id, m.getOrElse(id, "")))
+                  _ <-
+                    if text.nonEmpty || thinking.nonEmpty then
+                      sessionStore.appendUiMessages(
+                        id,
+                        List(
+                          UiMessage.Ai(
+                            text,
+                            None,
+                            None,
+                            Option.when(thinking.nonEmpty)(thinking),
+                            System.currentTimeMillis()
+                          )
+                        )
                       )
-                    )
-                  )
-                else IO.unit
-            yield ()
-          }.as(stale.size)
-    }
+                    else IO.unit
+                yield ()
+              }
+              .as(stale.size)
+      }
 
   /**
    * 孤儿扫描睡眠循环（ttlScanner 同款形态；`*> IO.defer(loop)` 显式延迟到执行期，
@@ -297,9 +308,7 @@ class ProcessRecorder(sessionStore: SessionStore):
     def loop: IO[Unit] =
       IO.sleep(interval) *>
         sweepOrphans(maxIdle.toMillis)
-          .handleErrorWith(e =>
-            logger.warn(s"[process-recorder] orphan sweep failed: ${e.getMessage}").void
-          ) *>
+          .handleErrorWith(e => logger.warn(s"[process-recorder] orphan sweep failed: ${e.getMessage}").void) *>
         IO.defer(loop)
     loop
 

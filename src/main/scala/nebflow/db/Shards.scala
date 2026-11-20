@@ -45,7 +45,8 @@ object Shards:
     val prefix = s"$base."
     val suffix = ".jsonl"
     if name.startsWith(prefix) && name.endsWith(suffix)
-      && !Quarantine.isQuarantinedName(name) && !WriteFace.isTmpName(name) then
+      && !Quarantine.isQuarantinedName(name) && !WriteFace.isTmpName(name)
+    then
       val mid = name.substring(prefix.length, name.length - suffix.length)
       if mid.nonEmpty && mid.forall(_.isDigit) then mid.toIntOption else None
     else None
@@ -71,8 +72,7 @@ object Shards:
       if cur == 0 then (1, 0, lineBytes > maxShardBytes)
       else
         val curSize = Files.size(shardPath(dir, base, cur))
-        if curSize > 0 && curSize + lineBytes > maxShardBytes then
-          (cur + 1, cur, lineBytes > maxShardBytes)
+        if curSize > 0 && curSize + lineBytes > maxShardBytes then (cur + 1, cur, lineBytes > maxShardBytes)
         else (cur, 0, false)
     // 轮转离场的 Batched 片在此收口（PerRecord 片每条已 force）。
     if rotatedFrom >= 1 && tier == WriteFace.FsyncTier.Batched then
@@ -126,19 +126,23 @@ object Shards:
           }
           bad.toLeft(rows.result())
 
+  end readIdx
+
   /** 全量重写 idx（五步写；仅 rebuild 与增量维护调用）。空清单 ⇒ 空档（零字节）。 */
   def writeIdx(dir: Path, rows: List[IdxRow]): Unit =
     val text = if rows.isEmpty then "" else rows.map(idxRowJson).mkString("", "\n", "\n")
     WriteFace.writeFiveStepText(dir.resolve(IdxFileName), text)
 
   def idxRowJson(r: IdxRow): String =
-    Json.obj(
-      "shard" -> Json.fromInt(r.shard),
-      "firstSeq" -> Json.fromLong(r.firstSeq),
-      "lastSeq" -> Json.fromLong(r.lastSeq),
-      "bytes" -> Json.fromLong(r.bytes),
-      "count" -> Json.fromLong(r.count)
-    ).noSpaces
+    Json
+      .obj(
+        "shard" -> Json.fromInt(r.shard),
+        "firstSeq" -> Json.fromLong(r.firstSeq),
+        "lastSeq" -> Json.fromLong(r.lastSeq),
+        "bytes" -> Json.fromLong(r.bytes),
+        "count" -> Json.fromLong(r.count)
+      )
+      .noSpaces
 
   private given io.circe.Decoder[IdxRow] = c =>
     for

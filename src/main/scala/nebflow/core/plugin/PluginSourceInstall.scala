@@ -47,30 +47,30 @@ object PluginSourceInstall:
 
   // ── 稳定错误码（🔴 禁改名——CLI/REST/测试逐字断言）────────────────
 
-  val CodeUnreachable      = "SOURCE_UNREACHABLE"       // 索引/清单/归档所有候选端点都不可达
-  val CodeIdNotInIndex     = "SOURCE_ID_NOT_IN_INDEX"   // 官方身份闸：id ∉ 官方索引
-  val CodeVersionNotFound  = "SOURCE_VERSION_NOT_FOUND" // @version 不在清单（列可用版本）
+  val CodeUnreachable = "SOURCE_UNREACHABLE" // 索引/清单/归档所有候选端点都不可达
+  val CodeIdNotInIndex = "SOURCE_ID_NOT_IN_INDEX" // 官方身份闸：id ∉ 官方索引
+  val CodeVersionNotFound = "SOURCE_VERSION_NOT_FOUND" // @version 不在清单（列可用版本）
   val CodeArtifactUnusable = "SOURCE_ARTIFACT_UNUSABLE" // 清单版本无可用 zip artifact（字段不齐）
-  val CodeSizeMismatch     = "SOURCE_SIZE_MISMATCH"     // 归档字节长 ≠ 声明 sizeBytes
-  val CodeSha256Mismatch   = "SOURCE_SHA256_MISMATCH"   // 双值校验①：归档字节 sha256 失配
-  val CodeDigestMismatch   = "SOURCE_DIGEST_MISMATCH"   // 双值校验②：内容树 digest 失配
-  val CodeArchiveLayout    = "SOURCE_ARCHIVE_LAYOUT"    // 归档布局违规（无 plugin.json 等）
-  val CodeArchiveFence     = "SOURCE_ARCHIVE_FENCE"     // zip 围栏拒绝（逃逸/链接/超限）
-  val CodeGitPinRequired   = "GIT_PIN_REQUIRED"         // 浮动 HEAD 禁令（§2.2B）
-  val CodeGitCloneFailed   = "GIT_CLONE_FAILED"
-  val CodeGitTagNotFound   = "GIT_TAG_NOT_FOUND"        // tag 不存在/不可解析
-  val CodeGitTagMoved      = "GIT_TAG_MOVED"            // tag 解引用 ≠ pin commit（防 tag 被移动）
+  val CodeSizeMismatch = "SOURCE_SIZE_MISMATCH" // 归档字节长 ≠ 声明 sizeBytes
+  val CodeSha256Mismatch = "SOURCE_SHA256_MISMATCH" // 双值校验①：归档字节 sha256 失配
+  val CodeDigestMismatch = "SOURCE_DIGEST_MISMATCH" // 双值校验②：内容树 digest 失配
+  val CodeArchiveLayout = "SOURCE_ARCHIVE_LAYOUT" // 归档布局违规（无 plugin.json 等）
+  val CodeArchiveFence = "SOURCE_ARCHIVE_FENCE" // zip 围栏拒绝（逃逸/链接/超限）
+  val CodeGitPinRequired = "GIT_PIN_REQUIRED" // 浮动 HEAD 禁令（§2.2B）
+  val CodeGitCloneFailed = "GIT_CLONE_FAILED"
+  val CodeGitTagNotFound = "GIT_TAG_NOT_FOUND" // tag 不存在/不可解析
+  val CodeGitTagMoved = "GIT_TAG_MOVED" // tag 解引用 ≠ pin commit（防 tag 被移动）
   val CodeGitCheckoutFailed = "GIT_CHECKOUT_FAILED"
 
   // ── zip 围栏常量（§2.3；zip bomb 面）─────────────────────────
 
-  private val MaxZipEntries        = 4096
+  private val MaxZipEntries = 4096
   private val MaxUncompressedBytes = 256L * 1024 * 1024
-  private val MaxArchiveBytes      = 256L * 1024 * 1024
+  private val MaxArchiveBytes = 256L * 1024 * 1024
 
   // ── 路径（与 PluginRegistry.pluginsDir / P1 ledgerDir 同根派生）──
 
-  private def pluginsDir: os.Path  = PathUtil.dataRoot / "plugins"
+  private def pluginsDir: os.Path = PathUtil.dataRoot / "plugins"
   private def stagingRoot: os.Path = PathUtil.dataRoot / ".plugin-staging"
 
   /**
@@ -81,16 +81,17 @@ object PluginSourceInstall:
   def engineBeta: Boolean =
     sys.props.get("nebflow.plugins.channel").map(_.trim).filter(_.nonEmpty) match
       case Some(forced) => forced.equalsIgnoreCase("beta")
-      case None         => nebflow.Version.channel.trim.equalsIgnoreCase("beta")
+      case None => nebflow.Version.channel.trim.equalsIgnoreCase("beta")
 
   // ── 入口①：CLI 参数歧义消解（§4.1 逐字规则）────────────────────
 
   sealed trait ArgClass
+
   object ArgClass:
-    final case class Link(raw: String)                               extends ArgClass
-    final case class Git(url: String, tag: Option[String])           extends ArgClass
-    final case class Local(path: String)                             extends ArgClass
-    final case class Official(id: String, version: Option[String])   extends ArgClass
+    final case class Link(raw: String) extends ArgClass
+    final case class Git(url: String, tag: Option[String]) extends ArgClass
+    final case class Local(path: String) extends ArgClass
+    final case class Official(id: String, version: Option[String]) extends ArgClass
 
   /**
    * `#tag` 片段先行剥离（git URL 的 tag 载体；本地路径带 `#` 不属合法形态），其后按
@@ -103,12 +104,14 @@ object PluginSourceInstall:
   def classifyArg(raw: String): Either[String, ArgClass] =
     val arg = raw.trim
     if arg.isEmpty then
-      Left("plugin source required — pass an official plugin id (name[@version]), a git URL ('<url>#<tag>'), or a local plugin directory")
+      Left(
+        "plugin source required — pass an official plugin id (name[@version]), a git URL ('<url>#<tag>'), or a local plugin directory"
+      )
     else if arg.startsWith("stand://") then Right(ArgClass.Link(arg))
     else
       val hash = arg.indexOf('#')
       val base = if hash >= 0 then arg.substring(0, hash).trim else arg
-      val tag  = if hash >= 0 then Some(arg.substring(hash + 1).trim).filter(_.nonEmpty) else None
+      val tag = if hash >= 0 then Some(arg.substring(hash + 1).trim).filter(_.nonEmpty) else None
       if PluginSourceSpec.isGitUrl(base) then Right(ArgClass.Git(base, tag))
       else
         val looksLocal =
@@ -129,14 +132,17 @@ object PluginSourceInstall:
                   "to name the source explicitly."
               )
             case None => Right(ArgClass.Local(base))
-        else official match
-          case Some((id, version)) => Right(ArgClass.Official(id, version))
-          case None =>
-            Left(
-              s"'$arg' is not a git URL, does not name an existing local path, and is not a valid official plugin id " +
-                "(official form: name[@version]; names are 1-64 chars of a-z 0-9 - . per §5.5). " +
-                "Or pass a full source spec: stand plugin add --from <spec.json>."
-            )
+        else
+          official match
+            case Some((id, version)) => Right(ArgClass.Official(id, version))
+            case None =>
+              Left(
+                s"'$arg' is not a git URL, does not name an existing local path, and is not a valid official plugin id " +
+                  "(official form: name[@version]; names are 1-64 chars of a-z 0-9 - . per §5.5). " +
+                  "Or pass a full source spec: stand plugin add --from <spec.json>."
+              )
+        end if
+      end if
     end if
   end classifyArg
 
@@ -146,7 +152,7 @@ object PluginSourceInstall:
       case -1 => Option.when(PluginRegistry.validPluginName(base))((base, None))
       case i =>
         val id = base.substring(0, i)
-        val v  = base.substring(i + 1).trim
+        val v = base.substring(i + 1).trim
         Option.when(PluginRegistry.validPluginName(id) && v.nonEmpty)((id, Some(v)))
 
   private def expandTilde(p: String): String =
@@ -157,23 +163,24 @@ object PluginSourceInstall:
   /** CLI `stand plugin add <arg>` 的分派单点。 */
   def installFromArg(raw: String): IO[Either[String, String]] =
     classifyArg(raw) match
-      case Left(err)                       => IO.pure(Left(err))
-      case Right(ArgClass.Link(link))       => installFromLink(link)
-      case Right(ArgClass.Git(url, tag))   => installGitFromArg(url, tag)
-      case Right(ArgClass.Local(path))     => PluginRegistry.installFromLocalPath(path)
+      case Left(err) => IO.pure(Left(err))
+      case Right(ArgClass.Link(link)) => installFromLink(link)
+      case Right(ArgClass.Git(url, tag)) => installGitFromArg(url, tag)
+      case Right(ArgClass.Local(path)) => PluginRegistry.installFromLocalPath(path)
       case Right(ArgClass.Official(id, v)) => installOfficial(id, v, beta = engineBeta, explicitIndex = None)
 
   // ── 入口②：--from 三态 spec 直读 ────────────────────────────
 
   def installFromSpecJson(raw: String): IO[Either[String, String]] =
     PluginSourceSpec.parse(raw) match
-      case Left(err)   => IO.pure(Left(err.render))
+      case Left(err) => IO.pure(Left(err.render))
       case Right(spec) => installFromSpec(spec)
 
   def installFromSpec(spec: PluginSourceSpec.Spec): IO[Either[String, String]] = spec match
-    case o: PluginSourceSpec.OfficialSpec => installOfficial(o.id, version = None, beta = engineBeta, explicitIndex = o.index)
-    case g: PluginSourceSpec.GitSpec      => installGitPinned(g)
-    case h: PluginSourceSpec.HttpsSpec    => installHttps(h)
+    case o: PluginSourceSpec.OfficialSpec =>
+      installOfficial(o.id, version = None, beta = engineBeta, explicitIndex = o.index)
+    case g: PluginSourceSpec.GitSpec => installGitPinned(g)
+    case h: PluginSourceSpec.HttpsSpec => installHttps(h)
 
   // ── official 腿：索引 → 清单 → 版本解析 → 归档双值 → 落盘 ────────
 
@@ -182,23 +189,25 @@ object PluginSourceInstall:
    * 镜像跳）；None = 默认官方对（官网 → OSS 双跳，A8② 通道由 `beta` 决定）。
    */
   def installOfficial(
-      id: String,
-      version: Option[String],
-      beta: Boolean,
-      explicitIndex: Option[String]
+    id: String,
+    version: Option[String],
+    beta: Boolean,
+    explicitIndex: Option[String]
   ): IO[Either[String, String]] =
     val indexEndpoints = explicitIndex match
       case Some(u) => List(u)
-      case None    => PluginSourceCheck.indexUrls(beta)
+      case None => PluginSourceCheck.indexUrls(beta)
     PluginSourceCheck.fetchIndexAt(indexEndpoints).flatMap {
       case Left(un) => IO.pure(Left(s"${un.render} (${CodeUnreachable})"))
       case Right((index, servedIndexUrl)) =>
         index.entry(id) match
           case None =>
-            IO.pure(Left(
-              s"official identity gate: id '$id' is not in the official plugin index (served by $servedIndexUrl) — " +
-                s"the official source only installs ids it publishes. (${CodeIdNotInIndex})"
-            ))
+            IO.pure(
+              Left(
+                s"official identity gate: id '$id' is not in the official plugin index (served by $servedIndexUrl) — " +
+                  s"the official source only installs ids it publishes. (${CodeIdNotInIndex})"
+              )
+            )
           case Some(entry) =>
             val manifestEndpoints =
               PluginSourceCheck.manifestUrls(servedIndexUrl, entry, beta, officialPair = explicitIndex.isEmpty)
@@ -210,11 +219,13 @@ object PluginSourceInstall:
                   case Right(ventry) =>
                     IO.pure(ventry.artifacts.find(_.usableForZipInstall)).flatMap {
                       case None =>
-                        IO.pure(Left(
-                          s"version ${ventry.version} of '$id' has no usable zip artifact (needs format=zip-or-absent " +
-                            s"plus url+sha256+digest on the artifact; manifest listed ${ventry.artifacts.size} artifact(s)). " +
-                            s"(${CodeArtifactUnusable})"
-                        ))
+                        IO.pure(
+                          Left(
+                            s"version ${ventry.version} of '$id' has no usable zip artifact (needs format=zip-or-absent " +
+                              s"plus url+sha256+digest on the artifact; manifest listed ${ventry.artifacts.size} artifact(s)). " +
+                              s"(${CodeArtifactUnusable})"
+                          )
+                        )
                       case Some(artifact) =>
                         // usableForZipInstall 已钉死 sha256/digest/url 齐备；此处只是拆 Option 壳
                         val expectedSha = artifact.sha256.map(_.trim.toLowerCase).getOrElse("")
@@ -227,15 +238,20 @@ object PluginSourceInstall:
                             IO.blocking {
                               withStagingSync(id) { pkg =>
                                 verifyAndStageZip(
-                                  bytes, pkg,
+                                  bytes,
+                                  pkg,
                                   declaredSize = artifact.sizeBytes,
                                   expectedSha256 = expectedSha,
                                   expectedDigest = expectedTreeDigest
                                 ).flatMap { digest =>
                                   commitStaged(
-                                    pkg, digest, fallbackVersion = ventry.version,
-                                    kind = Kind.Official, via = Via.Official,
-                                    url = artifact.url, pin = None,
+                                    pkg,
+                                    digest,
+                                    fallbackVersion = ventry.version,
+                                    kind = Kind.Official,
+                                    via = Via.Official,
+                                    url = artifact.url,
+                                    pin = None,
                                     sourceDesc = s"official source ($id@${ventry.version})",
                                     meta = PluginSourceLedger.InstallMeta(
                                       // §5.4 A 期地基字段（厂方索引腿）：分发 id + 已验归档 sha256（双值校验面）；
@@ -257,7 +273,10 @@ object PluginSourceInstall:
   end installOfficial
 
   /** 版本解析（A8②）：@version 精确 / 缺省 = versions[] 第一条（新→旧，装载器只需第一条）。 */
-  private def resolveVersion(manifest: PluginSourceCheck.VersionManifest, wanted: Option[String]): Either[String, PluginSourceCheck.VersionEntry] =
+  private def resolveVersion(
+    manifest: PluginSourceCheck.VersionManifest,
+    wanted: Option[String]
+  ): Either[String, PluginSourceCheck.VersionEntry] =
     val available = manifest.versions.map(_.version)
     wanted match
       case None =>
@@ -265,10 +284,16 @@ object PluginSourceInstall:
           s"version manifest lists no usable versions (every entry is missing its version string) (${CodeVersionNotFound})"
         )
       case Some(v) =>
-        manifest.versions.find(_.version == v).toRight(
-          s"version $v is not published by this manifest (available: ${if available.isEmpty then "none" else available.mkString(", ")}) " +
-            s"(${CodeVersionNotFound})"
-        )
+        manifest.versions
+          .find(_.version == v)
+          .toRight(
+            s"version $v is not published by this manifest (available: ${
+                if available.isEmpty then "none" else available.mkString(", ")
+              }) " +
+              s"(${CodeVersionNotFound})"
+          )
+
+  end resolveVersion
 
   /** 归档下载（官方 = OSS 字节为主、mirror 兜底；https = 直链单候选）。全败 ⇒ 列试过端点。 */
   private def downloadArtifact(a: PluginSourceCheck.Artifact): IO[Either[String, Array[Byte]]] =
@@ -277,10 +302,13 @@ object PluginSourceInstall:
   private def downloadFromCandidates(urls: List[String]): IO[Either[String, Array[Byte]]] =
     def go(rest: List[String], tried: List[String]): IO[Either[String, Array[Byte]]] =
       rest match
-        case Nil => IO.pure(Left(s"archive download failed — tried: ${if tried.isEmpty then "(no endpoint declared)" else tried.mkString("; ")}"))
+        case Nil =>
+          IO.pure(Left(s"archive download failed — tried: ${
+              if tried.isEmpty then "(no endpoint declared)" else tried.mkString("; ")
+            }"))
         case url :: tail =>
           fetchBytes(url).flatMap {
-            case Right(b)     => IO.pure(Right(b))
+            case Right(b) => IO.pure(Right(b))
             case Left(reason) => go(tail, tried :+ s"$url ($reason)")
           }
     go(urls, Nil)
@@ -294,7 +322,7 @@ object PluginSourceInstall:
         conn.setReadTimeout(60000)
         val code = conn match
           case hc: java.net.HttpURLConnection => hc.getResponseCode
-          case _                              => 200
+          case _ => 200
         if code < 200 || code >= 300 then Left(s"HTTP $code")
         else
           val in = conn.getInputStream
@@ -313,6 +341,7 @@ object PluginSourceInstall:
             buf.write(chunk, 0, n)
           in.close()
           Right(buf.toByteArray)
+        end if
       catch case NonFatal(e) => Left(s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}")
     }
 
@@ -325,11 +354,11 @@ object PluginSourceInstall:
    * 返回现算 digest（== 声明值；https 无声明 digest 时它成为落账基准）。
    */
   private def verifyAndStageZip(
-      bytes: Array[Byte],
-      pkg: os.Path,
-      declaredSize: Option[Long],
-      expectedSha256: String,
-      expectedDigest: Option[String]
+    bytes: Array[Byte],
+    pkg: os.Path,
+    declaredSize: Option[Long],
+    expectedSha256: String,
+    expectedDigest: Option[String]
   ): Either[String, String] =
     declaredSize match
       case Some(want) if bytes.length != want =>
@@ -354,6 +383,7 @@ object PluginSourceInstall:
                     )
                   case _ => Right(digest)
           }
+        end if
   end verifyAndStageZip
 
   /**
@@ -375,7 +405,8 @@ object PluginSourceInstall:
         if entry == null then scanning = false
         else
           entries += 1
-          if entries > MaxZipEntries then failure = Some(s"archive holds more than $MaxZipEntries entries (${CodeArchiveFence})")
+          if entries > MaxZipEntries then
+            failure = Some(s"archive holds more than $MaxZipEntries entries (${CodeArchiveFence})")
           else
             val rawName = entry.getName
             val isDir = rawName.endsWith("/")
@@ -398,8 +429,12 @@ object PluginSourceInstall:
                       os.write.over(target, content, createFolders = true)
                 catch
                   case NonFatal(e) =>
-                    failure = Some(s"archive entry '$name' failed to extract (${e.getClass.getSimpleName}: ${e.getMessage}) (${CodeArchiveFence})")
+                    failure = Some(
+                      s"archive entry '$name' failed to extract (${e.getClass.getSimpleName}: ${e.getMessage}) (${CodeArchiveFence})"
+                    )
             end match
+          end if
+        end if
       end while
       zin.close()
       failure.toLeft(()).flatMap { _ =>
@@ -407,12 +442,18 @@ object PluginSourceInstall:
           try os.walk(dest).filter(os.isLink).map(_.relativeTo(dest).toString).toList
           catch case NonFatal(_) => Nil
         if links.nonEmpty then
-          Left(s"archive contains symlink entr${if links.size == 1 then "y" else "ies"}: ${links.mkString(", ")} — refused (${CodeArchiveFence})")
+          Left(
+            s"archive contains symlink entr${if links.size == 1 then "y" else "ies"}: ${links.mkString(", ")} — refused (${CodeArchiveFence})"
+          )
         else if !os.isFile(dest / "plugin.json") then
-          Left(s"archive root has no plugin.json — the package root must be flat at the archive top level (design §2.3) (${CodeArchiveLayout})")
+          Left(
+            s"archive root has no plugin.json — the package root must be flat at the archive top level (design §2.3) (${CodeArchiveLayout})"
+          )
         else Right(())
       }
-    catch case NonFatal(e) => Left(s"archive unreadable (${e.getClass.getSimpleName}: ${e.getMessage}) (${CodeArchiveLayout})")
+    catch
+      case NonFatal(e) =>
+        Left(s"archive unreadable (${e.getClass.getSimpleName}: ${e.getMessage}) (${CodeArchiveLayout})")
   end extractZipFenced
 
   private def fenceError(name: String): Option[String] =
@@ -433,11 +474,13 @@ object PluginSourceInstall:
   def installGitFromArg(url: String, tag: Option[String]): IO[Either[String, String]] =
     tag match
       case None =>
-        IO.pure(Left(
-          s"git source '$url' carries no pin — floating HEAD installs are forbidden (the same URL could install " +
-            "different content on different days, which defeats the digest trust face). Pass '<url>#<tag>' or use " +
-            s"'stand plugin add --from' with a spec pinning {\"commit\"[, \"tag\"]}. (${CodeGitPinRequired})"
-        ))
+        IO.pure(
+          Left(
+            s"git source '$url' carries no pin — floating HEAD installs are forbidden (the same URL could install " +
+              "different content on different days, which defeats the digest trust face). Pass '<url>#<tag>' or use " +
+              s"'stand plugin add --from' with a spec pinning {\"commit\"[, \"tag\"]}. (${CodeGitPinRequired})"
+          )
+        )
       case Some(t) =>
         resolveTagCommit(url, t).flatMap {
           case Left(err) => IO.pure(Left(err))
@@ -453,15 +496,19 @@ object PluginSourceInstall:
       try
         val res = os.proc("git", "ls-remote", url, s"refs/tags/$tag", s"refs/tags/$tag^{}").call(check = false)
         if res.exitCode != 0 then
-          Left(s"git tag '$tag' could not be resolved on '$url' (exit ${res.exitCode}): ${errTail(res)} (${CodeGitTagNotFound})")
+          Left(
+            s"git tag '$tag' could not be resolved on '$url' (exit ${res.exitCode}): ${errTail(res)} (${CodeGitTagNotFound})"
+          )
         else
           val lines = res.out.text().linesIterator.toList
           val peeled = lines.find(_.endsWith(s"refs/tags/$tag^{}")).map(_.takeWhile(_ != '\t'))
-          val plain  = lines.find(_.endsWith(s"refs/tags/$tag")).map(_.takeWhile(_ != '\t'))
+          val plain = lines.find(_.endsWith(s"refs/tags/$tag")).map(_.takeWhile(_ != '\t'))
           peeled.orElse(plain).map(_.trim.toLowerCase).filter(_.matches("[0-9a-f]{40}")) match
             case Some(commit) => Right(commit)
-            case None         => Left(s"git tag '$tag' not found on '$url' (${CodeGitTagNotFound})")
-      catch case NonFatal(e) => Left(s"git ls-remote failed (${e.getClass.getSimpleName}: ${e.getMessage}) (${CodeGitTagNotFound})")
+            case None => Left(s"git tag '$tag' not found on '$url' (${CodeGitTagNotFound})")
+      catch
+        case NonFatal(e) =>
+          Left(s"git ls-remote failed (${e.getClass.getSimpleName}: ${e.getMessage}) (${CodeGitTagNotFound})")
     }
 
   /**
@@ -481,7 +528,9 @@ object PluginSourceInstall:
       try
         val repo = tmp / "repo"
         val cloneUrl = localFileUri(spec.url).getOrElse(spec.url)
-        val withFilter = os.proc("git", "clone", "-q", "--filter=blob:none", "--no-checkout", cloneUrl, repo.toString).call(check = false)
+        val withFilter = os
+          .proc("git", "clone", "-q", "--filter=blob:none", "--no-checkout", cloneUrl, repo.toString)
+          .call(check = false)
         val cloned =
           if withFilter.exitCode == 0 then Right(())
           else
@@ -500,12 +549,14 @@ object PluginSourceInstall:
           else
             spec.path match
               case Some(rel) if !os.isDir(repo / os.SubPath(rel)) =>
-                Left(s"git source path '$rel' is not a directory inside the repo at ${spec.pin.commit.take(12)}… (${CodeArchiveLayout})")
+                Left(
+                  s"git source path '$rel' is not a directory inside the repo at ${spec.pin.commit.take(12)}… (${CodeArchiveLayout})"
+                )
               case _ =>
                 withStagingSync(spec.pin.commit.take(12)) { pkg =>
                   val root = spec.path match
                     case Some(rel) => repo / os.SubPath(rel)
-                    case None      => repo
+                    case None => repo
                   os.copy(root, pkg, createFolders = true, mergeFolders = true, replaceExisting = true)
                   try os.remove.all(pkg / ".git")
                   catch case NonFatal(_) => ()
@@ -513,21 +564,29 @@ object PluginSourceInstall:
                     case Right((digest, _)) =>
                       // 提交在暂存会话**内**完成（finally 兜底只清未提交残渣）
                       commitStaged(
-                        pkg, digest, fallbackVersion = "",
-                        kind = Kind.Git, via = Via.Git,
+                        pkg,
+                        digest,
+                        fallbackVersion = "",
+                        kind = Kind.Git,
+                        via = Via.Git,
                         url = Some(spec.url),
                         pin = Some(Pin.Commit(spec.pin.tag, spec.pin.commit)),
                         sourceDesc = s"git ${spec.url} @ ${spec.pin.commit.take(12)}…",
                         meta = PluginSourceLedger.InstallMeta(validationSummary = Some("git-pin-clone@1"))
                       )
                     case Left(err) => Left(s"digest computation failed on cloned package: $err (${CodeArchiveLayout})")
+                  end match
                 }
+          end if
         }
       finally
         // Retire first, then remove wholesale: a partially failed teardown
         // stays inactive with a valid manifest and remains TTL-sweepable.
-        try EvidenceTemp.finishBatch(batch) catch case NonFatal(_) => ()
-        try os.remove.all(tmp) catch case NonFatal(_) => ()
+        try EvidenceTemp.finishBatch(batch)
+        catch case NonFatal(_) => ()
+        try os.remove.all(tmp)
+        catch case NonFatal(_) => ()
+      end try
     }
   end installGitPinned
 
@@ -560,15 +619,20 @@ object PluginSourceInstall:
         IO.blocking {
           withStagingSync("https") { pkg =>
             verifyAndStageZip(
-              bytes, pkg,
+              bytes,
+              pkg,
               declaredSize = spec.sizeBytes,
               expectedSha256 = spec.sha256,
               expectedDigest = spec.digest
             ).flatMap { digest =>
               commitStaged(
-                pkg, digest, fallbackVersion = "",
-                kind = Kind.Https, via = Via.Https,
-                url = Some(spec.archive), pin = None,
+                pkg,
+                digest,
+                fallbackVersion = "",
+                kind = Kind.Https,
+                via = Via.Https,
+                url = Some(spec.archive),
+                pin = None,
                 sourceDesc = s"direct archive ${spec.archive}",
                 meta = PluginSourceLedger.InstallMeta(
                   // HttpsSpec.sha256 是必填 String（spec 解析面已验 64-hex）——落账前归一化
@@ -590,29 +654,49 @@ object PluginSourceInstall:
           case Left(err) => IO.pure(Left(err))
           case Right(m) =>
             val artifact = m.resolved.v.artifact
-            val location = try
-              val rel = java.net.URI.create(artifact)
-              if rel.isAbsolute || rel.getRawAuthority != null || rel.getRawQuery != null || rel.getRawFragment != null ||
-                  artifact.contains("%") || artifact.startsWith("/") || artifact.contains("\\") || artifact.split("/").exists(s => s == ".." || s == "." || s.isEmpty) then None
-              else if m.catalog.isDir then Some((os.Path(m.catalog.location) / os.SubPath(artifact)).toNIO.toUri.toString)
-              else Some(java.net.URI.create(m.catalog.location).resolve(rel).toString)
-            catch case NonFatal(_) => None
+            val location =
+              try
+                val rel = java.net.URI.create(artifact)
+                if rel.isAbsolute || rel.getRawAuthority != null || rel.getRawQuery != null || rel.getRawFragment != null ||
+                  artifact.contains("%") || artifact.startsWith("/") || artifact
+                    .contains("\\") || artifact.split("/").exists(s => s == ".." || s == "." || s.isEmpty)
+                then None
+                else if m.catalog.isDir then
+                  Some((os.Path(m.catalog.location) / os.SubPath(artifact)).toNIO.toUri.toString)
+                else Some(java.net.URI.create(m.catalog.location).resolve(rel).toString)
+              catch case NonFatal(_) => None
             location match
               case None => IO.pure(Left("unsafe catalog artifact location"))
-              case Some(url) => fetchBytes(url).flatMap {
-                case Left(err) => IO.pure(Left(s"artifact fetch failed: $err ($CodeUnreachable)"))
-                case Right(bytes) => IO.blocking {
-                  withStagingSync("catalog") { pkg =>
-                    verifyAndStageZip(bytes, pkg, Some(m.resolved.v.size), m.resolved.v.sha256, None).flatMap { digest =>
-                      commitStaged(pkg, digest, m.resolved.v.version, Kind.Catalog, Via.Hub, Some(url), None,
-                        s"catalog ${m.catalog.sourceId}", PluginSourceLedger.InstallMeta(
-                          distributionId = Some(m.resolved.pkg.id), publisherKeyId = Some(m.resolved.pkg.publisherKeyId),
-                          artifactSha256 = Some(m.resolved.v.sha256), validationSummary = Some("catalog-zip-sha256@1")
-                        ), m.resolved.pkg.publisherClass)
+              case Some(url) =>
+                fetchBytes(url).flatMap {
+                  case Left(err) => IO.pure(Left(s"artifact fetch failed: $err ($CodeUnreachable)"))
+                  case Right(bytes) =>
+                    IO.blocking {
+                      withStagingSync("catalog") { pkg =>
+                        verifyAndStageZip(bytes, pkg, Some(m.resolved.v.size), m.resolved.v.sha256, None).flatMap {
+                          digest =>
+                            commitStaged(
+                              pkg,
+                              digest,
+                              m.resolved.v.version,
+                              Kind.Catalog,
+                              Via.Hub,
+                              Some(url),
+                              None,
+                              s"catalog ${m.catalog.sourceId}",
+                              PluginSourceLedger.InstallMeta(
+                                distributionId = Some(m.resolved.pkg.id),
+                                publisherKeyId = Some(m.resolved.pkg.publisherKeyId),
+                                artifactSha256 = Some(m.resolved.v.sha256),
+                                validationSummary = Some("catalog-zip-sha256@1")
+                              ),
+                              m.resolved.pkg.publisherClass
+                            )
+                        }
+                      }
                     }
-                  }
                 }
-              }
+            end match
         }
 
   // ── 暂存（plugins/ 之外 ⇒ 半装态零扫描面）与原子落盘 ──────────────
@@ -630,8 +714,9 @@ object PluginSourceInstall:
     val session = stagingRoot / s"$label-${System.currentTimeMillis()}-${java.util.UUID.randomUUID().toString.take(8)}"
     os.makeDir.all(session)
     try body(session / "pkg")
-    finally try os.remove.all(session)
-    catch case NonFatal(_) => ()
+    finally
+      try os.remove.all(session)
+      catch case NonFatal(_) => ()
 
   private def sweepStaleStaging(): Unit =
     try
@@ -653,19 +738,20 @@ object PluginSourceInstall:
    * `meta` = §5.4 A 期地基字段载荷（各腿 validator summary / 归档 sha256 / 分发 id），缺省空——既有行为面不破。
    */
   private def commitStaged(
-      pkg: os.Path,
-      digest: String,
-      fallbackVersion: String,
-      kind: Kind,
-      via: Via,
-      url: Option[String],
-      pin: Option[Pin],
-      sourceDesc: String,
-      meta: PluginSourceLedger.InstallMeta = PluginSourceLedger.InstallMeta(),
-      publisherClass: Option[PluginDistributionTrust.PublisherClass] = None
+    pkg: os.Path,
+    digest: String,
+    fallbackVersion: String,
+    kind: Kind,
+    via: Via,
+    url: Option[String],
+    pin: Option[Pin],
+    sourceDesc: String,
+    meta: PluginSourceLedger.InstallMeta = PluginSourceLedger.InstallMeta(),
+    publisherClass: Option[PluginDistributionTrust.PublisherClass] = None
   ): Either[String, String] =
     val manifestFile = pkg / "plugin.json"
-    if !os.isFile(manifestFile) then Left(s"staged package has no plugin.json manifest — not a plugin package (${CodeArchiveLayout})")
+    if !os.isFile(manifestFile) then
+      Left(s"staged package has no plugin.json manifest — not a plugin package (${CodeArchiveLayout})")
     else
       io.circe.parser.parse(os.read(manifestFile)) match
         case Left(err) => Left(s"staged plugin.json unparseable: ${err.message} (${CodeArchiveLayout})")
@@ -697,28 +783,38 @@ object PluginSourceInstall:
                   PluginRemovePolicy.reinstate(pname)
                   PluginRegistry.invalidateCache()
                   PluginSourceLedger.recordInstall(
-                    name = pname, kind = kind, url = url, pin = pin,
-                    version = version, digest = digest, via = via, meta = meta, publisherClass = publisherClass
+                    name = pname,
+                    kind = kind,
+                    url = url,
+                    pin = pin,
+                    version = version,
+                    digest = digest,
+                    via = via,
+                    meta = meta,
+                    publisherClass = publisherClass
                   ) match
                     case Right(entry) =>
                       logger.infoSync(
                         s"[plugin-sources] '$pname' installed from $sourceDesc — via=${via.label} " +
                           s"digest=${digest.take(12)}… plan=${PluginLifecyclePlan.planId(
-                            PluginLifecyclePlan.forInstall(pname, version, digest, entry.updatePolicy)
-                          )} (presence = trust; provenance recorded)"
+                              PluginLifecyclePlan.forInstall(pname, version, digest, entry.updatePolicy)
+                            )} (presence = trust; provenance recorded)"
                       )
                     case Left(err) =>
                       logger.warnSync(
                         s"[plugin-sources] provenance recording failed for '$pname' ($err) — the package stays installed " +
                           "(presence = trust); its source query degrades to unknown-source"
                       )
+                  end match
                   val planId = PluginLifecyclePlan.planId(
                     PluginLifecyclePlan.forInstall(
-                      pname, version, digest,
+                      pname,
+                      version,
+                      digest,
                       // 落账失败（best-effort 面）时策略面回落默认 check——计划身份不依赖账本写成功
                       PluginSourceLedger.query(pname) match
                         case PluginSourceLedger.Known(e) => e.updatePolicy
-                        case _                            => PluginDistributionTrust.UpdatePolicy.Check
+                        case _ => PluginDistributionTrust.UpdatePolicy.Check
                     )
                   )
                   Right(
@@ -728,6 +824,7 @@ object PluginSourceInstall:
                       s"Block it if intended: Plugin panel, REST POST /api/plugins/$pname/revoke, or CLI 'stand plugin revoke $pname'."
                   )
                 }
+              end if
           end match
       end match
     end if

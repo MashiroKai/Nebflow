@@ -278,8 +278,7 @@ class AccountRootSpec extends munit.FunSuite:
       assertEquals(AccountRoot.findBySub(root, piped), Some(pipedDir), "按 profile.json 里的原文反查（账号数=个位数）")
       assertEquals(AccountRoot.findBySub(root, "acct-first"), Some(read))
       assertEquals(AccountRoot.findBySub(root, "logto|nobody"), None)
-      if !IsWindows then
-        assertEquals(modeOf(pipedDir), "rwx------", "映射出来的账号根同样 0700（V5 不看目录名形态）")
+      if !IsWindows then assertEquals(modeOf(pipedDir), "rwx------", "映射出来的账号根同样 0700（V5 不看目录名形态）")
     }
 
   test("profile.json: 四字段（accountSub/email/createdAt/hostPromptDeclinedAt）可存可读 + 0600 + isAccountRoot"):
@@ -291,8 +290,7 @@ class AccountRootSpec extends munit.FunSuite:
       AccountRoot.writeProfile(accountDir, profile)
       assertEquals(AccountRoot.readProfile(accountDir), Some(profile), "四字段必须原样往返（None 形态）")
       assert(AccountRoot.isAccountRoot(accountDir), "写了 profile.json ⇒ 本目录即账号根")
-      if !IsWindows then
-        assertEquals(modeOf(accountDir / "profile.json"), "rw-------", "profile.json 必须 0600（§3.2）")
+      if !IsWindows then assertEquals(modeOf(accountDir / "profile.json"), "rw-------", "profile.json 必须 0600（§3.2）")
 
       val declined = profile.copy(hostPromptDeclinedAt = Some("2026-11-05T10:00:00Z"))
       AccountRoot.writeProfile(accountDir, declined)

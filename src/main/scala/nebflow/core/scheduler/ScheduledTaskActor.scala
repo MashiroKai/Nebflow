@@ -67,8 +67,7 @@ object ScheduledTaskService:
       val fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(zone)
       val lines = todos.zipWithIndex.map { case (t, i) =>
         val streakNote =
-          if missStreak(t.id) then
-            s"【已连续 ${MissThreshold} 次浮出未销账——建议：降低提醒频率或把这条拆小；要调整请直接说，不擅自改计划】"
+          if missStreak(t.id) then s"【已连续 ${MissThreshold} 次浮出未销账——建议：降低提醒频率或把这条拆小；要调整请直接说，不擅自改计划】"
           else ""
         s"${i + 1}. [id: ${t.id}] ${t.content.take(200)}（创建于 ${fmt.format(Instant.ofEpochMilli(t.createdAt))}）$streakNote"
       }
@@ -221,7 +220,8 @@ class ScheduledTaskService(
         case _ => None
     val withName = unanimous(_.name).fold(base)(n => base.add("name", n.asJson))
     val withRepeat = unanimous(_.repeat).fold(withName)(r => withName.add("repeat", r.asJson))
-    unanimous(_.referencePath).fold(withRepeat)(p => withRepeat.add("referencePath", p.asJson))
+    unanimous(_.referencePath)
+      .fold(withRepeat)(p => withRepeat.add("referencePath", p.asJson))
       .add("merged", true.asJson)
       .add("count", tasks.size.asJson)
       .asJson
@@ -283,6 +283,7 @@ class ScheduledTaskService(
         logger.warn(s"Failed to route scheduled task to agent: ${e.getMessage}")
       )
     yield ()
+  end injectScheduleCard
 
   /**
    * 到期待办的周期提醒只在用户待办 UI 体现，不建立 chat user 消息或 agent turn。
@@ -642,9 +643,13 @@ class ScheduledTaskService(
         _ <- surfaceDigest(dueTodos, now)
       yield ()
 
+  end surfaceTodos
+
   private def surfaceDigest(dueTodos: List[ScheduledTask], now: Long): IO[Unit] =
     for
-      _ <- logger.info(s"Surfacing ${dueTodos.size} due todo(s) in the user inbox: " + dueTodos.map(_.id).mkString(", "))
+      _ <- logger.info(
+        s"Surfacing ${dueTodos.size} due todo(s) in the user inbox: " + dueTodos.map(_.id).mkString(", ")
+      )
       resolvedSessionId = dueTodos.head.sessionId
       // No prompt/chat message is emitted; the UI notification below carries ids only.
       // 只顺延**到期**的待办（未到期的首次浮出时间不动——它明晨自会浮出）。

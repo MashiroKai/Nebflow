@@ -85,6 +85,8 @@ class AskUserDualModeToolSpec extends FunSuite:
       executionIdentity = identity
     )
 
+  end ctxFor
+
   private val twoQuestions = JsonObject(
     "questions" -> io.circe.Json.arr(
       io.circe.Json
@@ -128,7 +130,9 @@ class AskUserDualModeToolSpec extends FunSuite:
       val input = twoQuestions.add("mode", "non-blocking".asJson)
       AskUserQuestionTool.call(input, ctx.copy(agentActorRef = Some(recordingRef(sink)))).unsafeRunSync() match
         case Left(err) =>
-          val expected = if trusted then AskUserQuestionTool.ModeParamRetiredCode else AskUserQuestionTool.TrustedIdentityRequiredCode
+          val expected =
+            if trusted then AskUserQuestionTool.ModeParamRetiredCode
+            else AskUserQuestionTool.TrustedIdentityRequiredCode
           assert(err.message.contains(expected), err.message)
         case Right(ok) => fail(s"带 mode 调用被放行：$ok")
       assertEquals(sink.toList, Nil, "拒绝之后仍有副作用（已派发 AskUser）")
@@ -182,7 +186,8 @@ class AskUserDualModeToolSpec extends FunSuite:
       ctxFor(generalDef, 1, Some(recordingRef(scala.collection.mutable.ListBuffer.empty))),
       ctxFor(kernelDef, 1, Some(recordingRef(scala.collection.mutable.ListBuffer.empty))),
       ctxFor(nebulaDef, 1, Some(recordingRef(scala.collection.mutable.ListBuffer.empty))),
-      ctxFor(nebulaDef, 0, Some(recordingRef(scala.collection.mutable.ListBuffer.empty))).copy(executionIdentity = None),
+      ctxFor(nebulaDef, 0, Some(recordingRef(scala.collection.mutable.ListBuffer.empty)))
+        .copy(executionIdentity = None),
       ToolContext(projectRoot = "", agentDef = Some(nebulaDef), depth = 0)
     )
     invalidContexts.foreach { ctx =>

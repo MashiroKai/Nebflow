@@ -89,12 +89,18 @@ final class LlmAllocator(
               case Right(Some(reply)) =>
                 parsePlugins(reply.reply, catalog) match
                   case Right(names) =>
-                    val reason = DelegateJudgeMachine.extractJsonObject(reply.reply)
+                    val reason = DelegateJudgeMachine
+                      .extractJsonObject(reply.reply)
                       .flatMap(_.hcursor.get[String]("reason").toOption)
                       .map(_.replaceAll("[\\r\\n]+", " ").take(240))
                       .getOrElse("model supplied no rationale")
-                    IO(logger.infoSync(s"allocation decision subject=${subject.replaceAll("[\\r\\n]+", " ")} plugins=${names.mkString(",").replaceAll("[\\r\\n]+", " ")} reason=$reason")) *>
-                      JevFallback.recordSuccess(subject, names, Some(PluginAllocatorMachine.LlmFallbackWire))
+                    IO(
+                      logger.infoSync(
+                        s"allocation decision subject=${subject.replaceAll("[\\r\\n]+", " ")} plugins=${names.mkString(",").replaceAll("[\\r\\n]+", " ")} reason=$reason"
+                      )
+                    ) *>
+                      JevFallback
+                        .recordSuccess(subject, names, Some(PluginAllocatorMachine.LlmFallbackWire))
                         .as(JevAllocation.Allocated(names))
                   case Left(reason) =>
                     // 归因精确化批（2026-10-29）：回文不可用 = ParseFail——可恢复
@@ -258,17 +264,19 @@ ${catalogText(catalog)}"""
    * 由探活面与分配审计表达。
    */
   def fromRegistry(registry: ProviderRegistry): IO[Option[LlmAllocator]] =
-    if registry == null then IO.pure(None) // registry-absent（降级装配/测试夹具）⇒ 无兜底腿 = 既有行为（SharedResources.assignFallbackChain 同款守卫）
-    else candidatesFrom(registry).map { cands =>
-      if cands.isEmpty then None
-      else
-        Some(
-          new LlmAllocator(
-            call => LlmKernel.run(registry, call),
-            IO.pure(cands.headOption)
+    if registry == null then
+      IO.pure(None) // registry-absent（降级装配/测试夹具）⇒ 无兜底腿 = 既有行为（SharedResources.assignFallbackChain 同款守卫）
+    else
+      candidatesFrom(registry).map { cands =>
+        if cands.isEmpty then None
+        else
+          Some(
+            new LlmAllocator(
+              call => LlmKernel.run(registry, call),
+              IO.pure(cands.headOption)
+            )
           )
-        )
-    }
+      }
 
   /**
    * 候选解析（fail-open 根因修复批 2026-10-29）：返回**整条候选链**而非链头一个

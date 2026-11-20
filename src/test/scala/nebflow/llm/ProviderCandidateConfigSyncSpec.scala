@@ -64,11 +64,19 @@ class ProviderCandidateConfigSyncSpec extends CatsEffectSuite:
     s"""{"baseUrl":"http://127.0.0.1:$port","apiKey":"k",${d}"protocol":"anthropic","models":[$ms]}"""
 
   /** 写整份 `nebflow.json`（隔离根内的唯一配置源）。 */
-  private def writeConfig(root: os.Path, providers: List[(String, List[String])], disabled: Set[String] = Set.empty): Unit =
+  private def writeConfig(
+    root: os.Path,
+    providers: List[(String, List[String])],
+    disabled: Set[String] = Set.empty
+  ): Unit =
     val body = providers
       .map { case (pid, ms) => s""""$pid":${providerEntry(1, ms, disabled.contains(pid))}""" }
       .mkString(",")
-    os.write.over(root / nebflow.shared.Branding.configFileName, s"""{"llm":{"providers":{$body}}}""", createFolders = true)
+    os.write.over(
+      root / nebflow.shared.Branding.configFileName,
+      s"""{"llm":{"providers":{$body}}}""",
+      createFolders = true
+    )
 
   /** Nebula 的显式主链（= `/model` 面写的那份，全局默认链的锚）。 */
   private def writeNebulaChain(root: os.Path, preferred: String, fallbacks: List[String]): Unit =
@@ -160,9 +168,11 @@ class ProviderCandidateConfigSyncSpec extends CatsEffectSuite:
             s"删除后链引用也应被 scrub 掉，实际 ${strList(after, "chainRefs")}"
           )
           assertEquals(strList(after, "configProviders"), List("cmdcode", "zhipu"), "配置面应只剩 cmdcode/zhipu")
-          val diskHasKimi = IO.blocking(
-            os.read(root / nebflow.shared.Branding.configFileName).contains("\"kimi\"")
-          ).unsafeRunSync()
+          val diskHasKimi = IO
+            .blocking(
+              os.read(root / nebflow.shared.Branding.configFileName).contains("\"kimi\"")
+            )
+            .unsafeRunSync()
           assert(!diskHasKimi, "删除必须真的落到磁盘（否则运行期下次读又复活）")
       }
     }
@@ -177,7 +187,9 @@ class ProviderCandidateConfigSyncSpec extends CatsEffectSuite:
       } *> mkRegistryFromDisk.flatMap { reg =>
         for
           before <- reg.candidateReport()
-          _ <- ConfigService.updateConfig(s"""{"llm":{"providers":{"kimi":${providerEntry(1, List("kimi-for-coding"))}}}}""")
+          _ <- ConfigService.updateConfig(
+            s"""{"llm":{"providers":{"kimi":${providerEntry(1, List("kimi-for-coding"))}}}}"""
+          )
           _ <- reg.reloadConfig(None)
           after <- reg.candidateReport()
         yield
@@ -218,7 +230,11 @@ class ProviderCandidateConfigSyncSpec extends CatsEffectSuite:
           val driftNode = drifted.hcursor.downField("drift")
           val onlyInRuntime = driftNode.downField("onlyInRuntime").as[List[String]].getOrElse(Nil)
           assertEquals(onlyInRuntime, List("kimi"), "点名：运行期多出来的就是 kimi（运行期还在用它）")
-          assertEquals(healed.hcursor.downField("drift").downField("inSync").as[Boolean].toOption, Some(true), "reload 后回到同步")
+          assertEquals(
+            healed.hcursor.downField("drift").downField("inSync").as[Boolean].toOption,
+            Some(true),
+            "reload 后回到同步"
+          )
           assert(!reportRefs(healed).exists(_.startsWith("kimi/")), "reload 后 kimi 必须离开候选集")
       }
     }
@@ -270,6 +286,7 @@ class ProviderCandidateConfigSyncSpec extends CatsEffectSuite:
             strList(report, "configProviders").contains("kimi"),
             s"复活后的配置重新进入配置面，实际 ${strList(report, "configProviders")}"
           )
+        end for
       }
     }
   }
@@ -288,3 +305,4 @@ class ProviderCandidateConfigSyncSpec extends CatsEffectSuite:
       }
     }
   }
+end ProviderCandidateConfigSyncSpec

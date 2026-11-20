@@ -116,9 +116,14 @@ class BgLifecycleReconcilerSpec extends FunSuite:
   test("D4 suspect 退避阶梯：+10min 首催、+30min 二催、+70min 三催，提前一拍不催") {
     val ts = 11 * min // suspectSince
     def obsAt(nudges: Int, lastNudge: Long) =
-      Map("j-d4" -> BgLifecycleReconciler.Observation(
-        lastActivityMs = 0L, suspectSinceMs = ts, nudges = nudges, lastNudgeAtMs = lastNudge
-      ))
+      Map(
+        "j-d4" -> BgLifecycleReconciler.Observation(
+          lastActivityMs = 0L,
+          suspectSinceMs = ts,
+          nudges = nudges,
+          lastNudgeAtMs = lastNudge
+        )
+      )
     def tick(now: Long, nudges: Int, lastNudge: Long) =
       scan1(List(view("j-d4", 0L, now, health = BgHealth.Suspect)), obsAt(nudges, lastNudge), now)
 
@@ -149,9 +154,14 @@ class BgLifecycleReconcilerSpec extends FunSuite:
     def tick(now: Long) =
       scan1(
         List(view("j-d5", 0L, now, health = BgHealth.Suspect)),
-        Map("j-d5" -> BgLifecycleReconciler.Observation(
-          lastActivityMs = 0L, suspectSinceMs = ts, nudges = 3, lastNudgeAtMs = lastNudge
-        )),
+        Map(
+          "j-d5" -> BgLifecycleReconciler.Observation(
+            lastActivityMs = 0L,
+            suspectSinceMs = ts,
+            nudges = 3,
+            lastNudgeAtMs = lastNudge
+          )
+        ),
         now
       )
     val (before, _) = tick(lastNudge + 40 * min - 1)
@@ -165,9 +175,14 @@ class BgLifecycleReconcilerSpec extends FunSuite:
   test("D6 429 风暴抑制：到点不催、计数不进位（风暴过后到点照催），BadgeSync 恒发徽标照刷") {
     val ts = 11 * min
     val t = view("j-d6", 0L, ts + 10 * min, health = BgHealth.Suspect)
-    val obs = Map("j-d6" -> BgLifecycleReconciler.Observation(
-      lastActivityMs = 0L, suspectSinceMs = ts, nudges = 0, lastNudgeAtMs = 0L
-    ))
+    val obs = Map(
+      "j-d6" -> BgLifecycleReconciler.Observation(
+        lastActivityMs = 0L,
+        suspectSinceMs = ts,
+        nudges = 0,
+        lastNudgeAtMs = 0L
+      )
+    )
     val (actions, next) = scan1(List(t), obs, ts + 10 * min, storm = true)
     assertEquals(actions.collect { case n: BgLifecycleReconciler.Nudge => n }, Nil, "风暴期 Nudge 被抑制")
     assertEquals(next("j-d6").nudges, 0, "抑制不进位——风暴过后同窗口照催")
@@ -179,32 +194,53 @@ class BgLifecycleReconcilerSpec extends FunSuite:
 
   test("D7 ×10 腿：基线>0 且空闲 > 基线×10 ⇒ 直达 Escalate（无需催注穷尽；基线=0 时该腿永不触发）") {
     // 基线 5min ⇒ 升级线 50min；空闲 49min ⇒ 仅 suspect 线（15min）命中 ⇒ MarkSuspect
-    val obs49 = Map("j-d7" -> BgLifecycleReconciler.Observation(
-      lastLines = 5L, lastActivityMs = 0L, baselineFrozen = true, baselineMs = 5 * min
-    ))
+    val obs49 = Map(
+      "j-d7" -> BgLifecycleReconciler.Observation(
+        lastLines = 5L,
+        lastActivityMs = 0L,
+        baselineFrozen = true,
+        baselineMs = 5 * min
+      )
+    )
     val (a49, _) = scan1(List(view("j-d7", 0L, 49 * min, lines = 5L)), obs49, 49 * min)
     assertEquals(a49.collect { case e: BgLifecycleReconciler.Escalate => e }, Nil)
     assertEquals(a49.collect { case m: BgLifecycleReconciler.MarkSuspect => m.jobId }, List("j-d7"))
     // 空闲 51min ⇒ ×10 腿直达升级
-    val obs51 = Map("j-d7" -> BgLifecycleReconciler.Observation(
-      lastLines = 5L, lastActivityMs = 0L, baselineFrozen = true, baselineMs = 5 * min
-    ))
+    val obs51 = Map(
+      "j-d7" -> BgLifecycleReconciler.Observation(
+        lastLines = 5L,
+        lastActivityMs = 0L,
+        baselineFrozen = true,
+        baselineMs = 5 * min
+      )
+    )
     val (a51, _) = scan1(List(view("j-d7", 0L, 51 * min, lines = 5L)), obs51, 51 * min)
     assertEquals(a51.collect { case e: BgLifecycleReconciler.Escalate => e.jobId }, List("j-d7"))
     assertEquals(a51.collect { case m: BgLifecycleReconciler.MarkSuspect => m }, Nil)
     // 基线 = 0（零采样）⇒ 升级线 MaxValue：110min 空闲也只走催注穷尽腿
-    val obs0 = Map("j-d7" -> BgLifecycleReconciler.Observation(
-      lastActivityMs = 0L, suspectSinceMs = min, nudges = 1, lastNudgeAtMs = min
-    ))
+    val obs0 = Map(
+      "j-d7" -> BgLifecycleReconciler.Observation(
+        lastActivityMs = 0L,
+        suspectSinceMs = min,
+        nudges = 1,
+        lastNudgeAtMs = min
+      )
+    )
     val (a0, _) = scan1(List(view("j-d7", 0L, 110 * min, health = BgHealth.Suspect)), obs0, 110 * min)
     assertEquals(a0.collect { case e: BgLifecycleReconciler.Escalate => e }, Nil)
   }
 
   test("D8 幂等：已 escalated 行 ⇒ 零升级动作（重复升级由行状态挡掉，Escalate 不重复发）") {
     val t = view("j-d8", 0L, 200 * min, health = BgHealth.Escalated)
-    val obs = Map("j-d8" -> BgLifecycleReconciler.Observation(
-      lastActivityMs = 0L, baselineFrozen = true, baselineMs = 5 * min, nudges = 3, lastNudgeAtMs = 0L
-    ))
+    val obs = Map(
+      "j-d8" -> BgLifecycleReconciler.Observation(
+        lastActivityMs = 0L,
+        baselineFrozen = true,
+        baselineMs = 5 * min,
+        nudges = 3,
+        lastNudgeAtMs = 0L
+      )
+    )
     val (actions, next) = scan1(List(t), obs, 200 * min)
     assertEquals(actions, List(BgLifecycleReconciler.BadgeSync), "已升级：零健康动作")
     assertEquals(next("j-d8").nudges, 3, "记账原样保留（幂等不漂移）")
@@ -212,9 +248,15 @@ class BgLifecycleReconcilerSpec extends FunSuite:
 
   test("D9 进展复位（重排不判死）：suspect 行遇行增 ⇒ ProgressReset + RecordActivity，停滞计数清零") {
     val t = view("j-d9", 0L, 20 * min, lines = 6L, health = BgHealth.Suspect)
-    val obs = Map("j-d9" -> BgLifecycleReconciler.Observation(
-      lastLines = 5L, lastActivityMs = 5 * min, suspectSinceMs = 11 * min, nudges = 2, lastNudgeAtMs = 15 * min
-    ))
+    val obs = Map(
+      "j-d9" -> BgLifecycleReconciler.Observation(
+        lastLines = 5L,
+        lastActivityMs = 5 * min,
+        suspectSinceMs = 11 * min,
+        nudges = 2,
+        lastNudgeAtMs = 15 * min
+      )
+    )
     val (actions, next) = scan1(List(t), obs, 20 * min)
     assertEquals(actions.collect { case r: BgLifecycleReconciler.ProgressReset => r.jobId }, List("j-d9"))
     assertEquals(actions.collect { case r: BgLifecycleReconciler.RecordActivity => r.jobId }, List("j-d9"))
@@ -230,21 +272,43 @@ class BgLifecycleReconcilerSpec extends FunSuite:
   test("D10 基线冻结：到龄（>K=10min）冻结中位；冻结后判据用基线×N（5min 基线 ⇒ 15min 嫌疑线）") {
     // 窗口内采样 [1m,5m,3m] ⇒ 冻结中位 3min ⇒ 嫌疑线 max(9min,10min)=10min（地板兜住）
     val t1 = view("j-d10", 0L, 11 * min, lines = 3L)
-    val obs1 = Map("j-d10" -> BgLifecycleReconciler.Observation(
-      lastLines = 3L, lastActivityMs = 11 * min - 4 * min, gapsMs = Vector(1 * min, 5 * min, 3 * min)
-    ))
+    val obs1 = Map(
+      "j-d10" -> BgLifecycleReconciler.Observation(
+        lastLines = 3L,
+        lastActivityMs = 11 * min - 4 * min,
+        gapsMs = Vector(1 * min, 5 * min, 3 * min)
+      )
+    )
     val (_, n1) = scan1(List(t1), obs1, 11 * min)
     assert(n1("j-d10").baselineFrozen, "到龄冻结")
     assertEquals(n1("j-d10").baselineMs, 3 * min)
     // 基线 5min ⇒ 嫌疑线 15min：空闲 16min ⇒ MarkSuspect；12min ⇒ 不动
-    def obsB(idleMin: Long) = Map("j-d10" -> BgLifecycleReconciler.Observation(
-      lastLines = 3L, lastActivityMs = idleMin * min, baselineFrozen = true, baselineMs = 5 * min
-    ))
-    val (a16, _) = scan1(List(view("j-d10", 0L, 16 * min, lines = 3L)), obsB(0L).map { case (k, o) => k -> o.copy(lastActivityMs = 0L) }, 16 * min)
+    def obsB(idleMin: Long) = Map(
+      "j-d10" -> BgLifecycleReconciler.Observation(
+        lastLines = 3L,
+        lastActivityMs = idleMin * min,
+        baselineFrozen = true,
+        baselineMs = 5 * min
+      )
+    )
+    val (a16, _) = scan1(
+      List(view("j-d10", 0L, 16 * min, lines = 3L)),
+      obsB(0L).map { case (k, o) => k -> o.copy(lastActivityMs = 0L) },
+      16 * min
+    )
     assertEquals(a16.collect { case m: BgLifecycleReconciler.MarkSuspect => m.jobId }, List("j-d10"))
-    val (a12, _) = scan1(List(view("j-d10", 0L, 12 * min, lines = 3L)), Map("j-d10" -> BgLifecycleReconciler.Observation(
-      lastLines = 3L, lastActivityMs = 0L, baselineFrozen = true, baselineMs = 5 * min
-    )), 12 * min)
+    val (a12, _) = scan1(
+      List(view("j-d10", 0L, 12 * min, lines = 3L)),
+      Map(
+        "j-d10" -> BgLifecycleReconciler.Observation(
+          lastLines = 3L,
+          lastActivityMs = 0L,
+          baselineFrozen = true,
+          baselineMs = 5 * min
+        )
+      ),
+      12 * min
+    )
     assertEquals(a12, List(BgLifecycleReconciler.BadgeSync), "12min < 15min 嫌疑线 ⇒ 不动")
   }
 
@@ -273,7 +337,16 @@ class BgLifecycleReconcilerSpec extends FunSuite:
 
   test("R2 零杀伤语义扫描：reconciler 源码无进程/会话杀伤 token（killSession/destroy/reclaim 等）") {
     val src = os.read(os.pwd / "src/main/scala/nebflow/core/processor/BgLifecycleReconciler.scala")
-    val banned = List("killSession", "KillProcess", "destroy", "reclaimSession", "cancelNodes", "ProcessHandle", ".destroy()", "waitFor")
+    val banned = List(
+      "killSession",
+      "KillProcess",
+      "destroy",
+      "reclaimSession",
+      "cancelNodes",
+      "ProcessHandle",
+      ".destroy()",
+      "waitFor"
+    )
     banned.foreach { token =>
       assert(!src.contains(token), s"red-line token '$token' must not appear in BgLifecycleReconciler source")
     }

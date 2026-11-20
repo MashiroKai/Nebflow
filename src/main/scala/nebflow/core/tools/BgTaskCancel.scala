@@ -48,9 +48,9 @@ object BgTaskCancel:
     by: String,
     wsSend: Option[Json => IO[Unit]],
     agentRef: Option[ActorRef[AgentCommand]],
-    remoteCancel: (String, String) => IO[Either[String, String]] =
-      (device, id) => RemoteExecutor.current match
-        case None    => IO.pure(Left("remote executor not initialized on this instance"))
+    remoteCancel: (String, String) => IO[Either[String, String]] = (device, id) =>
+      RemoteExecutor.current match
+        case None => IO.pure(Left("remote executor not initialized on this instance"))
         case Some(e) => e.requestPeerCancel(device, id)
   ): IO[Either[String, String]] =
     BgTaskRegistry.find(jobId).flatMap {
@@ -63,7 +63,7 @@ object BgTaskCancel:
               .forSession(row.sessionId)
               .flatMap(_.cancelBackgroundJob(jobId))
               .flatMap {
-                case true  => IO.pure(Right("local process tree killed"))
+                case true => IO.pure(Right("local process tree killed"))
                 case false => IO.pure(Left(s"Background task $jobId not found or already completed"))
               }
               .handleErrorWith(e => IO.pure(Left(s"local cancel failed: ${e.getMessage}")))
@@ -89,12 +89,12 @@ object BgTaskCancel:
                 val frame = wsSend.fold(IO.unit) { send =>
                   send(
                     Json.obj(
-                      "type"          -> "backgroundTaskUpdate".asJson,
-                      "sessionId"     -> taken.sessionId.asJson,
+                      "type" -> "backgroundTaskUpdate".asJson,
+                      "sessionId" -> taken.sessionId.asJson,
                       "rootSessionId" -> taken.rootSessionId.asJson,
-                      "taskId"        -> jobId.asJson,
-                      "description"   -> taken.description.asJson,
-                      "status"        -> "completed".asJson
+                      "taskId" -> jobId.asJson,
+                      "description" -> taken.description.asJson,
+                      "status" -> "completed".asJson
                     )
                   ).handleErrorWith(_ => IO.unit)
                 }

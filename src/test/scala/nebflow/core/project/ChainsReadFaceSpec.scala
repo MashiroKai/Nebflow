@@ -44,7 +44,8 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(originalRoot)
 
   override def beforeEach(context: munit.BeforeEach): Unit =
-    if os.exists(tempRoot / "delegates" / ".legacy-settled.json") then os.remove(tempRoot / "delegates" / ".legacy-settled.json")
+    if os.exists(tempRoot / "delegates" / ".legacy-settled.json") then
+      os.remove(tempRoot / "delegates" / ".legacy-settled.json")
     (ProjectRuntimeRegistry.clear *> DelegateFlowHosts.clear).unsafeRunSync()
     if os.exists(tempRoot / "delegates") then nebflow.ForceRemove.removeAll(tempRoot / "delegates")
     if os.exists(tempRoot / "chains") then nebflow.ForceRemove.removeAll(tempRoot / "chains")
@@ -53,7 +54,8 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     if os.exists(tempRoot / "c4b-alias-root") then nebflow.ForceRemove.removeAll(tempRoot / "c4b-alias-root")
 
   override def afterEach(context: munit.AfterEach): Unit =
-    if os.exists(tempRoot / "delegates" / ".legacy-settled.json") then os.remove(tempRoot / "delegates" / ".legacy-settled.json")
+    if os.exists(tempRoot / "delegates" / ".legacy-settled.json") then
+      os.remove(tempRoot / "delegates" / ".legacy-settled.json")
     (ProjectRuntimeRegistry.clear *> DelegateFlowHosts.clear).unsafeRunSync()
 
   private def mkResources(system: ActorSystem, llm: LlmHandle[IO]): IO[SharedResources] =
@@ -117,7 +119,10 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
       ref = new nebflow.actor.ActorRef[AgentCommand]:
         def path = nebflow.actor.ActorPath("test", List(sid))
         def !(msg: AgentCommand): IO[Unit] = IO.unit
-        def ?[Reply](makeMsg: nebflow.actor.ActorRef[Reply] => AgentCommand, timeout: Option[FiniteDuration]): IO[Reply] = IO.raiseError(new Exception("not used"))
+        def ?[Reply](
+          makeMsg: nebflow.actor.ActorRef[Reply] => AgentCommand,
+          timeout: Option[FiniteDuration]
+        ): IO[Reply] = IO.raiseError(new Exception("not used"))
       ,
       kind = AgentKind.Delegate,
       status = nebflow.actor.AgentStatus.Processing,
@@ -133,13 +138,21 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     val result = nebflow.core.delegate.LegacySettledManifest.generate()
     assertEquals(result, (2, true))
     assertEquals(nebflow.core.delegate.LegacySettledManifest.generate(), (2, false))
-    os.write.over(tempRoot / "delegates" / ".legacy-settled.json", s"{\"version\":1,\"ids\":[\"${hidden.id}\"]}", createFolders = true)
+    os.write.over(
+      tempRoot / "delegates" / ".legacy-settled.json",
+      s"{\"version\":1,\"ids\":[\"${hidden.id}\"]}",
+      createFolders = true
+    )
     for
       active <- ChainsReadFace.rowsJson(Map.empty)
       history <- ChainsReadFace.rowsJson(Map.empty, archived = true)
     yield
-      def ids(body: io.circe.Json) = body.hcursor.downField("rows").as[List[io.circe.Json]].getOrElse(Nil)
-        .flatMap(_.hcursor.get[String]("id").toOption).toSet
+      def ids(body: io.circe.Json) = body.hcursor
+        .downField("rows")
+        .as[List[io.circe.Json]]
+        .getOrElse(Nil)
+        .flatMap(_.hcursor.get[String]("id").toOption)
+        .toSet
       assertEquals(ids(active), Set.empty[String])
       assertEquals(ids(history), Set(visible.id))
   }
@@ -156,7 +169,10 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
   test("instance ownership distinguishes a stopped holder from a live incarnation without interruption flags") {
     val system = ActorSystem(s"liveness-${scala.util.Random.nextInt(100000)}")
     val idle = new nebflow.actor.Behavior[AgentCommand]:
-      def receive(ctx: nebflow.actor.ActorContext[AgentCommand], msg: AgentCommand): IO[nebflow.actor.Behavior[AgentCommand]] = IO.pure(this)
+      def receive(
+        ctx: nebflow.actor.ActorContext[AgentCommand],
+        msg: AgentCommand
+      ): IO[nebflow.actor.Behavior[AgentCommand]] = IO.pure(this)
     val program = for
       dead <- system.spawn(idle, "dead-holder")
       _ <- system.stop(dead)
@@ -165,7 +181,10 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
       freshRec = record("delegate-live-fresh", None)
       _ = DelegateRegistry.put(deadRec)
       _ = DelegateRegistry.put(freshRec)
-      agents = Map(deadRec.id -> agentRecord(deadRec.id).copy(ref = dead), freshRec.id -> agentRecord(freshRec.id).copy(ref = fresh))
+      agents = Map(
+        deadRec.id -> agentRecord(deadRec.id).copy(ref = dead),
+        freshRec.id -> agentRecord(freshRec.id).copy(ref = fresh)
+      )
       adopted <- nebflow.core.delegate.DelegateLiveness.adopted(system, agents)
       body <- ChainsReadFace.rowsJson(agents, adoptedIds = adopted)
       bypass <- ChainsReadFace.rowsJson(agents, adoptedIds = agents.keySet)
@@ -174,14 +193,21 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
       assertEquals(adopted, Set(freshRec.id))
       assertEquals(liveStatus(body, deadRec.id), Some("interrupted"))
       assertEquals(liveStatus(body, freshRec.id), Some("running"))
-      assertEquals(liveStatus(bypass, deadRec.id), Some("running"), "bypassing ownership must invert the negative control")
+      assertEquals(
+        liveStatus(bypass, deadRec.id),
+        Some("running"),
+        "bypassing ownership must invert the negative control"
+      )
     program.guarantee(system.stopAll)
   }
 
   test("owned delegate waiting for user remains live in active rows") {
     val system = ActorSystem(s"liveness-wait-${scala.util.Random.nextInt(100000)}")
     val behavior = new nebflow.actor.Behavior[AgentCommand]:
-      def receive(ctx: nebflow.actor.ActorContext[AgentCommand], msg: AgentCommand): IO[nebflow.actor.Behavior[AgentCommand]] = IO.pure(this)
+      def receive(
+        ctx: nebflow.actor.ActorContext[AgentCommand],
+        msg: AgentCommand
+      ): IO[nebflow.actor.Behavior[AgentCommand]] = IO.pure(this)
     val program = for
       ref <- system.spawn(behavior, "waiting-holder")
       rec = record("delegate-waiting-permission", None)
@@ -545,7 +571,11 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
       assertEquals(a.hcursor.get[String]("status").toOption, Some("pending"), "pending/wiring ⇒ pending")
       assertEquals(a.hcursor.downField("deps").as[List[String]].toOption, Some(List("n-b")))
       val statuses = nodes.flatMap(_.hcursor.get[String]("status").toOption)
-      assertEquals(statuses, List("pending", "interrupted", "completed", "failed"), "unowned running node is interrupted")
+      assertEquals(
+        statuses,
+        List("pending", "interrupted", "completed", "failed"),
+        "unowned running node is interrupted"
+      )
       assertEquals(m.hcursor.downField("chain").get[Boolean]("mounted").toOption, Some(true))
       // record = 三行族原样（适配层直接输入；此处为空记录形）。
       assertEquals(
@@ -721,9 +751,14 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     ChainStore.appendSync("900", "delegate-spawn", io.circe.Json.obj("delegateId" -> "d-900".asJson))
     ChainStore.appendSync("delegate-900", "terminal-verdict", io.circe.Json.obj("verdict" -> "completed".asJson))
     def digestsOf(body: io.circe.Json): Map[String, String] =
-      body.hcursor.downField("digests").focus.flatMap(_.asObject).map { obj =>
-        obj.toMap.map((k, v) => k -> v.asString.getOrElse(""))
-      }.getOrElse(Map.empty)
+      body.hcursor
+        .downField("digests")
+        .focus
+        .flatMap(_.asObject)
+        .map { obj =>
+          obj.toMap.map((k, v) => k -> v.asString.getOrElse(""))
+        }
+        .getOrElse(Map.empty)
     for
       first <- ChainsReadFace.chainDigestsJson()
       second <- ChainsReadFace.chainDigestsJson()
@@ -735,7 +770,11 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
       assert(digests.values.forall(d => d.nonEmpty && d.length <= 16), s"digests are short change detectors: $digests")
       val fp = first.hcursor.get[String]("fingerprint").toOption.getOrElse("")
       assert(fp.nonEmpty, "a fingerprint must be supplied")
-      assertEquals(second.hcursor.get[String]("fingerprint").toOption, Some(fp), "the fingerprint is stable while nothing moves")
+      assertEquals(
+        second.hcursor.get[String]("fingerprint").toOption,
+        Some(fp),
+        "the fingerprint is stable while nothing moves"
+      )
       assertEquals(digestsOf(second), digests)
       // `?since=<上次 fingerprint>` 未变 ⇒ 零 digests 体 = 重连稳态的零增量路径。
       val unchanged = ChainsReadFace.chainDigestsJson(Some(fp)).unsafeRunSync()

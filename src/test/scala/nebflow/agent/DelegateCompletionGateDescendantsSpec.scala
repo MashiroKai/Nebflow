@@ -161,7 +161,11 @@ class DelegateCompletionGateDescendantsSpec extends CatsEffectSuite:
     for
       _ <- IO {
         progressEnabled.foreach(enabled =>
-          os.write.over(PathUtil.configJsonWritePath(PathUtil.dataRoot), s"""{"delegateProgressNotifications":$enabled}""", createFolders = true)
+          os.write.over(
+            PathUtil.configJsonWritePath(PathUtil.dataRoot),
+            s"""{"delegateProgressNotifications":$enabled}""",
+            createFolders = true
+          )
         )
       }
       childEvents <- Ref.of[IO, List[AgentCommand]](Nil)
@@ -224,12 +228,19 @@ class DelegateCompletionGateDescendantsSpec extends CatsEffectSuite:
         _ <- supervisor ! AgentEvent.Completed(childSid, List(assistantMsg("held nonempty text")))
         _ <- IO.sleep(800.millis)
         progress <- mails(parentSid, "delegate-progress")
-        _ <- resources.subAgentTaskStore.updateStatus(childSid, s"child-$suffix", "completed", completedAt = Some(System.currentTimeMillis()))
+        _ <- resources.subAgentTaskStore.updateStatus(
+          childSid,
+          s"child-$suffix",
+          "completed",
+          completedAt = Some(System.currentTimeMillis())
+        )
         _ <- supervisor ! AgentEvent.Completed(childSid, List(assistantMsg("final report")))
         _ <- waitUntil(10.seconds)(mails(parentSid, "delegate-terminal").map(_.nonEmpty))
         terminal <- mails(parentSid, "delegate-terminal")
         _ <- system.stopAll
       yield (progress.size, terminal.size)
+      end for
+    end scenario
     for
       off <- scenario(None, "off")
       on <- scenario(Some(true), "on")

@@ -69,3 +69,4 @@ class SeqCounterSpec extends FunSuite:
     assertEquals(c.next(), 101L, "发号从抬升后继续")
     val reloaded = SeqCounter.open(f, treeHasData = true, interval = 4).toTry.get
     assertEquals(reloaded.persistedNext, 105L, "抬升已持久化并随新区间推进")
+end SeqCounterSpec

@@ -69,6 +69,8 @@ object InjectionTiming:
     /** 永不在工具边界消费的命令（SkillActivate / AskQuestion / 非注入队列件）。 */
     case NonInjectable
 
+  end Leg
+
   /**
    * 判定发生的**时机面**（同一个判据在三个生命周期位置的取值口径）。
    *
@@ -138,15 +140,15 @@ object InjectionTiming:
   /** 队列元素形态判据（`pendingUserInputs` 是 `List[AgentCommand]`）。 */
   def isMailSupplementCommand(cmd: AgentCommand): Boolean = cmd match
     case ui: AgentCommand.UserInput => isMailSupplement(ui)
-    case _                          => false
+    case _ => false
 
   private def legOfImmediate(imm: AgentCommand.ImmediateInput): Leg =
     if imm.fromUser then Leg.UserText
     else
       imm.source match
         case Some("delegate-notify") | Some("flow-notify") | Some("mail") => Leg.MailDelegate
-        case Some("system") | Some("node")                                => Leg.NodeMessage
-        case _                                                            => Leg.ServerInjected
+        case Some("system") | Some("node") => Leg.NodeMessage
+        case _ => Leg.ServerInjected
 
   private def legOf(cmd: AgentCommand): Leg = cmd match
     case imm: AgentCommand.ImmediateInput => legOfImmediate(imm)
@@ -202,6 +204,10 @@ object InjectionTiming:
         case _ =>
           Decision(leg, Verdict.HoldForNextBoundary, "非注入队列命令：本边界不消费")
 
+    end if
+
+  end decide
+
   /**
    * 一次工具边界的注入计划（纯值，`AgentProcessing` 的 ToolsComplete 分支逐字段消费）。
    *
@@ -225,6 +231,8 @@ object InjectionTiming:
   ):
     def isEmpty: Boolean = immediate.isEmpty && mails.isEmpty && humanFrames.isEmpty
 
+  end BoundaryPlan
+
   def planBoundary(
     immediateQueue: List[AgentCommand.ImmediateInput],
     userQueue: List[AgentCommand],
@@ -243,9 +251,11 @@ object InjectionTiming:
     val mailIdx = indexed.collect {
       case (ui: AgentCommand.UserInput, d, i) if d.injectsNow && d.leg == Leg.MailSupplement => (i, ui)
     }
-    val humanIdx = indexed.collect {
-      case (ui: AgentCommand.UserInput, d, i) if d.injectsNow && d.leg == Leg.UserFrame => (i, ui)
-    }.take(1) // 每边界至多一件真人帧（与 immediate 的「一件一次全上下文往返」预算同源）
+    val humanIdx = indexed
+      .collect {
+        case (ui: AgentCommand.UserInput, d, i) if d.injectsNow && d.leg == Leg.UserFrame => (i, ui)
+      }
+      .take(1) // 每边界至多一件真人帧（与 immediate 的「一件一次全上下文往返」预算同源）
     val consumed = (mailIdx ++ humanIdx).map(_._1).toSet
     val held = indexed.collect { case (_, d, i) if !consumed.contains(i) => (d.leg, d.reason) }.distinct
 
@@ -257,6 +267,8 @@ object InjectionTiming:
       remainingUser = indexed.collect { case (c, _, i) if !consumed.contains(i) => c },
       held = held
     )
+
+  end planBoundary
 
   /**
    * 本边界是否还有可注入件（`AgentFinishTurn` 的回合末腿用它替代 `nonEmpty` 直判，

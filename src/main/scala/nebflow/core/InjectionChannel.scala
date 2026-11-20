@@ -48,8 +48,14 @@ object InjectionChannel:
   private val logger = NebflowLogger.forName("nebflow.core.injection-channel")
 
   /** Read-only diagnostic; never records event payloads. Disable with -Dnebflow.injection.decisionLog=false. */
-  def logSuppressed(sessionId: String, source: String, eventType: String, sourceId: String,
-    gate: String, basis: JsonObject): IO[Unit] =
+  def logSuppressed(
+    sessionId: String,
+    source: String,
+    eventType: String,
+    sourceId: String,
+    gate: String,
+    basis: JsonObject
+  ): IO[Unit] =
     if sys.props.get("nebflow.injection.decisionLog").contains("false") then IO.unit
     else
       val row = Json.obj(
@@ -177,6 +183,7 @@ object InjectionChannel:
     // ⇒ 非 ask 帧字节形态逐字不变。
     val withAskAddr = row.askAddress.fold(withDiff)(a => withDiff.deepMerge(Json.obj("askAddress" -> a.asJson)))
     if extra.isEmpty then withAskAddr else withAskAddr.deepMerge(Json.fromJsonObject(extra))
+  end frame
 
   /** 落盘面（窄端口 ⇒ 本件可在无 gateway 的测试里用真 `SessionStore` 或假实现直测）。 */
   type Store = SessionStorePort
@@ -208,8 +215,12 @@ object InjectionChannel:
       if dedup && hasText then admit(dedupKey(sessionId, row))
       else true
     if !admitted then
-      logSuppressed(sessionId, row.source.getOrElse(""), row.eventType.getOrElse(""),
-        row.sender.getOrElse(""), "injection-window-dedup",
+      logSuppressed(
+        sessionId,
+        row.source.getOrElse(""),
+        row.eventType.getOrElse(""),
+        row.sender.getOrElse(""),
+        "injection-window-dedup",
         JsonObject("windowMs" -> windowMs.asJson, "fingerprint" -> fingerprint(row.text).asJson)
       ).as(Outcome.Collapsed)
     else
@@ -224,9 +235,12 @@ object InjectionChannel:
         IO.defer(send(frame(sessionId, row, extra))).attempt.flatMap {
           case Right(_) => IO.pure(if appendFailed then Outcome.Failed(true, false) else Outcome.Emitted)
           case Left(e) =>
-            logger.warn(s"injected user event failed: ${e.getMessage}")
+            logger
+              .warn(s"injected user event failed: ${e.getMessage}")
               .as(Outcome.Failed(appendFailed, true))
         }
       }
+    end if
+  end deliver
 
 end InjectionChannel

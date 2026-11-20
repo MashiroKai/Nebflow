@@ -64,6 +64,7 @@ object PdfParser:
 
   /** Failure with a stable machine code and a readable sentence. */
   final case class PdfFailure(code: String, message: String):
+
     def toJson: io.circe.Json =
       io.circe.Json.obj("error" -> io.circe.Json.fromString(code), "message" -> io.circe.Json.fromString(message))
 
@@ -153,6 +154,8 @@ object PdfParser:
           l
       }
 
+  end parse
+
   /**
    * Turn one finished parser run into a verdict. Exit 0 is only a success when
    * the manifest it wrote is readable — a parser that exits 0 with a broken
@@ -169,10 +172,11 @@ object PdfParser:
     val errTail = if err.length > stderrTail then err.takeRight(stderrTail) else err
     if res.exitCode == 0 then
       val metaPath = outDir / "meta.json"
-      if !os.exists(metaPath) then Left(PdfFailure(CodeParseFailed, s"parser exited 0 without writing meta.json ($argv)"))
+      if !os.exists(metaPath) then
+        Left(PdfFailure(CodeParseFailed, s"parser exited 0 without writing meta.json ($argv)"))
       else
         PdfManifest.decode(os.read(metaPath)) match
-          case Right(m)  => Right(m)
+          case Right(m) => Right(m)
           case Left(why) => Left(PdfFailure(CodeParseFailed, s"parser wrote an unreadable manifest: $why"))
     else
       // The parser's own single-line JSON verdict is the best message; a
@@ -191,8 +195,16 @@ object PdfParser:
             yield PdfFailure(code, message)
           }
       verdict match
-        case Some(f)                    => Left(f)
-        case None if res.exitCode == 2  => Left(PdfFailure(CodeParserUsage, s"parser usage error (exit 2): ${errTail.trim}"))
+        case Some(f) => Left(f)
+        case None if res.exitCode == 2 =>
+          Left(PdfFailure(CodeParserUsage, s"parser usage error (exit 2): ${errTail.trim}"))
         case None =>
-          Left(PdfFailure(CodeParseFailed, s"parser failed (exit ${res.exitCode}) without a readable verdict: ${errTail.trim}"))
-
+          Left(
+            PdfFailure(
+              CodeParseFailed,
+              s"parser failed (exit ${res.exitCode}) without a readable verdict: ${errTail.trim}"
+            )
+          )
+    end if
+  end verdictOf
+end PdfParser

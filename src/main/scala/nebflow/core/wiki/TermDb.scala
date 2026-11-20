@@ -47,8 +47,13 @@ final class TermDb(val dbPath: os.Path):
    * @param doc     限定文档：vault 相对路径精确命中，否则按 basename / 子串
    * @param limit   返回条数上限（<=0 取默认，>MaxLimit 截到 MaxLimit）
    */
-  def terms(q: Option[String] = None, project: Option[String] = None, topic: Option[String] = None,
-            doc: Option[String] = None, limit: Int = DefaultLimit): IO[TermQueryResult] =
+  def terms(
+    q: Option[String] = None,
+    project: Option[String] = None,
+    topic: Option[String] = None,
+    doc: Option[String] = None,
+    limit: Int = DefaultLimit
+  ): IO[TermQueryResult] =
     withDb("terms") { conn =>
       val (where, params) = filtersOf(q, project, topic, doc)
       val rows = selectRecords(conn, where, params, clampLimit(limit))
@@ -67,9 +72,12 @@ final class TermDb(val dbPath: os.Path):
       else
         var rows = selectBy(conn, "t.name_key = ?", List(key), MaxLimit)
         if rows.isEmpty then
-          rows = selectBy(conn,
+          rows = selectBy(
+            conn,
             "EXISTS (SELECT 1 FROM term_aliases a WHERE a.term_id = t.id AND a.alias_key = ?)",
-            List(key), MaxLimit)
+            List(key),
+            MaxLimit
+          )
         rows.map(r => TermDetail(r, refsOf(conn, r.id)))
     }.map(_.getOrElse(Nil))
 
@@ -77,9 +85,10 @@ final class TermDb(val dbPath: os.Path):
   def stats: IO[Option[TermDbStats]] =
     withDb("stats") { conn =>
       val meta = metaOf(conn)
-      val perProject = query2(conn,
-        "SELECT project, count(*) AS n FROM documents GROUP BY project ORDER BY project",
-        Nil) { rs => (rs.getString("project"), rs.getInt("n")) }
+      val perProject =
+        query2(conn, "SELECT project, count(*) AS n FROM documents GROUP BY project ORDER BY project", Nil) { rs =>
+          (rs.getString("project"), rs.getInt("n"))
+        }
       TermDbStats(
         dbPath = dbPath.toString,
         schemaVersion = meta.getOrElse(SchemaVersionKey, ""),
@@ -113,22 +122,30 @@ final class TermDb(val dbPath: os.Path):
           conn = open(path)
           val version = metaOf(conn).getOrElse(SchemaVersionKey, "")
           if !SupportedSchemas.contains(version) then
-            degrade(s"$label|schema|$path|$version",
-              s"schema_version='$version' 不在已知集合 ${SupportedSchemas.toList.sorted.mkString("/")}（$path）")
+            degrade(
+              s"$label|schema|$path|$version",
+              s"schema_version='$version' 不在已知集合 ${SupportedSchemas.toList.sorted.mkString("/")}（$path）"
+            )
             None
           else Some(f(conn))
         catch
           case NonFatal(e) =>
-            degrade(s"$label|error|$path|${e.getClass.getSimpleName}",
-              s"读库失败（$path）：${e.getClass.getSimpleName}: ${msgOf(e)}")
+            degrade(
+              s"$label|error|$path|${e.getClass.getSimpleName}",
+              s"读库失败（$path）：${e.getClass.getSimpleName}: ${msgOf(e)}"
+            )
             None
         finally
-          if conn != null then try conn.close() catch case NonFatal(_) => ()
+          if conn != null then
+            try conn.close()
+            catch case NonFatal(_) => ()
+        end try
+      end if
     }
 
   private def open(path: os.Path): Connection =
     val cfg = new org.sqlite.SQLiteConfig()
-    cfg.setReadOnly(true)          // open_mode = READONLY：缺库即失败，绝不建库
+    cfg.setReadOnly(true) // open_mode = READONLY：缺库即失败，绝不建库
     DriverManager.getConnection("jdbc:sqlite:" + path.toString, cfg.toProperties)
 
   /** 每种失败签名只 WARN 一次（省日志）；签名含 label + 原因，别把不同故障揉一起。 */
@@ -138,8 +155,12 @@ final class TermDb(val dbPath: os.Path):
 
   // ── SQL 面 ───────────────────────────────────────────────────────
 
-  private def filtersOf(q: Option[String], project: Option[String], topic: Option[String],
-                        doc: Option[String]): (List[String], List[Any]) =
+  private def filtersOf(
+    q: Option[String],
+    project: Option[String],
+    topic: Option[String],
+    doc: Option[String]
+  ): (List[String], List[Any]) =
     val where = ListBuffer.empty[String]
     val params = ListBuffer.empty[Any]
     q.map(_.trim).filter(_.nonEmpty).foreach { raw =>
@@ -166,6 +187,8 @@ final class TermDb(val dbPath: os.Path):
     }
     (where.toList, params.toList)
 
+  end filtersOf
+
   private def whereSql(where: List[String]): String =
     if where.isEmpty then "" else " WHERE " + where.mkString(" AND ")
 
@@ -178,15 +201,12 @@ final class TermDb(val dbPath: os.Path):
       if rs.next() then rs.getInt(1) else 0
     finally st.close()
 
-  private def selectRecords(conn: Connection, where: List[String], params: List[Any],
-                            limit: Int): List[TermRecord] =
+  private def selectRecords(conn: Connection, where: List[String], params: List[Any], limit: Int): List[TermRecord] =
     val sql = BaseSelect + whereSql(where) + " ORDER BY t.name_key, d.project, d.rel, t.line LIMIT ?"
     hydrate(conn, sql, params, limit)
 
-  private def selectBy(conn: Connection, predicate: String, params: List[Any],
-                       limit: Int): List[TermRecord] =
-    hydrate(conn, BaseSelect + " WHERE " + predicate + " ORDER BY d.project, d.rel, t.line LIMIT ?",
-      params, limit)
+  private def selectBy(conn: Connection, predicate: String, params: List[Any], limit: Int): List[TermRecord] =
+    hydrate(conn, BaseSelect + " WHERE " + predicate + " ORDER BY d.project, d.rel, t.line LIMIT ?", params, limit)
 
   /** 一次主查询 + 一次别名批量 + 一次标签批量（N+1 免疫），行序照 SQL 给。 */
   private def hydrate(conn: Connection, sql: String, params: List[Any], limit: Int): List[TermRecord] =
@@ -201,11 +221,17 @@ final class TermDb(val dbPath: os.Path):
       val ids = rows.map(_.id)
       val aliases = aliasesOf(conn, ids)
       val tags = tagsOf(conn, ids)
-      rows.map(r => r.copy(
-        aliases = aliases.getOrElse(r.id, Nil),
-        tags = tags.getOrElse(r.id, TermTagBuckets.Empty)
-      ))
+      rows.map(r =>
+        r.copy(
+          aliases = aliases.getOrElse(r.id, Nil),
+          tags = tags.getOrElse(r.id, TermTagBuckets.Empty)
+        )
+      )
     finally st.close()
+
+    end try
+
+  end hydrate
 
   private def recordOf(rs: ResultSet): TermRecord =
     TermRecord(
@@ -234,9 +260,11 @@ final class TermDb(val dbPath: os.Path):
     if ids.isEmpty then Map.empty
     else
       val out = scala.collection.mutable.LinkedHashMap.empty[Long, ListBuffer[String]]
-      query2(conn,
+      query2(
+        conn,
         s"SELECT term_id, alias FROM term_aliases WHERE term_id IN (${ids.mkString(",")}) ORDER BY term_id, alias",
-        Nil) { rs =>
+        Nil
+      ) { rs =>
         out.getOrElseUpdate(rs.getLong("term_id"), ListBuffer.empty) += rs.getString("alias")
       }
       out.map { case (k, v) => k -> v.toList }.toMap
@@ -244,25 +272,29 @@ final class TermDb(val dbPath: os.Path):
   private def tagsOf(conn: Connection, ids: List[Long]): Map[Long, TermTagBuckets] =
     if ids.isEmpty then Map.empty
     else
-      val acc = scala.collection.mutable.LinkedHashMap.empty[Long, (ListBuffer[String], ListBuffer[String], ListBuffer[String])]
-      query2(conn,
+      val acc =
+        scala.collection.mutable.LinkedHashMap.empty[Long, (ListBuffer[String], ListBuffer[String], ListBuffer[String])]
+      query2(
+        conn,
         s"SELECT term_id, facet, value FROM term_tags WHERE term_id IN (${ids.mkString(",")}) ORDER BY term_id, facet, value",
-        Nil) { rs =>
-        val entry = acc.getOrElseUpdate(rs.getLong("term_id"),
-          (ListBuffer.empty, ListBuffer.empty, ListBuffer.empty))
+        Nil
+      ) { rs =>
+        val entry = acc.getOrElseUpdate(rs.getLong("term_id"), (ListBuffer.empty, ListBuffer.empty, ListBuffer.empty))
         rs.getString("facet") match
           case WikiIndex.TagFacetProject => entry._1 += rs.getString("value")
-          case WikiIndex.TagFacetTopic   => entry._2 += rs.getString("value")
-          case _                         => entry._3 += rs.getString("value")
+          case WikiIndex.TagFacetTopic => entry._2 += rs.getString("value")
+          case _ => entry._3 += rs.getString("value")
       }
       acc.map { case (k, (p, t, e)) =>
         k -> TermTagBuckets(p.distinct.sorted.toList, t.distinct.sorted.toList, e.distinct.sorted.toList)
       }.toMap
 
   private def refsOf(conn: Connection, termId: Long): List[TermRefHit] =
-    query2(conn,
+    query2(
+      conn,
       "SELECT from_rel, line, raw, resolved FROM term_refs WHERE term_id = ? ORDER BY from_rel, line, raw",
-      List(termId)) { rs =>
+      List(termId)
+    ) { rs =>
       TermRefHit(rs.getString("from_rel"), rs.getInt("line"), rs.getString("raw"), rs.getInt("resolved") == 1)
     }
 
@@ -292,10 +324,10 @@ final class TermDb(val dbPath: os.Path):
     var i = 1
     params.foreach { p =>
       p match
-        case n: Int    => st.setInt(i, n)
-        case l: Long   => st.setLong(i, l)
+        case n: Int => st.setInt(i, n)
+        case l: Long => st.setLong(i, l)
         case s: String => st.setString(i, s)
-        case other     => st.setObject(i, other)
+        case other => st.setObject(i, other)
       i += 1
     }
 
@@ -330,7 +362,10 @@ object TermDb:
 
   /** 有效库路径：`NEBFLOW_TERMS_DB` 显式覆盖优先，否则数据根缺省位。 */
   def resolvePath: os.Path =
-    sys.env.get(EnvOverride).map(_.trim).filter(_.nonEmpty)
+    sys.env
+      .get(EnvOverride)
+      .map(_.trim)
+      .filter(_.nonEmpty)
       .map(p => os.Path(p, os.pwd))
       .getOrElse(defaultPath)
 
@@ -358,13 +393,18 @@ object TermDb:
     while t.startsWith("#") do t = t.substring(1)
     val prefixes = namespace match
       case "project" => List("project/", "proj/")
-      case "topic"   => List("topic/")
-      case other     => List(other + "/")
+      case "topic" => List("topic/")
+      case other => List(other + "/")
     var changed = true
     while changed do
       changed = false
-      prefixes.foreach { p => if t.startsWith(p) then { t = t.substring(p.length); changed = true } }
+      prefixes.foreach { p =>
+        if t.startsWith(p) then
+          t = t.substring(p.length); changed = true
+      }
     t.trim
+
+  end tagValue
 
   private def normalizeRel(raw: String): String =
     var t = Option(raw).getOrElse("").trim.replace('\\', '/')
@@ -384,12 +424,14 @@ object TermDb:
       |       d.project, d.rel, d.abs_path, d.title, d.doc_type, d.status,
       |       (SELECT count(*) FROM term_refs r WHERE r.term_id = t.id) AS ref_count
       |  FROM terms t JOIN documents d ON d.id = t.doc_id""".stripMargin
+end TermDb
 
 // ── 结果类型（JSON 面 = 路由的唯一输出形状）────────────────────────────
 
 /** 词条的三桶标签，桶内已去重排序（与 `WikiIndex.termTagsJson` 同序）。 */
 final case class TermTagBuckets(project: List[String], topic: List[String], extra: List[String]):
   def isEmpty: Boolean = project.isEmpty && topic.isEmpty && extra.isEmpty
+
   def asJson: Json = Json.obj(
     WikiIndex.TagFacetProject -> project.asJson,
     WikiIndex.TagFacetTopic -> topic.asJson,
@@ -399,9 +441,18 @@ final case class TermTagBuckets(project: List[String], topic: List[String], extr
 object TermTagBuckets:
   val Empty: TermTagBuckets = TermTagBuckets(Nil, Nil, Nil)
 
-/** **原文档信息**（作者要的那一半：查到词条就带回它声明在哪份文档里）。 */
-final case class TermDocMeta(project: String, rel: String, absPath: String,
-                             title: String, docType: String, status: String):
+/**
+ * **原文档信息**（作者要的那一半：查到词条就带回它声明在哪份文档里）。
+ */
+final case class TermDocMeta(
+  project: String,
+  rel: String,
+  absPath: String,
+  title: String,
+  docType: String,
+  status: String
+):
+
   def asJson: Json = Json.obj(
     "project" -> project.asJson,
     "rel" -> rel.asJson,
@@ -410,6 +461,8 @@ final case class TermDocMeta(project: String, rel: String, absPath: String,
     "doc_type" -> docType.asJson,
     "status" -> status.asJson
   )
+
+end TermDocMeta
 
 /** 一条词条（含它声明所在文档的元数据、三桶标签、被引用次数）。 */
 final case class TermRecord(
@@ -446,8 +499,11 @@ final case class TermRecord(
     "doc" -> doc.asJson
   )
 
+end TermRecord
+
 /** 一处引用（谁在哪个文件哪一行引了这条词条）。 */
 final case class TermRefHit(fromRel: String, line: Int, raw: String, resolved: Boolean):
+
   def asJson: Json = Json.obj(
     "from_rel" -> fromRel.asJson,
     "line" -> line.asJson,
@@ -461,6 +517,7 @@ final case class TermDetail(term: TermRecord, refs: List[TermRefHit]):
 
 /** 一次检索的结果壳：`available=false` 即降级（库缺失 / schema 不认识 / 读失败）。 */
 final case class TermQueryResult(available: Boolean, total: Int, shown: Int, terms: List[TermRecord]):
+
   def asJson: Json = Json.obj(
     "available" -> available.asJson,
     "count" -> total.asJson,
@@ -472,9 +529,19 @@ object TermQueryResult:
   val unavailable: TermQueryResult = TermQueryResult(available = false, total = 0, shown = 0, terms = Nil)
 
 /** 库的汇总面（文档/词条/别名/标签/引用 + 每项目文档数）。 */
-final case class TermDbStats(dbPath: String, schemaVersion: String, lastRebuild: String,
-                             documents: Int, terms: Int, aliases: Int, tags: Int,
-                             refs: Int, refsResolved: Int, projects: List[(String, Int)]):
+final case class TermDbStats(
+  dbPath: String,
+  schemaVersion: String,
+  lastRebuild: String,
+  documents: Int,
+  terms: Int,
+  aliases: Int,
+  tags: Int,
+  refs: Int,
+  refsResolved: Int,
+  projects: List[(String, Int)]
+):
+
   def asJson: Json = Json.obj(
     "db" -> dbPath.asJson,
     "schema_version" -> schemaVersion.asJson,
@@ -487,3 +554,4 @@ final case class TermDbStats(dbPath: String, schemaVersion: String, lastRebuild:
     "refs_resolved" -> refsResolved.asJson,
     "projects" -> projects.map { case (p, n) => Json.obj("project" -> p.asJson, "documents" -> n.asJson) }.asJson
   )
+end TermDbStats

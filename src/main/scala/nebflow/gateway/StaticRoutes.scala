@@ -259,20 +259,21 @@ object StaticRoutes:
       .handleErrorWith(_ => NotFound())
   end indexWithBrandFile
 
-  /** Shared index response build: brand injection + raw-bytes response with the
-    * served-bytes weak validator (see [[weakEtagOf]]).
-    *
-    * 静态面重验证批（2026-11-18，作者令「尽量节省资源」）：修前本应答带
-    * `Cache-Control: no-cache` 却**零验证器**——`no-cache` 要求每次导航都先对
-    * 服务端核对，而既无 ETag 又无 Last-Modified（体是逐请求注入生成的，不是
-    * StaticFile 的盘上字节）⇒ 浏览器无法发条件请求，**整页体每次导航全量重下**
-    * （实测 dev 树 index 88 304 B / gzip 33 510 B，隧道腿每跳都过境）。
-    * 现在按**实际出向字节**算一个弱验证器并接条件请求：`If-None-Match` 命中
-    * ⇒ 304（零体），未命中/陈旧 ⇒ 200 全量且带同一 ETag。体字节不变（本批
-    * 不改注入内容），故 ETag 与内容一一对应——内容一变（重建/换静态面/换品牌
-    * 配置）ETag 即变，绝无陈旧服务。**弱**标签是必须的形态：GzipMiddleware 会
-    * 把可压缩应答换成 gzip 表示，而弱比较（RFC 9110 §8.8.3）忽略内容编码。
-    */
+  /**
+   * Shared index response build: brand injection + raw-bytes response with the
+   * served-bytes weak validator (see [[weakEtagOf]]).
+   *
+   * 静态面重验证批（2026-11-18，作者令「尽量节省资源」）：修前本应答带
+   * `Cache-Control: no-cache` 却**零验证器**——`no-cache` 要求每次导航都先对
+   * 服务端核对，而既无 ETag 又无 Last-Modified（体是逐请求注入生成的，不是
+   * StaticFile 的盘上字节）⇒ 浏览器无法发条件请求，**整页体每次导航全量重下**
+   * （实测 dev 树 index 88 304 B / gzip 33 510 B，隧道腿每跳都过境）。
+   * 现在按**实际出向字节**算一个弱验证器并接条件请求：`If-None-Match` 命中
+   * ⇒ 304（零体），未命中/陈旧 ⇒ 200 全量且带同一 ETag。体字节不变（本批
+   * 不改注入内容），故 ETag 与内容一一对应——内容一变（重建/换静态面/换品牌
+   * 配置）ETag 即变，绝无陈旧服务。**弱**标签是必须的形态：GzipMiddleware 会
+   * 把可压缩应答换成 gzip 表示，而弱比较（RFC 9110 §8.8.3）忽略内容编码。
+   */
   private def brandInjectedResponse(html: String, inm: Option[String] = None): IO[Response[IO]] =
     // 陈旧 SPA 指纹提示批（方案 B 小刀③，2026-10-28）：brand 脚本同点追加指纹
     // 注入——本页被 serve 时拿到引擎当前的前端资源指纹（webFingerprint 惰性单值，
@@ -463,14 +464,16 @@ object StaticRoutes:
 
   private val PackStylesheetRe = """<link rel="stylesheet" href="((?:css|vendor)/[^"]+)"([^>]*)>""".r
   private val PackVendorScriptRe = """<script defer src="(vendor/[^"]+)"></script>""".r
-  private val PackMediaAttrRe  = """media="([^"]*)"""".r
+  private val PackMediaAttrRe = """media="([^"]*)"""".r
 
   /** CSS 相对 url() 捕获（绝对/http(s)/data/协议相对/锚引用不碰）。 */
   private val CssRelativeUrlRe = """url\(\s*(?!['"]?(?:data:|https?:|//|/|#))([^)]+)\)""".r
 
-  /** 匹配重建助手：绕开 [[scala.util.matching.Regex.replaceAllIn]] 的替换串
-    * 语义（`$` 被当组引用展开——vendor JS 里的 `$` 模板字面量即触发
-    * Illegal group reference）。重建是纯拼接：f 的返回值逐字进结果串。 */
+  /**
+   * 匹配重建助手：绕开 [[scala.util.matching.Regex.replaceAllIn]] 的替换串
+   * 语义（`$` 被当组引用展开——vendor JS 里的 `$` 模板字面量即触发
+   * Illegal group reference）。重建是纯拼接：f 的返回值逐字进结果串。
+   */
   private def rebuildMatches(target: String, re: scala.util.matching.Regex)(
     f: scala.util.matching.Regex.Match => String
   ): String =
@@ -489,10 +492,10 @@ object StaticRoutes:
   /** [[packedIndexHtml]] 的 CSS url() 重写（纯函数，spec 直读）。 */
   private[gateway] def rewriteCssUrls(css: String, baseDir: String): String =
     rebuildMatches(css, CssRelativeUrlRe) { m =>
-      val inner  = m.group(1).trim
-      val quote  = if inner.startsWith("\"") then "\"" else if inner.startsWith("'") then "'" else ""
-      val bare   = if quote.isEmpty then inner else inner.stripPrefix(quote).stripSuffix(quote)
-      val cut    = bare.indexWhere(c => c == '?' || c == '#')
+      val inner = m.group(1).trim
+      val quote = if inner.startsWith("\"") then "\"" else if inner.startsWith("'") then "'" else ""
+      val bare = if quote.isEmpty then inner else inner.stripPrefix(quote).stripSuffix(quote)
+      val cut = bare.indexWhere(c => c == '?' || c == '#')
       val (path, suffix) = if cut < 0 then (bare, "") else bare.splitAt(cut)
       if path.isEmpty then m.matched
       else s"""url($quote$baseDir$path$suffix$quote)"""
@@ -501,7 +504,7 @@ object StaticRoutes:
   /** 隧道首开打包转换（纯函数）：逐字保留未知形状，单资源失败回落原 tag。 */
   private[gateway] def packedIndexHtml(html: String): String =
     val afterCss = rebuildMatches(html, PackStylesheetRe) { m =>
-      val path  = m.group(1)
+      val path = m.group(1)
       val attrs = m.group(2)
       ConsoleAssetBatchRoutes.readCapped(s"web/$path", ConsoleAssetBatchRoutes.MaxBytesPerAsset) match
         case None => m.matched
@@ -513,7 +516,7 @@ object StaticRoutes:
           ).replace("</style", "<\\/style")
           val open = PackMediaAttrRe.findFirstMatchIn(attrs) match
             case Some(mm) => s"""<style media="${mm.group(1)}">"""
-            case None     => "<style>"
+            case None => "<style>"
           open + css + "</style>"
     }
     rebuildMatches(afterCss, PackVendorScriptRe) { m =>
@@ -561,12 +564,12 @@ object StaticRoutes:
   private[gateway] def versionedIndexHtml(html: String): String =
     val afterHref = rebuildMatches(html, VerHrefRe) { m =>
       versionTag(m.group(2)) match
-        case None    => m.matched
+        case None => m.matched
         case Some(v) => s"${m.group(1)}${m.group(2)}$v${m.group(3)}"
     }
     rebuildMatches(afterHref, VerSrcRe) { m =>
       versionTag(m.group(2)) match
-        case None    => m.matched
+        case None => m.matched
         case Some(v) => s"${m.group(1)}${m.group(2)}$v${m.group(3)}"
     }
   end versionedIndexHtml
@@ -690,24 +693,26 @@ object StaticRoutes:
   def uploadsRoutes(tokenRef: cats.effect.Ref[IO, String], sessions: GatewaySessionStore): HttpRoutes[IO] =
     HttpRoutes.of[IO] {
       case req @ GET -> _ if req.uri.path.renderString.startsWith("/uploads/") =>
-        tokenRef.get.flatMap { token =>
-          OwnerAccess.authenticate(
-            req,
-            token,
-            sessions,
-            OwnerStore.forDataRoot(PathUtil.dataRoot.toNIO),
-            GatewayAuth.Rails.StaticAuth
-          )
-        }.flatMap {
-          case None => Forbidden("Invalid session")
-          case Some(access) =>
-            val decoded = req.uri.path.segments.map(_.decoded()).toList.drop(1)
-            val resourceId = decoded.mkString("/")
-            access.ownsResource("attachment", resourceId).flatMap {
-              case true => uploadsServe(req)
-              case false => Forbidden("Attachment owner unknown or mismatched")
-            }
-        }
+        tokenRef.get
+          .flatMap { token =>
+            OwnerAccess.authenticate(
+              req,
+              token,
+              sessions,
+              OwnerStore.forDataRoot(PathUtil.dataRoot.toNIO),
+              GatewayAuth.Rails.StaticAuth
+            )
+          }
+          .flatMap {
+            case None => Forbidden("Invalid session")
+            case Some(access) =>
+              val decoded = req.uri.path.segments.map(_.decoded()).toList.drop(1)
+              val resourceId = decoded.mkString("/")
+              access.ownsResource("attachment", resourceId).flatMap {
+                case true => uploadsServe(req)
+                case false => Forbidden("Attachment owner unknown or mismatched")
+              }
+          }
     }
 
   /**
@@ -771,6 +776,8 @@ object StaticRoutes:
             }
             .getOrElseF(NotFound())
         else NotFound()
+        end if
+      end if
     end if
 
   end uploadsServe

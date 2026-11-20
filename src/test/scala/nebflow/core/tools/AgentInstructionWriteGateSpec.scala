@@ -28,10 +28,34 @@ class AgentInstructionWriteGateSpec extends FunSuite:
       input = JsonObject("command" -> command.asJson),
       rawArguments = None
     )
-    for cmd <- List("cat AGENTS.md", "git log -- AGENTS.md", "git diff -- AGENTS.md", "cat AGENTS.md | grep hello", "ls; git status -- AGENTS.md", "sed -n p AGENTS.md") do
-      assert(!AgentInstructionWriteGate.requiresConfirmation(bash(cmd), isAgent = true), cmd)
-    for cmd <- List("tee AGENTS.md", "truncate AGENTS.md", "dd of=AGENTS.md", "mv a AGENTS.md", "cp a AGENTS.md", "install a AGENTS.md", "rm AGENTS.md", "chmod 600 AGENTS.md", "chown user AGENTS.md", "patch AGENTS.md", "git add AGENTS.md", "git commit -- AGENTS.md", "echo x > AGENTS.md", "echo x >> AGENTS.md", "vim AGENTS.md") do
-      assert(AgentInstructionWriteGate.requiresConfirmation(bash(cmd), isAgent = true), cmd)
+    for cmd <- List(
+        "cat AGENTS.md",
+        "git log -- AGENTS.md",
+        "git diff -- AGENTS.md",
+        "cat AGENTS.md | grep hello",
+        "ls; git status -- AGENTS.md",
+        "sed -n p AGENTS.md"
+      )
+    do assert(!AgentInstructionWriteGate.requiresConfirmation(bash(cmd), isAgent = true), cmd)
+    for cmd <- List(
+        "tee AGENTS.md",
+        "truncate AGENTS.md",
+        "dd of=AGENTS.md",
+        "mv a AGENTS.md",
+        "cp a AGENTS.md",
+        "install a AGENTS.md",
+        "rm AGENTS.md",
+        "chmod 600 AGENTS.md",
+        "chown user AGENTS.md",
+        "patch AGENTS.md",
+        "git add AGENTS.md",
+        "git commit -- AGENTS.md",
+        "echo x > AGENTS.md",
+        "echo x >> AGENTS.md",
+        "vim AGENTS.md"
+      )
+    do assert(AgentInstructionWriteGate.requiresConfirmation(bash(cmd), isAgent = true), cmd)
+    end for
     assert(
       AgentInstructionWriteGate.requiresConfirmation(bash("cat AGENTS.md; echo change >> AGENTS.md"), isAgent = true)
     )

@@ -135,4 +135,3 @@ class InfraUnitSpec extends FunSuite:
     assertEquals(WorkspaceDirPicker.busy, false)
 
 end InfraUnitSpec
-

@@ -35,7 +35,12 @@ class CacheAttributionSpec extends FunSuite:
 
   private def wireMsg(role: String, text: String, marker: Boolean = false): Json =
     val block =
-      if marker then Json.obj("type" -> "text".asJson, "text" -> text.asJson, "cache_control" -> Json.obj("type" -> "ephemeral".asJson))
+      if marker then
+        Json.obj(
+          "type" -> "text".asJson,
+          "text" -> text.asJson,
+          "cache_control" -> Json.obj("type" -> "ephemeral".asJson)
+        )
       else Json.obj("type" -> "text".asJson, "text" -> text.asJson)
     Json.obj("role" -> role.asJson, "content" -> Json.arr(block))
 
@@ -65,7 +70,7 @@ class CacheAttributionSpec extends FunSuite:
       agentId = Some("test")
     )
 
-  private val hit  = TokenUsage(inputTokens = 1000, outputTokens = 10, cacheReadTokens = Some(900)) // 90% 正常带
+  private val hit = TokenUsage(inputTokens = 1000, outputTokens = 10, cacheReadTokens = Some(900)) // 90% 正常带
   private val miss = TokenUsage(inputTokens = 1000, outputTokens = 10, cacheReadTokens = Some(0)) // 0% 归因带
 
   test("stream usage is accounted once after all Done events, matching persisted selection"):
@@ -73,8 +78,11 @@ class CacheAttributionSpec extends FunSuite:
     val doneWithout = StreamChunk.Done(None, None, None, None)
     val doneWith = StreamChunk.Done(None, Some(miss), None, None)
     val input = List(doneWithout, doneWith, doneWith)
-    val output = CacheAttribution.accountStream(fs2.Stream.emits(input).covary[cats.effect.IO], "s", "p", "m", Some("r"))
-      .compile.toList.unsafeRunSync()
+    val output = CacheAttribution
+      .accountStream(fs2.Stream.emits(input).covary[cats.effect.IO], "s", "p", "m", Some("r"))
+      .compile
+      .toList
+      .unsafeRunSync()
     assertEquals(output, input)
     assertEquals(CacheAttribution.snapshot.business.requests, 1L)
     assertEquals(CacheAttribution.snapshot.missCounts.get("usage-missing"), None)
@@ -83,8 +91,11 @@ class CacheAttributionSpec extends FunSuite:
   test("completed stream with genuinely missing usage is counted once"):
     import cats.effect.unsafe.implicits.global
     val done = StreamChunk.Done(None, None, None, None)
-    CacheAttribution.accountStream(fs2.Stream.emits(List(done, done)).covary[cats.effect.IO], "s", "p", "m", Some("missing"))
-      .compile.drain.unsafeRunSync()
+    CacheAttribution
+      .accountStream(fs2.Stream.emits(List(done, done)).covary[cats.effect.IO], "s", "p", "m", Some("missing"))
+      .compile
+      .drain
+      .unsafeRunSync()
     assertEquals(CacheAttribution.snapshot.missCounts.get("usage-missing"), Some(1))
     assertEquals(CacheAttribution.snapshot.recentMisses.last.requestId, Some("missing"))
 
@@ -168,8 +179,13 @@ class CacheAttributionSpec extends FunSuite:
     var emitted = List.empty[String]
     CacheAttribution.attributionLogSink = line => emitted = emitted :+ line
     val secret = "PROMPT-CONTENT-MUST-NOT-LOG"
-    CacheAttribution.observeWire("anthropic", paramsOf("log-s"), "Zai",
-      List(wireMsg("user", secret), wireMsg("assistant", "ok", marker = true)), clockWire(1))
+    CacheAttribution.observeWire(
+      "anthropic",
+      paramsOf("log-s"),
+      "Zai",
+      List(wireMsg("user", secret), wireMsg("assistant", "ok", marker = true)),
+      clockWire(1)
+    )
     val requestId = "request-123"
     val record = CacheAttribution.observeUsage("log-s", "Zai", "glm-5.3-flash", Some(miss), requestId = Some(requestId))
     assertEquals(record.flatMap(_.requestId), Some(requestId))
@@ -190,8 +206,15 @@ class CacheAttributionSpec extends FunSuite:
   test("⑧ tools fingerprint change → config-changed"):
     CacheAttribution.observeWire("anthropic", paramsOf("s3"), "Zai", persistedWire(1), clockWire(1))
     assertEquals(CacheAttribution.observeUsage("s3", "Zai", "glm-5.3-flash", Some(hit)), None)
-    val newTools = Some(List(ToolDefinition("Read", "read", JsonObject.empty), ToolDefinition("Edit", "edit", JsonObject.empty)))
-    CacheAttribution.observeWire("anthropic", paramsOf("s3", tools = newTools), "Zai", persistedWire(1, markTail = true), clockWire(2))
+    val newTools =
+      Some(List(ToolDefinition("Read", "read", JsonObject.empty), ToolDefinition("Edit", "edit", JsonObject.empty)))
+    CacheAttribution.observeWire(
+      "anthropic",
+      paramsOf("s3", tools = newTools),
+      "Zai",
+      persistedWire(1, markTail = true),
+      clockWire(2)
+    )
     val rec = CacheAttribution.observeUsage("s3", "Zai", "glm-5.3-flash", Some(miss))
     assertEquals(rec.map(_.category.name), Some("config-changed"))
     assertEquals(rec.flatMap(_.firstDiffIdx), None)
@@ -208,7 +231,13 @@ class CacheAttributionSpec extends FunSuite:
   test("⑧ front rebuilt + shrunk → compaction-rebuild"):
     CacheAttribution.observeWire("anthropic", paramsOf("s5"), "Zai", persistedWire(4), clockWire(1))
     assertEquals(CacheAttribution.observeUsage("s5", "Zai", "glm-5.3-flash", Some(hit)), None)
-    CacheAttribution.observeWire("anthropic", paramsOf("s5"), "Zai", persistedWire(1, frontText = "summary"), clockWire(2))
+    CacheAttribution.observeWire(
+      "anthropic",
+      paramsOf("s5"),
+      "Zai",
+      persistedWire(1, frontText = "summary"),
+      clockWire(2)
+    )
     val rec = CacheAttribution.observeUsage("s5", "Zai", "glm-5.3-flash", Some(miss))
     assertEquals(rec.map(_.category.name), Some("compaction-rebuild"))
 
@@ -216,8 +245,13 @@ class CacheAttributionSpec extends FunSuite:
     // 持久尾有合法 marker，但临时提醒也错误带 marker：要准确归为 ephemeral marker 错位。
     CacheAttribution.observeWire("anthropic", paramsOf("s6"), "Zai", persistedWire(1), clockWire(1))
     assertEquals(CacheAttribution.observeUsage("s6", "Zai", "glm-5.3-flash", Some(hit)), None)
-    CacheAttribution.observeWire("anthropic", paramsOf("s6"), "Zai", persistedWire(1),
-      clockWire(2) :+ wireMsg("user", "EPHEMERAL-REMINDER", marker = true))
+    CacheAttribution.observeWire(
+      "anthropic",
+      paramsOf("s6"),
+      "Zai",
+      persistedWire(1),
+      clockWire(2) :+ wireMsg("user", "EPHEMERAL-REMINDER", marker = true)
+    )
     val rec2 = CacheAttribution.observeUsage("s6", "Zai", "glm-5.3-flash", Some(miss))
     assertEquals(rec2.map(_.category.name), Some("ephemeral-marker-misplaced"))
     assert(rec2.get.detail.contains("ephemeral blocks"))
@@ -225,8 +259,13 @@ class CacheAttributionSpec extends FunSuite:
   test("⑧ non-empty persistent history without a marker → persistent-breakpoint-missing"):
     CacheAttribution.observeWire("anthropic", paramsOf("s6-missing"), "Zai", persistedWire(1), clockWire(1))
     assertEquals(CacheAttribution.observeUsage("s6-missing", "Zai", "glm-5.3-flash", Some(hit)), None)
-    CacheAttribution.observeWire("anthropic", paramsOf("s6-missing"), "Zai",
-      persistedWire(1, markTail = false), clockWire(2))
+    CacheAttribution.observeWire(
+      "anthropic",
+      paramsOf("s6-missing"),
+      "Zai",
+      persistedWire(1, markTail = false),
+      clockWire(2)
+    )
     val rec = CacheAttribution.observeUsage("s6-missing", "Zai", "glm-5.3-flash", Some(miss))
     assertEquals(rec.map(_.category.name), Some("persistent-breakpoint-missing"))
     assert(rec.get.detail.contains("no cache marker"))
@@ -259,7 +298,7 @@ class CacheAttributionSpec extends FunSuite:
 
   test("⑧ miss ring is bounded (512) and no message body ever lands in records"):
     val secret = "SECRET-BODY-do-not-leak-0xdeadbeef"
-    val msgs   = List(wireMsg("user", secret, marker = false), wireMsg("assistant", "ok", marker = true))
+    val msgs = List(wireMsg("user", secret, marker = false), wireMsg("assistant", "ok", marker = true))
     (1 to 520).foreach { i =>
       CacheAttribution.observeWire("anthropic", paramsOf(s"flood$i"), "Zai", msgs, clockWire(i.toLong))
       CacheAttribution.observeUsage(s"flood$i", "Zai", "glm-5.3-flash", Some(miss), nowMs = i.toLong)

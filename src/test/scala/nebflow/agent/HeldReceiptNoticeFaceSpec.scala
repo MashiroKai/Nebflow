@@ -57,14 +57,20 @@ class HeldReceiptNoticeFaceSpec extends FunSuite:
     while i < src.length do
       val rest = src.substring(i)
       if inBlock then
-        if rest.startsWith("*/") then { inBlock = false; i += 2; sb.append(' ') }
-        else { i += 1 }
-      else if inLine then
-        if src.charAt(i) == '\n' then { inLine = false; sb.append('\n'); i += 1 }
+        if rest.startsWith("*/") then
+          inBlock = false; i += 2; sb.append(' ')
         else i += 1
-      else if rest.startsWith("/*") then { inBlock = true; i += 2; sb.append(' ') }
-      else if rest.startsWith("//") then { inLine = true; i += 2 }
-      else { sb.append(src.charAt(i)); i += 1 }
+      else if inLine then
+        if src.charAt(i) == '\n' then
+          inLine = false; sb.append('\n'); i += 1
+        else i += 1
+      else if rest.startsWith("/*") then
+        inBlock = true; i += 2; sb.append(' ')
+      else if rest.startsWith("//") then
+        inLine = true; i += 2
+      else
+        sb.append(src.charAt(i)); i += 1
+    end while
     sb.toString
   end stripComments
 

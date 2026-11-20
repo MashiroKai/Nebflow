@@ -127,7 +127,12 @@ final class AdaptiveThrottle private[llm] (configRef: Ref[IO, NebflowServiceConf
    * @param now
    *   时钟注入口（spec 注入模拟时间；生产 = 系统时钟，与 loosenTick 同一钟面）。
    */
-  def onRateLimitSignal(key: String, reason: FailoverReason, body: String, now: Long = System.currentTimeMillis()): IO[Unit] =
+  def onRateLimitSignal(
+    key: String,
+    reason: FailoverReason,
+    body: String,
+    now: Long = System.currentTimeMillis()
+  ): IO[Unit] =
     params.flatMap { p =>
       val excerpt = LlmLogWriter.redactSecrets(body.take(160))
       if !p.enabled || reason != FailoverReason.RateLimit || isQuotaBody(body) ||
@@ -158,6 +163,8 @@ final class AdaptiveThrottle private[llm] (configRef: Ref[IO, NebflowServiceConf
                     s"(rung ${dg.label}, inFlight=${dg.inFlight}, trigger=account-level 429: \"$excerpt\")"
                 )
         yield ()
+        end for
+      end if
     }
 
   // ── 静默回松（懒触发：acquire 时顺带检查，无后台线程）──────────────────
@@ -185,8 +192,7 @@ final class AdaptiveThrottle private[llm] (configRef: Ref[IO, NebflowServiceConf
                   now,
                   ladder
                 )
-                if steps.isEmpty then
-                  (m, (Nil, AdaptiveThrottleMachine.limitAt(g.rung, g.refLimit, ladder)))
+                if steps.isEmpty then (m, (Nil, AdaptiveThrottleMachine.limitAt(g.rung, g.refLimit, ladder)))
                 else
                   val g2 = g.copy(rung = ns.rung, refLimit = ns.refLimit, quietSinceMs = ns.quietSinceMs)
                   val limit = AdaptiveThrottleMachine.limitAt(ns.rung, ns.refLimit, ladder)
@@ -203,6 +209,7 @@ final class AdaptiveThrottle private[llm] (configRef: Ref[IO, NebflowServiceConf
                   )
                 }
         yield ()
+        end for
     }
 
   // ── 过闸面（GatedAdapter 调用）─────────────────────────────────────────
@@ -221,26 +228,27 @@ final class AdaptiveThrottle private[llm] (configRef: Ref[IO, NebflowServiceConf
       else
         loosenTick(key) *>
           IO.uncancelable { poll =>
-            gates.modify { m =>
-              val g0 = m.getOrElse(key, freshGate)
-              g0.era match
-                // 旁路段（rung 0 / 不限）：只记在飞，不触信号量
-                case None => (m.updated(key, g0.copy(inFlight = g0.inFlight + 1)), None)
-                case Some(era) => (m, Some(era))
-            }.flatMap {
-              case None => IO.pure(ThrottlePermit(key, 0, this))
-              case Some(era) =>
-                val gen = era.gen
-                bump(key, g => g.copy(queued = g.queued + 1)) *>
-                  poll(era.sem.acquire)
-                    // 排队中被取消：信号量自身取消安全，这里只回扣排队计数
-                    .onCancel(bump(key, g => g.copy(queued = math.max(0, g.queued - 1))))
-                    .flatMap { _ =>
-                      bump(key, g =>
-                        g.copy(queued = math.max(0, g.queued - 1), inFlight = g.inFlight + 1))
-                        .as(ThrottlePermit(key, gen, this))
-                    }
-            }
+            gates
+              .modify { m =>
+                val g0 = m.getOrElse(key, freshGate)
+                g0.era match
+                  // 旁路段（rung 0 / 不限）：只记在飞，不触信号量
+                  case None => (m.updated(key, g0.copy(inFlight = g0.inFlight + 1)), None)
+                  case Some(era) => (m, Some(era))
+              }
+              .flatMap {
+                case None => IO.pure(ThrottlePermit(key, 0, this))
+                case Some(era) =>
+                  val gen = era.gen
+                  bump(key, g => g.copy(queued = g.queued + 1)) *>
+                    poll(era.sem.acquire)
+                      // 排队中被取消：信号量自身取消安全，这里只回扣排队计数
+                      .onCancel(bump(key, g => g.copy(queued = math.max(0, g.queued - 1))))
+                      .flatMap { _ =>
+                        bump(key, g => g.copy(queued = math.max(0, g.queued - 1), inFlight = g.inFlight + 1))
+                          .as(ThrottlePermit(key, gen, this))
+                      }
+              }
           }
     }
 
@@ -249,18 +257,20 @@ final class AdaptiveThrottle private[llm] (configRef: Ref[IO, NebflowServiceConf
       // 旁路许可：无信号量票，只回扣在飞计数（闸不存在 = 状态已被清，no-op）
       bump(permit.key, g => g.copy(inFlight = math.max(0, g.inFlight - 1)))
     else
-      gates.modify { m =>
-        m.get(permit.key) match
-          case Some(g) =>
-            val g2 = g.copy(inFlight = math.max(0, g.inFlight - 1))
-            g2.era match
-              case Some(e) if e.gen == permit.gen => (m.updated(permit.key, g2), Some(e.sem))
-              case _ => (m.updated(permit.key, g2), None) // 旧纪元许可：不回流（防跨纪元配额污染）
-          case None => (m, None)
-      }.flatMap {
-        case Some(sem) => sem.release
-        case None => IO.unit
-      }
+      gates
+        .modify { m =>
+          m.get(permit.key) match
+            case Some(g) =>
+              val g2 = g.copy(inFlight = math.max(0, g.inFlight - 1))
+              g2.era match
+                case Some(e) if e.gen == permit.gen => (m.updated(permit.key, g2), Some(e.sem))
+                case _ => (m.updated(permit.key, g2), None) // 旧纪元许可：不回流（防跨纪元配额污染）
+            case None => (m, None)
+        }
+        .flatMap {
+          case Some(sem) => sem.release
+          case None => IO.unit
+        }
 
   private def bump(key: String, f: GateState => GateState): IO[Unit] =
     gates.modify { m =>
@@ -318,50 +328,53 @@ final class AdaptiveThrottle private[llm] (configRef: Ref[IO, NebflowServiceConf
    * 在 FIFO 中排在吸收需求之后 ⇒ 对新请求即刻生效。
    */
   private def adjustCap(key: String, newCap: Int): IO[Unit] =
-    gates.modify { m =>
-      m.get(key).flatMap(_.era) match
-        case None => (m, None)
-        case Some(e) =>
-          if e.cap == newCap then (m, None)
-          else
-            var e2 = e.copy(cap = newCap)
-            var plan = Plan()
-            if newCap > e.total then
-              val mint = newCap - e.total
-              e2 = e2.copy(total = newCap)
-              plan = plan.copy(mint = mint)
-            val desiredHeld = math.max(0, e2.total - newCap)
-            val excess = e.held - desiredHeld
-            if excess > 0 then
-              e2 = e2.copy(held = desiredHeld)
-              plan = plan.copy(giveBack = excess)
-            else if excess < 0 then plan = plan.copy(absorb = -excess)
-            (m.updated(key, m(key).copy(era = Some(e2))), Some((e.sem, plan)))
-    }.flatMap {
-      case None => IO.unit
-      case Some((sem, plan)) =>
-        // 归还/铸造即时生效（releaseN）；吸收走分离 fiber（等在飞释放，绝不阻塞
-        // 429 处理路径），完成后 reconcile 防中途 cap 再变导致的超持。
-        (if plan.giveBack > 0 then sem.releaseN(plan.giveBack) else IO.unit) *>
-          (if plan.mint > 0 then sem.releaseN(plan.mint) else IO.unit) *>
-          (if plan.absorb > 0 then
-             (sem.acquireN(plan.absorb) *> reconcileAbsorb(key, plan.absorb, sem)).start.void
-           else IO.unit)
-    }
+    gates
+      .modify { m =>
+        m.get(key).flatMap(_.era) match
+          case None => (m, None)
+          case Some(e) =>
+            if e.cap == newCap then (m, None)
+            else
+              var e2 = e.copy(cap = newCap)
+              var plan = Plan()
+              if newCap > e.total then
+                val mint = newCap - e.total
+                e2 = e2.copy(total = newCap)
+                plan = plan.copy(mint = mint)
+              val desiredHeld = math.max(0, e2.total - newCap)
+              val excess = e.held - desiredHeld
+              if excess > 0 then
+                e2 = e2.copy(held = desiredHeld)
+                plan = plan.copy(giveBack = excess)
+              else if excess < 0 then plan = plan.copy(absorb = -excess)
+              (m.updated(key, m(key).copy(era = Some(e2))), Some((e.sem, plan)))
+      }
+      .flatMap {
+        case None => IO.unit
+        case Some((sem, plan)) =>
+          // 归还/铸造即时生效（releaseN）；吸收走分离 fiber（等在飞释放，绝不阻塞
+          // 429 处理路径），完成后 reconcile 防中途 cap 再变导致的超持。
+          (if plan.giveBack > 0 then sem.releaseN(plan.giveBack) else IO.unit) *>
+            (if plan.mint > 0 then sem.releaseN(plan.mint) else IO.unit) *>
+            (if plan.absorb > 0 then (sem.acquireN(plan.absorb) *> reconcileAbsorb(key, plan.absorb, sem)).start.void
+             else IO.unit)
+      }
 
   /** 吸收完成后按**当前** cap 重新对账：中途 cap 再变（回松先到）⇒ 超持部分归还。 */
   private def reconcileAbsorb(key: String, acquired: Int, sem: Semaphore[IO]): IO[Unit] =
-    gates.modify { m =>
-      m.get(key).flatMap(_.era) match
-        case Some(e) =>
-          val held = e.held + acquired
-          val desired = math.max(0, e.total - e.cap)
-          val excess = math.max(0, held - desired)
-          (m.updated(key, m(key).copy(era = Some(e.copy(held = held - excess)))), (excess, e.sem))
-        case None => (m, (0, sem)) // 纪元已拆：吸收票随纪元废弃，不回流
-    }.flatMap { case (excess, target) =>
-      if excess > 0 then target.releaseN(excess) else IO.unit
-    }
+    gates
+      .modify { m =>
+        m.get(key).flatMap(_.era) match
+          case Some(e) =>
+            val held = e.held + acquired
+            val desired = math.max(0, e.total - e.cap)
+            val excess = math.max(0, held - desired)
+            (m.updated(key, m(key).copy(era = Some(e.copy(held = held - excess)))), (excess, e.sem))
+          case None => (m, (0, sem)) // 纪元已拆：吸收票随纪元废弃，不回流
+      }
+      .flatMap { case (excess, target) =>
+        if excess > 0 then target.releaseN(excess) else IO.unit
+      }
 
   // ── 观测面 ──────────────────────────────────────────────────────────────
 
@@ -410,12 +423,16 @@ private[llm] object AdaptiveThrottle:
   /** 缺省降档因子（作者语义：90% → 70% → 50%，可配）。 */
   val DefaultFactors: List[Double] = List(0.9, 0.7, 0.5)
   private[llm] val DefaultFactorsPct: List[Int] = List(90, 70, 50)
+
   /** 硬下限缺省（作者建议 1–2 取 2：保留一线吞吐，spec 可配 1）。 */
   val DefaultHardFloor: Int = 2
+
   /** 静默窗缺省（作者建议 5–10min 取 5min，可配）。 */
   val DefaultQuietWindowMs: Long = 300_000L
+
   /** 账户级上游码缺省（今日 zhipu 实证形态；Fallback.QuotaUpstreamCodes 同纪律）。 */
   val DefaultAccountCodes: List[String] = List("1302")
+
   /** 账户级文本标记缺省（zhipu 1302 错误体文案）。 */
   val DefaultAccountTextMarkers: List[String] = List("您的账户已达到速率限制")
 
@@ -431,6 +448,7 @@ end AdaptiveThrottle
 
 /** 过闸许可：`gen <= 0` = 旁路许可（计数回扣腿）；`throttle == null` = 全局 Noop 哨兵（总闸关，纯 no-op）。 */
 final case class ThrottlePermit private[llm] (key: String, gen: Long, private[llm] throttle: AdaptiveThrottle):
+
   def release: IO[Unit] =
     if throttle == null then IO.unit // Noop 哨兵：总闸关路径的透传许可，零状态可扣
     else throttle.release(this)
@@ -451,6 +469,7 @@ final case class ThrottleParams(
 )
 
 object ThrottleParams:
+
   def from(cfg: Option[AdaptiveThrottleConfig]): ThrottleParams =
     val c = cfg.getOrElse(AdaptiveThrottleConfig())
     val factors = c.factors
@@ -467,6 +486,7 @@ object ThrottleParams:
       accountCodes = c.accountUpstreamCodes.getOrElse(AdaptiveThrottle.DefaultAccountCodes),
       accountTextMarkers = c.accountTextMarkers.getOrElse(AdaptiveThrottle.DefaultAccountTextMarkers)
     )
+  end from
 end ThrottleParams
 
 /**

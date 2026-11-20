@@ -1017,5 +1017,4 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
     yield ()
   }
 
-
 end UpdateOrchestratorSpec

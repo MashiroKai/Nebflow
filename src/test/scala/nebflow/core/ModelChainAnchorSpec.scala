@@ -6,7 +6,15 @@ import munit.FunSuite
 import nebflow.agent.AgentLibrary
 import nebflow.core.entity.BuiltinAgents
 import nebflow.llm.ProviderRegistry
-import nebflow.shared.{AgentModelConfig, LlmProtocol, ModelConfig, NebflowServiceConfig, PathUtil, ProviderConfig, ServiceLlmConfig}
+import nebflow.shared.{
+  AgentModelConfig,
+  LlmProtocol,
+  ModelConfig,
+  NebflowServiceConfig,
+  PathUtil,
+  ProviderConfig,
+  ServiceLlmConfig
+}
 
 /**
  * /model → fallback-anchor wiring spec (2026-10-29 author review):
@@ -84,7 +92,12 @@ class ModelChainAnchorSpec extends FunSuite:
     val config = NebflowServiceConfig(
       llm = ServiceLlmConfig(
         providers = Map(
-          "legacy" -> ProviderConfig("http://127.0.0.1:1", "k", LlmProtocol.OpenAI, List(ModelConfig("first-model", 8192))),
+          "legacy" -> ProviderConfig(
+            "http://127.0.0.1:1",
+            "k",
+            LlmProtocol.OpenAI,
+            List(ModelConfig("first-model", 8192))
+          ),
           "zhipu" -> ProviderConfig(
             "http://127.0.0.1:2",
             "k",
@@ -97,16 +110,28 @@ class ModelChainAnchorSpec extends FunSuite:
             LlmProtocol.OpenAI,
             List(ModelConfig("k3-fallback", 8192), ModelConfig("k3-primary", 8192))
           ),
-          "dispatcher" -> ProviderConfig("http://127.0.0.1:4", "k", LlmProtocol.OpenAI, List(ModelConfig("private", 8192)))
+          "dispatcher" -> ProviderConfig(
+            "http://127.0.0.1:4",
+            "k",
+            LlmProtocol.OpenAI,
+            List(ModelConfig("private", 8192))
+          )
         )
       )
     )
-    new ProviderRegistry(cats.effect.Ref.unsafe(config), null.asInstanceOf[sttp.client4.StreamBackend[cats.effect.IO, sttp.capabilities.fs2.Fs2Streams[cats.effect.IO]]])
+    new ProviderRegistry(
+      cats.effect.Ref.unsafe(config),
+      null.asInstanceOf[sttp.client4.StreamBackend[cats.effect.IO, sttp.capabilities.fs2.Fs2Streams[cats.effect.IO]]]
+    )
+
+  end registry
 
   private def candidateRefs(reg: ProviderRegistry, chain: AgentModelConfig): List[String] =
     reg.getCandidatesForAgent(Some(chain)).unsafeRunSync().map(c => s"${c.providerId}/${c.model}")
 
-  test("builtin executor: a /model Nebula write is the chain anchor (single-root), ahead of config/dispatcher defaults") {
+  test(
+    "builtin executor: a /model Nebula write is the chain anchor (single-root), ahead of config/dispatcher defaults"
+  ) {
     withRoot("builtin-executor") { root =>
       writeFixture(root)
 

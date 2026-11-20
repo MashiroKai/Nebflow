@@ -11,17 +11,22 @@ import munit.CatsEffectSuite
 
 import scala.collection.mutable
 
-/** pi-logic 接主链轮 A 接线测试：十处接线点逐点 ≥1 测 + 接线期四件（①在
-  * SiteEventsSpec；②③④在此件）。全部纯值/捕获断言——零 actor 依赖、零 db 触达
-  * （shadow 以捕获 lambda 注入）。 */
+/**
+ * pi-logic 接主链轮 A 接线测试：十处接线点逐点 ≥1 测 + 接线期四件（①在
+ * SiteEventsSpec；②③④在此件）。全部纯值/捕获断言——零 actor 依赖、零 db 触达
+ * （shadow 以捕获 lambda 注入）。
+ */
 class PiLoopWiringSpec extends CatsEffectSuite:
 
   // ── 捕获面（audit 行 + KernelEvent 影子）──────────────────────────────────
 
-  final case class Captured(rows: mutable.ListBuffer[(String, String)] = mutable.ListBuffer(),
-    events: mutable.ListBuffer[KernelEvent] = mutable.ListBuffer()):
+  final case class Captured(
+    rows: mutable.ListBuffer[(String, String)] = mutable.ListBuffer(),
+    events: mutable.ListBuffer[KernelEvent] = mutable.ListBuffer()
+  ):
     def audit: (String, String) => Unit = (ev, d) => rows += ((ev, d))
     def shadow: KernelEvent => Unit = e => events += e
+
     def bridge(sessionId: String = "s-1", runId: String, startTurn: Long): PiLoopWiring.PiBridge =
       PiLoopWiring.PiBridge(audit, shadow, sessionId, runId, startTurn)
 
@@ -66,35 +71,73 @@ class PiLoopWiringSpec extends CatsEffectSuite:
     br.emitSync(LoopEvent.TurnStarted(TurnNumber(1L)))
     br.emitSync(LoopEvent.MessageStarted(MessageSeq(1L)))
     br.emitSync(LoopEvent.MessageDelta(MessageSeq(1L), Json.Null))
-    br.emitSync(LoopEvent.MessageEnded(MessageSeq(1L),
-      LoopMessage(LoopMessageRole.Assistant, Json.fromString("x"))))
+    br.emitSync(LoopEvent.MessageEnded(MessageSeq(1L), LoopMessage(LoopMessageRole.Assistant, Json.fromString("x"))))
     br.emitSync(LoopEvent.ToolExecutionDelta("c1", Json.Null))
     br.emitSync(LoopEvent.ToolExecutionEnded("c1", Json.Null, isError = false))
     val names = cap.rows.map(_._1).toVector
-    assertEquals(names, Vector(
-      "pilogic-run-started", "pilogic-turn-started", "pilogic-message-started",
-      "pilogic-message-ended", "pilogic-tool-ended"))
+    assertEquals(
+      names,
+      Vector(
+        "pilogic-run-started",
+        "pilogic-turn-started",
+        "pilogic-message-started",
+        "pilogic-message-ended",
+        "pilogic-tool-ended"
+      )
+    )
 
   test("② ws 翻译（闸门关·形状钉）：delta 族与 StreamBatching 帧逐字节对拍；ToolStart 双形态"):
     val delta = PiLoopWiring.chunkJson("text", "hello")
     assertEquals(
-      PiLoopWiring.wsFrame(LoopEvent.MessageDelta(MessageSeq(1L), delta),
-        isSubagent = false, sessionId = Some("s-1"), agentPath = "p", isAskMode = false),
-      Some(StreamBatching.textFrame("hello", isAskMode = false, isSubagent = false, sessionId = Some("s-1"), agentPath = "p")))
+      PiLoopWiring.wsFrame(
+        LoopEvent.MessageDelta(MessageSeq(1L), delta),
+        isSubagent = false,
+        sessionId = Some("s-1"),
+        agentPath = "p",
+        isAskMode = false
+      ),
+      Some(
+        StreamBatching.textFrame(
+          "hello",
+          isAskMode = false,
+          isSubagent = false,
+          sessionId = Some("s-1"),
+          agentPath = "p"
+        )
+      )
+    )
     val think = PiLoopWiring.chunkJson("thinking", "hm")
     assertEquals(
-      PiLoopWiring.wsFrame(LoopEvent.MessageDelta(MessageSeq(1L), think),
-        isSubagent = false, sessionId = Some("s-1"), agentPath = "p", isAskMode = false),
-      Some(StreamBatching.thinkingFrame("hm", isSubagent = false, sessionId = Some("s-1"), agentPath = "p")))
+      PiLoopWiring.wsFrame(
+        LoopEvent.MessageDelta(MessageSeq(1L), think),
+        isSubagent = false,
+        sessionId = Some("s-1"),
+        agentPath = "p",
+        isAskMode = false
+      ),
+      Some(StreamBatching.thinkingFrame("hm", isSubagent = false, sessionId = Some("s-1"), agentPath = "p"))
+    )
     assertEquals(
-      PiLoopWiring.wsFrame(LoopEvent.ToolExecutionStarted("c1", "Bash"),
-        isSubagent = false, sessionId = Some("s-1"), agentPath = "p", isAskMode = false),
-      Some(Json.obj("type" -> "toolStart".asJson, "sessionId" -> "s-1".asJson, "label" -> "Bash".asJson)))
+      PiLoopWiring.wsFrame(
+        LoopEvent.ToolExecutionStarted("c1", "Bash"),
+        isSubagent = false,
+        sessionId = Some("s-1"),
+        agentPath = "p",
+        isAskMode = false
+      ),
+      Some(Json.obj("type" -> "toolStart".asJson, "sessionId" -> "s-1".asJson, "label" -> "Bash".asJson))
+    )
     // RunEnded/Done 不产帧（主链 returnToIdle 单点构造——翻译表文档面）
     assertEquals(
-      PiLoopWiring.wsFrame(LoopEvent.RunEnded(RunOutcome.Completed(Vector.empty)),
-        isSubagent = false, sessionId = None, agentPath = "p", isAskMode = false),
-      None)
+      PiLoopWiring.wsFrame(
+        LoopEvent.RunEnded(RunOutcome.Completed(Vector.empty)),
+        isSubagent = false,
+        sessionId = None,
+        agentPath = "p",
+        isAskMode = false
+      ),
+      None
+    )
 
   // ── 四件 ④（崩溃兜底）────────────────────────────────────────────────────
 
@@ -141,20 +184,28 @@ class PiLoopWiringSpec extends CatsEffectSuite:
   // ── 接线点 4（translator）─────────────────────────────────────────────────
 
   test("点4 翻译表：LlmComplete⇒MessageEnded+TurnEnded；LlmFailed⇒TurnEnded(Error)；ToolsComplete⇒ToolResult 族"):
-    val cr = ConsumeResult(text = "hi",
-      toolCalls = List(ToolCall("c1", "Bash", io.circe.JsonObject())), results = Nil, stopReason = None)
+    val cr = ConsumeResult(
+      text = "hi",
+      toolCalls = List(ToolCall("c1", "Bash", io.circe.JsonObject())),
+      results = Nil,
+      stopReason = None
+    )
     val ev1 = PiLoopWiring.PiLoopTranslator.eventsOnLlmComplete(cr, TurnNumber(2L), MessageSeq(2L))
     assertEquals(ev1(0).isInstanceOf[LoopEvent.MessageEnded], true)
     assertEquals(ev1(1).isInstanceOf[LoopEvent.TurnEnded], true)
     val ev2 = PiLoopWiring.PiLoopTranslator.eventsOnLlmFailed(TurnNumber(2L))
     assertEquals(
       ev2.collect { case LoopEvent.TurnEnded(_, _, _, o) => o }.toVector,
-      Vector(TurnEndOutcome.Error("llm-failed")))
+      Vector(TurnEndOutcome.Error("llm-failed"))
+    )
     val ev3 = PiLoopWiring.PiLoopTranslator.eventsOnToolsComplete(
-      List(ToolCall("c1", "Bash", io.circe.JsonObject()) -> ToolExecResult("ok")), TurnNumber(2L))
+      List(ToolCall("c1", "Bash", io.circe.JsonObject()) -> ToolExecResult("ok")),
+      TurnNumber(2L)
+    )
     assertEquals(
       ev3.collectFirst { case LoopEvent.TurnEnded(_, _, rs, _) => rs.headOption.map(_.role) }.flatten,
-      Some(LoopMessageRole.ToolResult))
+      Some(LoopMessageRole.ToolResult)
+    )
 
   // ── 接线点 5（六分支分类器）───────────────────────────────────────────────
 
@@ -174,8 +225,7 @@ class PiLoopWiringSpec extends CatsEffectSuite:
     assertEquals(PiLoopWiring.classifyLlmComplete(stateWith(), textCr), "text-finish")
     assertEquals(PiLoopWiring.classifyLlmComplete(stateWith(), emptyCr), "empty-response")
     // thinking-only 响应 = text-finish（ladder 同判：text 非空 || thinking 非空）
-    assertEquals(
-      PiLoopWiring.classifyLlmComplete(stateWith(), emptyCr.copy(thinking = Some("t"))), "text-finish")
+    assertEquals(PiLoopWiring.classifyLlmComplete(stateWith(), emptyCr.copy(thinking = Some("t"))), "text-finish")
 
   // ── 接线点 6/7（批收束/迟到留痕）──────────────────────────────────────────
 
@@ -209,8 +259,16 @@ class PiLoopWiringSpec extends CatsEffectSuite:
 
   test("点8 桥接适配器：Block→HookEffect.Block；改参→Modify；无决定→Proceed（割接轮注册面）"):
     val adapter = new PiLoopWiring.PiHookAdapter((name, args) =>
-      IO.pure(Some((name == "Danger", if name == "Danger" then "denied" else null,
-        if name == "Rewrite" then Some(args) else None))))
+      IO.pure(
+        Some(
+          (
+            name == "Danger",
+            if name == "Danger" then "denied" else null,
+            if name == "Rewrite" then Some(args) else None
+          )
+        )
+      )
+    )
     adapter.toolPreEffect("Danger", Json.obj("x" -> 1.asJson)).map {
       case HookEffect.Block(reason, _) => assertEquals(reason, "denied")
       case e => fail(s"unexpected: $e")
@@ -227,16 +285,20 @@ class PiLoopWiringSpec extends CatsEffectSuite:
   test("点9 执行器适配：pilogic 调用面→既有 executeTool 全链闭包；结果取模型面投影"):
     val seen = mutable.ListBuffer[ToolCall]()
     val exec = PiLoopWiring.PiToolExecutor(call => IO { seen += call; ToolExecResult("done-1", isError = false) })
-    exec.execute(
-      nebflow.pilogic.ToolCall("c9", "Read", Json.obj("path" -> "a.md".asJson)),
-      new AbortSignal[IO] { def aborted: IO[Boolean] = IO.pure(false) },
-      _ => IO.unit,
-    ).map { r =>
-      assertEquals(seen.headOption.map(_.name), Some("Read"))
-      assertEquals(seen.headOption.flatMap(_.input("path").flatMap(_.asString)), Some("a.md"))
-      assertEquals(r.output.asString, Some("done-1"))
-      assertEquals(r.isError, false)
-    }
+    exec
+      .execute(
+        nebflow.pilogic.ToolCall("c9", "Read", Json.obj("path" -> "a.md".asJson)),
+        new AbortSignal[IO]:
+          def aborted: IO[Boolean] = IO.pure(false)
+        ,
+        _ => IO.unit
+      )
+      .map { r =>
+        assertEquals(seen.headOption.map(_.name), Some("Read"))
+        assertEquals(seen.headOption.flatMap(_.input("path").flatMap(_.asString)), Some("a.md"))
+        assertEquals(r.output.asString, Some("done-1"))
+        assertEquals(r.isError, false)
+      }
 
   // ── 接线点 10（ProviderPort 适配器）───────────────────────────────────────
 
@@ -249,20 +311,26 @@ class PiLoopWiringSpec extends CatsEffectSuite:
       StreamChunk.TextDelta("world"),
       StreamChunk.ThinkingDelta("hm"),
       StreamChunk.ToolCallChunk(ToolCall("c1", "Bash", io.circe.JsonObject("command" -> "ls".asJson))),
-      StreamChunk.Done(Some("tool_use"), None),
+      StreamChunk.Done(Some("tool_use"), None)
     )
     val port = new PiLoopWiring.PiProviderPort(
       () => fs2.Stream.emits(chunks),
-      _ => ConsumeResult("hello world",
-        toolCalls = List(ToolCall("c1", "Bash", io.circe.JsonObject("command" -> "ls".asJson))),
-        results = Nil, stopReason = Some("tool_use")),
+      _ =>
+        ConsumeResult(
+          "hello world",
+          toolCalls = List(ToolCall("c1", "Bash", io.circe.JsonObject("command" -> "ls".asJson))),
+          results = Nil,
+          stopReason = Some("tool_use")
+        )
     )
     port.stream(ProviderRequest("m", None, Vector.empty, Json.obj(), Json.obj()), noAbort).map { ps =>
       assertEquals(ps.chunks.size, 3)
       assertEquals(
-        ps.chunks.map(c => (c.delta.hcursor.get[String]("kind").toOption,
-          c.delta.hcursor.get[String]("delta").toOption)).toVector,
-        Vector((Some("text"), Some("hello ")), (Some("text"), Some("world")), (Some("thinking"), Some("hm"))))
+        ps.chunks
+          .map(c => (c.delta.hcursor.get[String]("kind").toOption, c.delta.hcursor.get[String]("delta").toOption))
+          .toVector,
+        Vector((Some("text"), Some("hello ")), (Some("text"), Some("world")), (Some("thinking"), Some("hm")))
+      )
       assertEquals(ps.response.stopReason, StopReason.ToolUse)
       assertEquals(ps.response.toolCalls.map(_.name).toVector, Vector("Bash"))
     }
@@ -284,3 +352,4 @@ class PiLoopWiringSpec extends CatsEffectSuite:
     val s = AgentState()
     assertEquals(s.pilogicLedger, RunLedger.empty)
     assertEquals(s.copy(pilogicLedger = RunLedger.start(1L, "r-x", RunLedger.empty, 1L)).pilogicLedger.runId, "r-x")
+end PiLoopWiringSpec

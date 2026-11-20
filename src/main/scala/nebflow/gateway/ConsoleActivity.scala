@@ -44,6 +44,7 @@ object ConsoleActivity:
 
   /** 窗口秒数 env（裸名，经 Branding.env 双前缀读）。 */
   val WindowEnv: String = "DOOR_INUSE_WINDOW_SEC"
+
   /** 策略 env：`suppress`（默认）/ `open`。 */
   val PolicyEnv: String = "DOOR_INUSE_POLICY"
 
@@ -133,7 +134,8 @@ object ConsoleActivity:
 
   /** Live 判据（读真 env + 真标记件）：两条开门腿共用。 */
   def verdict: IO[Verdict] =
-    lastActivityMs.map(last => decide(envPolicy, envWindowSec, last, System.currentTimeMillis()))
+    lastActivityMs
+      .map(last => decide(envPolicy, envWindowSec, last, System.currentTimeMillis()))
       .handleError(_ => Verdict(true, "in-use probe failed — defaulting to open"))
 
   /** focus 门审计件（`<dataRoot>/logs/door-focus.log`，追加）。 */
@@ -163,3 +165,4 @@ object ConsoleActivity:
         )
       catch case _: Throwable => ()
     }
+end ConsoleActivity

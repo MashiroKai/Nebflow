@@ -20,11 +20,17 @@ private[gateway] object ProjectOpenApps:
         val dir = nebflow.shared.PathUtil.dataRoot.toNIO.resolve("cache/app-icons")
         Files.createDirectories(dir)
         val target = dir.resolve(app.id + ".png")
-        if !Files.exists(target) || Files.getLastModifiedTime(target).compareTo(Files.getLastModifiedTime(Paths.get(source))) < 0 then
+        if !Files.exists(target) || Files
+            .getLastModifiedTime(target)
+            .compareTo(Files.getLastModifiedTime(Paths.get(source))) < 0
+        then
           val temporary = Files.createTempFile(dir, app.id, ".png")
           try
-            val process = new ProcessBuilder("/usr/bin/sips", "-s", "format", "png", source, "--out", temporary.toString)
-              .redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start()
+            val process =
+              new ProcessBuilder("/usr/bin/sips", "-s", "format", "png", source, "--out", temporary.toString)
+                .redirectErrorStream(true)
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .start()
             require(process.waitFor() == 0, "Icon conversion failed")
             Files.move(temporary, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
           finally Files.deleteIfExists(temporary)
@@ -34,9 +40,15 @@ private[gateway] object ProjectOpenApps:
 
   private def executable(path: String): Boolean = Files.isExecutable(Paths.get(path))
   private def exists(path: String): Boolean = Files.exists(Paths.get(path))
+
   private def onPath(name: String): Option[String] =
-    sys.env.getOrElse("PATH", "").split(java.io.File.pathSeparator).iterator
-      .filter(_.nonEmpty).map(p => Paths.get(p, name).toString).find(executable)
+    sys.env
+      .getOrElse("PATH", "")
+      .split(java.io.File.pathSeparator)
+      .iterator
+      .filter(_.nonEmpty)
+      .map(p => Paths.get(p, name).toString)
+      .find(executable)
 
   def detect(): List[App] =
     val os = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT)
@@ -44,15 +56,22 @@ private[gateway] object ProjectOpenApps:
       val open = "/usr/bin/open"
       List(
         Option.when(exists("/System/Library/CoreServices/Finder.app"))(App("finder", "Finder", List(open))),
-        Option.when(exists("/Applications/Visual Studio Code.app"))(App("vscode", "VS Code", List(open, "-a", "Visual Studio Code"))),
-        Option.when(exists("/System/Applications/Utilities/Terminal.app"))(App("terminal", "Terminal", List(open, "-a", "Terminal"))),
+        Option.when(exists("/Applications/Visual Studio Code.app"))(
+          App("vscode", "VS Code", List(open, "-a", "Visual Studio Code"))
+        ),
+        Option.when(exists("/System/Applications/Utilities/Terminal.app"))(
+          App("terminal", "Terminal", List(open, "-a", "Terminal"))
+        ),
         Option.when(exists("/Applications/iTerm.app"))(App("iterm", "iTerm", List(open, "-a", "iTerm")))
       ).flatten
-    else if os.contains("linux") then
-      onPath("xdg-open").toList.map(p => App("file-manager", "File manager", List(p)))
+    else if os.contains("linux") then onPath("xdg-open").toList.map(p => App("file-manager", "File manager", List(p)))
     else if os.contains("windows") then
       onPath("explorer.exe").toList.map(p => App("file-manager", "File manager", List(p)))
     else Nil
+
+    end if
+
+  end detect
 
   /** Both paths must independently resolve to the same existing directory. */
   def registeredPath(requested: String, registered: String): Either[String, Path] =
@@ -67,3 +86,4 @@ private[gateway] object ProjectOpenApps:
 
   def launch(app: App, path: Path): Int =
     new ProcessBuilder((app.command :+ path.toString)*).start().waitFor()
+end ProjectOpenApps

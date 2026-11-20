@@ -102,7 +102,16 @@ object DelegateVisibility:
             fileUnreadable = false
           )
         case Left(_) =>
-          LiveChildren(count = 1, ids = List(UnreadableChildId), byStatus = List((UnreadableChildId, 1)), fileUnreadable = true)
+          LiveChildren(
+            count = 1,
+            ids = List(UnreadableChildId),
+            byStatus = List((UnreadableChildId, 1)),
+            fileUnreadable = true
+          )
+
+    end if
+
+  end liveChildrenOf
 
   /**
    * 一条身份的状态派生读数（**同一份判据的唯一形状**）。
@@ -136,6 +145,8 @@ object DelegateVisibility:
     /** 面板/审计读数词（greppable）。 */
     def windowWord: String = if historyWindow then "history" else "active"
 
+  end Reading
+
   /** 空读数（记录缺失形态；保守 = 未收口）。 */
   val Empty: Reading = Reading(
     identityClosed = false,
@@ -157,7 +168,11 @@ object DelegateVisibility:
    * 轮次台账在场时**取代**存量归档旗（旧世界的原语是「开轮时摘旗」，本批零写盘复现同义）；
    * 台账缺席（旧记录形态）才读存量旗，863 条在盘旧记录的既有读数因此原样保留。
    */
-  def read(record: Option[DelegateRegistry.Record], rounds: List[DelegateRoundLedger.RoundRow], children: LiveChildren): Reading =
+  def read(
+    record: Option[DelegateRegistry.Record],
+    rounds: List[DelegateRoundLedger.RoundRow],
+    children: LiveChildren
+  ): Reading =
     record match
       case None => Empty
       case Some(rec) =>

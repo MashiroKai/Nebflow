@@ -80,14 +80,13 @@ class ProcessTreeSpec extends CatsEffectSuite:
       _ <- IO(assert(before >= 2, s"the tree must have >=2 live descendants before the kill, got $before"))
       t0 <- IO.monotonic
       _ <- ProcessTree.killProcessTree(proc.toHandle)
-      alive <- {
+      alive <-
         val deadline = 3.seconds
         def loop: IO[Long] =
           IO.blocking(proc.toHandle.descendants().count()).flatMap { n =>
             if n == 0L then IO.pure(0L) else IO.sleep(100.millis) *> loop
           }
         loop.timeoutTo(deadline, IO.blocking(proc.toHandle.descendants().count()))
-      }
       elapsed <- IO.monotonic.map(d => (d - t0).toMillis)
       _ <- IO.blocking(proc.destroyForcibly()).attempt.void
     yield assertEquals(

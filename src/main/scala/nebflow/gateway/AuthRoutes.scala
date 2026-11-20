@@ -266,26 +266,41 @@ private[gateway] object AuthRoutes:
       peersResult <- ms.clearPeers.attempt
       // Queue before clearing the pointer: if the disk write fails, the
       // identity remains available for an explicit retry.
-      queueResult <- IO.blocking(AccountRoot.readPointer(PathUtil.machineRoot)).flatMap {
-        case Some(acct) => LogoutNotifyOutbox.enqueue(acct.accountSub, acct.email, LogoutNotifyOutbox.ReasonAccountTransportPending)
-        case None => IO.unit
-      }.attempt
+      queueResult <- IO
+        .blocking(AccountRoot.readPointer(PathUtil.machineRoot))
+        .flatMap {
+          case Some(acct) =>
+            LogoutNotifyOutbox.enqueue(acct.accountSub, acct.email, LogoutNotifyOutbox.ReasonAccountTransportPending)
+          case None => IO.unit
+        }
+        .attempt
       // 9+10. 账号面拆除（登出收尾批 logout-fin，T3；单点 = [[clearAccountSurface]]，
       //    两条登出路由 POST /neblink/logout 与 POST /neblink/auth/end-session 共用）：
       //    清机器层 active-account 指针 + 按账号吊销控制台会话。账号目录一律保留
       //    （登出 ≠ 删数据，设计 §3.5）；「Always completes locally」纪律由 seam 兜底。
       // Retain the pointer for retry if any critical teardown failed, not
       // only when enqueue failed. The account session is still revoked now.
-      canClearPointer = List(credentialResult, configResult, discoveryResult, relayResult, queueResult).forall(_.isRight)
+      canClearPointer = List(credentialResult, configResult, discoveryResult, relayResult, queueResult).forall(
+        _.isRight
+      )
       accountResult <- clearAccountSurface(
         sessions,
         PathUtil.machineRoot,
         clearPointer = canClearPointer,
         revokeTickets = faces.nfTicketRevocation.getOrElse(IO.pure(0))
       ).attempt
-      failures = List(credentialResult, configResult, discoveryResult, relayResult, infoResult, peersResult, queueResult)
+      failures = List(
+        credentialResult,
+        configResult,
+        discoveryResult,
+        relayResult,
+        infoResult,
+        peersResult,
+        queueResult
+      )
         .collect { case Left(e) => e } ++ accountResult.left.toOption.toList
-      _ <- if failures.isEmpty then IO.unit
+      _ <-
+        if failures.isEmpty then IO.unit
         else IO.raiseError(new IllegalStateException("local logout incomplete; retry required", failures.head))
     yield ()
 
@@ -407,89 +422,91 @@ private[gateway] object AuthRoutes:
                           case Right(tokens) =>
                             ms.identity.flatMap { identity =>
                               LogtoTransport
-                                  .register(LogtoTransport.jdkSend)(
-                                    serverUrl,
-                                    tokens.accessToken,
-                                    identity.deviceId,
-                                    identity.deviceName,
-                                    identity.platform,
-                                    nebflow.neblink.core.DeviceIdentity.machineFingerprint()
-                                  )
-                                  .flatMap {
-                                    case Right(json) =>
-                                      // 案 C（2026-09-14 作者裁定 C+B·客户端一刀）：
-                                      // 显式登录放行 + 失败透真因。
-                                      // ①(b) 机械判据：`explicitUserAction = true` 只在
-                                      // 这里给出，而这里的唯一入口是上面
-                                      // `pkceLogin.take(state)` 命中 —— 即「回调携带的
-                                      // state 命中了一次性、进程内、由 POST
-                                      // /api/neblink/auth/start（登录按钮的端点）建立的
-                                      // 待决登录尝试」。自动路径不可能携带它：boot 客户端
-                                      // 与 silent re-login 从不调 /auth/start，也从不经过
-                                      // /auth/callback；该标记 take 一次即消费、15min 过期
-                                      // （PkceLoginSession.ExpiryMs），且 pkceLogin 是进程内
-                                      // 单飞槽（`start` 的唯一调用点 = auth/start 路由）。
-                                      // ①(a) 真因：Left 原文（护栏拒绝 ⇒ EnrollGuard 的
-                                      // reason 文本）上页面与 /auth/state 面板，不再吞成
-                                      // 「设备注册未完成」。
-                                      completeDeviceEnrollmentDetailed(
-                                        ms,
-                                        serverUrl,
-                                        json,
-                                        tokens.refreshToken,
-                                        tokens.idToken,
-                                        explicitUserAction = true
-                                      ).attempt
-                                        .flatMap {
-                                          case Right(Right(_)) =>
-                                            tokens.picture.filter(_.nonEmpty)
-                                              .fold(IO.unit)(pic => ms.updateDeviceInfo(avatarUrl = Some(pic))) *>
-                                              pkceLogin.succeed *> htmlResponse(callbackPage(ok = true, ""), Status.Ok)
-                                          // 🔴 缺陷 A：`Right(Left(err))` 与 `Left(e)` 两支都改走
-                                          // **分类映射**（上游 §8.2 第 4 项），`getMessage` / 自由串
-                                          // 一律不进用户可见面。
-                                          //  · `err` 是左通道自由串 —— 逐字符反查分类（`persist` 出来的
-                                          //    凭据失败/服务端缺凭据都已是三段式文案），护栏拒绝则按
-                                          //    既有的逐字符相等判据给 `enroll-refused-isolated-home`
-                                          //    （案 C 语义：真因照实透出，护栏文本本身干净）。
-                                          case Right(Left(err)) =>
-                                            val diagnostic = classifyEnrollFailure(serverUrl, err)
-                                            pkceLogin.failDiagnosed(diagnostic) *>
-                                              htmlResponse(
-                                                callbackPage(ok = false, diagnostic.message),
-                                                Status.BadGateway
-                                              )
-                                          case Left(e) =>
-                                            val diagnostic = nebflow.neblink.identity.CredentialDiagnostics.classifyFailure(
+                                .register(LogtoTransport.jdkSend)(
+                                  serverUrl,
+                                  tokens.accessToken,
+                                  identity.deviceId,
+                                  identity.deviceName,
+                                  identity.platform,
+                                  nebflow.neblink.core.DeviceIdentity.machineFingerprint()
+                                )
+                                .flatMap {
+                                  case Right(json) =>
+                                    // 案 C（2026-09-14 作者裁定 C+B·客户端一刀）：
+                                    // 显式登录放行 + 失败透真因。
+                                    // ①(b) 机械判据：`explicitUserAction = true` 只在
+                                    // 这里给出，而这里的唯一入口是上面
+                                    // `pkceLogin.take(state)` 命中 —— 即「回调携带的
+                                    // state 命中了一次性、进程内、由 POST
+                                    // /api/neblink/auth/start（登录按钮的端点）建立的
+                                    // 待决登录尝试」。自动路径不可能携带它：boot 客户端
+                                    // 与 silent re-login 从不调 /auth/start，也从不经过
+                                    // /auth/callback；该标记 take 一次即消费、15min 过期
+                                    // （PkceLoginSession.ExpiryMs），且 pkceLogin 是进程内
+                                    // 单飞槽（`start` 的唯一调用点 = auth/start 路由）。
+                                    // ①(a) 真因：Left 原文（护栏拒绝 ⇒ EnrollGuard 的
+                                    // reason 文本）上页面与 /auth/state 面板，不再吞成
+                                    // 「设备注册未完成」。
+                                    completeDeviceEnrollmentDetailed(
+                                      ms,
+                                      serverUrl,
+                                      json,
+                                      tokens.refreshToken,
+                                      tokens.idToken,
+                                      explicitUserAction = true
+                                    ).attempt
+                                      .flatMap {
+                                        case Right(Right(_)) =>
+                                          tokens.picture
+                                            .filter(_.nonEmpty)
+                                            .fold(IO.unit)(pic => ms.updateDeviceInfo(avatarUrl = Some(pic))) *>
+                                            pkceLogin.succeed *> htmlResponse(callbackPage(ok = true, ""), Status.Ok)
+                                        // 🔴 缺陷 A：`Right(Left(err))` 与 `Left(e)` 两支都改走
+                                        // **分类映射**（上游 §8.2 第 4 项），`getMessage` / 自由串
+                                        // 一律不进用户可见面。
+                                        //  · `err` 是左通道自由串 —— 逐字符反查分类（`persist` 出来的
+                                        //    凭据失败/服务端缺凭据都已是三段式文案），护栏拒绝则按
+                                        //    既有的逐字符相等判据给 `enroll-refused-isolated-home`
+                                        //    （案 C 语义：真因照实透出，护栏文本本身干净）。
+                                        case Right(Left(err)) =>
+                                          val diagnostic = classifyEnrollFailure(serverUrl, err)
+                                          pkceLogin.failDiagnosed(diagnostic) *>
+                                            htmlResponse(
+                                              callbackPage(ok = false, diagnostic.message),
+                                              Status.BadGateway
+                                            )
+                                        case Left(e) =>
+                                          val diagnostic =
+                                            nebflow.neblink.identity.CredentialDiagnostics.classifyFailure(
                                               e,
                                               nebflow.neblink.identity.CredentialFailure.Unclassified
                                             )
-                                            logger.warn(
-                                              diagnostic.logLine("auth callback enrollment failed"),
-                                              "code" -> diagnostic.code
-                                            ) *>
-                                              pkceLogin.failDiagnosed(diagnostic) *>
-                                              htmlResponse(
-                                                callbackPage(ok = false, diagnostic.message),
-                                                Status.InternalServerError
-                                              )
-                                        }
-                                    case Left(rejection) =>
-                                      // 单设备单账号批：register 拒绝是**结构化**的
-                                      // （`RegisterRejection` 携带服务端稳定 reason）——
-                                      // 两条机器指纹闸 409 走各自的稳定码与文案键，
-                                      // 其余保持 `DeviceRegisterFailed`（原文进日志）。
-                                      val diagnostic = classifyRegisterRejection(rejection)
-                                      logger.warn(
-                                        diagnostic.logLine(
-                                          s"device register failed (status=${rejection.status}" +
-                                            s", reason=${rejection.reason.getOrElse("-")})"
-                                        ),
-                                        "code" -> diagnostic.code
-                                      ) *>
-                                        pkceLogin.failDiagnosed(diagnostic) *>
-                                        htmlResponse(callbackPage(ok = false, diagnostic.message), Status.BadGateway)
-                                  }
+                                          logger.warn(
+                                            diagnostic.logLine("auth callback enrollment failed"),
+                                            "code" -> diagnostic.code
+                                          ) *>
+                                            pkceLogin.failDiagnosed(diagnostic) *>
+                                            htmlResponse(
+                                              callbackPage(ok = false, diagnostic.message),
+                                              Status.InternalServerError
+                                            )
+                                      }
+                                  case Left(rejection) =>
+                                    // 单设备单账号批：register 拒绝是**结构化**的
+                                    // （`RegisterRejection` 携带服务端稳定 reason）——
+                                    // 两条机器指纹闸 409 走各自的稳定码与文案键，
+                                    // 其余保持 `DeviceRegisterFailed`（原文进日志）。
+                                    val diagnostic = classifyRegisterRejection(rejection)
+                                    logger.warn(
+                                      diagnostic.logLine(
+                                        s"device register failed (status=${rejection.status}" +
+                                          s", reason=${rejection.reason.getOrElse("-")})"
+                                      ),
+                                      "code" -> diagnostic.code
+                                    ) *>
+                                      pkceLogin.failDiagnosed(diagnostic) *>
+                                      htmlResponse(callbackPage(ok = false, diagnostic.message), Status.BadGateway)
+                                }
                             }
                           case Left(err) =>
                             val diagnostic = nebflow.neblink.identity.CredentialDiagnostics.diagnosticOf(
@@ -581,6 +598,8 @@ private[gateway] object AuthRoutes:
           .map(f => CD.diagnosticOf(f, err))
           .orElse(CD.byVisibleMessage(err).map(f => CD.diagnosticOf(f)))
           .getOrElse(CD.diagnosticOf(CF.Unclassified, err))
+
+  end classifyEnrollFailure
 
   /**
    * Static loopback login result page (success + error variants). The

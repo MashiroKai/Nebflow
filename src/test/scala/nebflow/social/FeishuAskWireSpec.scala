@@ -50,7 +50,13 @@ class FeishuAskWireSpec extends CatsEffectSuite:
     val hubQueries: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
     val injected: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
     val decisions: Ref[IO, List[Boolean]] = Ref.unsafe[IO, List[Boolean]](Nil)
-    override def decidePermission(requestId: String, rootSessionId: String, kind: nebflow.actor.InteractionKind, approved: Boolean): IO[Boolean] =
+
+    override def decidePermission(
+      requestId: String,
+      rootSessionId: String,
+      kind: nebflow.actor.InteractionKind,
+      approved: Boolean
+    ): IO[Boolean] =
       decisions.modify(xs => if xs.isEmpty then (List(approved), true) else (xs, false))
 
     override def listPendingAsks: IO[List[Json]] = hubQueries.update(_ + 1).as(frames)
@@ -101,6 +107,8 @@ class FeishuAskWireSpec extends CatsEffectSuite:
         .update(_ :+ card)
         .as(FeishuChannel.SendResult(ok = false, None, 230013, "card rejected by test seam", "t", "chat_id"))
 
+  end Seams
+
   /**
    * Recording rich adapter for the ask-attachment media leg: uploads succeed
    * (or fail, `ok = false`), every upload call and every degrade text is
@@ -146,9 +154,13 @@ class FeishuAskWireSpec extends CatsEffectSuite:
     val seams = new Seams
     val p = plugin(seams, Some(List("author")))
     val ctx = new HubCtx(Nil)
-    val frame = Json.obj("type" -> "askPermission".asJson, "requestId" -> "r1".asJson,
-      "input" -> Json.obj("token" -> "NEVER-SEND".asJson))
-    val value = Json.obj("nf" -> FeishuPermissionCard.namespace.asJson, "requestId" -> "r1".asJson, "decision" -> "allow".asJson)
+    val frame = Json.obj(
+      "type" -> "askPermission".asJson,
+      "requestId" -> "r1".asJson,
+      "input" -> Json.obj("token" -> "NEVER-SEND".asJson)
+    )
+    val value =
+      Json.obj("nf" -> FeishuPermissionCard.namespace.asJson, "requestId" -> "r1".asJson, "decision" -> "allow".asJson)
     def action(user: String, chat: String, message: String) =
       FeishuChannel.CardAction(Some(user), Some(chat), Some(message), value)
     for
@@ -168,6 +180,7 @@ class FeishuAskWireSpec extends CatsEffectSuite:
       assert(accepted.card.nonEmpty)
       assert(duplicate.card.isEmpty)
       assertEquals(decisions, List(true))
+    end for
   }
 
   test("empty permission allowlist never sends or approves") {

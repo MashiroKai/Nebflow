@@ -73,21 +73,23 @@ object WorkspaceTmpSweep:
           )
           .call(cwd = root, check = false, mergeErrIntoOut = true)
         Some((res.exitCode, res.out.text()))
-    }.attempt.flatMap {
-      case Left(e) =>
-        logger.warn(s"[workspace-tmp] TTL sweep skipped: ${e.getMessage}")
-      case Right(None) =>
-        IO.unit
-      case Right(Some((code, out))) =>
-        val removed = out.linesIterator.count(_.startsWith("DELETE "))
-        val summary = s"[workspace-tmp] TTL sweep (ttl=${TtlDays}d): removed $removed expired artifact dir(ies)"
-        if code == 0 then logger.info(summary)
-        else
-          logger.warn(
-            s"$summary — cleaner exit $code: " +
-              out.linesIterator.toList.takeRight(3).mkString(" / ")
-          )
-    }
+      end if
+    }.attempt
+      .flatMap {
+        case Left(e) =>
+          logger.warn(s"[workspace-tmp] TTL sweep skipped: ${e.getMessage}")
+        case Right(None) =>
+          IO.unit
+        case Right(Some((code, out))) =>
+          val removed = out.linesIterator.count(_.startsWith("DELETE "))
+          val summary = s"[workspace-tmp] TTL sweep (ttl=${TtlDays}d): removed $removed expired artifact dir(ies)"
+          if code == 0 then logger.info(summary)
+          else
+            logger.warn(
+              s"$summary — cleaner exit $code: " +
+                out.linesIterator.toList.takeRight(3).mkString(" / ")
+            )
+      }
 
   /**
    * Periodic re-arm: the first sweep fires after one full `interval`, then every

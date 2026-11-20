@@ -16,7 +16,8 @@ class MessageIdentityCodecSpec extends FunSuite:
   }
 
   test("legacy block messages retain timestamps and source without adding identity keys") {
-    val raw = """{"role":"user","content":[{"type":"text","text":"hello"}],"blocks":true,"timestamp":42,"source":"delegate"}"""
+    val raw =
+      """{"role":"user","content":[{"type":"text","text":"hello"}],"blocks":true,"timestamp":42,"source":"delegate"}"""
     val decoded = decode[Message](raw).toOption.get
     assertEquals(decoded.messageId, None)
     assertEquals(decoded.runId, None)

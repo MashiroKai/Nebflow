@@ -123,6 +123,7 @@ final class PdfCache(
           case Left(why) =>
             logger.warnSync(s"pdf-cache unreadable entry sha=${sha.take(12)}: $why — treating as a miss")
             None
+      end if
     }.handleErrorWith { e =>
       logger.warnSync(s"pdf-cache lookup failed sha=${sha.take(12)}: ${e.getMessage}")
       IO.pure(None)
@@ -146,7 +147,7 @@ final class PdfCache(
         case Right(sha) =>
           lookup(sha).flatMap {
             case Some(m) => IO.pure(Right(m))
-            case None    => ensureParsed(sha, pdf, displayName)
+            case None => ensureParsed(sha, pdf, displayName)
           }
       }
 
@@ -156,7 +157,7 @@ final class PdfCache(
         .modify { m =>
           m.get(sha) match
             case Some(existing) => (m, Left(existing))
-            case None           => (m.updated(sha, fresh), Right(fresh))
+            case None => (m.updated(sha, fresh), Right(fresh))
         }
         .flatMap {
           case Left(existing) =>
@@ -178,7 +179,7 @@ final class PdfCache(
   private def flushOnFailure(sha: String, verdict: Either[PdfFailure, PdfManifest]): IO[Unit] =
     verdict match
       case Right(_) => IO.unit
-      case Left(_)  => flights.update(_ - sha)
+      case Left(_) => flights.update(_ - sha)
 
   private def parseInto(sha: String, pdf: os.Path, displayName: String): IO[Either[PdfFailure, PdfManifest]] =
     // A missing/unextractable parser script is a readable failure of its own
@@ -232,6 +233,8 @@ final class PdfCache(
         .handleError(_ => ())
         .as(Left(PdfFailure(PdfParser.CodeParseFailed, msg)))
     }
+
+  end parseWithScript
 
   /** Synchronous corner of [[lookup]] used inside the publication critical section. */
   private def lookupSync(sha: String): Option[PdfManifest] =
@@ -290,6 +293,8 @@ final class PdfCache(
           .sum
     }.handleErrorWith(_ => IO.pure(0))
 
+end PdfCache
+
 object PdfCache:
 
   /** The cache root under a data root (single source path). */
@@ -343,7 +348,8 @@ object PdfCache:
   // parses did this instance start for this data root" regardless of how many
   // cache instances a caller built — that is exactly the fact the single-flight
   // fix has to be judged on.
-  private val parsesStarted = new java.util.concurrent.ConcurrentHashMap[String, java.util.concurrent.atomic.AtomicLong]()
+  private val parsesStarted =
+    new java.util.concurrent.ConcurrentHashMap[String, java.util.concurrent.atomic.AtomicLong]()
   private val pagesRead = new java.util.concurrent.ConcurrentHashMap[String, java.util.concurrent.atomic.AtomicLong]()
 
   private def counter(
@@ -361,3 +367,4 @@ object PdfCache:
 
   /** Page Markdown reads performed for one cache root since the process began. */
   def pageReadsFor(root: os.Path): Long = counter(pagesRead, root).get()
+end PdfCache

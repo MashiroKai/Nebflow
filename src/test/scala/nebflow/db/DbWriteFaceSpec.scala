@@ -32,8 +32,11 @@ class DbWriteFaceSpec extends FunSuite:
           point == WriteFace.CrashPoint.AfterDirForce
         val before = Files.readString(target)
         intercept[WriteFace.SimulatedCrash] {
-          WriteFace.writeFiveStep(target, newContent.getBytes("UTF-8"),
-            hook = p => if p == point then throw WriteFace.SimulatedCrash(point))
+          WriteFace.writeFiveStep(
+            target,
+            newContent.getBytes("UTF-8"),
+            hook = p => if p == point then throw WriteFace.SimulatedCrash(point)
+          )
         }
         injections += 1
         // 无 0 长真档 + 无半档：崩溃后目标要么旧完整要么新完整。
@@ -50,8 +53,11 @@ class DbWriteFaceSpec extends FunSuite:
     val target = dir.resolve("fresh.json")
     crashPoints.foreach { point =>
       intercept[WriteFace.SimulatedCrash] {
-        WriteFace.writeFiveStep(target, """{"a":1}""".getBytes,
-          p => if p == point then throw WriteFace.SimulatedCrash(p))
+        WriteFace.writeFiveStep(
+          target,
+          """{"a":1}""".getBytes,
+          p => if p == point then throw WriteFace.SimulatedCrash(p)
+        )
       }
       if Files.exists(target) then
         assert(Files.size(target) > 0, s"zero-length target after crash at $point")
@@ -65,8 +71,10 @@ class DbWriteFaceSpec extends FunSuite:
     val legit = Files.createFile(dir.resolve("events.1.jsonl"))
     Files.writeString(legit, "{}\n")
     val swept = WriteFace.sweepOrphanTmp(dir)
-    assertEquals(swept.map(_.getFileName.toString).sorted,
-      List(tmp1.getFileName.toString, tmp2.getFileName.toString).sorted)
+    assertEquals(
+      swept.map(_.getFileName.toString).sorted,
+      List(tmp1.getFileName.toString, tmp2.getFileName.toString).sorted
+    )
     assert(!Files.exists(tmp1) && !Files.exists(tmp2), "tmp residue must be gone")
     assert(Files.exists(legit), "legit file must survive the sweep")
     assert(WriteFace.sweepOrphanTmp(dir).isEmpty, "second sweep is a no-op")
@@ -89,8 +97,7 @@ class DbWriteFaceSpec extends FunSuite:
     val dir = Files.createTempDirectory("db-v1-badtail")
     val f = dir.resolve("stream.jsonl")
     Files.writeString(f, s"""{"seq":1}\n{"seq":2}\nNOT-JSON-AT-ALL\n""")
-    WriteFace.prepareAppend(f, line =>
-      if line.startsWith("{") then Right(()) else Left("decode failed")) match
+    WriteFace.prepareAppend(f, line => if line.startsWith("{") then Right(()) else Left("decode failed")) match
       case WriteFace.TailState.BadTail(why) => assert(why.nonEmpty)
       case other => fail(s"expected BadTail, got $other")
     // 原文件字节不动（拒绝路径零修改）。
@@ -101,3 +108,4 @@ class DbWriteFaceSpec extends FunSuite:
     intercept[IllegalArgumentException] {
       WriteFace.appendDurable(dir.resolve("a.jsonl"), "line1\nline2", WriteFace.FsyncTier.PerRecord)
     }
+end DbWriteFaceSpec

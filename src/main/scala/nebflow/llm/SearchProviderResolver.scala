@@ -180,8 +180,8 @@ object SearchProviderResolver:
           Some(
             StandaloneSearchConfig(
               provider = "zhipu",
-              apiKey = nebflow.core.secrets.ConfigCredentialStore.resolveManaged(
-                nebflow.shared.PathUtil.dataRoot, c.apiKey.trim, "search-runtime"),
+              apiKey = nebflow.core.secrets.ConfigCredentialStore
+                .resolveManaged(nebflow.shared.PathUtil.dataRoot, c.apiKey.trim, "search-runtime"),
               baseUrl = c.baseUrl.getOrElse(StandaloneSearchConfig.DefaultZhipuBaseUrl).replaceAll("/+$", ""),
               engine = c.engine.getOrElse(StandaloneSearchConfig.DefaultEngine)
             )

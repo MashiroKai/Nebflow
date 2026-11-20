@@ -474,6 +474,7 @@ private[project] trait NodeLoopRunner:
               legacyText = r.resumePrompt
             )
             loopRound(roundNum, None, Some(h.injectText), h.injectBlocks)
+    end match
   end runLoopNode
 
   // ── verdict 选通与 loop 预算熔断（nrloop 一期 2026-09-12；执行腿二期 2026-09-14）──
@@ -603,7 +604,9 @@ private[project] trait NodeLoopRunner:
    * 一轮即静默冻结）。
    */
   private[project] def verifierFailR(
-    nodeId: String, fb: NodeFeedback, resultText: String,
+    nodeId: String,
+    fb: NodeFeedback,
+    resultText: String,
     expectedRun: Option[(Option[String], Option[Long])] = None
   ): IO[Boolean] =
     IO(System.currentTimeMillis()).flatMap { now =>
@@ -612,30 +615,31 @@ private[project] trait NodeLoopRunner:
           case None =>
             logger.warn(s"Node '$nodeId' vanished before its verdict could be recorded — fail verdict dropped") *>
               IO.pure(false)
-          case Some(v) if v.status == NodeLifecycle.Running &&
-              expectedRun.forall(_ == (v.sessionRef, v.startedAt)) =>
+          case Some(v)
+              if v.status == NodeLifecycle.Running &&
+                expectedRun.forall(_ == (v.sessionRef, v.startedAt)) =>
             loopRouteTargetId(v).flatMap {
               case None =>
                 gateAndCompleteFor(nodeId, v, resultText, Some((VerdictFail, false))).flatMap {
                   case false => IO.pure(false)
                   case true =>
-                  logger.warn(
-                    s"Node '${v.name}' (${nodeId}) reported a fail verdict but declares no usable '(fail)<target>:loop' edge — " +
-                      "REJECTION STATE: the verdict is recorded and the node completes, but NO re-run route exists, so the " +
-                      "judged worker is NOT re-run and the chain stops here. Restore the route with NodeEdit " +
-                      "out=\"(pass)<landing>, (fail)<worker>:loop\" (NODE_VERIFIER_NEEDS_ROUTE)"
-                  ) *>
-                  FlowMapEventLog.append(
-                    workspace,
-                    projectName,
-                    nodeId,
-                    LoopRoundEventType,
-                    "verdict=fail but NO usable fail-route edge is declared — no re-run route exists; " +
-                      "the verifier is in the REJECTION STATE (see verifier-route-lost)"
-                  ) *>
-                  // 拒绝态留痕（卡 A4 / §2.5）：主语 = 本 verifier；「判词无处可去」这一事实
-                  // 不再只落一句良性退化文案 —— 事件行 + WARN + 载荷键三级同款。
-                  emitVerifierRouteLost(List(nodeId -> ""), "fail verdict with no usable route").as(true)
+                    logger.warn(
+                      s"Node '${v.name}' (${nodeId}) reported a fail verdict but declares no usable '(fail)<target>:loop' edge — " +
+                        "REJECTION STATE: the verdict is recorded and the node completes, but NO re-run route exists, so the " +
+                        "judged worker is NOT re-run and the chain stops here. Restore the route with NodeEdit " +
+                        "out=\"(pass)<landing>, (fail)<worker>:loop\" (NODE_VERIFIER_NEEDS_ROUTE)"
+                    ) *>
+                      FlowMapEventLog.append(
+                        workspace,
+                        projectName,
+                        nodeId,
+                        LoopRoundEventType,
+                        "verdict=fail but NO usable fail-route edge is declared — no re-run route exists; " +
+                          "the verifier is in the REJECTION STATE (see verifier-route-lost)"
+                      ) *>
+                      // 拒绝态留痕（卡 A4 / §2.5）：主语 = 本 verifier；「判词无处可去」这一事实
+                      // 不再只落一句良性退化文案 —— 事件行 + WARN + 载荷键三级同款。
+                      emitVerifierRouteLost(List(nodeId -> ""), "fail verdict with no usable route").as(true)
                 }
               case Some(targetId) =>
                 store.findNode(targetId).flatMap { tOpt =>
@@ -648,17 +652,27 @@ private[project] trait NodeLoopRunner:
                   val consumed = v.loopRound + 1
                   LoopBudget.decide(consumed, maxRounds, startedAt, now, maxWall) match
                     case Some(reason) =>
-                      circuitBreakLoopR(v, Some(targetId), reason, now, consumed, Some(resultText), Some((v.sessionRef, v.startedAt)))
+                      circuitBreakLoopR(
+                        v,
+                        Some(targetId),
+                        reason,
+                        now,
+                        consumed,
+                        Some(resultText),
+                        Some((v.sessionRef, v.startedAt))
+                      )
                     case None =>
                       val issues =
                         List(if fb.detail.trim.isEmpty then VerdictReader.PlaceholderIssues else fb.detail.trim)
                       for
                         landed <- gateAndCompleteFor(nodeId, v, resultText, Some((VerdictFail, true)))
-                        _ <- if landed then
-                          stampLoopStartedAt(targetId, now) *>
-                            reloopTo(v, targetId, consumed, maxRounds, issues, fb.suggestion)
-                        else IO.unit
+                        _ <-
+                          if landed then
+                            stampLoopStartedAt(targetId, now) *>
+                              reloopTo(v, targetId, consumed, maxRounds, issues, fb.suggestion)
+                          else IO.unit
                       yield landed
+                  end match
                 }
             }
           case _ => IO.pure(false)
@@ -734,21 +748,28 @@ private[project] trait NodeLoopRunner:
         case false => IO.pure(false)
         case true =>
           targetId.traverse_(clearLoopStartedAt) *>
-            FlowMapEventLog.append(workspace, projectName, v.id, LoopBudgetEventType,
-              s"$msg target=${targetId.getOrElse("<none>")} verdict=fail conclusion=retained") *>
+            FlowMapEventLog.append(
+              workspace,
+              projectName,
+              v.id,
+              LoopBudgetEventType,
+              s"$msg target=${targetId.getOrElse("<none>")} verdict=fail conclusion=retained"
+            ) *>
             IO.pure(true)
       }
-    else store.getNode(v.id).flatMap {
-      case Some(fresh) if fresh.status == NodeLifecycle.Failed || fresh.status == NodeLifecycle.Cancelled =>
-        logger.info(
-          s"Node '${v.name}' (${v.id}) loop circuit-break skipped — the fail-route driver is already " +
-            s"terminalized by another breaker (status=${fresh.status}, idempotent)"
-        ) *>
-          // 幂等跳过支 = 本次熔断**没有**写下终态（判词也未记）⇒ 落地判词 false，
-          // 由消费点把该 fail 申报补偿写回（#239①）
-          IO.pure(false)
-      case _ => drive
-    }
+    else
+      store.getNode(v.id).flatMap {
+        case Some(fresh) if fresh.status == NodeLifecycle.Failed || fresh.status == NodeLifecycle.Cancelled =>
+          logger.info(
+            s"Node '${v.name}' (${v.id}) loop circuit-break skipped — the fail-route driver is already " +
+              s"terminalized by another breaker (status=${fresh.status}, idempotent)"
+          ) *>
+            // 幂等跳过支 = 本次熔断**没有**写下终态（判词也未记）⇒ 落地判词 false，
+            // 由消费点把该 fail 申报补偿写回（#239①）
+            IO.pure(false)
+        case _ => drive
+      }
+    end if
 
   end circuitBreakLoopR
 

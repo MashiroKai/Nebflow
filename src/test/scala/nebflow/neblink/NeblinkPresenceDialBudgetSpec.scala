@@ -538,14 +538,18 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
     val gate = new java.util.concurrent.CountDownLatch(1)
     val hook: (String, Int, Long) => Unit = (host, _, budget) =>
       starts.put(s"$host:$budget")
-      if !gate.await(8, java.util.concurrent.TimeUnit.SECONDS) then throw new IllegalStateException("sync gate timed out")
+      if !gate.await(8, java.util.concurrent.TimeUnit.SECONDS) then
+        throw new IllegalStateException("sync gate timed out")
       throw new java.util.concurrent.TimeoutException("fixture timeout")
     withStack(port, dialHook = hook) { (_, ps) =>
       val p = peer("beat", List(epA, epB))
       (for
         _ <- ps.syncPeers(List(p)).timeout(5.seconds)
         _ <- IO.blocking {
-          val seen = Set(starts.poll(5, java.util.concurrent.TimeUnit.SECONDS), starts.poll(5, java.util.concurrent.TimeUnit.SECONDS))
+          val seen = Set(
+            starts.poll(5, java.util.concurrent.TimeUnit.SECONDS),
+            starts.poll(5, java.util.concurrent.TimeUnit.SECONDS)
+          )
           assertEquals(seen, Set("127.0.0.2:1500", "127.0.0.3:1500"))
           assertEquals(ps.lastDialRound("beat"), None, "blocked legs cannot have finished the round")
           gate.countDown()
@@ -597,7 +601,17 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
       yield round).guarantee(IO { releaseA.countDown(); releaseB.countDown() })
     }.map { round =>
       import scala.jdk.CollectionConverters.*
-      assertEquals(events.iterator().asScala.toList, List("start:127.0.0.2:1500", "release:a", "timeout:127.0.0.2", "start:127.0.0.3:1500", "release:b", "timeout:127.0.0.3"))
+      assertEquals(
+        events.iterator().asScala.toList,
+        List(
+          "start:127.0.0.2:1500",
+          "release:a",
+          "timeout:127.0.0.2",
+          "start:127.0.0.3:1500",
+          "release:b",
+          "timeout:127.0.0.3"
+        )
+      )
       assertEquals(round.attempted, List(epA, epB), "串行口径：两个候选都拨过（首胜才短路）")
       val serialBound = DialBudget.Default.roundUpperBoundMs(List(epA, epB))
       assertEquals(serialBound, 3_000L, "串行口径单轮上界 = Σ(单候选预算)")

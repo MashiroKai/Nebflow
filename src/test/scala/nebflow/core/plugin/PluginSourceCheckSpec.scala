@@ -29,7 +29,7 @@ class PluginSourceCheckSpec extends FunSuite:
   override def afterEach(context: munit.AfterEach): Unit =
     savedProps.foreach {
       case (k, Some(v)) => System.setProperty(k, v)
-      case (k, None)    => System.clearProperty(k)
+      case (k, None) => System.clearProperty(k)
     }
 
   // ── 解析容忍度 ────────────────────────────────────────────
@@ -52,7 +52,8 @@ class PluginSourceCheckSpec extends FunSuite:
     assertEquals(idx.plugins(1).manifest, None, "缺 manifest 字段 = 合法（派生形态）")
 
   test("index 解析降级：缺 id 条目跳过；缺 plugins ⇒ 空清单（不失败）；缺 sequence 等全容忍"):
-    val idx = PluginSourceCheck.parseIndex("""{"schema":1,"plugins":[{"latest":"1.0"},{"id":"a"},{"nope":1}]}""")
+    val idx = PluginSourceCheck
+      .parseIndex("""{"schema":1,"plugins":[{"latest":"1.0"},{"id":"a"},{"nope":1}]}""")
       .getOrElse(fail("index with degraded entries must still parse"))
     assertEquals(idx.plugins.map(_.id), List("a"), "缺 id 条目跳过，带 id 的保留")
     assertEquals(idx.sequence, None)
@@ -117,11 +118,13 @@ class PluginSourceCheckSpec extends FunSuite:
     val entry = PluginSourceCheck.IndexEntry("visual-report", None, None, None)
     val explicit = entry.copy(manifest = Some("https://cdn.example/m.json"))
     assertEquals(
-      PluginSourceCheck.manifestUrls("https://x.example/plugins/index.json", explicit, beta = false, officialPair = true),
+      PluginSourceCheck
+        .manifestUrls("https://x.example/plugins/index.json", explicit, beta = false, officialPair = true),
       List("https://cdn.example/m.json"),
       "显式 manifest URL = 唯一端点（不臆造镜像）"
     )
-    val derived = PluginSourceCheck.manifestUrls("https://x.example/plugins/index.json", entry, beta = false, officialPair = true)
+    val derived =
+      PluginSourceCheck.manifestUrls("https://x.example/plugins/index.json", entry, beta = false, officialPair = true)
     assertEquals(
       derived,
       List(
@@ -130,9 +133,19 @@ class PluginSourceCheckSpec extends FunSuite:
       ),
       "官方对：派生官网形态 + 同路径 OSS 镜像"
     )
-    val derivedBeta = PluginSourceCheck.manifestUrls("https://x.example/plugins/index-beta.json", entry, beta = true, officialPair = true)
+    val derivedBeta = PluginSourceCheck.manifestUrls(
+      "https://x.example/plugins/index-beta.json",
+      entry,
+      beta = true,
+      officialPair = true
+    )
     assert(derivedBeta(0).endsWith("/visual-report/manifest-beta.json"), s"beta 同构，got: ${derivedBeta(0)}")
-    val custom = PluginSourceCheck.manifestUrls("https://internal.example/mirror/index.json", entry, beta = false, officialPair = false)
+    val custom = PluginSourceCheck.manifestUrls(
+      "https://internal.example/mirror/index.json",
+      entry,
+      beta = false,
+      officialPair = false
+    )
     assertEquals(
       custom,
       List("https://internal.example/mirror/visual-report/manifest.json"),
@@ -145,7 +158,9 @@ class PluginSourceCheckSpec extends FunSuite:
     val fixture = FixtureHttp().start()
     try
       fixture.serve("/plugins/index.json", 200, """{"schema":1,"plugins":[{"id":"a"}]}""")
-      val res = PluginSourceCheck.fetchIndexAt(List(fixture.base + "/plugins/index.json", fixture.base + "/plugins/index-fallback.json")).unsafeRunSync()
+      val res = PluginSourceCheck
+        .fetchIndexAt(List(fixture.base + "/plugins/index.json", fixture.base + "/plugins/index-fallback.json"))
+        .unsafeRunSync()
       res match
         case Right((idx, served)) =>
           assertEquals(idx.plugins.map(_.id), List("a"))
@@ -154,26 +169,38 @@ class PluginSourceCheckSpec extends FunSuite:
       assert(!fixture.requested.contains("/plugins/index-fallback.json"), "主端点成功 ⇒ 回落端点零请求")
 
       // 主端点 404 ⇒ 回落命中
-      val res2 = PluginSourceCheck.fetchIndexAt(List(fixture.base + "/plugins/missing.json", fixture.base + "/plugins/index.json")).unsafeRunSync()
+      val res2 = PluginSourceCheck
+        .fetchIndexAt(List(fixture.base + "/plugins/missing.json", fixture.base + "/plugins/index.json"))
+        .unsafeRunSync()
       assert(res2.isRight, s"回落命中：${res2.swap.toOption.map(_.render)}")
       assert(fixture.requested.contains("/plugins/index.json"))
     finally fixture.stop()
+
+    end try
 
   test("读序反例：解析失败/schema≠1 也触发回落；全失败 ⇒ Unreachable 逐端点列原因（有序）"):
     val fixture = FixtureHttp().start()
     try
       fixture.serve("/plugins/index.json", 200, "not json{")
       fixture.serve("/plugins/index-fallback.json", 200, """{"schema":2,"plugins":[]}""")
-      val res = PluginSourceCheck.fetchIndexAt(List(
-        fixture.base + "/plugins/index.json",
-        fixture.base + "/plugins/index-fallback.json"
-      )).unsafeRunSync()
-      res match
-        case Left(un) =>
-          assertEquals(un.tried.map(_._1), List(
+      val res = PluginSourceCheck
+        .fetchIndexAt(
+          List(
             fixture.base + "/plugins/index.json",
             fixture.base + "/plugins/index-fallback.json"
-          ), "全失败 ⇒ 试过端点有序列出")
+          )
+        )
+        .unsafeRunSync()
+      res match
+        case Left(un) =>
+          assertEquals(
+            un.tried.map(_._1),
+            List(
+              fixture.base + "/plugins/index.json",
+              fixture.base + "/plugins/index-fallback.json"
+            ),
+            "全失败 ⇒ 试过端点有序列出"
+          )
           assert(un.tried(0)._2.contains("unparseable"), s"解析失败原因留痕，got: ${un.tried(0)._2}")
           assert(un.tried(1)._2.contains("schema"), s"schema≠1 原因留痕，got: ${un.tried(1)._2}")
           assert(un.render.contains("tried"), "render 给用户可读证据面")
@@ -182,21 +209,31 @@ class PluginSourceCheckSpec extends FunSuite:
       // 主端点 schema≠1（合法 JSON 但门不过）⇒ 回落成功
       fixture.serve("/plugins/index.json", 200, """{"schema":9}""")
       fixture.serve("/plugins/index-fallback.json", 200, """{"schema":1,"plugins":[{"id":"ok"}]}""")
-      val res2 = PluginSourceCheck.fetchIndexAt(List(
-        fixture.base + "/plugins/index.json",
-        fixture.base + "/plugins/index-fallback.json"
-      )).unsafeRunSync()
+      val res2 = PluginSourceCheck
+        .fetchIndexAt(
+          List(
+            fixture.base + "/plugins/index.json",
+            fixture.base + "/plugins/index-fallback.json"
+          )
+        )
+        .unsafeRunSync()
       assertEquals(res2.map(_._2), Right(fixture.base + "/plugins/index-fallback.json"), "schema≠1 ⇒ 回落命中")
     finally fixture.stop()
+
+    end try
 
   test("读序反例：死端口 + 404 混合 ⇒ 逐端点原因（连接拒绝 / HTTP 404）"):
     val dead = FixtureHttp.deadPort()
     val fixture = FixtureHttp().start()
     try
-      val res = PluginSourceCheck.fetchIndexAt(List(
-        s"http://127.0.0.1:$dead/plugins/index.json",
-        fixture.base + "/plugins/nothing-here.json"
-      )).unsafeRunSync()
+      val res = PluginSourceCheck
+        .fetchIndexAt(
+          List(
+            s"http://127.0.0.1:$dead/plugins/index.json",
+            fixture.base + "/plugins/nothing-here.json"
+          )
+        )
+        .unsafeRunSync()
       res match
         case Left(un) =>
           assert(un.tried(0)._1.endsWith(s":$dead/plugins/index.json"))
@@ -204,5 +241,6 @@ class PluginSourceCheckSpec extends FunSuite:
           assertEquals(un.tried(1)._2, "HTTP 404", "404 原因留痕")
         case Right(_) => fail("必须全败 Left")
     finally fixture.stop()
+    end try
 
 end PluginSourceCheckSpec

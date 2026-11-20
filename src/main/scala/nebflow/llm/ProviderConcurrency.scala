@@ -78,6 +78,7 @@ object ProviderConcurrency:
   enum PinVerdict:
     /** 钉链仍有效（或本就没有钉链）⇒ 原样使用。 */
     case Keep
+
     /** 钉链首已不在当前配置里 ⇒ 弃用；`to` = 现配置链首（None = 连链都没有，交给空链 fail-fast）。 */
     case Drop(from: String, to: Option[String])
 
@@ -172,6 +173,7 @@ object ProviderConcurrency:
                   s"$p/${orderedChain(idx)._2}" -> CandidateSkipCause.ProviderFull(inUse, cap)
                 }.toList
                 (Counts(upd, c.pinExclusions.updated(actorId, excl)), Right(Some((pid, excl))))
+        end match
       }
       .flatMap {
         // 幂等命中也返回完整快照：按 pid 在链上定位重造 + 剔除账取首钉记录（纯函数零副作用）。

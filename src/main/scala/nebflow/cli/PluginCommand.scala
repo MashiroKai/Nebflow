@@ -25,7 +25,20 @@ import io.circe.syntax.*
 object PluginCommand extends CliCommand:
   def name = "plugin"
   def description = "Manage plugins (installed = trusted; block/unblock a package)"
-  def subcommands = List(PluginList, PluginAdd, PluginSources, PluginUpdates, PluginUpdate, PluginApprove, PluginRevoke, PluginUnblock, PluginRemove, PluginEnable, PluginDisable)
+
+  def subcommands = List(
+    PluginList,
+    PluginAdd,
+    PluginSources,
+    PluginUpdates,
+    PluginUpdate,
+    PluginApprove,
+    PluginRevoke,
+    PluginUnblock,
+    PluginRemove,
+    PluginEnable,
+    PluginDisable
+  )
 
   def examples = List(
     "stand plugin list",
@@ -97,9 +110,11 @@ object PluginCommand extends CliCommand:
 
   private object PluginAdd extends CliSubcommand:
     def name = "add"
+
     def description =
       "Install a plugin: official id (name[@version]) | git URL (#tag required — floating HEAD is forbidden) | " +
         "local path | --from <spec.json>. Active on the next scan — no approval step."
+
     def params = List(
       CliParam("source", None, "Official plugin id (name[@version]) | git URL (#tag) | local plugin directory"),
       CliParam("from", None, "Path to a JSON source spec file ({kind: official | git | https, ...})")
@@ -112,23 +127,28 @@ object PluginCommand extends CliCommand:
         case (Some(specPath), _) =>
           IO.blocking(os.read(os.Path(specPath, os.pwd))).attempt.flatMap {
             case Left(err) =>
-              IO.pure(CliResult.Error(s"cannot read source spec file '$specPath' (${err.getClass.getSimpleName}: ${err.getMessage})"))
+              IO.pure(
+                CliResult
+                  .Error(s"cannot read source spec file '$specPath' (${err.getClass.getSimpleName}: ${err.getMessage})")
+              )
             case Right(raw) =>
               nebflow.core.plugin.PluginRegistry.installFromSpecJson(raw).map {
                 case Right(msg) => CliResult.text(msg)
-                case Left(err)  => CliResult.Error(err)
+                case Left(err) => CliResult.Error(err)
               }
           }
         case (None, false) =>
           nebflow.core.plugin.PluginRegistry.installFrom(source).map {
             case Right(msg) => CliResult.text(msg)
-            case Left(err)  => CliResult.Error(err)
+            case Left(err) => CliResult.Error(err)
           }
         case (None, true) =>
-          IO.pure(CliResult.Error(
-            "Plugin source required — official id (name[@version]), git URL ('<url>#<tag>'), local plugin directory, " +
-              "or --from <spec.json>"
-          ))
+          IO.pure(
+            CliResult.Error(
+              "Plugin source required — official id (name[@version]), git URL ('<url>#<tag>'), local plugin directory, " +
+                "or --from <spec.json>"
+            )
+          )
       end match
     end run
 
@@ -136,7 +156,9 @@ object PluginCommand extends CliCommand:
 
   private object PluginSources extends CliSubcommand:
     def name = "sources"
-    def description = "Show per-plugin install provenance (source ledger: via / kind / digest — where each plugin came from)"
+
+    def description =
+      "Show per-plugin install provenance (source ledger: via / kind / digest — where each plugin came from)"
     def params = Nil
 
     def run(ctx: CliContext): IO[CliResult] =
@@ -184,7 +206,9 @@ object PluginCommand extends CliCommand:
    */
   private object PluginUpdates extends CliSubcommand:
     def name = "updates"
-    def description = "Check the declared plugin sources for newer versions (source-managed plugins only; zero background polling)"
+
+    def description =
+      "Check the declared plugin sources for newer versions (source-managed plugins only; zero background polling)"
     def params = Nil
 
     def run(ctx: CliContext): IO[CliResult] =
@@ -202,7 +226,9 @@ object PluginCommand extends CliCommand:
                 val src = s.hcursor.downField("source").as[String].getOrElse("")
                 val inst = s.hcursor.downField("installedVersion").as[String].toOption.getOrElse("")
                 val remote = s.hcursor.downField("remoteVersion").as[String].toOption.getOrElse("")
-                val mark = if s.hcursor.downField("updateAvailable").as[Boolean].toOption.getOrElse(false) then "  [update]" else ""
+                val mark =
+                  if s.hcursor.downField("updateAvailable").as[Boolean].toOption.getOrElse(false) then "  [update]"
+                  else ""
                 val ver =
                   if remote.nonEmpty then s"v${if inst.isEmpty then "?" else inst} → v$remote"
                   else s"v$inst"
@@ -222,8 +248,10 @@ object PluginCommand extends CliCommand:
    */
   private object PluginUpdate extends CliSubcommand:
     def name = "update"
+
     def description =
       "Pull the latest version of a source-managed plugin and activate it (zero restart; keeps the old version if the source is unreachable)"
+
     def params = List(
       CliParam("name", None, "Plugin name (must have a source declaration)", required = true),
       CliParam("commit", None, "Pin the update to a specific 40-hex commit instead of the branch tip")
@@ -248,6 +276,7 @@ object PluginCommand extends CliCommand:
               if resp.hcursor.downField("ok").as[Boolean].toOption.contains(true) then CliResult.text(msg)
               else CliResult.Error(msg)
             }
+      end if
     end run
 
   end PluginUpdate
@@ -309,6 +338,7 @@ object PluginCommand extends CliCommand:
     def description =
       "Uninstall a plugin: out of the registry (plugins.removed) + delete its directory by default; " +
         "--keep-dir keeps the directory (disable-only leg). The seed will not reinstall it"
+
     def params = List(
       CliParam("name", None, "Plugin name", required = true),
       CliParam("keep-dir", None, "Keep the plugin directory (remove from the registry only)", isFlag = true)

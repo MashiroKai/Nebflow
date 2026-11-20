@@ -917,6 +917,8 @@ class ChainLedgerStore private (
       yield result
     readStable(afterSnapshot)
 
+  end verifySnapshot
+
   /**
    * 压缩镜像面（**取每个 id 的最晚一轮口径**）：某 id 的载荷此刻是否应在冷档 ——
    * 最晚提到它的那一轮是 compact ⇒ 热面应有 `compacted=true` 的条目（镜像成对）；

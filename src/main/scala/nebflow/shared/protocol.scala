@@ -640,7 +640,8 @@ object UiMessage:
         if m.timestamp > 0 then withThinking.deepMerge(Json.obj("timestamp" -> m.timestamp.asJson)) else withThinking
       // replay-terminal 批（2026-10-28）：轮终态标记——只在 Some(true) 落键
       // （缺席即不落键 ⇒ 无标记行与旧字节形态逐字相同）。
-      val withTerminal = if m.terminal.contains(true) then withTs.deepMerge(Json.obj("terminal" -> true.asJson)) else withTs
+      val withTerminal =
+        if m.terminal.contains(true) then withTs.deepMerge(Json.obj("terminal" -> true.asJson)) else withTs
       m.isRoot.fold(withTerminal)(root => withTerminal.deepMerge(Json.obj("isRoot" -> root.asJson)))
     case m: Tool =>
       val base = Json.obj(
@@ -677,7 +678,8 @@ object UiMessage:
         "input" -> m.input.asJson
       )
       val withSource = m.sourceAgent.fold(base)(sa => base.deepMerge(Json.obj("sourceAgent" -> sa.asJson)))
-      val withSession = m.sourceSession.fold(withSource)(ss => withSource.deepMerge(Json.obj("sourceSession" -> ss.asJson)))
+      val withSession =
+        m.sourceSession.fold(withSource)(ss => withSource.deepMerge(Json.obj("sourceSession" -> ss.asJson)))
       // permDetail：缺席即不落键（与 answerOf/quote 同款兼容纪律 ⇒ 旧行形态零变化）。
       m.permDetail.fold(withSession)(d => withSession.deepMerge(Json.obj("permDetail" -> d)))
     case m: System =>

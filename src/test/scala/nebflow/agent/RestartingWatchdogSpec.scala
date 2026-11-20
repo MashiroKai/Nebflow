@@ -48,7 +48,9 @@ class RestartingWatchdogSpec extends CatsEffectSuite:
   private lazy val ignoreChild: nebflow.actor.Behavior[AgentCommand] =
     nebflow.actor.Behaviors.receiveMessage[AgentCommand](_ => IO.pure(ignoreChild))
 
-  private def registryWith(entries: (String, nebflow.actor.ActorRef[AgentCommand])*): IO[Ref[IO, Map[String, AgentRecord]]] =
+  private def registryWith(
+    entries: (String, nebflow.actor.ActorRef[AgentCommand])*
+  ): IO[Ref[IO, Map[String, AgentRecord]]] =
     // IO[Ref]：for 推导里 `registry <- registryWith()` 需要被绑定值是 Monad——裸 Ref
     // 无 flatMap（Ref.of 在 IO 内分配，语义同 Ref.unsafe 但测试更干净）。
     Ref.of[IO, Map[String, AgentRecord]](
@@ -170,7 +172,9 @@ class RestartingWatchdogSpec extends CatsEffectSuite:
     val parentSid = "wd-parent-5"
     val childSid = "delegate-wd-child-5"
     for
-      _ <- store.recordTask(mkTask(parentSid, childSid, "restarting", statusAt = Some(System.currentTimeMillis()), retryCount = 1))
+      _ <- store.recordTask(
+        mkTask(parentSid, childSid, "restarting", statusAt = Some(System.currentTimeMillis()), retryCount = 1)
+      )
       reaped <- SubAgentStartupRecovery.recoverOrphans(store, sessionStore)
       tasks <- store.loadTasks(parentSid)
     yield

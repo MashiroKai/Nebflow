@@ -35,7 +35,9 @@ class PdfFeatureSpec extends CatsEffectSuite:
 
   private def pythonReady: Boolean =
     os.exists(fixtureScript) &&
-      scala.util.Try(os.proc(python, "-c", "import pdfplumber, pypdf").call(check = false).exitCode == 0).getOrElse(false)
+      scala.util
+        .Try(os.proc(python, "-c", "import pdfplumber, pypdf").call(check = false).exitCode == 0)
+        .getOrElse(false)
 
   private lazy val fixtureDir: os.Path =
     val dir = os.temp.dir(prefix = "pdf-fx-")
@@ -81,11 +83,15 @@ class PdfFeatureSpec extends CatsEffectSuite:
       read <- PdfNotes.json(root, "a" * 64, 3, None)
       _ = assertEquals(read.hcursor.downField("page_verified").as[Boolean].toOption, Some(false))
       _ = assertEquals(read.hcursor.downField("note").downField("text").as[String].toOption, Some("check this page"))
-      _ = assertEquals(read.hcursor.downField("note").downField("snippet").as[String].toOption, Some("verbatim snippet"))
+      _ = assertEquals(
+        read.hcursor.downField("note").downField("snippet").as[String].toOption,
+        Some("verbatim snippet")
+      )
       after <- cache.entryCount
       _ = assertEquals(after, 0, "writing a note must not create a cache entry")
       _ = assert(!os.exists(PdfCache.rootFor(root) / "00"), "no bucket directory may exist after open/note")
     yield ()
+    end for
   }
 
   test("a note is keyed by document bytes, not by path, and conflicts are reported") {
@@ -109,12 +115,24 @@ class PdfFeatureSpec extends CatsEffectSuite:
       badSha <- PdfNotes.put(root, "not-a-digest", 1, "x")
       _ = assert(badSha.isInstanceOf[PdfNotes.WriteResult.BadDigest])
       // A note with a manifest in hand can be judged against the real page bound.
-      manifest = PdfManifest(docA, "a.pdf", 3, List("p0001.md", "p0002.md", "p0003.md"), PdfManifest.ParserId("pdfplumber", "0.11.10"), PdfParser.MarkdownVersion, 1L, Nil, 0, 0)
+      manifest = PdfManifest(
+        docA,
+        "a.pdf",
+        3,
+        List("p0001.md", "p0002.md", "p0003.md"),
+        PdfManifest.ParserId("pdfplumber", "0.11.10"),
+        PdfParser.MarkdownVersion,
+        1L,
+        Nil,
+        0,
+        0
+      )
       inRange <- PdfNotes.json(root, docA, 1, Some(manifest))
       _ = assertEquals(inRange.hcursor.downField("out_of_range").as[Boolean].toOption, Some(false))
       outOfRange <- PdfNotes.json(root, docA, 99, Some(manifest))
       _ = assertEquals(outOfRange.hcursor.downField("out_of_range").as[Boolean].toOption, Some(true))
     yield ()
+    end for
   }
 
   test("ask parses once, publishes the documented layout, and a second ask reuses it") {
@@ -133,8 +151,14 @@ class PdfFeatureSpec extends CatsEffectSuite:
       _ = assert(os.exists(entry / "meta.json"), s"expected $entry/meta.json")
       _ = assert(os.exists(entry / "pages" / "p0001.md"), "expected pages/p0001.md")
       _ = assert(os.exists(entry / "media" / "p0003-0.png"), "expected media/p0003-0.png")
-      _ = assert(os.exists(PdfCache.scriptDirFor(root)), "the parser script must be extracted lazily under the data root")
-      _ = assert(os.read(entry / "pages" / "p0003.md").contains("../media/p0003-0.png"), "page image links must be relative")
+      _ = assert(
+        os.exists(PdfCache.scriptDirFor(root)),
+        "the parser script must be extracted lazily under the data root"
+      )
+      _ = assert(
+        os.read(entry / "pages" / "p0003.md").contains("../media/p0003-0.png"),
+        "page image links must be relative"
+      )
       mtimeBefore = os.mtime(cache.metaPath(sha))
       generatedBefore = json.hcursor.downField("manifest").downField("generated_at_ms").as[Long].toOption
       countBefore <- cache.entryCount
@@ -142,11 +166,15 @@ class PdfFeatureSpec extends CatsEffectSuite:
       // Reuse: same entry, no reparse.
       second <- PdfAsk.ask(cache, root, doc, "simple.pdf", "and page three?")
       json2 = second.toOption.getOrElse(fail(s"second ask failed: $second"))
-      _ = assertEquals(json2.hcursor.downField("manifest").downField("generated_at_ms").as[Long].toOption, generatedBefore)
+      _ = assertEquals(
+        json2.hcursor.downField("manifest").downField("generated_at_ms").as[Long].toOption,
+        generatedBefore
+      )
       _ = assertEquals(os.mtime(cache.metaPath(sha)), mtimeBefore)
       countAfter <- cache.entryCount
       _ = assertEquals(countAfter, 1)
     yield ()
+    end for
   }
 
   test("concurrent asks for one document run the parser exactly once") {
@@ -170,7 +198,11 @@ class PdfFeatureSpec extends CatsEffectSuite:
     yield first :: joiners
     for
       results <- run
-      _ = assertEquals(results.flatMap(_.toOption).map(_.sourceSha256).distinct.size, 1, s"expected one digest, got $results")
+      _ = assertEquals(
+        results.flatMap(_.toOption).map(_.sourceSha256).distinct.size,
+        1,
+        s"expected one digest, got $results"
+      )
       _ = assertEquals(results.count(_.isRight), 4, s"every concurrent caller must get the manifest: $results")
       spawns = spawnCount(log)
       _ = assertEquals(spawns, 1, s"the parser must run exactly once for concurrent asks (spawns=$spawns)")
@@ -188,7 +220,10 @@ class PdfFeatureSpec extends CatsEffectSuite:
     for
       encrypted <- cache.ensure(encryptedPdf, "encrypted.pdf")
       _ = assertEquals(encrypted.left.toOption.map(_.code), Some("PDF_ENCRYPTED"))
-      _ = assert(encrypted.left.toOption.exists(_.message.toLowerCase.contains("password")), s"readable failure expected: $encrypted")
+      _ = assert(
+        encrypted.left.toOption.exists(_.message.toLowerCase.contains("password")),
+        s"readable failure expected: $encrypted"
+      )
       entriesAfterFailure <- cache.entryCount
       _ = assertEquals(entriesAfterFailure, 0, "a failed parse must leave no entry")
       // Not cached as a negative verdict: the next ask tries again.
@@ -202,6 +237,7 @@ class PdfFeatureSpec extends CatsEffectSuite:
       spawnsAfterMissing = spawnCount(log)
       _ = assertEquals(spawnsAfterMissing, 2, "a missing file must not spawn the parser")
     yield ()
+    end for
   }
 
   test("ask selects pages, cites page numbers, and never hands over the whole document") {
@@ -224,11 +260,15 @@ class PdfFeatureSpec extends CatsEffectSuite:
       _ = assert(context.contains("Cite page numbers"), "the context must tell the answer to cite pages")
       // A page with no term overlap is not cited (no padding, no whole-document dump).
       unmatched <- PdfAsk.ask(cache, root, doc, "simple.pdf", "zzzznotpresent")
-      _ = assertEquals(unmatched.toOption.flatMap(_.hcursor.downField("citations").as[List[String]].toOption), Some(Nil))
+      _ = assertEquals(
+        unmatched.toOption.flatMap(_.hcursor.downField("citations").as[List[String]].toOption),
+        Some(Nil)
+      )
       // A PDF whose text cannot be read is a readable failure, never a blank answer.
       enc <- PdfAsk.ask(cache, root, encryptedPdf, "encrypted.pdf", "anything")
       _ = assertEquals(enc.left.toOption.map(_.code), Some("PDF_ENCRYPTED"))
     yield ()
+    end for
   }
 
   test("ask reads the manifest and the index first, then opens ONLY the matching pages") {
@@ -267,12 +307,16 @@ class PdfFeatureSpec extends CatsEffectSuite:
       _ = assertEquals(after2 - before2, 0L, "a question with no term overlap must open no page")
       _ = assertEquals(json2.hcursor.downField("citations").as[List[String]].toOption, Some(Nil))
     yield ()
+    end for
   }
 
   test("the parser script and the JVM agree on the Markdown shape version") {
     val text =
       Option(getClass.getClassLoader.getResourceAsStream(PdfParser.ScriptResource))
-        .map(s => try new String(s.readAllBytes(), StandardCharsets.UTF_8) finally s.close())
+        .map(s =>
+          try new String(s.readAllBytes(), StandardCharsets.UTF_8)
+          finally s.close()
+        )
         .getOrElse(fail(s"${PdfParser.ScriptResource} must be on the classpath"))
     val declared = """(?m)^MARKDOWN_VERSION\s*=\s*(\d+)\s*$""".r.findFirstMatchIn(text).map(_.group(1).toInt)
     assertEquals(declared, Some(PdfParser.MarkdownVersion))
@@ -289,3 +333,4 @@ class PdfFeatureSpec extends CatsEffectSuite:
       _ = assertEquals(m, None, "a corrupt entry must not be served as an empty document")
     yield ()
   }
+end PdfFeatureSpec

@@ -200,6 +200,7 @@ class FormatErrorNoEvictSpec extends CatsEffectSuite:
         case Left(e) => fail(s"400 with evict=false must exhaust the single-candidate chain, got $e")
         case Right(list) =>
           fail(s"唯一候选恒 400 ⇒ 必须失败退出（无下一根可换），实际成功 ${list.size} chunk")
+      end match
       // 核心断言（旧行为：a/m1 Down("...thinking must be passed back...")）：
       assert(
         !states.contains("a/m1"),
@@ -279,7 +280,7 @@ class FormatErrorNoEvictSpec extends CatsEffectSuite:
           agentModel = Some(AgentModelConfig(preferred = Some("a/m1"), fallbacks = Nil)) // 链深恒 1（fallback 废除）
         )
         // fallback 废除批申报：单候选链 401 驱逐后链空 ⇒ 进入「全灭闸等待恢复」
-        //（作者令「静默等待」语义面）——本测试给 8s 有界上界取终局，不无限等探测。
+        // （作者令「静默等待」语义面）——本测试给 8s 有界上界取终局，不无限等探测。
         chunks <- handle
           .sendStream(req)
           .compile

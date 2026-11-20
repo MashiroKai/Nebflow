@@ -44,26 +44,35 @@ class DisabledProviderSelectionSpec extends CatsEffectSuite:
 
   /** cmdcode 摘除形态镜像：cmdcode disabled=true，zhipu/kimi 正常。 */
   private def removalLikeConfig: NebflowServiceConfig =
-    NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map(
-      "cmdcode" -> mkProvider(List("deepseek-v4.1-flash"), disabled = Some(true)),
-      "kimi"    -> mkProvider(List("kimi-for-coding")),
-      "zhipu"   -> mkProvider(List("glm-5.3-flash"))
-    )))
+    NebflowServiceConfig(llm =
+      ServiceLlmConfig(providers =
+        Map(
+          "cmdcode" -> mkProvider(List("deepseek-v4.1-flash"), disabled = Some(true)),
+          "kimi" -> mkProvider(List("kimi-for-coding")),
+          "zhipu" -> mkProvider(List("glm-5.3-flash"))
+        )
+      )
+    )
 
   test("T1(重写): disabled provider 不进链（fail-closed），链深恒 1 = preferred 单候选") {
     val cfg = removalLikeConfig
     for
       reg <- mkRegistry(cfg)
-      cs  <- reg.getCandidatesForAgent(Some(AgentModelConfig(
-               preferred = Some("kimi/kimi-for-coding"),
-               fallbacks = Nil
-             )))
+      cs <- reg.getCandidatesForAgent(
+        Some(
+          AgentModelConfig(
+            preferred = Some("kimi/kimi-for-coding"),
+            fallbacks = Nil
+          )
+        )
+      )
     yield
       val r = refs(cs)
       assert(!r.exists(_.startsWith("cmdcode/")), s"disabled provider 不得进链，实际链 = $r")
       // fallback 废除批（2026-11-06 20:36 作者令）：链 = 授权单根——agent allowlist 外
       // 模型（含未 disabled 的 zhipu）不得进入候选；原「储备层项照常进链」断言随该面退役。
       assertEquals(r, List("kimi/kimi-for-coding"), s"agent allowlist 外模型不得进入候选 + 链深恒 1，实际链 = $r")
+    end for
   }
 
   test("T2(重写): agent 显式 ref 指向 disabled provider ⇒ 该根被丢弃、链 fail-closed 为空（换链=fallback，已废）") {
@@ -75,15 +84,23 @@ class DisabledProviderSelectionSpec extends CatsEffectSuite:
     for
       reg <- mkRegistry(cfg)
       one <- reg.getCandidateForRef("cmdcode/deepseek-v4.1-flash")
-      cs  <- reg.getCandidatesForAgent(Some(AgentModelConfig(
-               preferred = Some("cmdcode/deepseek-v4.1-flash"),
-               fallbacks = List("kimi/kimi-for-coding")
-             )))
+      cs <- reg.getCandidatesForAgent(
+        Some(
+          AgentModelConfig(
+            preferred = Some("cmdcode/deepseek-v4.1-flash"),
+            fallbacks = List("kimi/kimi-for-coding")
+          )
+        )
+      )
       // 对照腿：同一 fallbacks 数组里可解析的 kimi 只有在 preferred 位置才进链。
-      ok <- reg.getCandidatesForAgent(Some(AgentModelConfig(
-              preferred = Some("kimi/kimi-for-coding"),
-              fallbacks = Nil
-            )))
+      ok <- reg.getCandidatesForAgent(
+        Some(
+          AgentModelConfig(
+            preferred = Some("kimi/kimi-for-coding"),
+            fallbacks = Nil
+          )
+        )
+      )
     yield
       assertEquals(one, None, "disabled provider 的显式 ref 必须解析为 None（fail-closed）")
       val r = refs(cs)
@@ -94,6 +111,7 @@ class DisabledProviderSelectionSpec extends CatsEffectSuite:
         List("kimi/kimi-for-coding"),
         "同一 ref 放在 preferred 位置即可正常进链（证明 T2 的空链不是 provider 解析坏了）"
       )
+    end for
   }
 
   test("T3: disabled 不影响未 disabled 的解析（零行为变化对照腿）") {
@@ -107,10 +125,14 @@ class DisabledProviderSelectionSpec extends CatsEffectSuite:
   }
 
   test("T4(重写): 链深恒 1——disabled provider 不得进链，且链上不追加任何其它候选") {
-    val cfg = NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map(
-      "cmdcode" -> mkProvider(List("a1", "a2"), disabled = Some(true)),
-      "kimi"    -> mkProvider(List("k1"))
-    )))
+    val cfg = NebflowServiceConfig(llm =
+      ServiceLlmConfig(providers =
+        Map(
+          "cmdcode" -> mkProvider(List("a1", "a2"), disabled = Some(true)),
+          "kimi" -> mkProvider(List("k1"))
+        )
+      )
+    )
     for
       reg <- mkRegistry(cfg)
       chain <- reg.getCandidatesForAgentUnfiltered(
@@ -126,9 +148,13 @@ class DisabledProviderSelectionSpec extends CatsEffectSuite:
   }
 
   test("T5(重写): 全 provider disabled 时链构建不凭空造候选（fail-closed 不反转为编造）") {
-    val cfg = NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map(
-      "cmdcode" -> mkProvider(List("a1"), disabled = Some(true))
-    )))
+    val cfg = NebflowServiceConfig(llm =
+      ServiceLlmConfig(providers =
+        Map(
+          "cmdcode" -> mkProvider(List("a1"), disabled = Some(true))
+        )
+      )
+    )
     for
       reg <- mkRegistry(cfg)
       chain <- reg.getCandidatesUnfiltered()

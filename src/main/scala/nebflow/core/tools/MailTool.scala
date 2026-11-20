@@ -937,7 +937,11 @@ Delivery follows recipient state (there is no delivery parameter to set):
       Some(
         if askId.isEmpty then
           IO.pure(
-            Left(ToolError(s"Malformed address '$address' — expected \"ask:<会话id>\" (the id the ask panel / handoff receipt carried)."))
+            Left(
+              ToolError(
+                s"Malformed address '$address' — expected \"ask:<会话id>\" (the id the ask panel / handoff receipt carried)."
+              )
+            )
           )
         else if role != SenderRole.Root then IO.pure(Left(askExclusiveError(address, role.toString)))
         else deliverToAsk(askId, message, ctx, system)
@@ -1513,7 +1517,8 @@ Delivery follows recipient state (there is no delivery parameter to set):
                 (ctx.sharedResources, ctx.actorSystem) match
                   case (Some(res), Some(sys)) =>
                     res.agentRegistry.get.flatMap { reg =>
-                      reg.get(id)
+                      reg
+                        .get(id)
                         .fold(IO.pure(Option.empty[AgentRecord]))(entry =>
                           sys.isAlive(entry.ref.path).map(alive => Option.when(alive)(entry))
                         )
@@ -1651,7 +1656,8 @@ Delivery follows recipient state (there is no delivery parameter to set):
                               parentRef = parentRef,
                               wsSend = ctx.wsSend,
                               resources = res,
-                              messageId = Option(ctx.toolCallId).filter(_.nonEmpty)
+                              messageId = Option(ctx.toolCallId)
+                                .filter(_.nonEmpty)
                                 .map(call => s"mail:${ctx.sessionId.getOrElse("")}:$call")
                                 .getOrElse(java.util.UUID.randomUUID().toString)
                             )

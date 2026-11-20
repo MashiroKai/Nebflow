@@ -69,7 +69,11 @@ class SubagentCrashRecoverySpec extends CatsEffectSuite:
           case None => fail("synthetic tool_result missing")
       case _ => fail("synthetic message must carry content blocks")
     // 顺序不变式：synthetic result 紧随断点 assistant 消息（provider 配对要求）
-    assertEquals(repaired(repaired.size - 2), transcript.last, "the synthetic result must follow the dangling assistant message")
+    assertEquals(
+      repaired(repaired.size - 2),
+      transcript.last,
+      "the synthetic result must follow the dangling assistant message"
+    )
 
   test("缺口②: 完整配对的批次恒等（零漂移——正常 checkpoint 一字不动）"):
     val transcript = List(
@@ -90,7 +94,10 @@ class SubagentCrashRecoverySpec extends CatsEffectSuite:
   test("缺口②: 空输入恒等 / 多悬挂合并一条 user 消息（provider 配对形态）"):
     assertEquals(SubagentCrashRecovery.terminateDanglingToolCalls(Nil), (Nil, Nil), "empty checkpoint stays empty")
     val dangling =
-      List(ContentBlock.ToolUse("d1", "Subagent", io.circe.JsonObject.empty), ContentBlock.ToolUse("d2", "Read", io.circe.JsonObject.empty))
+      List(
+        ContentBlock.ToolUse("d1", "Subagent", io.circe.JsonObject.empty),
+        ContentBlock.ToolUse("d2", "Read", io.circe.JsonObject.empty)
+      )
     val (repaired, terminated) = SubagentCrashRecovery.terminateDanglingToolCalls(
       List(Message(MessageRole.Assistant, Right(dangling)))
     )
@@ -98,13 +105,17 @@ class SubagentCrashRecoverySpec extends CatsEffectSuite:
     assertEquals(repaired.size, 2, "one assistant + ONE synthetic user message")
     repaired.last.content match
       case Right(blocks) =>
-        assertEquals(blocks.collect { case r: ContentBlock.ToolResult => r }.map(_.toolUseId).sorted, List("d1", "d2"),
-          "both results land in the same user message (valid Anthropic pairing shape)")
+        assertEquals(
+          blocks.collect { case r: ContentBlock.ToolResult => r }.map(_.toolUseId).sorted,
+          List("d1", "d2"),
+          "both results land in the same user message (valid Anthropic pairing shape)"
+        )
       case _ => fail("synthetic message must carry content blocks")
 
   // ── ② 子会话面：孤儿子会话处置 ─────────────────────────────────────────────
 
   private class RecordingActor(record: cats.effect.Ref[IO, List[AgentCommand]]):
+
     def behavior: Behavior[AgentCommand] =
       Behaviors.receiveMessage[AgentCommand](cmd => record.update(_ :+ cmd).as(behavior))
 
@@ -154,21 +165,25 @@ class SubagentCrashRecoverySpec extends CatsEffectSuite:
           source = "subagent"
         )
       )
-      _ <- res.agentRegistry.update(_ + ("subagent-orphan1" -> AgentRecord(
-        sessionId = "subagent-orphan1",
-        ref = childRef,
-        kind = AgentKind.SubTask,
-        rootSessionId = "delegate-crashed",
-        parentSessionId = "delegate-crashed"
-      )))
+      _ <- res.agentRegistry.update(
+        _ + ("subagent-orphan1" -> AgentRecord(
+          sessionId = "subagent-orphan1",
+          ref = childRef,
+          kind = AgentKind.SubTask,
+          rootSessionId = "delegate-crashed",
+          parentSessionId = "delegate-crashed"
+        ))
+      )
       disposed <- SubagentCrashRecovery.disposeOrphanChildren(res, "delegate-crashed")
       cmds <- received.get
       tasks <- res.subAgentTaskStore.loadTasks("delegate-crashed")
       registry <- res.agentRegistry.get
     yield
       assertEquals(disposed, List("subagent-orphan1"), "only the running child is an orphan")
-      assert(cmds.exists { case AgentCommand.Stop(reason) => reason.contains("orphaned"); case _ => false },
-        s"the orphan child must receive a Stop, got $cmds")
+      assert(
+        cmds.exists { case AgentCommand.Stop(reason) => reason.contains("orphaned"); case _ => false },
+        s"the orphan child must receive a Stop, got $cmds"
+      )
       assert(!registry.contains("subagent-orphan1"), "the orphan's registry entry must be removed")
       val orphanRow = tasks.find(_.taskId == "subagent-orphan1").getOrElse(fail("orphan row must exist"))
       assertEquals(orphanRow.status, "cancelled", "the orphan row must be terminalized cancelled")
@@ -190,8 +205,8 @@ class SubagentCrashRecoverySpec extends CatsEffectSuite:
     (for
       res <- SpecResources.mkResources(system, tempRoot, fakeLlm)
       disposed <- SubagentCrashRecovery.disposeOrphanChildren(res, "delegate-no-children")
-    yield assertEquals(disposed, Nil, "no running rows ⇒ no disposal")
-    ).guarantee(system.stopAll.handleErrorWith(_ => IO.unit))
+    yield assertEquals(disposed, Nil, "no running rows ⇒ no disposal"))
+      .guarantee(system.stopAll.handleErrorWith(_ => IO.unit))
 
   // ── ③ registry 面：幽灵工具相位清零 ────────────────────────────────────────
 

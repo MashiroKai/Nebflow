@@ -52,9 +52,11 @@ class RetentionSweeperSpec extends CatsEffectSuite:
     val old = System.currentTimeMillis() - 400L * DayMs
     h.appendEvent(event("node-created", old, "g1")._1, Some("g1")).unsafeRunSync()
     // arm（100ms 周期——远小于等待窗；门不开）。
-    RetentionSweeper.arm(h,
+    RetentionSweeper.arm(
+      h,
       cfg = Retention.Config(maxAgeMs = Some(365L * DayMs), sampleRatioPer10k = 10000),
-      intervalMs = 100L)
+      intervalMs = 100L
+    )
     Thread.sleep(800L) // > 8 个周期
     assertEquals(logicalUnitIds(h), Set("g1"), "避让窗内绝不遗忘（门不开 ⇒ 不扫）")
     h.close()
@@ -69,9 +71,11 @@ class RetentionSweeperSpec extends CatsEffectSuite:
     h.appendEvent(event("audit-trail", old, "old-audit")._1, Some("old-audit")).unsafeRunSync()
     h.appendEvent(event("node-failed", old, "old-failed")._1, Some("old-failed")).unsafeRunSync()
     h.appendEvent(event("node-created", fresh, "fresh-plain")._1, Some("fresh-plain")).unsafeRunSync()
-    RetentionSweeper.arm(h,
+    RetentionSweeper.arm(
+      h,
       cfg = Retention.Config(maxAgeMs = Some(365L * DayMs), sampleRatioPer10k = 10000),
-      intervalMs = 5_000L)
+      intervalMs = 5_000L
+    )
     h.recoverPendingD8().unsafeRunSync() // 门开（空 pending 恢复成功）
     waitUntil()(logicalUnitIds(h) == Set("old-audit", "old-failed", "fresh-plain"))
     // 逻辑轨回滚（V10 面）：revive 后逻辑视图恢复，原文字节不动。

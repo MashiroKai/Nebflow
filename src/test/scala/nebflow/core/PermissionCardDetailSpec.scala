@@ -63,22 +63,37 @@ class PermissionCardDetailSpec extends CatsEffectSuite:
 
   test("askReason: Curl 非只读方法给理由，GET 不给") {
     val post = JsonObject("method" -> "POST".asJson, "url" -> "https://x/y".asJson)
-    assertEquals(ToolReversibility.askReason("Curl", post, SafetyMode.ConfirmEdits).map(_.ruleId), Some("curl.non-safe-method"))
+    assertEquals(
+      ToolReversibility.askReason("Curl", post, SafetyMode.ConfirmEdits).map(_.ruleId),
+      Some("curl.non-safe-method")
+    )
     val get = JsonObject("method" -> "GET".asJson, "url" -> "https://x/y".asJson)
     assertEquals(ToolReversibility.askReason("Curl", get, SafetyMode.ConfirmEdits), None)
   }
 
   test("build: 命令正文逐字保留（多行不截断）") {
     val c = call("Bash", JsonObject("command" -> dangerousCmd.asJson))
-    val detail = PermissionCardDetail.build(c, "/work/dir", SafetyMode.ConfirmEdits,
-      ToolReversibility.askReason("Bash", c.input, SafetyMode.ConfirmEdits), isRemoteExec = false, deviceName = "test-device")
+    val detail = PermissionCardDetail.build(
+      c,
+      "/work/dir",
+      SafetyMode.ConfirmEdits,
+      ToolReversibility.askReason("Bash", c.input, SafetyMode.ConfirmEdits),
+      isRemoteExec = false,
+      deviceName = "test-device"
+    )
     assertEquals(detail("command").flatMap(_.asString), Some(dangerousCmd))
   }
 
   test("build: 理由三件（闸/规则/标签）+ 档位") {
     val c = call("Bash", JsonObject("command" -> "rm -rf /tmp/probe/a".asJson))
-    val detail = PermissionCardDetail.build(c, "/work/dir", SafetyMode.ConfirmEdits,
-      ToolReversibility.askReason("Bash", c.input, SafetyMode.ConfirmEdits), isRemoteExec = false, deviceName = "test-device")
+    val detail = PermissionCardDetail.build(
+      c,
+      "/work/dir",
+      SafetyMode.ConfirmEdits,
+      ToolReversibility.askReason("Bash", c.input, SafetyMode.ConfirmEdits),
+      isRemoteExec = false,
+      deviceName = "test-device"
+    )
     val reason = detail("reason").flatMap(_.asObject).getOrElse(fail("reason 缺失"))
     assertEquals(reason("gate").flatMap(_.asString), Some("ToolReversibility.checkBash"))
     assertEquals(reason("ruleId").flatMap(_.asString), Some("bash.gate.rm-rf"))
@@ -88,8 +103,14 @@ class PermissionCardDetailSpec extends CatsEffectSuite:
 
   test("build: 作用域 = 设备名 + 工作目录 + 目标路径（文件类）") {
     val c = call("Write", JsonObject("file_path" -> "/work/dir/a.txt".asJson, "content" -> "x".asJson))
-    val detail = PermissionCardDetail.build(c, "/work/dir", SafetyMode.ConfirmEdits,
-      ToolReversibility.askReason("Write", c.input, SafetyMode.ConfirmEdits), isRemoteExec = false, deviceName = "test-device")
+    val detail = PermissionCardDetail.build(
+      c,
+      "/work/dir",
+      SafetyMode.ConfirmEdits,
+      ToolReversibility.askReason("Write", c.input, SafetyMode.ConfirmEdits),
+      isRemoteExec = false,
+      deviceName = "test-device"
+    )
     val scope = detail("scope").flatMap(_.asObject).getOrElse(fail("scope 缺失"))
     assertEquals(scope("cwd").flatMap(_.asString), Some("/work/dir"))
     assertEquals(scope("target").flatMap(_.asString), Some("/work/dir/a.txt"))
@@ -100,8 +121,16 @@ class PermissionCardDetailSpec extends CatsEffectSuite:
   test("build: 超长参数显式标注截断量（不静默裁掉）") {
     val big = "x" * (PermissionCardDetail.MaxInlineChars + 500)
     val c = call("Bash", JsonObject("command" -> big.asJson))
-    val detail = PermissionCardDetail.build(c, "/work/dir", SafetyMode.ConfirmEdits, None, isRemoteExec = false, deviceName = "test-device")
+    val detail = PermissionCardDetail.build(
+      c,
+      "/work/dir",
+      SafetyMode.ConfirmEdits,
+      None,
+      isRemoteExec = false,
+      deviceName = "test-device"
+    )
     val text = detail("command").flatMap(_.asString).getOrElse("")
     assert(text.contains("正文超长"), "超长正文必须显式标注（不静默截断）")
     assert(text.contains(big.length.toString), "标注里要带原文长度")
   }
+end PermissionCardDetailSpec

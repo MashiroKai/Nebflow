@@ -71,11 +71,15 @@ class ScheduleRestrictionChainSpec extends CatsEffectSuite:
   // ── T1（重写）：窗内剔除唯一候选 ⇒ 空链 ────────────────────
 
   test("T1(重写) 窗内：唯一候选（受限 provider）被剔除 ⇒ 链出口给空链；未引用 provider 不承接（fallback 废除）") {
-    val cfg = NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map(
-      "zhipu" -> providerWith(List(ModelConfig("glm")), windows = List(Window14to18)),
-      "kimi" -> providerWith(List(ModelConfig("kimi-for-coding")), windows = List(Window14to18)),
-      "cmdcode" -> providerWith(List(ModelConfig("deepseek-flash")))
-    )))
+    val cfg = NebflowServiceConfig(llm =
+      ServiceLlmConfig(providers =
+        Map(
+          "zhipu" -> providerWith(List(ModelConfig("glm")), windows = List(Window14to18)),
+          "kimi" -> providerWith(List(ModelConfig("kimi-for-coding")), windows = List(Window14to18)),
+          "cmdcode" -> providerWith(List(ModelConfig("deepseek-flash")))
+        )
+      )
+    )
     // 链深恒 1：fallbacks 数组退役 ⇒ 链 = preferred 单根
     val chain = AgentModelConfig(preferred = Some("zhipu/glm"), fallbacks = Nil)
     mkRegistry(cfg, ThuInsideWindow).flatMap(_.getCandidatesForAgent(Some(chain))).map { cs =>
@@ -109,10 +113,14 @@ class ScheduleRestrictionChainSpec extends CatsEffectSuite:
   // ── T3/T4（重写）：provider 级 vs 模型级 ────────────────────
 
   test("T3(重写) provider 级窗口对该 provider 全部模型生效（唯一候选被剔 ⇒ 空链）") {
-    val cfg = NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map(
-      "kimi" -> providerWith(List(ModelConfig("a"), ModelConfig("b")), windows = List(Window14to18)),
-      "ok" -> providerWith(List(ModelConfig("m")))
-    )))
+    val cfg = NebflowServiceConfig(llm =
+      ServiceLlmConfig(providers =
+        Map(
+          "kimi" -> providerWith(List(ModelConfig("a"), ModelConfig("b")), windows = List(Window14to18)),
+          "ok" -> providerWith(List(ModelConfig("m")))
+        )
+      )
+    )
     val chain = AgentModelConfig(preferred = Some("kimi/a"), fallbacks = Nil)
     mkRegistry(cfg, ThuInsideWindow).flatMap(_.getCandidatesForAgent(Some(chain))).map { cs =>
       assertEquals(refs(cs), Nil, "provider 级窗口下 kimi/a（唯一候选）必须被剔除")
@@ -120,12 +128,18 @@ class ScheduleRestrictionChainSpec extends CatsEffectSuite:
   }
 
   test("T4(重写) 模型级窗口只影响该模型——受限根被剔（空链）、未受限根照常在链") {
-    val cfg = NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map(
-      "kimi" -> providerWith(List(
-        ModelConfig("hit", unavailableWindows = Some(List(Window14to18))),
-        ModelConfig("free")
-      ))
-    )))
+    val cfg = NebflowServiceConfig(llm =
+      ServiceLlmConfig(providers =
+        Map(
+          "kimi" -> providerWith(
+            List(
+              ModelConfig("hit", unavailableWindows = Some(List(Window14to18))),
+              ModelConfig("free")
+            )
+          )
+        )
+      )
+    )
     for
       hit <- mkRegistry(cfg, ThuInsideWindow)
         .flatMap(_.getCandidatesForAgent(Some(AgentModelConfig(preferred = Some("kimi/hit"), fallbacks = Nil))))
@@ -144,10 +158,14 @@ class ScheduleRestrictionChainSpec extends CatsEffectSuite:
   // ── T6：全受限 ⇒ 空链（终局报错单点在 LlmInterface）────────
 
   test("T6 全受限（含储备层）⇒ 链出口给空链，不静默回退到受限模型") {
-    val cfg = NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map(
-      "zhipu" -> providerWith(List(ModelConfig("glm")), windows = List(Window14to18)),
-      "kimi" -> providerWith(List(ModelConfig("kimi")), windows = List(Window14to18))
-    )))
+    val cfg = NebflowServiceConfig(llm =
+      ServiceLlmConfig(providers =
+        Map(
+          "zhipu" -> providerWith(List(ModelConfig("glm")), windows = List(Window14to18)),
+          "kimi" -> providerWith(List(ModelConfig("kimi")), windows = List(Window14to18))
+        )
+      )
+    )
     val chain = AgentModelConfig(preferred = Some("zhipu/glm"), fallbacks = List("kimi/kimi"))
     mkRegistry(cfg, ThuInsideWindow).flatMap(_.getCandidatesForAgent(Some(chain))).map { cs =>
       assertEquals(refs(cs), Nil, s"全受限必须给空链（不得静默回退到受限模型）；实际 = ${refs(cs)}")
@@ -158,9 +176,13 @@ class ScheduleRestrictionChainSpec extends CatsEffectSuite:
 
   test("T7 跨午夜窗：23:30 与 06:59 受限、07:00 与 22:59 不受限（filterScheduleRestricted 同一谓词）") {
     val overnight = UnavailableWindow("23:00", "07:00")
-    val cfg = NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map(
-      "kimi" -> providerWith(List(ModelConfig("k")), windows = List(overnight))
-    )))
+    val cfg = NebflowServiceConfig(llm =
+      ServiceLlmConfig(providers =
+        Map(
+          "kimi" -> providerWith(List(ModelConfig("k")), windows = List(overnight))
+        )
+      )
+    )
     def cand = ModelCandidate("kimi", cfg.llm.providers("kimi"), "k")
     for
       night <- mkRegistry(cfg, at(29, 23, 30)).flatMap(_.filterScheduleRestricted(List(cand)))
@@ -178,10 +200,14 @@ class ScheduleRestrictionChainSpec extends CatsEffectSuite:
   // ── T8：scheduleRestrictionFor / scheduleWindowsByRef 可见性面 ──
 
   test("T8 可见性读数：ref 当前受限原因 + 声明窗口 + active 双态") {
-    val cfg = NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map(
-      "zhipu" -> providerWith(List(ModelConfig("glm")), windows = List(Window14to18)),
-      "cmdcode" -> providerWith(List(ModelConfig("deepseek-flash")))
-    )))
+    val cfg = NebflowServiceConfig(llm =
+      ServiceLlmConfig(providers =
+        Map(
+          "zhipu" -> providerWith(List(ModelConfig("glm")), windows = List(Window14to18)),
+          "cmdcode" -> providerWith(List(ModelConfig("deepseek-flash")))
+        )
+      )
+    )
     for
       inside <- mkRegistry(cfg, ThuInsideWindow)
       r1 <- inside.scheduleRestrictionFor("zhipu/glm")
@@ -193,18 +219,26 @@ class ScheduleRestrictionChainSpec extends CatsEffectSuite:
       assertEquals(r1, Some("14:00-18:00"), "窗内：受限原因 = 窗口描述")
       assertEquals(r2, None, "无窗口 = 不受限")
       assertEquals(r3, None, "窗外：不受限")
-      assertEquals(byRef, List(
-        ("zhipu/glm", List("14:00-18:00"), true),
-        ("cmdcode/deepseek-flash", Nil, false)
-      ))
+      assertEquals(
+        byRef,
+        List(
+          ("zhipu/glm", List("14:00-18:00"), true),
+          ("cmdcode/deepseek-flash", Nil, false)
+        )
+      )
+    end for
   }
 
   // ── T9：getCandidateForRef 不过滤（探测集必须能取回窗内候选）──
 
   test("T9 getCandidateForRef 保持纯构造不过滤——HealthMonitor 探测集不被时段闸打穿") {
-    val cfg = NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map(
-      "zhipu" -> providerWith(List(ModelConfig("glm")), windows = List(Window14to18))
-    )))
+    val cfg = NebflowServiceConfig(llm =
+      ServiceLlmConfig(providers =
+        Map(
+          "zhipu" -> providerWith(List(ModelConfig("glm")), windows = List(Window14to18))
+        )
+      )
+    )
     mkRegistry(cfg, ThuInsideWindow).flatMap(_.getCandidateForRef("zhipu/glm")).map { c =>
       assert(c.isDefined, "窗内候选仍必须可构造（探测恢复路径依赖它）")
     }

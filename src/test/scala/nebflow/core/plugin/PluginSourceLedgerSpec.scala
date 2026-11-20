@@ -26,7 +26,7 @@ class PluginSourceLedgerSpec extends FunSuite:
   override val munitTimeout: FiniteDuration = Duration(180, "s")
 
   private var prevRoot: os.Path = os.Path("/tmp")
-  private var home: os.Path     = os.Path("/tmp")
+  private var home: os.Path = os.Path("/tmp")
   private val fixtureRoot: os.Path = os.pwd / "target" / "plugin-source-ledger"
 
   override def beforeAll(): Unit =
@@ -172,14 +172,20 @@ class PluginSourceLedgerSpec extends FunSuite:
 
   test("损坏账本降级：单包坏 = 该包 unknown-source，不影响他包"):
     PluginRegistry.invalidateCache()
-    val bad  = "corrupt-x"
+    val bad = "corrupt-x"
     val good = "still-known-fixture"
     installLocal(bad)
     installLocal(good)
     dropLedgers()
     os.makeDir.all(PluginSourceLedger.ledgerDir) // 损坏注入需手写账本文件（write.over 不建父目录）
     val _ = PluginSourceLedger.recordInstall(
-      good, PluginSourceLedger.Kind.Local, None, None, "1.0.0", "d" * 64, PluginSourceLedger.Via.Local
+      good,
+      PluginSourceLedger.Kind.Local,
+      None,
+      None,
+      "1.0.0",
+      "d" * 64,
+      PluginSourceLedger.Via.Local
     )
 
     val validEntry =
@@ -187,18 +193,21 @@ class PluginSourceLedgerSpec extends FunSuite:
     // 损坏注入走 circe 对象变异（字符串 replace 对引号拼写脆弱——曾整段漏改导致注入失效）
     val validObj = io.circe.parser.parse(validEntry) match
       case Right(json) => json.asObject.getOrElse(munit.Assertions.fail("fixture entry must be an object"))
-      case Left(err)   => munit.Assertions.fail(s"fixture entry unparseable: ${err.message}")
+      case Left(err) => munit.Assertions.fail(s"fixture entry unparseable: ${err.message}")
     def variant(patch: io.circe.JsonObject => io.circe.JsonObject): String =
       io.circe.Json.fromJsonObject(patch(validObj)).noSpaces
     val corruptions: List[(String, String)] = List(
       ("not json{", "unparseable"),
       ("[]", "not an object"),
-      (variant(_.add("digest", io.circe.Json.fromString("short"))) , "digest 64-hex"),
-      (variant(_.add("via", io.circe.Json.fromString("aliens"))) , "via 枚举外"),
-      (variant(_.add("kind", io.circe.Json.fromString("ftp"))) , "kind 枚举外"),
-      (variant(_.add("installedAt", io.circe.Json.fromString("yesterday"))) , "installedAt 类型"),
-      (variant(o => o.remove("pin").add("pin", io.circe.Json.obj("commit" -> io.circe.Json.fromString("abc")))) , "pin.commit 40-hex"),
-      (variant(_.add("name", io.circe.Json.fromString("someone-else"))) , "名实不符")
+      (variant(_.add("digest", io.circe.Json.fromString("short"))), "digest 64-hex"),
+      (variant(_.add("via", io.circe.Json.fromString("aliens"))), "via 枚举外"),
+      (variant(_.add("kind", io.circe.Json.fromString("ftp"))), "kind 枚举外"),
+      (variant(_.add("installedAt", io.circe.Json.fromString("yesterday"))), "installedAt 类型"),
+      (
+        variant(o => o.remove("pin").add("pin", io.circe.Json.obj("commit" -> io.circe.Json.fromString("abc")))),
+        "pin.commit 40-hex"
+      ),
+      (variant(_.add("name", io.circe.Json.fromString("someone-else"))), "名实不符")
     )
     corruptions.foreach { (body, label) =>
       os.write.over(ledgerFile(bad), body)
@@ -209,7 +218,7 @@ class PluginSourceLedgerSpec extends FunSuite:
     }
     // 他包零影响
     PluginSourceLedger.query(good) match
-      case PluginSourceLedger.Known(e)          => assertEquals(e.digest, "d" * 64)
+      case PluginSourceLedger.Known(e) => assertEquals(e.digest, "d" * 64)
       case PluginSourceLedger.UnknownSource(reason) => fail(s"他包不得受坏账本牵连, got: $reason")
 
   // ── 读写单点往返 ──────────────────────────────────────────
@@ -217,8 +226,13 @@ class PluginSourceLedgerSpec extends FunSuite:
   test("写读往返：recordInstall → query 逐字段相等（pin 两形态）+ queryAll 逐包"):
     val commit40 = "e" * 40
     val _ = PluginSourceLedger.recordInstall(
-      "roundtrip-fixture", PluginSourceLedger.Kind.Git, Some("https://github.com/o/r.git"),
-      Some(PluginSourceLedger.Pin.Commit(Some("v1.6.0"), commit40)), "1.6.0", "f" * 64, PluginSourceLedger.Via.Git
+      "roundtrip-fixture",
+      PluginSourceLedger.Kind.Git,
+      Some("https://github.com/o/r.git"),
+      Some(PluginSourceLedger.Pin.Commit(Some("v1.6.0"), commit40)),
+      "1.6.0",
+      "f" * 64,
+      PluginSourceLedger.Via.Git
     )
     PluginSourceLedger.query("roundtrip-fixture") match
       case PluginSourceLedger.Known(e) =>
@@ -232,8 +246,13 @@ class PluginSourceLedgerSpec extends FunSuite:
 
     // 同名重写（唯一写点的覆盖语义——update 腿 P2/P3 复用）：digest 基线 pin 形态
     val _2 = PluginSourceLedger.recordInstall(
-      "roundtrip-fixture", PluginSourceLedger.Kind.Official, None,
-      Some(PluginSourceLedger.Pin.DigestBasis("9" * 64)), "1.7.0", "8" * 64, PluginSourceLedger.Via.Official
+      "roundtrip-fixture",
+      PluginSourceLedger.Kind.Official,
+      None,
+      Some(PluginSourceLedger.Pin.DigestBasis("9" * 64)),
+      "1.7.0",
+      "8" * 64,
+      PluginSourceLedger.Via.Official
     )
     PluginSourceLedger.query("roundtrip-fixture") match
       case PluginSourceLedger.Known(e) =>
@@ -255,10 +274,10 @@ class PluginSourceLedgerSpec extends FunSuite:
     installLocal("bf-local-fixture")
     dropLedgers() // 模拟存量：账本出现之前安装的包
 
-    val installedSeed  = home / "plugins" / seedName
+    val installedSeed = home / "plugins" / seedName
     val installedLocal = home / "plugins" / "bf-local-fixture"
-    val seedDigest     = PluginRegistry.computeDigest(installedSeed).toOption.get._1
-    val localDigest    = PluginRegistry.computeDigest(installedLocal).toOption.get._1
+    val seedDigest = PluginRegistry.computeDigest(installedSeed).toOption.get._1
+    val localDigest = PluginRegistry.computeDigest(installedLocal).toOption.get._1
 
     val report = PluginSourceLedger.backfill(
       List(pluginDef(seedName, installedSeed, seedDigest), pluginDef("bf-local-fixture", installedLocal, localDigest))
@@ -270,7 +289,11 @@ class PluginSourceLedgerSpec extends FunSuite:
       case PluginSourceLedger.Known(e) =>
         assertEquals(e.via, PluginSourceLedger.Via.Seed, "seed 树成员 ⇒ via=seed")
         assertEquals(e.kind, PluginSourceLedger.Kind.Official)
-        assertEquals(e.pin, Some(PluginSourceLedger.Pin.DigestBasis(seedDigest)), "基线 pin = 当前盘上 digest（非 seed 树 digest）")
+        assertEquals(
+          e.pin,
+          Some(PluginSourceLedger.Pin.DigestBasis(seedDigest)),
+          "基线 pin = 当前盘上 digest（非 seed 树 digest）"
+        )
         assertEquals(e.digest, seedDigest)
         assertEquals(e.url, None, "回填不猜 url")
       case PluginSourceLedger.UnknownSource(reason) => fail(s"expected Known, got: $reason")
@@ -298,11 +321,15 @@ class PluginSourceLedgerSpec extends FunSuite:
     val first = PluginSourceLedger.backfill(defs)
     assert(first.written.nonEmpty, "首轮回填必须落账")
 
-    val before = os.list(PluginSourceLedger.ledgerDir).filter(_.ext == "json").map { f =>
-      f.last -> (os.mtime(f), new String(os.read.bytes(f), UTF_8))
-    }.toMap
+    val before = os
+      .list(PluginSourceLedger.ledgerDir)
+      .filter(_.ext == "json")
+      .map { f =>
+        f.last -> (os.mtime(f), new String(os.read.bytes(f), UTF_8))
+      }
+      .toMap
     val pkgDigestsBefore = defs.map(p => p.name -> PluginRegistry.computeDigest(os.Path(p.dir)).toOption.get._1).toMap
-    val pkgFilesBefore   = defs.map(p => p.name -> fileSet(os.Path(p.dir))).toMap
+    val pkgFilesBefore = defs.map(p => p.name -> fileSet(os.Path(p.dir))).toMap
 
     // 二次 boot（同实现重放）：全部 skip，零写入
     val second = PluginSourceLedger.backfill(defs)
@@ -310,9 +337,13 @@ class PluginSourceLedgerSpec extends FunSuite:
     assertEquals(second.alreadyRecorded.sorted, defs.map(_.name).sorted)
     assertEquals(second.failed, Nil)
 
-    val after = os.list(PluginSourceLedger.ledgerDir).filter(_.ext == "json").map { f =>
-      f.last -> (os.mtime(f), new String(os.read.bytes(f), UTF_8))
-    }.toMap
+    val after = os
+      .list(PluginSourceLedger.ledgerDir)
+      .filter(_.ext == "json")
+      .map { f =>
+        f.last -> (os.mtime(f), new String(os.read.bytes(f), UTF_8))
+      }
+      .toMap
     assertEquals(after, before, "二次回填后账本文件 mtime 与字节必须逐项不变（零改写）")
 
     // digest 不变量（回填面）：包 digest 与文件集前后相等

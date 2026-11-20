@@ -129,9 +129,19 @@ class TodoTaxonomySpec extends CatsEffectSuite:
           id = "o1",
           title = "看截图再定",
           media = List(
-            DecisionMedia(DecisionMedia.KindImage, ref = "att-1", refType = DecisionMedia.RefAttachment, role = Some("cover")),
+            DecisionMedia(
+              DecisionMedia.KindImage,
+              ref = "att-1",
+              refType = DecisionMedia.RefAttachment,
+              role = Some("cover")
+            ),
             DecisionMedia(DecisionMedia.KindImage, ref = "att-2", refType = DecisionMedia.RefAttachment),
-            DecisionMedia(DecisionMedia.KindVideo, ref = "/tmp/clip.mp4", refType = DecisionMedia.RefPath, durationMs = Some(3200))
+            DecisionMedia(
+              DecisionMedia.KindVideo,
+              ref = "/tmp/clip.mp4",
+              refType = DecisionMedia.RefPath,
+              durationMs = Some(3200)
+            )
           )
         )
       )
@@ -139,20 +149,41 @@ class TodoTaxonomySpec extends CatsEffectSuite:
     assertEquals(TodoTaxonomy.validateCreate(Some("todo"), Some("tool"), Some(d)), Right(()))
 
   test("③ 媒体 kind 非法 ⇒ TODO_MEDIA_KIND"):
-    val d = TodoDecision(options = List(DecisionOption("o1", "t", media = List(DecisionMedia("audio", "x", DecisionMedia.RefUrl)))))
-    assertEquals(TodoTaxonomy.validateCreate(None, Some("tool"), Some(d)).left.toOption.map(_.code), Some(TodoTaxonomy.Codes.MediaKind))
+    val d = TodoDecision(options =
+      List(DecisionOption("o1", "t", media = List(DecisionMedia("audio", "x", DecisionMedia.RefUrl))))
+    )
+    assertEquals(
+      TodoTaxonomy.validateCreate(None, Some("tool"), Some(d)).left.toOption.map(_.code),
+      Some(TodoTaxonomy.Codes.MediaKind)
+    )
 
   test("③ 媒体 ref 空白 ⇒ TODO_MEDIA_REF"):
-    val d = TodoDecision(options = List(DecisionOption("o1", "t", media = List(DecisionMedia(DecisionMedia.KindImage, "  ", DecisionMedia.RefUrl)))))
-    assertEquals(TodoTaxonomy.validateCreate(None, Some("tool"), Some(d)).left.toOption.map(_.code), Some(TodoTaxonomy.Codes.MediaRef))
+    val d = TodoDecision(options =
+      List(DecisionOption("o1", "t", media = List(DecisionMedia(DecisionMedia.KindImage, "  ", DecisionMedia.RefUrl))))
+    )
+    assertEquals(
+      TodoTaxonomy.validateCreate(None, Some("tool"), Some(d)).left.toOption.map(_.code),
+      Some(TodoTaxonomy.Codes.MediaRef)
+    )
 
   test("③ 媒体 refType 非法 ⇒ TODO_MEDIA_REF_TYPE"):
-    val d = TodoDecision(options = List(DecisionOption("o1", "t", media = List(DecisionMedia(DecisionMedia.KindImage, "x", "ftp")))))
-    assertEquals(TodoTaxonomy.validateCreate(None, Some("tool"), Some(d)).left.toOption.map(_.code), Some(TodoTaxonomy.Codes.MediaRefType))
+    val d = TodoDecision(options =
+      List(DecisionOption("o1", "t", media = List(DecisionMedia(DecisionMedia.KindImage, "x", "ftp"))))
+    )
+    assertEquals(
+      TodoTaxonomy.validateCreate(None, Some("tool"), Some(d)).left.toOption.map(_.code),
+      Some(TodoTaxonomy.Codes.MediaRefType)
+    )
 
   test("③ 媒体 validator 不校验可达性（外链 404/路径不存在都放行）"):
     val d = TodoDecision(options =
-      List(DecisionOption("o1", "t", media = List(DecisionMedia(DecisionMedia.KindImage, "https://example.invalid/nope.png", DecisionMedia.RefUrl))))
+      List(
+        DecisionOption(
+          "o1",
+          "t",
+          media = List(DecisionMedia(DecisionMedia.KindImage, "https://example.invalid/nope.png", DecisionMedia.RefUrl))
+        )
+      )
     )
     assertEquals(TodoTaxonomy.validateCreate(None, Some("tool"), Some(d)), Right(()))
 
@@ -172,7 +203,12 @@ class TodoTaxonomySpec extends CatsEffectSuite:
     val d = TodoDecision(
       question = "  q  ",
       options = List(
-        DecisionOption(id = "", title = " 第一条 ", detail = Some("  "), media = List(DecisionMedia(DecisionMedia.KindImage, " a ", DecisionMedia.RefAttachment))),
+        DecisionOption(
+          id = "",
+          title = " 第一条 ",
+          detail = Some("  "),
+          media = List(DecisionMedia(DecisionMedia.KindImage, " a ", DecisionMedia.RefAttachment))
+        ),
         DecisionOption(id = "kept", title = "   ", media = Nil)
       )
     )
@@ -220,6 +256,8 @@ class TodoTaxonomySpec extends CatsEffectSuite:
       wsSend = Some(j => IO(wsSent += j).void)
     )
 
+  end mkCtx
+
   private def callTool(input: Json): Either[ToolError, String] =
     ScheduleTool.call(input.asObject.get, mkCtx()).unsafeRunSync()
 
@@ -244,7 +282,12 @@ class TodoTaxonomySpec extends CatsEffectSuite:
           "id" -> "o2".asJson,
           "title" -> "看截图再定".asJson,
           "media" -> Json.arr(
-            Json.obj("kind" -> "image".asJson, "refType" -> "attachment".asJson, "ref" -> "att-1".asJson, "role" -> "cover".asJson),
+            Json.obj(
+              "kind" -> "image".asJson,
+              "refType" -> "attachment".asJson,
+              "ref" -> "att-1".asJson,
+              "role" -> "cover".asJson
+            ),
             Json.obj("kind" -> "image".asJson, "refType" -> "attachment".asJson, "ref" -> "att-2".asJson)
           )
         )
@@ -288,8 +331,7 @@ class TodoTaxonomySpec extends CatsEffectSuite:
           )
         )
       )
-    yield assertEquals(res.left.toOption.map(_.message.contains(TodoTaxonomy.Codes.DecisionMalformed)), Some(true))
-    )
+    yield assertEquals(res.left.toOption.map(_.message.contains(TodoTaxonomy.Codes.DecisionMalformed)), Some(true)))
 
 end TodoTaxonomySpec
 

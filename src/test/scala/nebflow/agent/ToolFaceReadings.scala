@@ -54,7 +54,7 @@ object ToolFaceReadings:
 
     def allowed(
       defn: AgentDef,
-        isFlowNode: Boolean = false,
+      isFlowNode: Boolean = false,
       projectBoardSession: Boolean = false,
       isDispatcher: Boolean = false,
       delegateSession: Boolean = false,
@@ -119,11 +119,20 @@ object ToolFaceReadings:
     Identity("standalone (escape: decl=[Card])", mk("myagent", List("Card"))),
     Identity("team (tools=[*])", mk("backend", List("*"), category = "team")),
     Identity("flow (tools=[*])", mk("scanner", List("*"), category = "flow")),
-    Identity("project node (isFlowNode + projectBoardSession)", mk("nebflow", List("*")),
-      isFlowNode = true, projectBoardSession = true),
+    Identity(
+      "project node (isFlowNode + projectBoardSession)",
+      mk("nebflow", List("*")),
+      isFlowNode = true,
+      projectBoardSession = true
+    ),
     Identity("dispatcher session", mk("nebflow", List("*")), isDispatcher = true),
     Identity("subagent", mk("subagent")),
-    Identity("delegate session (dispatcher mode)", mk("nebflow"), delegateSession = true, delegateMode = Some(ModeDispatcher)),
+    Identity(
+      "delegate session (dispatcher mode)",
+      mk("nebflow"),
+      delegateSession = true,
+      delegateMode = Some(ModeDispatcher)
+    ),
     Identity("delegate session (kernel mode)", mk("nebflow"), delegateSession = true, delegateMode = Some(ModeKernel))
   )
 
@@ -132,13 +141,25 @@ object ToolFaceReadings:
     Row(
       id.label,
       CoreProbe.allowed(
-        id.defn, id.isFlowNode, id.projectBoardSession,
-        id.isDispatcher, id.delegateSession, id.askSession, id.delegateMode
+        id.defn,
+        id.isFlowNode,
+        id.projectBoardSession,
+        id.isDispatcher,
+        id.delegateSession,
+        id.askSession,
+        id.delegateMode
       ),
-      CoreProbe.face(
-        id.defn, id.isFlowNode, id.projectBoardSession,
-        id.isDispatcher, id.delegateSession, id.askSession, id.delegateMode
-      ).toSet
+      CoreProbe
+        .face(
+          id.defn,
+          id.isFlowNode,
+          id.projectBoardSession,
+          id.isDispatcher,
+          id.delegateSession,
+          id.askSession,
+          id.delegateMode
+        )
+        .toSet
     )
 
   /** 全部身份的读数（顺序 = [[Identities]]）。 */
@@ -146,11 +167,13 @@ object ToolFaceReadings:
 
   /** 按身份标签取一行（标签见 [[Identities]]；未知标签抛显式异常，不静默）。 */
   def row(label: String): Row =
-    rows.find(_.label == label).getOrElse(
-      throw new IllegalArgumentException(
-        s"unknown identity label: '$label' — known: ${rows.map(_.label).mkString(" | ")}"
+    rows
+      .find(_.label == label)
+      .getOrElse(
+        throw new IllegalArgumentException(
+          s"unknown identity label: '$label' — known: ${rows.map(_.label).mkString(" | ")}"
+        )
       )
-    )
 
   /** 该身份是否两个面都带该工具（两个面分开可读见 [[Row]]）。 */
   def has(label: String, tool: String): Boolean =
@@ -168,14 +191,21 @@ object ToolFaceReadings:
     }
     rows.foreach { r =>
       val cols = tools.map(t => s"allowedHas$t=${r.allowedHas(t)}|llmFaceHas$t=${r.llmFaceHas(t)}").mkString("|")
-      println(s"READING|${r.label}|$cols|allowed=${r.allowed.toList.sorted.mkString(" ")}|llmFace=${r.llmFace.toList.sorted.mkString(" ")}")
+      println(
+        s"READING|${r.label}|$cols|allowed=${r.allowed.toList.sorted.mkString(" ")}|llmFace=${r.llmFace.toList.sorted.mkString(" ")}"
+      )
     }
     println(s"READING|ask.AllowedTools|${nebflow.core.ask.AskSessions.AllowedTools.toList.sorted.mkString(" ")}")
-    println(s"READING|ask.AskExclusiveTools|${nebflow.core.ask.AskSessions.AskExclusiveTools.toList.sorted.mkString(" ")}")
-    println(s"READING|pluginWhitelist|${nebflow.core.plugin.PluginRegistry.BuiltinToolWhitelist.toList.sorted.mkString(" ")}")
+    println(
+      s"READING|ask.AskExclusiveTools|${nebflow.core.ask.AskSessions.AskExclusiveTools.toList.sorted.mkString(" ")}"
+    )
+    println(
+      s"READING|pluginWhitelist|${nebflow.core.plugin.PluginRegistry.BuiltinToolWhitelist.toList.sorted.mkString(" ")}"
+    )
     println(s"READING|remoteable|${nebflow.core.tools.RemoteExecutor.remoteableTools.toList.sorted.mkString(" ")}")
     println(s"READING|rootExclusive|${AgentCore.RootExclusiveTools.toList.sorted.mkString(" ")}")
     println(s"READING|rootOrchestration|${AgentCore.RootOrchestrationTools.toList.sorted.mkString(" ")}")
     println(s"READING|retiredGuides|${AgentCore.RetiredToolGuides.keys.toList.sorted.mkString(" ")}")
+  end printReadings
 
 end ToolFaceReadings

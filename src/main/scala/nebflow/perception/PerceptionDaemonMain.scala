@@ -56,19 +56,21 @@ object PerceptionDaemonMain extends IOApp:
         case Nil =>
           home match
             case Some(h) if enginePort > 0 => Right(Args(h, port, enginePort))
-            case Some(_)                   => Left("--engine-port is required (engine ingest target)")
-            case None                      => Left("--home is required")
-        case "--home" :: v :: t      => loop(t, Some(os.Path(v, os.pwd)), port, enginePort)
-        case "--port" :: v :: t      =>
+            case Some(_) => Left("--engine-port is required (engine ingest target)")
+            case None => Left("--home is required")
+        case "--home" :: v :: t => loop(t, Some(os.Path(v, os.pwd)), port, enginePort)
+        case "--port" :: v :: t =>
           v.toIntOption match
             case Some(p) => loop(t, home, p, enginePort)
-            case None    => Left(s"--port must be an integer: $v")
+            case None => Left(s"--port must be an integer: $v")
         case "--engine-port" :: v :: t =>
           v.toIntOption match
             case Some(p) if p > 0 => loop(t, home, port, p)
-            case _                => Left(s"--engine-port must be a positive integer: $v")
+            case _ => Left(s"--engine-port must be a positive integer: $v")
         case other :: _ => Left(s"unknown argument: ${other.take(40)}")
     loop(argv, None, 0, 0)
+
+  end parseArgs
 
   def run(args: List[String]): IO[ExitCode] =
     parseArgs(args) match
@@ -130,7 +132,10 @@ object PerceptionDaemonMain extends IOApp:
       Right(())
     catch case e: Throwable => Left(s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}")
 
-  private def encoder(ctx: ch.qos.logback.classic.LoggerContext, pattern: String): ch.qos.logback.classic.encoder.PatternLayoutEncoder =
+  private def encoder(
+    ctx: ch.qos.logback.classic.LoggerContext,
+    pattern: String
+  ): ch.qos.logback.classic.encoder.PatternLayoutEncoder =
     val enc = new ch.qos.logback.classic.encoder.PatternLayoutEncoder
     enc.setContext(ctx)
     enc.setPattern(pattern)
@@ -179,7 +184,9 @@ object PerceptionDaemonMain extends IOApp:
           _ <- watchdogLoop(logger, bindPort).start
           exit <- EmberServerBuilder
             .default[IO]
-            .withHost(com.comcast.ip4s.Host.fromString("127.0.0.1").getOrElse(com.comcast.ip4s.Host.fromString("localhost").get))
+            .withHost(
+              com.comcast.ip4s.Host.fromString("127.0.0.1").getOrElse(com.comcast.ip4s.Host.fromString("localhost").get)
+            )
             .withPort(com.comcast.ip4s.Port.fromInt(bindPort).get)
             .withHttpApp(Router("/" -> routes).orNotFound)
             .withShutdownTimeout(scala.concurrent.duration.FiniteDuration(5, scala.concurrent.duration.SECONDS))
@@ -192,6 +199,12 @@ object PerceptionDaemonMain extends IOApp:
             }
             .as(ExitCode.Success)
         yield exit
+
+        end for
+
+    end match
+
+  end serve
 
   /** --port 0 = 自选空闲（绑定即释的固有占位窗，与引擎 dock pickPort 同级）。 */
   private def pickFreePort(): Int =
@@ -216,8 +229,8 @@ object PerceptionDaemonMain extends IOApp:
 
   private def tokenOf(home: os.Path): Either[String, String] =
     val f = home / "perception" / "daemon.token"
-    if !os.exists(f) then
-      Left(s"token file missing: $f (engine writes it 0600 before spawn)")
+    if !os.exists(f) then Left(s"token file missing: $f (engine writes it 0600 before spawn)")
     else
       val t = os.read(f).trim
       if t.isEmpty then Left(s"token file empty: $f") else Right(t)
+end PerceptionDaemonMain

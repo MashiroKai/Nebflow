@@ -39,31 +39,46 @@ private[agent] object AgentFinishTurn:
             IO.blocking(journal.prepareReport(slot, body)).flatMap { identity =>
               val event = ChildReport.event(identity, body, agentDef.name)
               def findParent(attempt: Int): IO[Option[String]] =
-                (sessionIdOfRef(resources, parentRef), resources.agentRegistry.get).mapN { (byRef, registry) =>
-                  byRef.orElse(registry.get(sid).flatMap(r => Option(r.parentSessionId).filter(_.nonEmpty)))
-                }.flatMap {
-                  case found @ Some(_) => IO.pure(found)
-                  case None if attempt < 5 => IO.sleep(scala.concurrent.duration.DurationInt(1 << (attempt - 1)).seconds) *> findParent(attempt + 1)
-                  case None => IO.pure(None)
-                }
+                (sessionIdOfRef(resources, parentRef), resources.agentRegistry.get)
+                  .mapN { (byRef, registry) =>
+                    byRef.orElse(registry.get(sid).flatMap(r => Option(r.parentSessionId).filter(_.nonEmpty)))
+                  }
+                  .flatMap {
+                    case found @ Some(_) => IO.pure(found)
+                    case None if attempt < 5 =>
+                      IO.sleep(scala.concurrent.duration.DurationInt(1 << (attempt - 1)).seconds) *> findParent(
+                        attempt + 1
+                      )
+                    case None => IO.pure(None)
+                  }
               findParent(1).flatMap {
-              case None =>
-                val note = s"Child report parked: parent identity unavailable (slot $slot); retry on supervisor recovery."
-                IO.blocking(journal.park(slot)) *>
-                  resources.subAgentTaskStore.findByTaskId(sid).flatMap {
-                    case Some(row) if row.runId.nonEmpty =>
-                      resources.subAgentTaskStore.updateRun(row.parentSessionId, sid, row.runId.get, diagnostic = Some(note)).void
-                    case Some(row) => resources.subAgentTaskStore.setDiagnostic(row.parentSessionId, sid, Some(note))
-                    case None => IO.unit
-                  } *> nebflow.shared.NebflowLogger.forName("nebflow.agent").warn(s"[child-report-parked] session=$sid slot=$slot parent identity unavailable after 5 attempts")
-              case Some(parentSid) =>
-                  MailboxProducer.deliver(resources, parentSid, event, identity, "child-report", producer = "child-report")
+                case None =>
+                  val note =
+                    s"Child report parked: parent identity unavailable (slot $slot); retry on supervisor recovery."
+                  IO.blocking(journal.park(slot)) *>
+                    resources.subAgentTaskStore.findByTaskId(sid).flatMap {
+                      case Some(row) if row.runId.nonEmpty =>
+                        resources.subAgentTaskStore
+                          .updateRun(row.parentSessionId, sid, row.runId.get, diagnostic = Some(note))
+                          .void
+                      case Some(row) => resources.subAgentTaskStore.setDiagnostic(row.parentSessionId, sid, Some(note))
+                      case None => IO.unit
+                    } *> nebflow.shared.NebflowLogger
+                      .forName("nebflow.agent")
+                      .warn(
+                        s"[child-report-parked] session=$sid slot=$slot parent identity unavailable after 5 attempts"
+                      )
+                case Some(parentSid) =>
+                  MailboxProducer
+                    .deliver(resources, parentSid, event, identity, "child-report", producer = "child-report")
                     .flatMap {
-                      case nebflow.core.mail.SessionMailbox.MailResult.Failed(cause) => IO.raiseError(new IllegalStateException(s"child-report delivery failed: $cause"))
+                      case nebflow.core.mail.SessionMailbox.MailResult.Failed(cause) =>
+                        IO.raiseError(new IllegalStateException(s"child-report delivery failed: $cause"))
                       case _ => IO.blocking(journal.markFlushed(slot))
                     }
-                }
+              }
             }
+        end match
       case _ => IO.unit
 
   // ============================================================
@@ -131,7 +146,15 @@ private[agent] object AgentFinishTurn:
       // After MaxMailReminders retries, give up and finishTurn (avoid infinite loop).
       if state.expectsMail && !state.mailUsedThisTurn && state.mailReminders < MaxMailReminders then
         routeChildProgress(agentDef, resources, parentRef, state, result.text) *>
-          handleMissingMail(agentDef, resources, depth, parentRef, state.copy(execution = state.execution.copy(childReportSlot = None)), replyTo, result)
+          handleMissingMail(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            state.copy(execution = state.execution.copy(childReportSlot = None)),
+            replyTo,
+            result
+          )
       else
         if state.expectsMail && !state.mailUsedThisTurn then
           logAgentEvent(
@@ -143,7 +166,12 @@ private[agent] object AgentFinishTurn:
             s"agent finished without Mail after $MaxMailReminders reminders"
           )
         val closeSlot = (state.sessionId, state.execution.childReportSlot) match
-          case (Some(sid), Some(slot)) => IO.blocking(ChildReportJournal.open((nebflow.shared.PathUtil.dataRoot / "child-report-journal").toNIO, sid).closeNoReport(slot))
+          case (Some(sid), Some(slot)) =>
+            IO.blocking(
+              ChildReportJournal
+                .open((nebflow.shared.PathUtil.dataRoot / "child-report-journal").toNIO, sid)
+                .closeNoReport(slot)
+            )
           case _ => IO.unit
         closeSlot *> finishTurn(
           agentDef,
@@ -246,20 +274,28 @@ private[agent] object AgentFinishTurn:
       val handle = resources.protectedExecutions(state.sessionId.get)
       val sid = handle.admission.sessionId
       for
-        task <- resources.subAgentTaskStore.findByTaskId(sid).flatMap(row =>
-          IO.fromOption(row.filter(_.runId.contains(handle.admission.executionId)))(
-            new IllegalStateException("terminal-task-binding-unavailable")))
-        runner <- IO.fromOption(resources.protectedRunners.get(sid))(new IllegalStateException("terminal-runner-unavailable"))
+        task <- resources.subAgentTaskStore
+          .findByTaskId(sid)
+          .flatMap(row =>
+            IO.fromOption(row.filter(_.runId.contains(handle.admission.executionId)))(
+              new IllegalStateException("terminal-task-binding-unavailable")
+            )
+          )
+        runner <- IO.fromOption(resources.protectedRunners.get(sid))(
+          new IllegalStateException("terminal-runner-unavailable")
+        )
         trimmed = text.trim
         hasText = trimmed.nonEmpty && trimmed != Defaults.MaxTokensStubText
         diagnostic <- BackoffSupervisor.protectedCompletionDiagnostic(sid, newMessages, hasText)
-        payload = (if hasText then s"\"${task.description}\":\n$trimmed" else s"\"${task.description}\" (no text output)") + diagnostic
+        payload = (if hasText then s"\"${task.description}\":\n$trimmed"
+                   else s"\"${task.description}\" (no text output)") + diagnostic
         envelope = Json.obj(
           "source" -> "delegate".asJson,
           "eventType" -> "completed".asJson,
           "payload" -> payload.asJson,
           "metadata" -> Json.obj(
-            "description" -> task.description.asJson, "agentName" -> task.agentName.asJson,
+            "description" -> task.description.asJson,
+            "agentName" -> task.agentName.asJson,
             "taskRunId" -> handle.admission.executionId.asJson,
             "parentSessionId" -> task.parentSessionId.asJson,
             "completionMessages" -> newMessages.asJson,
@@ -274,31 +310,41 @@ private[agent] object AgentFinishTurn:
         _ <- IO.fromEither(projected.left.map(new IllegalStateException(_)))
         _ <- compactionCleanup
         _ <- sendTextIO
-        _ <- emitStreamIO(state.wsSend, AgentStreamEvent.Done(model.orElse(state.lastModel),
-          finalText = Option(text).map(_.trim).filter(_.nonEmpty)), isSubagent = isSubagent, state.sessionId)
-        targets <- resolveSettleTargets(resources.agentRegistry, state.sessionId,
-          (replyTo.toList ++ state.execution.owedCompletion).distinct)
+        _ <- emitStreamIO(
+          state.wsSend,
+          AgentStreamEvent.Done(model.orElse(state.lastModel), finalText = Option(text).map(_.trim).filter(_.nonEmpty)),
+          isSubagent = isSubagent,
+          state.sessionId
+        )
+        targets <- resolveSettleTargets(
+          resources.agentRegistry,
+          state.sessionId,
+          (replyTo.toList ++ state.execution.owedCompletion).distinct
+        )
         _ <- targets.traverse_(_ ! AgentEvent.Completed(sid, newMessages))
       yield idle(agentDef, resources, depth, parentRef, normalizedState.withMessages(newMessages))
-    else for
-      _ <- compactionCleanup
-      _ <- sendTextIO
-      result <- finishTurnCont(
-        agentDef,
-        resources,
-        depth,
-        parentRef,
-        normalizedState,
-        replyTo,
-        newMessages,
-        text,
-        model,
-        thinking,
-        thinkingSignature,
-        textAlreadyStreamed,
-        isSubagent
-      )
-    yield result
+      end for
+    else
+      for
+        _ <- compactionCleanup
+        _ <- sendTextIO
+        result <- finishTurnCont(
+          agentDef,
+          resources,
+          depth,
+          parentRef,
+          normalizedState,
+          replyTo,
+          newMessages,
+          text,
+          model,
+          thinking,
+          thinkingSignature,
+          textAlreadyStreamed,
+          isSubagent
+        )
+      yield result
+    end if
 
   end finishTurn
 
@@ -411,35 +457,46 @@ private[agent] object AgentFinishTurn:
             // 的次序不变：债落盘先于信号）；记不上（未注册会话 / 取消栅栏 / 债面
             // 故障）**不得吞掉完成信号本身**——信号发 targets 是交付面，与债面解耦
             // （W2 负控基线：带 replyTo 的根会话必须照常收到 Completed）。
-            val persistDebt: IO[Unit] = state.sessionId.fold(IO.unit) { sid =>
-              resources.agentRegistry.get.flatMap { registry =>
-                registry.get(sid) match
-                  case Some(rec) if rec.kind == AgentKind.SubTask && rec.parentSessionId.nonEmpty =>
-                    resources.subAgentTaskStore.findByTaskId(sid).flatMap {
-                      case Some(row) if Set("subtask", "subagent").contains(row.source) && row.parentSessionId == rec.parentSessionId && row.runId.nonEmpty =>
-                        def persist(attempts: Int): IO[Unit] =
-                          resources.subAgentTaskStore.recordManagedCompletionDebt(row.parentSessionId, sid, row.runId.get, msgs).void
-                            .handleErrorWith(e => if attempts > 1 then persist(attempts - 1) else IO.raiseError(e))
-                        persist(3)
-                      case _ => IO.unit
-                    }
-                  case Some(rec) if rec.kind == AgentKind.Delegate && rec.parentSessionId.nonEmpty =>
-                    nebflow.core.mail.CompletionDebtStore.record(sid, rec.parentSessionId, msgs).void
-                  case Some(rec) if rec.kind == AgentKind.Delegate =>
-                    nebflow.core.mail.CompletionDebtStore.record(sid, "", msgs).void
-                  case _ => IO.unit // 非监督 Delegate / 未注册会话：无持久义务，不凭空造债
+            val persistDebt: IO[Unit] = state.sessionId
+              .fold(IO.unit) { sid =>
+                resources.agentRegistry.get.flatMap { registry =>
+                  registry.get(sid) match
+                    case Some(rec) if rec.kind == AgentKind.SubTask && rec.parentSessionId.nonEmpty =>
+                      resources.subAgentTaskStore.findByTaskId(sid).flatMap {
+                        case Some(row)
+                            if Set("subtask", "subagent").contains(
+                              row.source
+                            ) && row.parentSessionId == rec.parentSessionId && row.runId.nonEmpty =>
+                          def persist(attempts: Int): IO[Unit] =
+                            resources.subAgentTaskStore
+                              .recordManagedCompletionDebt(row.parentSessionId, sid, row.runId.get, msgs)
+                              .void
+                              .handleErrorWith(e => if attempts > 1 then persist(attempts - 1) else IO.raiseError(e))
+                          persist(3)
+                        case _ => IO.unit
+                      }
+                    case Some(rec) if rec.kind == AgentKind.Delegate && rec.parentSessionId.nonEmpty =>
+                      nebflow.core.mail.CompletionDebtStore.record(sid, rec.parentSessionId, msgs).void
+                    case Some(rec) if rec.kind == AgentKind.Delegate =>
+                      nebflow.core.mail.CompletionDebtStore.record(sid, "", msgs).void
+                    case _ => IO.unit // 非监督 Delegate / 未注册会话：无持久义务，不凭空造债
+                }
               }
-            }.handleErrorWith(e =>
-              NebflowLogger.forName("nebflow.agent").warn(
-                s"completion debt persistence failed for ${state.sessionId.getOrElse("-")} — the completion signal still delivers (${e.getMessage})"
+              .handleErrorWith(e =>
+                NebflowLogger
+                  .forName("nebflow.agent")
+                  .warn(
+                    s"completion debt persistence failed for ${state.sessionId.getOrElse("-")} — the completion signal still delivers (${e.getMessage})"
+                  )
               )
-            )
             persistDebt *> targets.traverse_ { target =>
               (target ! AgentEvent.Completed(state.sessionId.getOrElse(""), msgs))
                 .handleErrorWith(e =>
-                  NebflowLogger.forName("nebflow.agent").warn(
-                    s"completion signal to the supervisor failed (${state.sessionId.getOrElse("-")}): ${e.getMessage}"
-                  )
+                  NebflowLogger
+                    .forName("nebflow.agent")
+                    .warn(
+                      s"completion signal to the supervisor failed (${state.sessionId.getOrElse("-")}): ${e.getMessage}"
+                    )
                 )
             }
           }

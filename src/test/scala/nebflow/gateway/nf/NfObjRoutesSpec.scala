@@ -77,6 +77,8 @@ class NfObjRoutesSpec extends CatsEffectSuite:
     val entry = json.hcursor.downField("tickets").downField(path)
     (entry.downField("t").as[String].getOrElse(""), entry.downField("cid").as[String].toOption)
 
+  end mint
+
   private def mintCid(path: String): String =
     mint(path)._2.getOrElse(sys.error(s"mint returned no cid for $path"))
 
@@ -93,8 +95,10 @@ class NfObjRoutesSpec extends CatsEffectSuite:
     NfFileRoutes.nfFileRoutes(store, policy)(req).value.unsafeRunSync().get
 
   private def enc(s: String) = java.net.URLEncoder.encode(s, "UTF-8")
+
   private def bodyBytes(r: org.http4s.Response[IO]): Array[Byte] =
     r.body.compile.toVector.unsafeRunSync().toArray
+
   private def header(r: org.http4s.Response[IO], name: String): String =
     r.headers.get(org.typelevel.ci.CIString(name)).map(_.head.value).getOrElse("")
 
@@ -127,10 +131,13 @@ class NfObjRoutesSpec extends CatsEffectSuite:
         val cid = mintCid(f.toString)
         val first = objGet(cid, "shot.png", bearer)
         val etag = header(first, "ETag")
-        val second = objGet(cid, "shot.png", r =>
-          bearer(r).putHeaders(
-            org.http4s.Header.Raw(org.typelevel.ci.CIString("If-None-Match"), etag)
-          )
+        val second = objGet(
+          cid,
+          "shot.png",
+          r =>
+            bearer(r).putHeaders(
+              org.http4s.Header.Raw(org.typelevel.ci.CIString("If-None-Match"), etag)
+            )
         )
         assertEquals(second.status, Status.NotModified)
         assertEquals(bodyBytes(second).length, 0, "304 carries no body")
@@ -149,8 +156,10 @@ class NfObjRoutesSpec extends CatsEffectSuite:
         assertEquals(resp.status, Status.Unauthorized)
         assertEquals(header(resp, "X-Nf-Reason"), "credential-required")
         val (t, _) = mint(f.toString)
-        val withTicket = objGet(cid, "shot.png", _ =>
-          Request[IO](Method.GET, Uri.unsafeFromString(s"/api/nf-obj/$cid/shot.png?ticket=$t"))
+        val withTicket = objGet(
+          cid,
+          "shot.png",
+          _ => Request[IO](Method.GET, Uri.unsafeFromString(s"/api/nf-obj/$cid/shot.png?ticket=$t"))
         )
         assertEquals(withTicket.status, Status.Unauthorized, "?ticket= 不是本路由的凭据")
       }
@@ -172,9 +181,8 @@ class NfObjRoutesSpec extends CatsEffectSuite:
     withSeedFile("shot.png", "abc".getBytes(StandardCharsets.UTF_8)) { f =>
       IO {
         val cid = mintCid(f.toString)
-        val bad = objGet(cid, "shot.png", r =>
-          r.putHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, "wrong-token")))
-        )
+        val bad =
+          objGet(cid, "shot.png", r => r.putHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, "wrong-token"))))
         assertEquals(bad.status, Status.Forbidden)
         assertEquals(objGet(cid, "shot.png", bearer).status, Status.Ok)
       }
@@ -284,3 +292,4 @@ class NfObjRoutesSpec extends CatsEffectSuite:
       }
     }
   }
+end NfObjRoutesSpec

@@ -94,7 +94,16 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
     Dispatcher.parallel[IO].use { dispatcher =>
       for
         ms <- NeblinkService.createForTest(serverPort, dispatcher, 300.millis)
-        ps = new NeblinkPresenceService(ms, serverPort, budget, EvictionPolicy.Default, schedule, reachLedger, dialHook, dialResultOverride)(
+        ps = new NeblinkPresenceService(
+          ms,
+          serverPort,
+          budget,
+          EvictionPolicy.Default,
+          schedule,
+          reachLedger,
+          dialHook,
+          dialResultOverride
+        )(
           dispatcher
         )
         _ = ms.setPresenceService(ps)
@@ -271,7 +280,8 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
           fiber <- ps.connect(peer("event-order", eps)).start
           _ <- IO.blocking(assert(first.await(5, java.util.concurrent.TimeUnit.SECONDS), "first leg did not start"))
           _ <- IO.blocking {
-            if parallel then assert(second.await(5, java.util.concurrent.TimeUnit.SECONDS), "parallel leg did not start")
+            if parallel then
+              assert(second.await(5, java.util.concurrent.TimeUnit.SECONDS), "parallel leg did not start")
             else assertEquals(second.getCount, 1L, "serial second leg cannot start before first releases")
             releaseA.countDown()
             assert(second.await(5, java.util.concurrent.TimeUnit.SECONDS), "second leg did not start")
@@ -284,10 +294,14 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
             val seen = events.iterator().asScala.toList
             if parallel then assert(seen.indexOf("start-b") < seen.indexOf("release-a"))
             else assert(seen.indexOf("release-a") < seen.indexOf("start-b"))
-            assertEquals(round.failures.map(_._2), List(nebflow.neblink.relay.DialFailureClass.Timeout, nebflow.neblink.relay.DialFailureClass.Timeout))
+            assertEquals(
+              round.failures.map(_._2),
+              List(nebflow.neblink.relay.DialFailureClass.Timeout, nebflow.neblink.relay.DialFailureClass.Timeout)
+            )
           }
         yield ()).guarantee(IO { releaseA.countDown(); releaseB.countDown() })
       }
+    end check
     check(PresenceDialSchedule.Production, true) *> check(PresenceDialSchedule.LegacySerial, false)
   }
 
@@ -343,25 +357,26 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
         throw new IllegalStateException("fake success gate was not released within budget")
       events.add("success")
       Right(())
-    withStack(port, budget = DialBudget(classify = _ => DialAddressClass.Lan), dialResultOverride = Some(fake)) { (_, ps) =>
-      (for
-        fiber <- ps.connect(peer("fake-win", List(ep))).start
-        _ <- IO.blocking {
-          assert(started.await(5, java.util.concurrent.TimeUnit.SECONDS))
-          events.add("release")
-          gate.countDown()
-        }
-        _ <- fiber.joinWithNever
-        _ <- IO {
-          import scala.jdk.CollectionConverters.*
-          assertEquals(events.iterator().asScala.toList, List(s"start:$ep:1500", "release", "success"))
-          val round = roundOf(ps, "fake-win")
-          assertEquals(round.attempted, List(ep))
-          assertEquals(round.failures, Nil)
-          assertEquals(ps.chosenEndpoint("fake-win"), Some(ep))
-          assert(!ps.isConnected("fake-win"), "fake result does not publish a socket")
-        }
-      yield ()).guarantee(IO(gate.countDown()))
+    withStack(port, budget = DialBudget(classify = _ => DialAddressClass.Lan), dialResultOverride = Some(fake)) {
+      (_, ps) =>
+        (for
+          fiber <- ps.connect(peer("fake-win", List(ep))).start
+          _ <- IO.blocking {
+            assert(started.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            events.add("release")
+            gate.countDown()
+          }
+          _ <- fiber.joinWithNever
+          _ <- IO {
+            import scala.jdk.CollectionConverters.*
+            assertEquals(events.iterator().asScala.toList, List(s"start:$ep:1500", "release", "success"))
+            val round = roundOf(ps, "fake-win")
+            assertEquals(round.attempted, List(ep))
+            assertEquals(round.failures, Nil)
+            assertEquals(ps.chosenEndpoint("fake-win"), Some(ep))
+            assert(!ps.isConnected("fake-win"), "fake result does not publish a socket")
+          }
+        yield ()).guarantee(IO(gate.countDown()))
     }
   }
 
@@ -428,7 +443,8 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
     val epA = s"http://127.0.0.2:$port"
     val epB = s"http://127.0.0.3:$port"
     val starts = new java.util.concurrent.LinkedBlockingQueue[String]()
-    val releases = Map("127.0.0.2" -> new java.util.concurrent.Semaphore(0), "127.0.0.3" -> new java.util.concurrent.Semaphore(0))
+    val releases =
+      Map("127.0.0.2" -> new java.util.concurrent.Semaphore(0), "127.0.0.3" -> new java.util.concurrent.Semaphore(0))
     val events = new java.util.concurrent.ConcurrentLinkedQueue[String]()
     val completed = new java.util.concurrent.LinkedBlockingQueue[String]()
     val hook: (String, Int, Long) => Unit = (host, _, _) =>
@@ -443,36 +459,52 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
       throw new java.util.concurrent.TimeoutException("fixture timeout")
     withStack(port, budget = DialBudget(classify = _ => DialAddressClass.Lan), dialHook = hook) { (_, ps) =>
       val p = peer("c3-fake", List(epA, epB))
-      (1 to 5).toList.traverse_ { i =>
-        (for
-          fiber <- ps.connect(p).start
-          _ <- IO.blocking {
-            val firstStart = starts.poll(5, java.util.concurrent.TimeUnit.SECONDS)
-            val secondStart = starts.poll(5, java.util.concurrent.TimeUnit.SECONDS)
-            assertEquals(Set(firstStart, secondStart), Set("127.0.0.2", "127.0.0.3"), s"round $i starts both")
-            // Whichever leg starts first is A: force B to complete before A.
-            events.add(s"release:$secondStart")
-            releases(secondStart).release()
-            assertEquals(completed.poll(5, java.util.concurrent.TimeUnit.SECONDS), secondStart, s"round $i B completed")
-            events.add(s"release:$firstStart")
-            releases(firstStart).release()
-            assertEquals(completed.poll(5, java.util.concurrent.TimeUnit.SECONDS), firstStart, s"round $i A completed")
-          }
-          _ <- fiber.joinWithNever
-          _ <- IO {
-            val round = roundOf(ps, "c3-fake")
-            assertEquals(round.attempted, List(epA, epB))
-            assertEquals(round.failures.map(_._2), List(nebflow.neblink.relay.DialFailureClass.Timeout, nebflow.neblink.relay.DialFailureClass.Timeout))
-            assertEquals(ps.dialStatus("c3-fake").map(_.endpoint), Some(epB))
-            import scala.jdk.CollectionConverters.*
-            val all = events.iterator().asScala.toList.drop((i - 1) * 6)
-            assertEquals(all.size, 6, s"round $i event count")
-            val a = all.head.stripPrefix("start:")
-            val b = all(1).stripPrefix("start:")
-            assertEquals(all, List(s"start:$a", s"start:$b", s"release:$b", s"complete:$b", s"release:$a", s"complete:$a"))
-          }
-        yield ())
-      }.guarantee(IO { releases.values.foreach(_.release()) })
+      (1 to 5).toList
+        .traverse_ { i =>
+          (for
+            fiber <- ps.connect(p).start
+            _ <- IO.blocking {
+              val firstStart = starts.poll(5, java.util.concurrent.TimeUnit.SECONDS)
+              val secondStart = starts.poll(5, java.util.concurrent.TimeUnit.SECONDS)
+              assertEquals(Set(firstStart, secondStart), Set("127.0.0.2", "127.0.0.3"), s"round $i starts both")
+              // Whichever leg starts first is A: force B to complete before A.
+              events.add(s"release:$secondStart")
+              releases(secondStart).release()
+              assertEquals(
+                completed.poll(5, java.util.concurrent.TimeUnit.SECONDS),
+                secondStart,
+                s"round $i B completed"
+              )
+              events.add(s"release:$firstStart")
+              releases(firstStart).release()
+              assertEquals(
+                completed.poll(5, java.util.concurrent.TimeUnit.SECONDS),
+                firstStart,
+                s"round $i A completed"
+              )
+            }
+            _ <- fiber.joinWithNever
+            _ <- IO {
+              val round = roundOf(ps, "c3-fake")
+              assertEquals(round.attempted, List(epA, epB))
+              assertEquals(
+                round.failures.map(_._2),
+                List(nebflow.neblink.relay.DialFailureClass.Timeout, nebflow.neblink.relay.DialFailureClass.Timeout)
+              )
+              assertEquals(ps.dialStatus("c3-fake").map(_.endpoint), Some(epB))
+              import scala.jdk.CollectionConverters.*
+              val all = events.iterator().asScala.toList.drop((i - 1) * 6)
+              assertEquals(all.size, 6, s"round $i event count")
+              val a = all.head.stripPrefix("start:")
+              val b = all(1).stripPrefix("start:")
+              assertEquals(
+                all,
+                List(s"start:$a", s"start:$b", s"release:$b", s"complete:$b", s"release:$a", s"complete:$a")
+              )
+            }
+          yield ())
+        }
+        .guarantee(IO { releases.values.foreach(_.release()) })
     }
   }
 
@@ -501,7 +533,10 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
         _ <- IO {
           import scala.jdk.CollectionConverters.*
           assertEquals(events.iterator().asScala.toList, List("start", "release", "refused"))
-          assertEquals(roundOf(ps, "fake-refused").failures.map(_._2), List(nebflow.neblink.relay.DialFailureClass.Refused))
+          assertEquals(
+            roundOf(ps, "fake-refused").failures.map(_._2),
+            List(nebflow.neblink.relay.DialFailureClass.Refused)
+          )
           assert(ps.dialStatus("fake-refused").exists(_.error.nonEmpty))
         }
       yield ()).guarantee(IO(gate.countDown()))
@@ -724,6 +759,7 @@ object NeblinkPresenceDialConcurrencySpec:
       t.setDaemon(true)
       t.start()
       t
+    end acceptorThread
 
     def port: Int = serverSocket.getLocalPort
     def endpoint: String = s"http://127.0.0.1:$port"
@@ -743,7 +779,7 @@ object NeblinkPresenceDialConcurrencySpec:
             case (1, '\n') => 2
             case (2, '\r') => 3
             case (3, '\n') => 4
-            case _         => 0
+            case _ => 0
           if state < 4 then b = in.read()
         servedCount.incrementAndGet()
         if handshakeDelayMs > 0L then Thread.sleep(handshakeDelayMs)
@@ -765,6 +801,7 @@ object NeblinkPresenceDialConcurrencySpec:
           s.getOutputStream.flush()
           val sink = new Array[Byte](2048)
           while !stopped && in.read(sink) >= 0 do ()
+        end if
       catch case _: Throwable => ()
       finally
         try s.close()

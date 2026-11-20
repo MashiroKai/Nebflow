@@ -50,8 +50,20 @@ final class AskEditReviewSpec extends CatsEffectSuite:
     val (_, _, _, binding) = setup("chain")
     val file = os.Path(binding.file)
     val run = for
-      one <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", s => Right(s.replace("beta", "BETA")))
-      two <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", s => Right(s.replace("gamma", "GAMMA")))
+      one <- AskEditReviews.applyChange(
+        binding.id,
+        binding,
+        binding.file,
+        "ask_write",
+        s => Right(s.replace("beta", "BETA"))
+      )
+      two <- AskEditReviews.applyChange(
+        binding.id,
+        binding,
+        binding.file,
+        "ask_write",
+        s => Right(s.replace("gamma", "GAMMA"))
+      )
     yield (one, two)
     run.map { case (one, two) =>
       assert(one.isRight, one.toString)
@@ -82,7 +94,13 @@ final class AskEditReviewSpec extends CatsEffectSuite:
     val (_, _, _, binding) = setup("accept-all")
     val file = os.Path(binding.file)
     val run = for
-      applied <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", s => Right(s.replace("gamma", "GAMMA")))
+      applied <- AskEditReviews.applyChange(
+        binding.id,
+        binding,
+        binding.file,
+        "ask_write",
+        s => Right(s.replace("gamma", "GAMMA"))
+      )
       accepted <- AskEditReviews.accept(binding.id, None)
     yield (applied, accepted)
     run.map { case (applied, accepted) =>
@@ -185,7 +203,13 @@ final class AskEditReviewSpec extends CatsEffectSuite:
     val (_, _, _, binding) = setup("stale")
     val file = os.Path(binding.file)
     val run = for
-      applied <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", s => Right(s.replace("alpha", "ALPHA")))
+      applied <- AskEditReviews.applyChange(
+        binding.id,
+        binding,
+        binding.file,
+        "ask_write",
+        s => Right(s.replace("alpha", "ALPHA"))
+      )
       _ <- IO.blocking(os.write.over(file, "externally changed\n")) // 审阅期间外部改动
       staleAccept <- applied.fold(_ => IO.pure(Left("?")), _ => AskEditReviews.accept(binding.id, None))
       staleReject <- applied.fold(_ => IO.pure(Left("?")), _ => AskEditReviews.reject(binding.id, None))
@@ -210,9 +234,21 @@ final class AskEditReviewSpec extends CatsEffectSuite:
     val (_, _, _, binding) = setup("rebase")
     val file = os.Path(binding.file)
     val run = for
-      one <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", s => Right(s.replace("beta", "BETA")))
+      one <- AskEditReviews.applyChange(
+        binding.id,
+        binding,
+        binding.file,
+        "ask_write",
+        s => Right(s.replace("beta", "BETA"))
+      )
       _ <- IO.blocking(os.write.over(file, "externally changed\n"))
-      two <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", s => Right(s.replace("changed", "CHANGED")))
+      two <- AskEditReviews.applyChange(
+        binding.id,
+        binding,
+        binding.file,
+        "ask_write",
+        s => Right(s.replace("changed", "CHANGED"))
+      )
     yield (one, two)
     run.map { case (one, two) =>
       assert(one.isRight, one.toString)
@@ -229,7 +265,13 @@ final class AskEditReviewSpec extends CatsEffectSuite:
     val run = for
       same <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", s => Right(s))
       ghostReview <- AskEditReviews.accept(binding.id, None)
-      applied <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", s => Right(s.replace("beta", "BETA")))
+      applied <- AskEditReviews.applyChange(
+        binding.id,
+        binding,
+        binding.file,
+        "ask_write",
+        s => Right(s.replace("beta", "BETA"))
+      )
       ghostHunk <- applied.fold(_ => IO.pure(Left("?")), _ => AskEditReviews.accept(binding.id, Some("h9")))
     yield (same, ghostReview, ghostHunk)
     run.map { case (same, ghostReview, ghostHunk) =>
@@ -295,7 +337,13 @@ final class AskEditReviewSpec extends CatsEffectSuite:
       // 软链指向**同一份文档** ⇒ 归一后同一身份 ⇒ 放行（直接落盘）
       l <- AskEditReviews.applyChange(linkBinding.id, linkBinding, link.toString, "ask_write", s => Right(s + "x"))
       // 软链指向**别处** ⇒ 拒，且目标文件一个字节不动
-      le <- AskEditReviews.applyChange(binBinding.id, binBinding, linkElsewhere.toString, "ask_write", s => Right("HACK\n"))
+      le <- AskEditReviews.applyChange(
+        binBinding.id,
+        binBinding,
+        linkElsewhere.toString,
+        "ask_write",
+        s => Right("HACK\n")
+      )
       b <- AskEditReviews.applyChange(binBinding.id, binBinding, binary.toString, "ask_write", s => Right(s + "x"))
       m <- AskEditReviews.applyChange(missBinding.id, missBinding, missing.toString, "ask_write", s => Right(s + "x"))
     yield (l, le, b, m)

@@ -34,12 +34,16 @@ import java.time.{DayOfWeek, Instant, ZoneId, ZonedDateTime}
  */
 object WeeklyReport:
 
-  /** Reserved upsert-name prefix of the inbox entry this generator owns. Already written by
-   *  the pre-`source` engine, so the prefix is the provable provenance for those legacy rows. */
+  /**
+   * Reserved upsert-name prefix of the inbox entry this generator owns. Already written by
+   *  the pre-`source` engine, so the prefix is the provable provenance for those legacy rows.
+   */
   val InboxNamePrefix: String = "weekly-report-"
 
-  /** A legacy weekly-report entry can be adopted as engine-owned without guessing: only this
-   *  generator assigns `weekly-report-<weekKey>` (see the name at the upsert below). */
+  /**
+   * A legacy weekly-report entry can be adopted as engine-owned without guessing: only this
+   *  generator assigns `weekly-report-<weekKey>` (see the name at the upsert below).
+   */
   val engineOwnsLegacyInboxEntry: ScheduledTask => Boolean =
     t => t.name.exists(_.startsWith(InboxNamePrefix))
 
@@ -72,6 +76,8 @@ object WeeklyReport:
         case Some(p) if doneCount > p => "↑"
         case Some(p) if doneCount < p => "↓"
         case Some(_) => "→"
+
+  end WeekStats
 
   /** 周键（ISO week-based 年-周序，marker/文件名片段共用）。 */
   def weekKeyOf(instant: Instant, zone: ZoneId): String =
@@ -130,6 +136,8 @@ object WeeklyReport:
       perDay = perDay
     )
 
+  end aggregate
+
   private def fmtDate(ms: Long, zone: ZoneId): String =
     DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(zone).format(Instant.ofEpochMilli(ms))
 
@@ -149,11 +157,13 @@ object WeeklyReport:
       s"打卡率 ${stats.doneCount}/${stats.plannedCount} · 连续天数 ${stats.bestStreakDays} · 计划负荷 ${stats.openTodos}"
     val caption =
       s"本周热力图：${stats.perDay.count(_ > 0)} 天有打卡，峰值 ${stats.perDay.max} 条/天，趋势${stats.trendArrow}。"
-    val findings = stats.perDay.zipWithIndex.map { case (n, i) =>
-      val day = fmtDate(stats.fromMs + i * 86_400_000L, zone)
-      val dayName = Seq("周一", "周二", "周三", "周四", "周五", "周六", "周日")(i)
-      s"- $day（$dayName）：完成 $n 条"
-    }.mkString("\n")
+    val findings = stats.perDay.zipWithIndex
+      .map { case (n, i) =>
+        val day = fmtDate(stats.fromMs + i * 86_400_000L, zone)
+        val dayName = Seq("周一", "周二", "周三", "周四", "周五", "周六", "周日")(i)
+        s"- $day（$dayName）：完成 $n 条"
+      }
+      .mkString("\n")
     val nextPlan =
       if openTodos.isEmpty then "（无未销账待办——新计划可直接入账。）"
       else openTodos.zipWithIndex.map { case (c, i) => s"${i + 1}. $c" }.mkString("\n")
@@ -176,6 +186,8 @@ object WeeklyReport:
        |$nextPlan
        |""".stripMargin
 
+  end renderMarkdown
+
   /** 热力图 SVG（GitHub 贡献图形态：7 行工作日 × 1 列本周，色阶 = 当日条数）。 */
   def renderHeatmapSvg(stats: WeekStats): String =
     val cell = 16
@@ -188,15 +200,21 @@ object WeeklyReport:
       else
         val l = (n.toDouble / max * 3).toInt
         Seq("#9be9a8", "#40c463", "#30a14e", "#216e39")(math.min(3, l))
-    val cells = (0 until 7).map { i =>
-      val y = pad + i * (cell + gap)
-      val n = stats.perDay(i)
-      s"""<rect x="$pad" y="$y" width="$cell" height="$cell" rx="2" fill="${level(n)}"><title>周${dayNames(i)} · $n 条</title></rect>"""
-    }.mkString("\n    ")
-    val labels = (0 until 7).map { i =>
-      val y = pad + i * (cell + gap) + cell - 4
-      s"""<text x="${pad - 6}" y="$y" text-anchor="end" font-size="9" fill="#57606a">周${dayNames(i)}</text>"""
-    }.mkString("\n    ")
+    val cells = (0 until 7)
+      .map { i =>
+        val y = pad + i * (cell + gap)
+        val n = stats.perDay(i)
+        s"""<rect x="$pad" y="$y" width="$cell" height="$cell" rx="2" fill="${level(n)}"><title>周${dayNames(
+            i
+          )} · $n 条</title></rect>"""
+      }
+      .mkString("\n    ")
+    val labels = (0 until 7)
+      .map { i =>
+        val y = pad + i * (cell + gap) + cell - 4
+        s"""<text x="${pad - 6}" y="$y" text-anchor="end" font-size="9" fill="#57606a">周${dayNames(i)}</text>"""
+      }
+      .mkString("\n    ")
     val w = pad * 2 + cell
     val h = pad * 2 + 7 * (cell + gap)
     s"""<svg xmlns="http://www.w3.org/2000/svg" width="$w" height="$h" viewBox="0 0 $w $h" font-family="-apple-system, 'Segoe UI', sans-serif">
@@ -204,6 +222,7 @@ object WeeklyReport:
     $cells
     <text x="$pad" y="${h - 2}" font-size="9" fill="#57606a">第 ${stats.weekKey} 周 · 共 ${stats.doneCount} 条 · 趋势${stats.trendArrow}</text>
     </svg>"""
+  end renderHeatmapSvg
 
 end WeeklyReport
 
@@ -234,6 +253,7 @@ final class WeeklyReportGenerator(
   private val logger = NebflowLogger.forName("nebflow.weekly-report")
 
   private case class Marker(lastReportedWeek: String = "")
+
   private object Marker:
     import io.circe.generic.semiauto.*
     implicit val decoder: io.circe.Decoder[Marker] = deriveDecoder
@@ -307,24 +327,29 @@ final class WeeklyReportGenerator(
                   sid <- activeSession
                   _ <-
                     if sid.isEmpty then
-                      logger.info("Weekly report surfaced but no active session — inbox entry skipped (report archived)")
+                      logger.info(
+                        "Weekly report surfaced but no active session — inbox entry skipped (report archived)"
+                      )
                     else
                       taskStore
                         .upsertTaskByName(
-                          ScheduledTask.create(
-                            sessionId = sid,
-                            content =
-                              s"打卡周报 $weekKey 已生成：打卡 ${stats.doneCount}/${stats.plannedCount}，趋势${stats.trendArrow}" +
-                                s" — 周报：$reportPath（读后可打卡销账）",
-                            triggerAt = ScheduledTask.nextTodoSurfaceAt(instant.toEpochMilli, zone),
-                            referencePath = Some(reportPath),
-                            name = Some(s"${WeeklyReport.InboxNamePrefix}$weekKey"),
-                            kind = Some(ScheduledTask.KindTodo)
-                          ).copy(source = Some("engine")),
+                          ScheduledTask
+                            .create(
+                              sessionId = sid,
+                              content =
+                                s"打卡周报 $weekKey 已生成：打卡 ${stats.doneCount}/${stats.plannedCount}，趋势${stats.trendArrow}" +
+                                  s" — 周报：$reportPath（读后可打卡销账）",
+                              triggerAt = ScheduledTask.nextTodoSurfaceAt(instant.toEpochMilli, zone),
+                              referencePath = Some(reportPath),
+                              name = Some(s"${WeeklyReport.InboxNamePrefix}$weekKey"),
+                              kind = Some(ScheduledTask.KindTodo)
+                            )
+                            .copy(source = Some("engine")),
                           WeeklyReport.engineOwnsLegacyInboxEntry
                         )
                         .void
-                  summary = s"打卡周报 ${weekKey} 已生成：打卡 ${stats.doneCount}/${stats.plannedCount}，趋势${stats.trendArrow}（reports/weekly-checkin）"
+                  summary =
+                    s"打卡周报 ${weekKey} 已生成：打卡 ${stats.doneCount}/${stats.plannedCount}，趋势${stats.trendArrow}（reports/weekly-checkin）"
                   _ <- logger.info(s"Weekly report written: $reportPath")
                   _ <- broadcast(
                     Json.obj(
@@ -335,8 +360,7 @@ final class WeeklyReportGenerator(
                     )
                   )
                 yield ()
-          yield ()
-        ).handleErrorWith(e => logger.warn(s"Weekly report generation failed: ${e.getMessage}").void)
+          yield ()).handleErrorWith(e => logger.warn(s"Weekly report generation failed: ${e.getMessage}").void)
     }
 
 end WeeklyReportGenerator

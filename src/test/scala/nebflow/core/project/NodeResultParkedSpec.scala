@@ -117,7 +117,10 @@ class NodeResultParkedSpec extends CatsEffectSuite:
       val results = parked.filter(_.kind == "node-result")
       assertEquals(results.size, 1, s"exactly one durable park entry, got kinds: ${parked.map(_.kind)}")
       val e = results.head
-      assert(e.identity.startsWith(s"node-result-node-impl-1-"), s"identity = node-result-<nodeId>-<gen>: ${e.identity}")
+      assert(
+        e.identity.startsWith(s"node-result-node-impl-1-"),
+        s"identity = node-result-<nodeId>-<gen>: ${e.identity}"
+      )
       assertEquals(e.event.eventType, "completed")
       assert(e.event.payload.contains("3 files changed"))
       assertEquals(e.event.source, "node")

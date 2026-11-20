@@ -138,11 +138,17 @@ class ConfigSingleSourceSpec extends FunSuite:
   }
 
   test("decisionRoutes: per-call route decodes as independent primary; missing map remains unset") {
-    val json = parse("""{"llm":{"providers":{},"decisionRoutes":{"plugin-allocation":{"preferred":"p/m"},"rerank":{"preferred":"q/r"}}}}""").toOption.get
+    val json = parse(
+      """{"llm":{"providers":{},"decisionRoutes":{"plugin-allocation":{"preferred":"p/m"},"rerank":{"preferred":"q/r"}}}}"""
+    ).toOption.get
     val cfg = Config.normalizeConfigJson(json).as[NebflowServiceConfig].toOption.get
     assertEquals(cfg.llm.decisionRoutes.flatMap(_.get("plugin-allocation")).flatMap(_.preferred), Some("p/m"))
     assertEquals(cfg.llm.decisionRoutes.flatMap(_.get("rerank")).flatMap(_.preferred), Some("q/r"))
-    val inherited = Config.normalizeConfigJson(parse("""{"llm":{"providers":{}}}""").toOption.get).as[NebflowServiceConfig].toOption.get
+    val inherited = Config
+      .normalizeConfigJson(parse("""{"llm":{"providers":{}}}""").toOption.get)
+      .as[NebflowServiceConfig]
+      .toOption
+      .get
     assertEquals(inherited.llm.decisionRoutes, None)
   }
 
@@ -197,8 +203,10 @@ class ConfigSingleSourceSpec extends FunSuite:
     ).toOption.get
     // duplicate 告警腿随其世界退役（fallback 废除批）：链深恒 1（preferred 单根），
     // 「duplicate ref」结构性不可达——旧钉是链深>1 时代的产物，删除而非放宽。
-    assert(FallbackChain.validate(Config.normalizeConfigJson(dup).as[NebflowServiceConfig].toOption.get) == Nil,
-      "retired fallbacks array must stay dead data (no duplicate warnings from a depth-1 chain)")
+    assert(
+      FallbackChain.validate(Config.normalizeConfigJson(dup).as[NebflowServiceConfig].toOption.get) == Nil,
+      "retired fallbacks array must stay dead data (no duplicate warnings from a depth-1 chain)"
+    )
   }
 
   test("B5: 无 fallback 小节 ⇒ configured 为空（零行为变化：走侧车/种子链）") {

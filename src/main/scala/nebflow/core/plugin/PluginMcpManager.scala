@@ -249,25 +249,32 @@ object PluginMcpManager:
     def expand(s: String): String =
       s.replace("${PLUGIN_ROOT}", pluginDir).replace("${PLUGIN_DATA}", pluginData.toString)
     def resolveEnv: Either[String, Map[String, String]] =
-      cfg.env.getOrElse(Map.empty).toList.sortBy(_._1).foldLeft[Either[String, List[(String, String)]]](Right(Nil)) {
-        case (Left(e), _) => Left(e)
-        case (Right(acc), (k, v)) =>
-          SecretEnvPointer.parse(v) match
-            case None => Right((k, expand(v)) :: acc)
-            case Some(secretName) =>
-              val resolved =
-                nebflow.core.secrets.SecretInjection.materialize(
-                  PathUtil.dataRoot / "secrets",
-                  List(nebflow.core.secrets.SecretInjection.Entry(variable = k, secret = secretName))
-                ).get(k)
-              resolved match
-                case Some(value) => Right((k, value) :: acc)
-                case None =>
-                  Left(
-                    s"env '$k' points at secret '$secretName' which did not resolve " +
-                      "(missing, empty, or over the 64KiB cap) — write it via the secrets store and restart the node"
-                  )
-      }.map(_.toMap + ("PLUGIN_ROOT" -> pluginDir) + ("PLUGIN_DATA" -> pluginData.toString))
+      cfg.env
+        .getOrElse(Map.empty)
+        .toList
+        .sortBy(_._1)
+        .foldLeft[Either[String, List[(String, String)]]](Right(Nil)) {
+          case (Left(e), _) => Left(e)
+          case (Right(acc), (k, v)) =>
+            SecretEnvPointer.parse(v) match
+              case None => Right((k, expand(v)) :: acc)
+              case Some(secretName) =>
+                val resolved =
+                  nebflow.core.secrets.SecretInjection
+                    .materialize(
+                      PathUtil.dataRoot / "secrets",
+                      List(nebflow.core.secrets.SecretInjection.Entry(variable = k, secret = secretName))
+                    )
+                    .get(k)
+                resolved match
+                  case Some(value) => Right((k, value) :: acc)
+                  case None =>
+                    Left(
+                      s"env '$k' points at secret '$secretName' which did not resolve " +
+                        "(missing, empty, or over the 64KiB cap) — write it via the secrets store and restart the node"
+                    )
+        }
+        .map(_.toMap + ("PLUGIN_ROOT" -> pluginDir) + ("PLUGIN_DATA" -> pluginData.toString))
     resolveEnv.map { injectedEnv =>
       cfg.copy(
         args = cfg.args.map(_.map(expand)),
@@ -275,6 +282,8 @@ object PluginMcpManager:
         cwd = Some(cfg.cwd.map(expand).getOrElse(pluginDir))
       )
     }
+
+  end expandRuntimeConfig
 
   /** 创建（GatewayMain / SharedResources 默认实例共用）。 */
   def create: IO[PluginMcpManager] =

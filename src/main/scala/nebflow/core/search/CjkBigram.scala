@@ -14,10 +14,10 @@ package nebflow.core.search
 object CjkBigram:
 
   private val CjkRanges: Seq[(Int, Int)] = Seq(
-    (0x4e00, 0x9fff),   // CJK 统一表意文字
-    (0x3400, 0x4dbf),   // 扩展 A
+    (0x4e00, 0x9fff), // CJK 统一表意文字
+    (0x3400, 0x4dbf), // 扩展 A
     (0x20000, 0x2a6df), // 扩展 B
-    (0xf900, 0xfaff),   // 兼容表意文字
+    (0xf900, 0xfaff) // 兼容表意文字
   )
 
   def isCjk(c: Char): Boolean =
@@ -29,8 +29,8 @@ object CjkBigram:
    * 输出交给 FTS5 unicode61 做最终分词（非 CJK 部分）。
    */
   def transform(text: String): String =
-    val out   = new StringBuilder()
-    val run   = new StringBuilder()
+    val out = new StringBuilder()
+    val run = new StringBuilder()
     def flush(): Unit =
       if run.nonEmpty then
         if run.length == 1 then out.append(run.charAt(0))
@@ -50,6 +50,8 @@ object CjkBigram:
     flush()
     out.toString
 
+  end transform
+
   /**
    * 查询侧切分：返回 [(isCjkRun, payload)] 序列。
    * isCjkRun=true 的 payload 是 CJK 串（≥1 字），false 的是 ASCII 词（已 trim）。
@@ -63,17 +65,22 @@ object CjkBigram:
     def flushCjk(): Unit =
       if run.nonEmpty then res += ((true, run.toString)); run.setLength(0)
     query.foreach { ch =>
-      if ch.isWhitespace then { flushAscii(); flushCjk() }
-      else if isCjk(ch) then { flushAscii(); run.append(ch) }
-      else { flushCjk(); buf.append(ch) }
+      if ch.isWhitespace then
+        flushAscii(); flushCjk()
+      else if isCjk(ch) then
+        flushAscii(); run.append(ch)
+      else
+        flushCjk(); buf.append(ch)
     }
     flushAscii(); flushCjk()
     res.toList
 
+  end runs
+
   /**
    * 构造 FTS5 MATCH 表达式（渐进放宽：AND → OR，调用方两趟）。
-    *   - CJK 串（≥2 字）→ 双引号 phrase（bigram 保序邻接，xerj positions 语义；
-    *     实测 SQLite FTS5 对单引号 phrase 报 syntax error——字符串只用双引号）；
+   *   - CJK 串（≥2 字）→ 双引号 phrase（bigram 保序邻接，xerj positions 语义；
+   *     实测 SQLite FTS5 对单引号 phrase 报 syntax error——字符串只用双引号）；
    *   - 单字 CJK → 索引无 unigram 谓词，可索引面丢弃（仅当整查询只剩单字时
    *     由调用方退化 LIKE）；
    *   - ASCII 词 → 整词单 term（unicode61 分词口径：索引侧 transform 原样交还
@@ -84,8 +91,8 @@ object CjkBigram:
    *   likePattern 非空 ⇔ 查询只含单字 CJK 且无其他可索引词。
    */
   def ftsQuery(query: String): (String, String, String) =
-    val parts        = scala.collection.mutable.ListBuffer.empty[String]
-    val singleChars  = scala.collection.mutable.ListBuffer.empty[String]
+    val parts = scala.collection.mutable.ListBuffer.empty[String]
+    val singleChars = scala.collection.mutable.ListBuffer.empty[String]
     runs(query).foreach { case (isCjk, payload) =>
       if isCjk then
         if payload.length == 1 then singleChars += payload
@@ -97,9 +104,10 @@ object CjkBigram:
         if tok.nonEmpty then parts += tok
     }
     val andExpr = parts.mkString(" ")
-    val orExpr  = if parts.length > 1 then parts.mkString(" OR ") else ""
+    val orExpr = if parts.length > 1 then parts.mkString(" OR ") else ""
     val likePattern =
       if singleChars.nonEmpty && parts.isEmpty then "%" + singleChars.mkString("%") + "%" else ""
     (andExpr, orExpr, likePattern)
+  end ftsQuery
 
 end CjkBigram

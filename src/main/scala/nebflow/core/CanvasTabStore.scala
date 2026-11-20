@@ -56,9 +56,11 @@ object CanvasTabs:
   final case class Tomb(id: String, closedAt: Long, dev: Option[String], reopenedAt: Option[Long]):
     def latestTs: Long = math.max(closedAt, reopenedAt.getOrElse(Long.MinValue))
 
-    /** 生效墓碑：closedAt 晚于 reopenedAt。重开过的老墓碑保持惰性（不删除）——
-      * 旧 PUT 重放既无法复活「已重开又被关」的标签，也无法把已重开的标签
-      * 压回关闭态（时间戳裁决，见 merge）。 */
+    /**
+     * 生效墓碑：closedAt 晚于 reopenedAt。重开过的老墓碑保持惰性（不删除）——
+     * 旧 PUT 重放既无法复活「已重开又被关」的标签，也无法把已重开的标签
+     * 压回关闭态（时间戳裁决，见 merge）。
+     */
     def active: Boolean = closedAt > reopenedAt.getOrElse(Long.MinValue)
 
   /**
@@ -154,7 +156,7 @@ object CanvasTabs:
   private def arrField(j: Json, field: String): Vector[Json] =
     j.hcursor.downField(field).as[Option[Vector[Json]]] match
       case Right(Some(arr)) => arr
-      case _                => Vector.empty
+      case _ => Vector.empty
 
   /** 宽松解析墓碑数组（merge 只吃已过 validate 的载荷，坏条目静默跳过）。 */
   private def parseTombstones(j: Json): Vector[Tomb] =
@@ -206,7 +208,7 @@ object CanvasTabs:
     parseTombstones(put).foreach { t =>
       map(t.id) = map.get(t.id) match
         case Some(old) => old.copy(closedAt = math.max(old.closedAt, t.closedAt), dev = t.dev.orElse(old.dev))
-        case None      => t
+        case None => t
     }
     parseReopens(put).foreach { r =>
       map.get(r.id).foreach { old =>
@@ -227,7 +229,11 @@ object CanvasTabs:
     val tabs = kept.toVector
     val prevActive =
       prev.flatMap(_.hcursor.downField("activeTabId").as[Option[String]].toOption.flatten)
-    val activeId = put.hcursor.downField("activeTabId").as[Option[String]].toOption.flatten
+    val activeId = put.hcursor
+      .downField("activeTabId")
+      .as[Option[String]]
+      .toOption
+      .flatten
       .orElse(prevActive)
       .filter(id => !activeIds(id) && id.nonEmpty)
     val tombJson = map.values.toVector.sortBy(_.latestTs).map { t =>
@@ -242,6 +248,7 @@ object CanvasTabs:
     fields("tombstones") = Json.fromValues(tombJson)
     activeId.foreach(id => fields("activeTabId") = Json.fromString(id))
     Json.fromJsonObject(io.circe.JsonObject.fromIterable(fields))
+  end merge
 
 end CanvasTabs
 
@@ -293,42 +300,83 @@ class CanvasTabStore(path: os.Path, ledgerLimit: Int = 100000):
         val closed = h.get[Vector[Json]]("closed").toOption
         val reopened = h.downField("reopened").focus.getOrElse(Json.arr())
         val base = h.get[Long]("baseVersion").toOption.filter(_ >= 0) // diagnostic only, never arbitrates LWW
-        val normalizedOpened = opened.getOrElse(Vector.empty).map(t => Json.obj("title" -> Json.fromString(""), "type" -> Json.fromString("")).deepMerge(t))
-        val candidate = Json.obj("v" -> Json.fromInt(2), "tabs" -> Json.fromValues(normalizedOpened),
-          "tombstones" -> Json.fromValues(closed.getOrElse(Vector.empty)), "reopened" -> reopened)
+        val normalizedOpened = opened
+          .getOrElse(Vector.empty)
+          .map(t => Json.obj("title" -> Json.fromString(""), "type" -> Json.fromString("")).deepMerge(t))
+        val candidate = Json.obj(
+          "v" -> Json.fromInt(2),
+          "tabs" -> Json.fromValues(normalizedOpened),
+          "tombstones" -> Json.fromValues(closed.getOrElse(Vector.empty)),
+          "reopened" -> reopened
+        )
         val prev = loadSync()
-        val existingIds = prev.flatMap(_.hcursor.get[Vector[Json]]("tabs").toOption).getOrElse(Vector.empty).flatMap(_.hcursor.get[String]("id").toOption).toSet
-        val newTabsComplete = opened.getOrElse(Vector.empty).forall(t =>
-          t.hcursor.get[String]("id").toOption.exists(existingIds) ||
-            (t.hcursor.get[String]("title").isRight && t.hcursor.get[String]("type").isRight))
+        val existingIds = prev
+          .flatMap(_.hcursor.get[Vector[Json]]("tabs").toOption)
+          .getOrElse(Vector.empty)
+          .flatMap(_.hcursor.get[String]("id").toOption)
+          .toSet
+        val newTabsComplete = opened
+          .getOrElse(Vector.empty)
+          .forall(t =>
+            t.hcursor.get[String]("id").toOption.exists(existingIds) ||
+              (t.hcursor.get[String]("title").isRight && t.hcursor.get[String]("type").isRight)
+          )
         if id.isEmpty || issued.isEmpty || opened.isEmpty || closed.isEmpty || base.isEmpty || !newTabsComplete ||
-          h.get[Option[String]]("activeTabId").isLeft || CanvasTabs.validate(candidate).isLeft then
-          Left("invalid canvas tab operation")
+          h.get[Option[String]]("activeTabId").isLeft || CanvasTabs.validate(candidate).isLeft
+        then Left("invalid canvas tab operation")
         else if issued.get < nowMs - 600000L || issued.get > nowMs + 600000L then
           Left("expired operation or clock skew exceeds ten minutes")
         else
-          val ledger = prev.flatMap(_.hcursor.get[Vector[Json]]("operationLedger").toOption).getOrElse(Vector.empty)
+          val ledger = prev
+            .flatMap(_.hcursor.get[Vector[Json]]("operationLedger").toOption)
+            .getOrElse(Vector.empty)
             .filter(_.hcursor.get[Long]("appliedAt").toOption.exists(_ >= nowMs - 86400000L))
           val duplicate = ledger.find(_.hcursor.get[String]("operationId").toOption.contains(id.get))
           duplicate match
             case Some(rec) =>
-              Right((Json.obj("operationId" -> Json.fromString(id.get), "writeVersion" -> rec.hcursor.downField("version").focus.get), true))
+              Right(
+                (
+                  Json.obj(
+                    "operationId" -> Json.fromString(id.get),
+                    "writeVersion" -> rec.hcursor.downField("version").focus.get
+                  ),
+                  true
+                )
+              )
             case None =>
               val old = prev.flatMap(_.hcursor.get[Vector[Json]]("tabs").toOption).getOrElse(Vector.empty)
               val byId = scala.collection.mutable.LinkedHashMap.empty[String, Json]
               old.foreach(t => t.hcursor.get[String]("id").toOption.foreach(k => byId(k) = t))
-              opened.get.foreach(t => t.hcursor.get[String]("id").toOption.foreach(k => byId(k) = byId.get(k).fold(t)(_.deepMerge(t))))
+              opened.get.foreach(t =>
+                t.hcursor.get[String]("id").toOption.foreach(k => byId(k) = byId.get(k).fold(t)(_.deepMerge(t)))
+              )
               val active = h.downField("activeTabId").focus.fold(Json.obj())(x => Json.obj("activeTabId" -> x))
-              val payload = candidate.deepMerge(Json.obj("tabs" -> Json.fromValues(byId.values))) .deepMerge(active)
+              val payload = candidate.deepMerge(Json.obj("tabs" -> Json.fromValues(byId.values))).deepMerge(active)
               val version = prev.flatMap(_.hcursor.get[Long]("writeVersion").toOption).getOrElse(0L) + 1L
-              val result = CanvasTabs.merge(prev, payload, nowMs).deepMerge(Json.obj("writeVersion" -> Json.fromLong(version), "operationId" -> Json.fromString(id.get)))
-              val record = Json.obj("operationId" -> Json.fromString(id.get), "version" -> Json.fromLong(version), "appliedAt" -> Json.fromLong(nowMs))
+              val result = CanvasTabs
+                .merge(prev, payload, nowMs)
+                .deepMerge(Json.obj("writeVersion" -> Json.fromLong(version), "operationId" -> Json.fromString(id.get)))
+              val record = Json.obj(
+                "operationId" -> Json.fromString(id.get),
+                "version" -> Json.fromLong(version),
+                "appliedAt" -> Json.fromLong(nowMs)
+              )
               val entries = (ledger :+ record).sortBy(_.hcursor.get[Long]("appliedAt").getOrElse(0L))
               if entries.size > ledgerLimit then
-                NebflowLogger.forName("nebflow.canvas-tabs").warnSync("operation ledger cap reached; evicting oldest records")
-              AtomicJson.writeSync(path, result.deepMerge(Json.obj("operationLedger" -> Json.fromValues(entries.takeRight(ledgerLimit)))).noSpaces)
+                NebflowLogger
+                  .forName("nebflow.canvas-tabs")
+                  .warnSync("operation ledger cap reached; evicting oldest records")
+              AtomicJson.writeSync(
+                path,
+                result
+                  .deepMerge(Json.obj("operationLedger" -> Json.fromValues(entries.takeRight(ledgerLimit))))
+                  .noSpaces
+              )
               Right((result, false))
+          end match
+        end if
       finally CanvasTabStore.mergeGate.release()
+      end try
     }
 
   /** 原子写存档（tmp + ATOMIC_MOVE，崩溃安全；写失败抛错由调用方转 500）。 */
@@ -351,14 +399,29 @@ class CanvasTabStore(path: os.Path, ledgerLimit: Int = 100000):
         val incoming = put.hcursor.get[Vector[Json]]("tabs").getOrElse(Vector.empty)
         val incomingIds = incoming.flatMap(_.hcursor.get[String]("id").toOption).toSet
         val missing = old.flatMap(_.hcursor.get[String]("id").toOption).filterNot(incomingIds)
-        val fingerprint = java.security.MessageDigest.getInstance("SHA-256").digest(put.noSpaces.getBytes(java.nio.charset.StandardCharsets.UTF_8)).map(b => f"${b & 0xff}%02x").mkString
-        NebflowLogger.forName("nebflow.canvas-tabs").warnSync(s"legacy PUT deprecated source=$source sha256=$fingerprint ignoredMissing=${missing.mkString(",")}")
-        val mergedInput = put.deepMerge(Json.obj("tabs" -> Json.fromValues(incoming ++ old.filterNot(t => t.hcursor.get[String]("id").toOption.exists(incomingIds)))))
+        val fingerprint = java.security.MessageDigest
+          .getInstance("SHA-256")
+          .digest(put.noSpaces.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+          .map(b => f"${b & 0xff}%02x")
+          .mkString
+        NebflowLogger
+          .forName("nebflow.canvas-tabs")
+          .warnSync(s"legacy PUT deprecated source=$source sha256=$fingerprint ignoredMissing=${missing.mkString(",")}")
+        val mergedInput = put.deepMerge(
+          Json.obj(
+            "tabs" -> Json.fromValues(
+              incoming ++ old.filterNot(t => t.hcursor.get[String]("id").toOption.exists(incomingIds))
+            )
+          )
+        )
         val version = previous.flatMap(_.hcursor.get[Long]("writeVersion").toOption).getOrElse(0L) + 1L
         val ledger = previous.flatMap(_.hcursor.downField("operationLedger").focus).getOrElse(Json.arr())
-        val merged = CanvasTabs.merge(previous, mergedInput, nowMs).deepMerge(Json.obj("writeVersion" -> Json.fromLong(version), "operationLedger" -> ledger))
+        val merged = CanvasTabs
+          .merge(previous, mergedInput, nowMs)
+          .deepMerge(Json.obj("writeVersion" -> Json.fromLong(version), "operationLedger" -> ledger))
         AtomicJson.writeSync(path, merged.noSpaces)
         merged
       finally CanvasTabStore.mergeGate.release()
+      end try
     }
 end CanvasTabStore

@@ -146,12 +146,13 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
           subAgentTaskStore = store,
           voiceMutedRef = voiceMuted
         )
-        _ <- if verifiedLegacy then
-          IO.blocking(os.makeDir.all(tmp / "sessions")) *>
-            ExecutionCommitStore.resource((tmp / "sessions").toNIO).use { authority =>
-              body(Fx(store, sessionStore, resources.copy(executionCommitPort = authority), system, tmp, seat))
-            }
-        else body(Fx(store, sessionStore, resources, system, tmp, seat))
+        _ <-
+          if verifiedLegacy then
+            IO.blocking(os.makeDir.all(tmp / "sessions")) *>
+              ExecutionCommitStore.resource((tmp / "sessions").toNIO).use { authority =>
+                body(Fx(store, sessionStore, resources.copy(executionCommitPort = authority), system, tmp, seat))
+              }
+          else body(Fx(store, sessionStore, resources, system, tmp, seat))
       yield ()
     try io.unsafeRunSync()
     finally
@@ -315,14 +316,16 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
     // 执行已停（写入时的原话 "Execution interrupted; manual recovery required"）⇒ 同享
     // 7 天 TTL，超期即清，不能是无限期待恢复。
     assertEquals(
-      DelegateTerminalTtl.rowVerdict(
-        mkTask("t4", "p", status = "pending-recovery", completedAt = now - 100L * Day), now).isExpired,
+      DelegateTerminalTtl
+        .rowVerdict(mkTask("t4", "p", status = "pending-recovery", completedAt = now - 100L * Day), now)
+        .isExpired,
       true,
       "待恢复 100 天 ⇒ 到期（旧口径这里是 InFlight，一行永久挂着）"
     )
     assertEquals(
-      DelegateTerminalTtl.rowVerdict(
-        mkTask("t5", "p", status = "pending-recovery", completedAt = now - 60_000L), now).isExpired,
+      DelegateTerminalTtl
+        .rowVerdict(mkTask("t5", "p", status = "pending-recovery", completedAt = now - 60_000L), now)
+        .isExpired,
       false,
       "待恢复 1 分钟 ⇒ 未到期（刚重启中断的行要留给人决定）"
     )
@@ -429,15 +432,26 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
       val id = "delegate-protected-cascade"
       val parent = "cascade-parent"
       val admission = nebflow.shared.ExecutionAdmission(
-        id, "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
-        io.circe.Json.fromString("initial"), "input"
+        id,
+        "run",
+        "commit",
+        "request",
+        "attempt",
+        "incarnation",
+        "owner",
+        "business",
+        "audit",
+        io.circe.Json.fromString("initial"),
+        "input"
       )
       for
         _ <- IO.blocking(os.makeDir.all(fx.tmp / "sessions"))
         _ <- fx.store.recordTask(mkTask(id, parent, "running", NineDaysAgo))
         _ <- ExecutionCommitStore.resource(fx.sessionStore.executionAuthorityRoot).use(_.admit(admission))
         stopped <- ExecutionCommitStore.resource(fx.sessionStore.executionAuthorityRoot).use { authority =>
-          SessionChildCascade.stopChildDelegateActors(fx.resources.copy(executionCommitPort = authority), parent).attempt
+          SessionChildCascade
+            .stopChildDelegateActors(fx.resources.copy(executionCommitPort = authority), parent)
+            .attempt
         }
         row <- fx.store.findByTaskId(id)
       yield
@@ -450,14 +464,25 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
     withFx("orphan-candidate-cascade") { fx =>
       val id = "delegate-orphan-candidate"
       val admission = nebflow.shared.ExecutionAdmission(
-        id, "run", "commit", "request", "attempt", "incarnation", "parent", "business", "audit",
-        io.circe.Json.fromString("initial"), "input"
+        id,
+        "run",
+        "commit",
+        "request",
+        "attempt",
+        "incarnation",
+        "parent",
+        "business",
+        "audit",
+        io.circe.Json.fromString("initial"),
+        "input"
       )
       for
         _ <- IO.blocking(os.makeDir.all(fx.tmp / "sessions"))
         _ <- ExecutionCommitStore.resource(fx.sessionStore.executionAuthorityRoot).use(_.admit(admission))
         stopped <- ExecutionCommitStore.resource(fx.sessionStore.executionAuthorityRoot).use { authority =>
-          SessionChildCascade.stopChildDelegateActors(fx.resources.copy(executionCommitPort = authority), "parent").attempt
+          SessionChildCascade
+            .stopChildDelegateActors(fx.resources.copy(executionCommitPort = authority), "parent")
+            .attempt
         }
         row <- fx.store.findByTaskId(id)
       yield
@@ -469,14 +494,25 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
   test("cascade does not reject an unrelated protected candidate") {
     withFx("unrelated-candidate-cascade") { fx =>
       val admission = nebflow.shared.ExecutionAdmission(
-        "delegate-unrelated", "run", "commit", "request", "attempt", "incarnation", "other-parent", "business", "audit",
-        io.circe.Json.fromString("initial"), "input"
+        "delegate-unrelated",
+        "run",
+        "commit",
+        "request",
+        "attempt",
+        "incarnation",
+        "other-parent",
+        "business",
+        "audit",
+        io.circe.Json.fromString("initial"),
+        "input"
       )
       for
         _ <- IO.blocking(os.makeDir.all(fx.tmp / "sessions"))
         _ <- ExecutionCommitStore.resource(fx.sessionStore.executionAuthorityRoot).use(_.admit(admission))
         stopped <- ExecutionCommitStore.resource(fx.sessionStore.executionAuthorityRoot).use { authority =>
-          SessionChildCascade.stopChildDelegateActors(fx.resources.copy(executionCommitPort = authority), "parent").attempt
+          SessionChildCascade
+            .stopChildDelegateActors(fx.resources.copy(executionCommitPort = authority), "parent")
+            .attempt
         }
       yield assertEquals(stopped, Right(Nil))
     }
@@ -487,8 +523,17 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
       val id = "delegate-ttl-protected"
       val parent = "ttl-parent-protected"
       val admission = nebflow.shared.ExecutionAdmission(
-        id, "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
-        io.circe.Json.fromString("initial"), "input"
+        id,
+        "run",
+        "commit",
+        "request",
+        "attempt",
+        "incarnation",
+        "owner",
+        "business",
+        "audit",
+        io.circe.Json.fromString("initial"),
+        "input"
       )
       for
         _ <- IO.blocking(os.makeDir.all(fx.tmp / "sessions"))
@@ -512,8 +557,17 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
       val id = "delegate-ttl-race"
       val parent = "ttl-race-parent"
       val admission = nebflow.shared.ExecutionAdmission(
-        id, "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
-        io.circe.Json.fromString("initial"), "input"
+        id,
+        "run",
+        "commit",
+        "request",
+        "attempt",
+        "incarnation",
+        "owner",
+        "business",
+        "audit",
+        io.circe.Json.fromString("initial"),
+        "input"
       )
       val authority = fx.resources.executionCommitPort
       for
@@ -543,6 +597,7 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
         assert(report.keptOnError.exists(_._1 == id))
         assert(row.nonEmpty)
         assert(record.nonEmpty)
+      end for
     }
   }
 

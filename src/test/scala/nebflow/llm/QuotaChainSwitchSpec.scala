@@ -173,7 +173,11 @@ class QuotaChainSwitchSpec extends CatsEffectSuite:
           )
           t0 <- IO.monotonic
           // fallback 废除批申报：单候选配额死 ⇒ 静默等待恢复面——给 8s 有界上界取终局。
-          res <- handle.sendStream(req).compile.toList.attempt
+          res <- handle
+            .sendStream(req)
+            .compile
+            .toList
+            .attempt
             .timeoutTo(
               8.seconds,
               // 哨兵以 Left 捕获（raiseError 会让 IO 失败、下方断言面走不到）
@@ -259,7 +263,11 @@ class QuotaChainSwitchSpec extends CatsEffectSuite:
           t0 <- IO.monotonic
           // fallback 废除批申报：单候选 403 驱逐后链空 ⇒ 静默等待（全灭闸）——给 8s
           // 有界上界取终局（原 T2 阻塞的 120s 全灭闸预算不再由测试承担）。
-          res <- handle.sendStream(req).compile.toList.attempt
+          res <- handle
+            .sendStream(req)
+            .compile
+            .toList
+            .attempt
             .timeoutTo(
               8.seconds,
               // 哨兵以 Left 捕获（raiseError 会让 IO 失败、下方断言面走不到）
@@ -294,7 +302,7 @@ class QuotaChainSwitchSpec extends CatsEffectSuite:
       // 储备层」的多根面退役）
       assertEquals(chain, List("qa/m1"), s"候选链必须恰 = preferred 单根，实际链 = $chain")
       // 配额类面原样钉死（mock quota403 = 403 载配额体 ⇒ 引擎判配额类）：不 markDown
-      //（不进探测集），软回避窗 ≫ 瞬时窗。
+      // （不进探测集），软回避窗 ≫ 瞬时窗。
       assert(
         !states.contains("qa/m1"),
         s"配额类 403 不进健康状态（不 markDown ⇒ 不进探测集）；实际 ${states.get("qa/m1")}"

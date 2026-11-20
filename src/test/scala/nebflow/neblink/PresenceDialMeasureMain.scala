@@ -77,20 +77,23 @@ object PresenceDialMeasureMain:
     schedule: PresenceDialSchedule,
     reachLedger: Option[P2pReachability]
   )(use: NeblinkPresenceService => IO[A]): A =
-    Dispatcher.parallel[IO].use { dispatcher =>
-      for
-        ms <- NeblinkService.createForTest(6138, dispatcher, 300.millis)
-        ps = new NeblinkPresenceService(
-          ms,
-          6138,
-          DialBudget.Default,
-          EvictionPolicy.Default,
-          schedule,
-          reachLedger
-        )(dispatcher)
-        out <- use(ps).guarantee(ps.disconnectAll().handleErrorWith(_ => IO.unit))
-      yield out
-    }.unsafeRunSync()
+    Dispatcher
+      .parallel[IO]
+      .use { dispatcher =>
+        for
+          ms <- NeblinkService.createForTest(6138, dispatcher, 300.millis)
+          ps = new NeblinkPresenceService(
+            ms,
+            6138,
+            DialBudget.Default,
+            EvictionPolicy.Default,
+            schedule,
+            reachLedger
+          )(dispatcher)
+          out <- use(ps).guarantee(ps.disconnectAll().handleErrorWith(_ => IO.unit))
+        yield out
+      }
+      .unsafeRunSync()
 
   private def peer(id: String, candidates: List[String]) =
     nebflow.shared.PeerInfo(
@@ -123,10 +126,12 @@ object PresenceDialMeasureMain:
       }
     loop
 
-  private def pct(xs: List[Long], p: Double): Long =    if xs.isEmpty then -1L
-    else
-      val sorted = xs.sorted
-      sorted(math.min(sorted.size - 1, math.max(0, (sorted.size * p).toInt)))
+  end sampleComputeLatency
+
+  private def pct(xs: List[Long], p: Double): Long = if xs.isEmpty then -1L
+  else
+    val sorted = xs.sorted
+    sorted(math.min(sorted.size - 1, math.max(0, (sorted.size * p).toInt)))
 
   /** 单臂单端点集的一轮读数（冷轮 ×2 各自新账本 + 负缓存轮）。 */
   private def measureArm(setLabel: String, endpoints: List[String], arm: Arm): Unit =
@@ -185,7 +190,10 @@ object PresenceDialMeasureMain:
       for
         _ <-
           if arm.sharedLedger then
-            IO(ledger.noteFailure(p.deviceId, nebflow.core.tools.P2pPathDecision.addressKey(p), System.currentTimeMillis()))
+            IO(
+              ledger
+                .noteFailure(p.deviceId, nebflow.core.tools.P2pPathDecision.addressKey(p), System.currentTimeMillis())
+            )
           else IO.unit
         _ <- IO(ps.resetDialThreadStats())
         t0 <- IO.monotonic
@@ -194,6 +202,7 @@ object PresenceDialMeasureMain:
         stats <- IO(ps.dialThreadStats)
         round <- IO(ps.lastDialRound("cached"))
       yield (ms, stats, round)
+      end for
     } match
       case (ms, stats, round) =>
         println(
@@ -208,6 +217,7 @@ object PresenceDialMeasureMain:
             "attempted" -> round.map(_.attempted.size).getOrElse(-1).toString
           )
         )
+    end match
   end measureArm
 
   /** 风暴臂：N 台设备同时拨号（真实舰队形态），量 compute 活性 p99 与 compute 线程占用。 */
@@ -296,13 +306,14 @@ object PresenceDialMeasureMain:
         // 40 个取件任务**同时**提交（= 一次冷开的真实形态：一批取件同时落到 compute 池）；
         // t0 在提交侧取、由子 fiber 记账，join 带超时兜底 ⇒ 臂时长有界。
         openFibers <- (1 to 40).toList.traverse { _ =>
-                        IO(System.nanoTime()).flatMap { t0 =>
-                          IO.blocking {
-                            val bytes = Files.readAllBytes(tmpFile)
-                            java.security.MessageDigest.getInstance("SHA-256").digest(bytes).length
-                          }.flatMap(_ => IO(opens.add((System.nanoTime() - t0) / 1000L))).start
-                        }
-                      }
+          IO(System.nanoTime()).flatMap { t0 =>
+            IO.blocking {
+              val bytes = Files.readAllBytes(tmpFile)
+              java.security.MessageDigest.getInstance("SHA-256").digest(bytes).length
+            }.flatMap(_ => IO(opens.add((System.nanoTime() - t0) / 1000L)))
+              .start
+          }
+        }
         _ <- openFibers.traverse_(_.join.void.timeout(30.seconds).handleErrorWith(_ => IO.unit))
         _ <- dials.traverse_(_.join.void.timeout(20.seconds).handleErrorWith(_ => IO.unit))
         _ <- ps.disconnectAll().handleErrorWith(_ => IO.unit)
@@ -351,7 +362,9 @@ object PresenceDialMeasureMain:
       PathUtil.setDataRoot(savedRoot)
       try os.remove.all(os.Path(tmp.toString, os.pwd))
       catch case _: Throwable => ()
-      // 夹具自退（`ProbeTaxMeasureMain` 同款纪律）：global IORuntime 工作线程非 daemon。
+        // 夹具自退（`ProbeTaxMeasureMain` 同款纪律）：global IORuntime 工作线程非 daemon。
       cats.effect.unsafe.IORuntime.global.shutdown()
+    end try
+  end main
 
 end PresenceDialMeasureMain

@@ -25,6 +25,7 @@ object PermissionCardDetail:
 
   /** 档位 + 命中规则（0 = 未命中任何风险档）。 */
   final case class Level(value: Int, ruleId: String, label: String)
+
   object Level:
     val Safe: Level = Level(0, "", "")
 
@@ -114,6 +115,9 @@ object PermissionCardDetail:
       "scope" -> scopeJson
     )
 
+  end build
+
   private def clip(s: String): String =
     if s.length <= MaxInlineChars then s
     else s.take(MaxInlineChars) + s"\n…（正文超长，此处展示前 $MaxInlineChars 字/共 ${s.length} 字；完整参数见工具卡）"
+end PermissionCardDetail

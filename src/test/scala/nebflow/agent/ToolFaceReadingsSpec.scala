@@ -15,14 +15,18 @@ package nebflow.agent
 class ToolFaceReadingsSpec extends munit.FunSuite:
 
   test("print per-identity tool-face readings"):
-    val tools = sys.props.get("toolface.readings").map(_.split(",").map(_.trim).filter(_.nonEmpty).toList)
+    val tools = sys.props
+      .get("toolface.readings")
+      .map(_.split(",").map(_.trim).filter(_.nonEmpty).toList)
       .getOrElse(List("Card", "Pop"))
     ToolFaceReadings.printReadings(tools)
     // 读数件唯一自证：枚举表非空且标签唯一（防复制粘贴造成的重复身份）。
     val labels = ToolFaceReadings.rows.map(_.label)
     assert(labels.nonEmpty, "the identity table must not be empty")
     assertEquals(labels.distinct.length, labels.length, s"duplicate identity labels: $labels")
-    assert(ToolFaceReadings.has("ask (Canvas Ask session leg)", "Read"),
-      "sanity: the ask leg has the shared Read tool on both faces")
+    assert(
+      ToolFaceReadings.has("ask (Canvas Ask session leg)", "Read"),
+      "sanity: the ask leg has the shared Read tool on both faces"
+    )
 
 end ToolFaceReadingsSpec

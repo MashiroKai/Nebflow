@@ -156,8 +156,10 @@ object FileChangeLedger:
   private def isDiffLine(l: String): Boolean =
     l.isEmpty || l.startsWith("@@") || l.startsWith(" ") || l.startsWith("+") || l.startsWith("-")
 
-  /** Bodies ship verbatim (2026-10-10 ruling): empty body = no diff (counts-only,
-    * no reason — nothing was dropped), otherwise the full body is kept. */
+  /**
+   * Bodies ship verbatim (2026-10-10 ruling): empty body = no diff (counts-only,
+   * no reason — nothing was dropped), otherwise the full body is kept.
+   */
   private def capBody(body: String): (Option[String], Option[String]) =
     if body.isEmpty then (None, None) else (Some(body), None)
 
@@ -192,8 +194,7 @@ object FileChangeLedger:
               case (None, None) => None
             val diffText = diffJoin
             val degradedFinal =
-              if diffText.isEmpty then
-                prev.degradedReason.orElse(e.degradedReason)
+              if diffText.isEmpty then prev.degradedReason.orElse(e.degradedReason)
               else None
             merged.put(
               e.path,

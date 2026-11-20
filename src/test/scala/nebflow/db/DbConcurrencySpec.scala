@@ -50,6 +50,8 @@ class DbConcurrencySpec extends CatsEffectSuite:
         case r => fail(s"verify: $r")
     finally h.close()
 
+    end try
+
   test("V4: seq never reused across kill-9 restarts (skip-only across abandoned intervals)"):
     val root = Files.createTempDirectory("db-conc-restart")
     val a = Db.open(DbConfig(root, seqInterval = 8)).unsafeRunSync()
@@ -91,8 +93,7 @@ class DbConcurrencySpec extends CatsEffectSuite:
     Files.writeString(counter, """{"version":1,"next":2}""")
     val b = Db.open(DbConfig(root, seqInterval = 4)).unsafeRunSync()
     try
-      assertEquals(b.counterPersistedNext > seqs.max, true,
-        "交叉校验以大者为准（计数器 ≥ 各流尾 seq）")
+      assertEquals(b.counterPersistedNext > seqs.max, true, "交叉校验以大者为准（计数器 ≥ 各流尾 seq）")
       val next = b.appendEvent(kernelEvent(99), None).unsafeRunSync()
       assert(next > seqs.max, "新号不回退不重号")
     finally b.close()

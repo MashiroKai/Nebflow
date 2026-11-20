@@ -50,6 +50,8 @@ class DelegateWorkReportRoundSpec extends FunSuite:
     val mergeSha = os.proc("git", "-C", ws.toString, "rev-parse", "HEAD").call().out.trim()
     (ws, mergeSha)
 
+  end mergedChildRepo
+
   private def putChild(id: String, parent: String, cwd: os.Path, baseBranch: String, mergeSha: Option[String]): Unit =
     DelegateRegistry.put(
       DelegateRegistry.Record(

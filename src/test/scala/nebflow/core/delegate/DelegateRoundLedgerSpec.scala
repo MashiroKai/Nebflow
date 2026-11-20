@@ -53,6 +53,7 @@ class DelegateRoundLedgerSpec extends FunSuite:
     // round pointer via the single write point (mirrors the spawn/Mail write faces)
     roundNo.foreach(n => DelegateRegistry.startRound(id, n, roundId.getOrElse("")))
     DelegateRegistry.find(id).getOrElse(sys.error("record must exist"))
+  end mkRecord
 
   // ── R1 append-only + no whitewashing ──────────────────────────────────────
 
@@ -66,14 +67,20 @@ class DelegateRoundLedgerSpec extends FunSuite:
     DelegateRoundLedger.settleRound(id, 1, "gen-r1", "completed", List("oid-1"), Some(false))
     val afterReplay = DelegateRoundLedger.currentRounds(id)
     assertEquals(afterReplay, afterFirstSettle, "a settled round must never be rewritten")
-    assertEquals(afterFirstSettle.map(r => (r.roundNo, r.verdict)), List((1, Some("failed"))),
-      "round 1 keeps its failed truth")
+    assertEquals(
+      afterFirstSettle.map(r => (r.roundNo, r.verdict)),
+      List((1, Some("failed"))),
+      "round 1 keeps its failed truth"
+    )
     // A later successful round does not touch round 1.
     DelegateRoundLedger.settleRound(id, 2, "gen-r2", "completed", List("oid-2"), None)
     val rounds = DelegateRoundLedger.currentRounds(id)
     assertEquals(rounds.map(_.roundNo), List(1, 2), "both rounds stay in the ledger")
-    assertEquals(rounds.find(_.roundNo == 1).flatMap(_.verdict), Some("failed"),
-      "later success never whitewashes an earlier failed round")
+    assertEquals(
+      rounds.find(_.roundNo == 1).flatMap(_.verdict),
+      Some("failed"),
+      "later success never whitewashes an earlier failed round"
+    )
     assertEquals(rounds.find(_.roundNo == 2).flatMap(_.verdict), Some("completed"))
   }
 
@@ -86,11 +93,17 @@ class DelegateRoundLedgerSpec extends FunSuite:
     assertEquals(DelegateRoundLedger.countedOids(id), Set.empty, "open round contributes nothing")
     DelegateRoundLedger.settleRound(id, 1, "gen-a", "completed", List("oid-1", "oid-2"), None)
     DelegateRoundLedger.openRound(id, 2, "gen-b", DelegateRoundLedger.CauseMail, None, None)
-    assertEquals(DelegateRoundLedger.countedOids(id), Set("oid-1", "oid-2"),
-      "open round 2 does not pollute the counted account")
+    assertEquals(
+      DelegateRoundLedger.countedOids(id),
+      Set("oid-1", "oid-2"),
+      "open round 2 does not pollute the counted account"
+    )
     DelegateRoundLedger.settleRound(id, 2, "gen-b", "completed", List("oid-2", "oid-3"), None)
-    assertEquals(DelegateRoundLedger.countedOids(id), Set("oid-1", "oid-2", "oid-3"),
-      "countedOids is the union over settled rounds")
+    assertEquals(
+      DelegateRoundLedger.countedOids(id),
+      Set("oid-1", "oid-2", "oid-3"),
+      "countedOids is the union over settled rounds"
+    )
   }
 
   // ── R3 stale-round audit ──────────────────────────────────────────────────
@@ -102,8 +115,7 @@ class DelegateRoundLedgerSpec extends FunSuite:
     val rows = DelegateRoundLedger.rowsOf(id)
     assertEquals(rows.map(_.kind), List(DelegateRoundLedger.KindStaleRound))
     assertEquals(rows.head.detail, Some("late terminal from an old round"))
-    assertEquals(DelegateRoundLedger.currentRounds(id), Nil,
-      "stale-round audit rows are never round state")
+    assertEquals(DelegateRoundLedger.currentRounds(id), Nil, "stale-round audit rows are never round state")
     // The audit row survives later round writes untouched (append-only file).
     DelegateRoundLedger.openRound(id, 2, "gen-now", DelegateRoundLedger.CauseMail, None, None)
     assert(DelegateRoundLedger.rowsOf(id).exists(_.kind == DelegateRoundLedger.KindStaleRound))
@@ -119,10 +131,16 @@ class DelegateRoundLedgerSpec extends FunSuite:
     DelegateRoundLedger.openRound(id, 2, "gen-r4b", DelegateRoundLedger.CauseMail, None, None)
     DelegateRoundLedger.settleOpenRoundsCancelled(id, "cancelled terminal")
     val rounds = DelegateRoundLedger.currentRounds(id)
-    assertEquals(rounds.find(_.roundNo == 1).flatMap(_.verdict), Some("completed"),
-      "the already-settled round keeps its own truth")
-    assertEquals(rounds.find(_.roundNo == 2).flatMap(_.verdict), Some("cancelled"),
-      "the open round settles as cancelled (tombstone wins)")
+    assertEquals(
+      rounds.find(_.roundNo == 1).flatMap(_.verdict),
+      Some("completed"),
+      "the already-settled round keeps its own truth"
+    )
+    assertEquals(
+      rounds.find(_.roundNo == 2).flatMap(_.verdict),
+      Some("cancelled"),
+      "the open round settles as cancelled (tombstone wins)"
+    )
     assert(rounds.find(_.roundNo == 2).exists(_.settledAt.isDefined))
   }
 
@@ -132,21 +150,33 @@ class DelegateRoundLedgerSpec extends FunSuite:
     val rec = mkRecord("delegate-nebflow-r5", tmp, roundNo = Some(1), roundId = Some("gen-r5"))
     import DelegateRoundLedger.MailRoundDecision as D
     // busy: live actor registration
-    assertEquals(DelegateRoundLedger.decideMailRound(rec, Some("completed"), actorRegistered = true), D.InjectCurrentRound,
-      "a live actor means the round is running — Mail injects, no second execution body")
+    assertEquals(
+      DelegateRoundLedger.decideMailRound(rec, Some("completed"), actorRegistered = true),
+      D.InjectCurrentRound,
+      "a live actor means the round is running — Mail injects, no second execution body"
+    )
     // busy: unfinished row statuses
     List("running", "restarting", "frozen", "ready-to-merge").foreach { s =>
-      assertEquals(DelegateRoundLedger.decideMailRound(rec, Some(s), actorRegistered = false), D.InjectCurrentRound,
-        s"row status '$s' means unfinished business — same round")
+      assertEquals(
+        DelegateRoundLedger.decideMailRound(rec, Some(s), actorRegistered = false),
+        D.InjectCurrentRound,
+        s"row status '$s' means unfinished business — same round"
+      )
     }
     // settled: terminal rows open a new round
     List("completed", "failed").foreach { s =>
-      assertEquals(DelegateRoundLedger.decideMailRound(rec, Some(s), actorRegistered = false), D.OpenNewRound,
-        s"row status '$s' is settled — Mail opens a new round")
+      assertEquals(
+        DelegateRoundLedger.decideMailRound(rec, Some(s), actorRegistered = false),
+        D.OpenNewRound,
+        s"row status '$s' is settled — Mail opens a new round"
+      )
     }
     // unknown / missing evidence: legacy behavior, zero new writes
     assertEquals(DelegateRoundLedger.decideMailRound(rec, Some("weird-status"), actorRegistered = false), D.LeaveAsIs)
-    assertEquals(DelegateRoundLedger.decideMailRound(rec.copy(archivedAt = None), None, actorRegistered = false), D.LeaveAsIs)
+    assertEquals(
+      DelegateRoundLedger.decideMailRound(rec.copy(archivedAt = None), None, actorRegistered = false),
+      D.LeaveAsIs
+    )
     // no task row + the identity reads closed by STATE (阶段②：收口判据由归档旗改为状态派生读数)
     assertEquals(
       DelegateRoundLedger.decideMailRound(rec, None, actorRegistered = false, identityClosed = true),
@@ -156,7 +186,9 @@ class DelegateRoundLedgerSpec extends FunSuite:
 
   // ── R6 openNewRound effects ───────────────────────────────────────────────
 
-  test("R6 openNewRound: roundNo+1, fresh roundId, no flag write (state-derived return to the active window), baseline re-anchored, prior rows kept") {
+  test(
+    "R6 openNewRound: roundNo+1, fresh roundId, no flag write (state-derived return to the active window), baseline re-anchored, prior rows kept"
+  ) {
     val id = "delegate-nebflow-r6"
     // seat = a real git repo so the baseline snapshot is judgeable
     val seat = tmp / "seat"
@@ -181,8 +213,11 @@ class DelegateRoundLedgerSpec extends FunSuite:
     assertEquals(row.roundNo, 2)
     assert(row.roundId != "gen-r6a", "a new round mints a fresh roundId")
     assert(row.baseHeadSha.isDefined, "the git seat baseline head is snapshotted")
-    assertEquals(row.baseDirty.getOrElse(Nil).contains("?? dirty.txt"), true,
-      "the dirty path is part of the new round's baseline")
+    assertEquals(
+      row.baseDirty.getOrElse(Nil).contains("?? dirty.txt"),
+      true,
+      "the dirty path is part of the new round's baseline"
+    )
     val rec2 = DelegateRegistry.find(id).get
     assertEquals(rec2.roundNo, Some(2))
     assertEquals(rec2.roundId, Some(row.roundId))
@@ -199,8 +234,11 @@ class DelegateRoundLedgerSpec extends FunSuite:
     assertEquals(rounds.map(_.roundNo), List(1, 2), "prior rounds stay in the ledger")
     assertEquals(rounds.head.cause, DelegateRoundLedger.CauseSpawn)
     assertEquals(rounds(1).cause, DelegateRoundLedger.CauseMail)
-    assertEquals(DelegateRoundLedger.countedOids(id), Set("oid-early"),
-      "the settled round-1 account is preserved for cross-round dedup")
+    assertEquals(
+      DelegateRoundLedger.countedOids(id),
+      Set("oid-early"),
+      "the settled round-1 account is preserved for cross-round dedup"
+    )
   }
 
   // ── R7 legacy tolerance ───────────────────────────────────────────────────

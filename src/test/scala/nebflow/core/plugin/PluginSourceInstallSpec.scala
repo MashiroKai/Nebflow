@@ -27,7 +27,7 @@ class PluginSourceInstallSpec extends FunSuite:
   override val munitTimeout: FiniteDuration = Duration(240, "s")
 
   private var prevRoot: os.Path = os.Path("/tmp")
-  private var home: os.Path     = os.Path("/tmp")
+  private var home: os.Path = os.Path("/tmp")
   private val fixtureRoot: os.Path = os.pwd / "target" / "plugin-source-install"
 
   private val propKeys = List("nebflow.plugins.indexUrl", "nebflow.plugins.indexFallbackUrl", "nebflow.plugins.channel")
@@ -45,7 +45,7 @@ class PluginSourceInstallSpec extends FunSuite:
     PathUtil.setDataRoot(prevRoot)
     propKeys.foreach {
       case k if savedProps.get(k).flatten.isDefined => System.setProperty(k, savedProps(k).get)
-      case k                                        => System.clearProperty(k)
+      case k => System.clearProperty(k)
     }
     try os.remove.all(home)
     catch case _: Exception => ()
@@ -68,7 +68,7 @@ class PluginSourceInstallSpec extends FunSuite:
   override def afterEach(context: munit.AfterEach): Unit =
     savedProps.foreach {
       case (k, Some(v)) => System.setProperty(k, v)
-      case (k, None)    => System.clearProperty(k)
+      case (k, None) => System.clearProperty(k)
     }
 
   // ── 夹具构建 ──────────────────────────────────────────────
@@ -119,7 +119,9 @@ class PluginSourceInstallSpec extends FunSuite:
     if os.isDir(root) then os.list(root).map(_.last).toList else Nil
 
   private def ledgerRows: List[String] =
-    if os.isDir(PluginSourceLedger.ledgerDir) then os.list(PluginSourceLedger.ledgerDir).filter(_.ext == "json").map(_.last).toList else Nil
+    if os.isDir(PluginSourceLedger.ledgerDir) then
+      os.list(PluginSourceLedger.ledgerDir).filter(_.ext == "json").map(_.last).toList
+    else Nil
 
   private def installedNames: List[String] =
     if os.isDir(home / "plugins") then os.list(home / "plugins").map(_.last).toList.sorted else Nil
@@ -139,12 +141,12 @@ class PluginSourceInstallSpec extends FunSuite:
 
   /** 标准官方源夹具：index + manifest（多版本可选）+ 归档。返回 (fixture, id, zipBytes)。 */
   private def serveOfficial(
-      id: String,
-      versions: List[String],
-      mutate: Map[String, Array[Byte]] => Map[String, Array[Byte]] = identity,
-      manifestOverride: Option[String => String] = None,
-      indexOverride: Option[String] = None,
-      beta: Boolean = false
+    id: String,
+    versions: List[String],
+    mutate: Map[String, Array[Byte]] => Map[String, Array[Byte]] = identity,
+    manifestOverride: Option[String => String] = None,
+    indexOverride: Option[String] = None,
+    beta: Boolean = false
   ): (FixtureHttp, String, Array[Byte]) =
     val fixture = FixtureHttp().start()
     val files = mutate(treeFor(id))
@@ -157,13 +159,15 @@ class PluginSourceInstallSpec extends FunSuite:
       fixture.serveBytes(s"/plugins/$id/files/$id-$version.zip", 200, zip)
       s"""{"format":"zip","sizeBytes":${zip.length},"sha256":"$sha","digest":"$digest","url":"$url",""" +
         s""""mirror":"http://127.0.0.1:1/mirror-must-not-be-hit.zip"}"""
-    val versionsJson = versions.map { v =>
-      s"""{"version":"$v","publishedAt":"2026-10-29T16:40:00Z","notesUrl":"https://example/notes",""" +
-        s""""requires":{"manifestSchema":"1.0.0","minEngine":"2026.10.1"},"artifacts":[${artifactJson(v)}]}"""
-    }.mkString(",")
+    val versionsJson = versions
+      .map { v =>
+        s"""{"version":"$v","publishedAt":"2026-10-29T16:40:00Z","notesUrl":"https://example/notes",""" +
+          s""""requires":{"manifestSchema":"1.0.0","minEngine":"2026.10.1"},"artifacts":[${artifactJson(v)}]}"""
+      }
+      .mkString(",")
     val manifest = manifestOverride match
       case Some(f) => f(id)
-      case None    => s"""{"schema":1,"id":"$id","sequence":45,"versions":[$versionsJson]}"""
+      case None => s"""{"schema":1,"id":"$id","sequence":45,"versions":[$versionsJson]}"""
     fixture.serve(s"/plugins/$id/manifest$suffix.json", 200, manifest)
     val index = indexOverride.getOrElse {
       s"""{"schema":1,"sequence":47,"plugins":[{"id":"$id","latest":"${versions.head}","sequence":45}]}"""
@@ -201,6 +205,8 @@ class PluginSourceInstallSpec extends FunSuite:
       assertEquals(stagingResidue, Nil, "成功路径暂存会话零残留")
     finally fixture.stop()
 
+    end try
+
   test("@version 精确解析；未知版本 ⇒ SOURCE_VERSION_NOT_FOUND 列可用版本（零副作用）"):
     val (fixture, id, _) = serveOfficial("versioned-fixture-pkg", List("2.0.0", "1.0.0"))
     try
@@ -211,7 +217,7 @@ class PluginSourceInstallSpec extends FunSuite:
       assert(old.isRight, s"@1.0.0 必须精确装旧版，got: ${old.swap.toOption.getOrElse("")}")
       PluginSourceLedger.query(id) match
         case PluginSourceLedger.Known(e) => assertEquals(e.version, "1.0.0", "@version 精确指定")
-        case u                           => fail(s"expected Known, got: $u")
+        case u => fail(s"expected Known, got: $u")
 
       // 重装同名 = 拒（先清掉再测未知版本路径，保持零副作用断言干净）
       os.remove.all(home / "plugins" / id)
@@ -224,6 +230,7 @@ class PluginSourceInstallSpec extends FunSuite:
       assert(msg.contains("9.9.9") && msg.contains("2.0.0") && msg.contains("1.0.0"), s"列可用版本，got: $msg")
       assertNoSideEffects(before)
     finally fixture.stop()
+    end try
 
   // ── 双值校验（篡改一字节必拒）与围栏 ──────────────────────────
 
@@ -236,7 +243,9 @@ class PluginSourceInstallSpec extends FunSuite:
         "/plugins/sha-fixture-pkg/manifest.json",
         200,
         s"""{"schema":1,"versions":[{"version":"1.0.0","artifacts":[{"format":"zip","sizeBytes":${zip.length},""" +
-          s""""sha256":"${"f" * 64}","digest":"${treeDigest(treeFor(id))}","url":"${fixture.base}/plugins/sha-zip"}]}]}"""
+          s""""sha256":"${"f" * 64}","digest":"${treeDigest(
+              treeFor(id)
+            )}","url":"${fixture.base}/plugins/sha-zip"}]}]}"""
       )
       setEndpoints(s"http://127.0.0.1:1/plugins/index.json", s"${fixture.base}/plugins/index.json")
       val before = installedNames
@@ -245,6 +254,8 @@ class PluginSourceInstallSpec extends FunSuite:
       assert(msg.contains(PluginSourceInstall.CodeSha256Mismatch), s"双值①错误码逐字，got: $msg")
       assertNoSideEffects(before)
     finally fixture.stop()
+
+    end try
 
   test("双值②：内容树 digest 失配 ⇒ 拒装（归档字节对但解出内容 ≠ pin——重打包等价形态）"):
     val (fixture, id, zip) = serveOfficial("digest-fixture-pkg", List("1.0.0"))
@@ -266,6 +277,8 @@ class PluginSourceInstallSpec extends FunSuite:
       assertNoSideEffects(before)
     finally fixture.stop()
 
+    end try
+
   test("sizeBytes 咬合：声明字节数 ≠ 实际 ⇒ SOURCE_SIZE_MISMATCH 拒装"):
     val (fixture, id, zip) = serveOfficial("size-fixture-pkg", List("1.0.0"))
     try
@@ -284,6 +297,8 @@ class PluginSourceInstallSpec extends FunSuite:
       assertNoSideEffects(before)
     finally fixture.stop()
 
+    end try
+
   test("zip 围栏：.. 逃逸条目 / 绝对路径条目 ⇒ SOURCE_ARCHIVE_FENCE 拒装；包根无 manifest ⇒ LAYOUT 拒"):
     val before = installedNames
     List(
@@ -299,7 +314,9 @@ class PluginSourceInstallSpec extends FunSuite:
           s"/plugins/fence-$label-pkg/manifest.json",
           200,
           s"""{"schema":1,"versions":[{"version":"1.0.0","artifacts":[{"format":"zip","sizeBytes":${malicious.length},""" +
-            s""""sha256":"${sha256Hex(malicious)}","digest":"${"9" * 64}","url":"${fixture.base}/plugins/escape-zip"}]}]}"""
+            s""""sha256":"${sha256Hex(
+                malicious
+              )}","digest":"${"9" * 64}","url":"${fixture.base}/plugins/escape-zip"}]}]}"""
         )
         setEndpoints(s"http://127.0.0.1:1/plugins/index.json", s"${fixture.base}/plugins/index.json")
         val res = PluginSourceInstall.installFromArg(s"fence-$label-pkg").unsafeRunSync()
@@ -307,23 +324,35 @@ class PluginSourceInstallSpec extends FunSuite:
         assert(msg.contains(code), s"[$label] 围栏错误码逐字，got: $msg")
         assert(msg.contains(badName.take(8)), s"[$label] 点名违规条目，got: $msg")
       finally fixture.stop()
+      end try
     }
     // 包根平铺布局：plugin.json 在子目录 ⇒ LAYOUT 拒
     val (fixture2, id2, _) = serveOfficial("layout-fixture-pkg", List("1.0.0"))
     try
-      val wrapped = zipOf(Map("pkg/plugin.json" -> treeFor(id2)("plugin.json"), "pkg/skills/s/SKILL.md" -> treeFor(id2)("skills/s/SKILL.md")))
+      val wrapped = zipOf(
+        Map(
+          "pkg/plugin.json" -> treeFor(id2)("plugin.json"),
+          "pkg/skills/s/SKILL.md" -> treeFor(id2)("skills/s/SKILL.md")
+        )
+      )
       fixture2.serveBytes("/plugins/wrapped.zip", 200, wrapped)
       fixture2.serve(
         "/plugins/layout-fixture-pkg/manifest.json",
         200,
         s"""{"schema":1,"versions":[{"version":"1.0.0","artifacts":[{"format":"zip","sizeBytes":${wrapped.length},""" +
-          s""""sha256":"${sha256Hex(wrapped)}","digest":"${treeDigest(Map("plugin.json" -> treeFor(id2)("plugin.json"), "skills/s/SKILL.md" -> treeFor(id2)("skills/s/SKILL.md")))}",""" +
+          s""""sha256":"${sha256Hex(wrapped)}","digest":"${treeDigest(
+              Map(
+                "plugin.json" -> treeFor(id2)("plugin.json"),
+                "skills/s/SKILL.md" -> treeFor(id2)("skills/s/SKILL.md")
+              )
+            )}",""" +
           s""""url":"${fixture2.base}/plugins/wrapped.zip"}]}]}"""
       )
       setEndpoints(s"http://127.0.0.1:1/plugins/index.json", s"${fixture2.base}/plugins/index.json")
       val res = PluginSourceInstall.installFromArg(id2).unsafeRunSync()
       assert(res.left.toOption.exists(_.contains(PluginSourceInstall.CodeArchiveLayout)), s"got: $res")
     finally fixture2.stop()
+    end try
     assertNoSideEffects(before)
 
   // ── 原子切换（中断不留半包的结构保证）─────────────────────────
@@ -351,6 +380,8 @@ class PluginSourceInstallSpec extends FunSuite:
       )
     finally fixture.stop()
 
+    end try
+
   test("归档 mirror 兜底：主 url 404 ⇒ mirror 命中（双候选次序）"):
     val fixture = FixtureHttp().start()
     try
@@ -359,10 +390,15 @@ class PluginSourceInstallSpec extends FunSuite:
       val zip = zipOf(files)
       fixture.serveBytes("/mirror/pkg.zip", 200, zip)
       fixture.serve("/plugins/index.json", 200, s"""{"schema":1,"plugins":[{"id":"$id"}]}""")
-      fixture.serve(s"/plugins/$id/manifest.json", 200,
+      fixture.serve(
+        s"/plugins/$id/manifest.json",
+        200,
         s"""{"schema":1,"versions":[{"version":"1.0.0","artifacts":[{"format":"zip","sizeBytes":${zip.length},""" +
-          s""""sha256":"${sha256Hex(zip)}","digest":"${treeDigest(files)}","url":"${fixture.base}/plugins/missing-path.zip",""" +
-          s""""mirror":"${fixture.base}/mirror/pkg.zip"}]}]}""")
+          s""""sha256":"${sha256Hex(zip)}","digest":"${treeDigest(
+              files
+            )}","url":"${fixture.base}/plugins/missing-path.zip",""" +
+          s""""mirror":"${fixture.base}/mirror/pkg.zip"}]}]}"""
+      )
       setEndpoints(s"http://127.0.0.1:1/plugins/index.json", s"${fixture.base}/plugins/index.json")
       val res = PluginSourceInstall.installFromArg(id).unsafeRunSync()
       assert(res.isRight, s"mirror 兜底必须命中，got: ${res.swap.toOption.getOrElse("")}")
@@ -370,6 +406,7 @@ class PluginSourceInstallSpec extends FunSuite:
       assert(fixture.requested.contains("/mirror/pkg.zip"), "mirror 兜底命中")
       assert(installedNames.contains(id))
     finally fixture.stop()
+    end try
 
   // ── 官方身份闸 / 同名拒覆盖 / artifact 不可用 ──────────────────
 
@@ -418,14 +455,21 @@ class PluginSourceInstallSpec extends FunSuite:
     val (fixture, id, zip) = serveOfficial("degraded-fixture-pkg", List("1.0.0"))
     try
       fixture.serveBytes("/plugins/degraded-zip", 200, zip)
-      fixture.serve(s"/plugins/$id/manifest.json", 200,
-        s"""{"schema":1,"versions":[{"version":"1.0.0","artifacts":[{"sizeBytes":${zip.length},"sha256":"${sha256Hex(zip)}","digest":"${treeDigest(treeFor(id))}","url":"${fixture.base}/plugins/degraded-zip"}]}]}""")
+      fixture.serve(
+        s"/plugins/$id/manifest.json",
+        200,
+        s"""{"schema":1,"versions":[{"version":"1.0.0","artifacts":[{"sizeBytes":${zip.length},"sha256":"${sha256Hex(
+            zip
+          )}","digest":"${treeDigest(treeFor(id))}","url":"${fixture.base}/plugins/degraded-zip"}]}]}"""
+      )
       fixture.serve("/plugins/index.json", 200, s"""{"schema":1,"plugins":[{"id":"$id"}]}""")
       setEndpoints(s"http://127.0.0.1:1/plugins/index.json", s"${fixture.base}/plugins/index.json")
       val res = PluginSourceInstall.installFromArg(id).unsafeRunSync()
       assert(res.isRight, s"降级清单照装，got: ${res.swap.toOption.getOrElse("")}")
       assert(installedNames.contains(id))
     finally fixture.stop()
+
+    end try
 
   test("OSS 回落次序：主端点死 ⇒ 回落命中（请求只落到 fixture）；双端点死 ⇒ 列端点报错"):
     val (fixture, id, _) = serveOfficial("fallback-fixture-pkg", List("1.0.0"))
@@ -462,13 +506,19 @@ class PluginSourceInstallSpec extends FunSuite:
       // 端点属性**不注入**——默认端点（mystand.space）不得被请求
       val spec =
         s"""{"kind":"official","index":"${fixture.base}/plugins/custom-index.json","id":"$id"}"""
-      fixture.serve("/plugins/custom-index.json", 200, s"""{"schema":1,"plugins":[{"id":"$id","manifest":"${fixture.base}/plugins/from-official-pkg/manifest.json"}]}""")
+      fixture.serve(
+        "/plugins/custom-index.json",
+        200,
+        s"""{"schema":1,"plugins":[{"id":"$id","manifest":"${fixture.base}/plugins/from-official-pkg/manifest.json"}]}"""
+      )
       val res = PluginSourceInstall.installFromSpecJson(spec).unsafeRunSync()
       assert(res.isRight, s"got: ${res.swap.toOption.getOrElse("")}")
       assert(fixture.requested.contains("/plugins/custom-index.json"))
       assert(fixture.requested.contains("/plugins/from-official-pkg/manifest.json"), "显式 manifest 端点")
       assert(!fixture.requested.contains("/plugins/index.json"), "默认索引零请求")
     finally fixture.stop()
+
+    end try
 
   test("--from https：直链归档 + 双值 ⇒ via=https 账本；sha 失配拒装"):
     val fixture = FixtureHttp().start()
@@ -494,11 +544,15 @@ class PluginSourceInstallSpec extends FunSuite:
       val tampered = zip ++ Array[Byte](0)
       fixture.serveBytes("/direct/tampered.zip", 200, tampered)
       val badSpec =
-        s"""{"kind":"https","archive":"${fixture.base}/direct/tampered.zip","sha256":"${sha256Hex(zip)}","digest":"${treeDigest(files)}"}"""
+        s"""{"kind":"https","archive":"${fixture.base}/direct/tampered.zip","sha256":"${sha256Hex(
+            zip
+          )}","digest":"${treeDigest(files)}"}"""
       val res2 = PluginSourceInstall.installFromSpecJson(badSpec).unsafeRunSync()
       assert(res2.left.toOption.exists(_.contains(PluginSourceInstall.CodeSha256Mismatch)), s"got: $res2")
       assert(!installedNames.contains(id), "拒装零半包")
     finally fixture.stop()
+
+    end try
 
   test("--from 非法 spec ⇒ SPEC_ 错误码透传（P1 解析面）"):
     val res = PluginSourceInstall.installFromSpecJson("""{"kind":"svn","url":"x"}""").unsafeRunSync()
@@ -528,6 +582,8 @@ class PluginSourceInstallSpec extends FunSuite:
       git("commit", "-q", "-m", "c1")(repo)
     repo
 
+  end mkRepo
+
   test("git 腿正例：add <repo>.git#tag ⇒ pin clone 落盘 + via=git + pin=Commit(tag, head) + 包树无 .git"):
     val repo = mkRepo("git-fixture-repo")
     git("tag", "v1")(repo)
@@ -544,7 +600,8 @@ class PluginSourceInstallSpec extends FunSuite:
         assertEquals(e.url, Some(s"$repo/.git"))
       case u => fail(s"expected Known, got: $u")
     // 包树零仓元数据（.git 剔除——扫描/digest 面）
-    val installedFiles = os.walk(home / "plugins" / "git-fixture-repo").map(_.relativeTo(home / "plugins" / "git-fixture-repo").toString)
+    val installedFiles =
+      os.walk(home / "plugins" / "git-fixture-repo").map(_.relativeTo(home / "plugins" / "git-fixture-repo").toString)
     assert(!installedFiles.exists(_.startsWith(".git")), s".git 必须剔除，got: $installedFiles")
 
   test("git 腿反例：无 pin ⇒ GIT_PIN_REQUIRED（浮动 HEAD 退役）；tag 被挪 ⇒ GIT_TAG_MOVED"):

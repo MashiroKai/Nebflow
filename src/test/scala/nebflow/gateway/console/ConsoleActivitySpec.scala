@@ -109,3 +109,4 @@ class ConsoleActivitySpec extends FunSuite:
     assertEquals(ConsoleActivity.PolicyOpen, "open")
     assertEquals(ConsoleActivity.DefaultWindowSec, 900L)
   }
+end ConsoleActivitySpec

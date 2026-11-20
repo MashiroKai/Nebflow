@@ -11,7 +11,7 @@ class ReaderAnnoStoreSpec extends FunSuite:
     val cases = List(
       os.temp.dir(),
       os.Path(os.temp.dir().toString + "/"), // trailing slash
-      os.temp.dir() / "sub dir"              // spaces
+      os.temp.dir() / "sub dir" // spaces
     )
     for root <- cases do
       val p = ReaderAnnoStore.storePath(root)

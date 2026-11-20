@@ -41,8 +41,13 @@ class SessionSearchScopeSpec extends CatsEffectSuite:
 
   test("① 判据：8 个后台族逐族 = 后台；uuid 主会话 / 索引登记名 = 主会话") {
     val bg = List(
-      "delegate-nebflow-1a2b3c4d", "subtask-1a2b3c4d", "subagent-1a2b3c4d",
-      "workflow-1a2b3c4d", "node-1a2b3c4d", "dispatcher-p1", "external-codex-7cf37283",
+      "delegate-nebflow-1a2b3c4d",
+      "subtask-1a2b3c4d",
+      "subagent-1a2b3c4d",
+      "workflow-1a2b3c4d",
+      "node-1a2b3c4d",
+      "dispatcher-p1",
+      "external-codex-7cf37283",
       "dag-release-be-coder-1a2b3c"
     )
     bg.foreach(sid => assert(SessionScope.isBackgroundAgentSession(sid), clue(sid)))
@@ -50,8 +55,8 @@ class SessionSearchScopeSpec extends CatsEffectSuite:
 
     val main = List(
       "d7c3cb54-dd90-4f3f-bbf6-e7898c425cff", // 主会话（uuid）
-      "team-abc",                              // MailTool 前端路由标记，非会话族
-      "ask-verify-001"                         // 非族前缀 ⇒ 保守留面（宁多不漏）
+      "team-abc", // MailTool 前端路由标记，非会话族
+      "ask-verify-001" // 非族前缀 ⇒ 保守留面（宁多不漏）
     )
     main.foreach(sid => assert(SessionScope.isMainSession(sid), clue(sid)))
 
@@ -86,7 +91,10 @@ class SessionSearchScopeSpec extends CatsEffectSuite:
     assert(start >= 0, "utils.js 里找不到 isBgAgentId（前端判据改名/移位 ⇒ 本门需重新 pin）")
     val body = js.substring(start, math.min(js.length, start + 800))
     val found = "id\\.startsWith\\(['\"]([a-z-]+)['\"]\\)".r
-      .findAllMatchIn(body).map(_.group(1)).toList.distinct
+      .findAllMatchIn(body)
+      .map(_.group(1))
+      .toList
+      .distinct
     assert(found.nonEmpty, s"未从 isBgAgentId 解析出前缀：${body.take(200)}")
     found.foreach { p =>
       assert(SessionScope.BackgroundAgentPrefixes.contains(p), clue(s"前端 bg 族 $p 未进搜索排除表"))
@@ -99,8 +107,10 @@ class SessionSearchScopeSpec extends CatsEffectSuite:
     val adapter = new ChatSearchAdapter(sessionsDir)
     val kw = "口径关键词OVERRUN"
     def write(sid: String): Unit =
-      os.write(sessionsDir / s"$sid.ui.json",
-        List[UiMessage](UiMessage.User(text = kw, timestamp = 1000L)).asJson.noSpaces)
+      os.write(
+        sessionsDir / s"$sid.ui.json",
+        List[UiMessage](UiMessage.User(text = kw, timestamp = 1000L)).asJson.noSpaces
+      )
 
     write("delegate-nebflow-1a2b3c4d")
     write("d7c3cb54-dd90-4f3f-bbf6-e7898c425cff")
@@ -122,29 +132,48 @@ class SessionSearchScopeSpec extends CatsEffectSuite:
   test("④ 查询收口：旧库残留（后台会话文档）零命中、total=0；主会话照常命中") {
     val adapter = new ChatSearchAdapter(sessionsDir)
     val kw = "残留关键词彗星"
-    os.write(sessionsDir / "d7c3cb54-dd90-4f3f-bbf6-e7898c425cff.ui.json",
-      List[UiMessage](UiMessage.User(text = s"main $kw", timestamp = 2000L)).asJson.noSpaces)
+    os.write(
+      sessionsDir / "d7c3cb54-dd90-4f3f-bbf6-e7898c425cff.ui.json",
+      List[UiMessage](UiMessage.User(text = s"main $kw", timestamp = 2000L)).asJson.noSpaces
+    )
 
     SearchIndexService.unsafeResetForTests()
     SearchIndexService.unsafeRegisterInMemory(adapter)
     // 主会话：走 adapter 正常抽取
-    SearchIndexService.unsafeInsertDocs("chat",
-      adapter.extractSession("d7c3cb54-dd90-4f3f-bbf6-e7898c425cff").getOrElse(Nil))
+    SearchIndexService.unsafeInsertDocs(
+      "chat",
+      adapter.extractSession("d7c3cb54-dd90-4f3f-bbf6-e7898c425cff").getOrElse(Nil)
+    )
     // 后台会话：**绕过 adapter 直接灌库** = 模拟本批之前入库的旧库残留行
-    SearchIndexService.unsafeInsertDocs("chat", List(
-      SearchIndexService.IndexDoc(sid = "delegate-nebflow-1a2b3c4d", ord = 0, kind = "message",
-        ts = 1000L, text = s"delegate $kw", extra = """{"role":"ai"}"""),
-      SearchIndexService.IndexDoc(sid = "node-1a2b3c4d", ord = 0, kind = "message",
-        ts = 1100L, text = s"node $kw", extra = """{"role":"ai"}""")
-    ))
+    SearchIndexService.unsafeInsertDocs(
+      "chat",
+      List(
+        SearchIndexService.IndexDoc(
+          sid = "delegate-nebflow-1a2b3c4d",
+          ord = 0,
+          kind = "message",
+          ts = 1000L,
+          text = s"delegate $kw",
+          extra = """{"role":"ai"}"""
+        ),
+        SearchIndexService.IndexDoc(
+          sid = "node-1a2b3c4d",
+          ord = 0,
+          kind = "message",
+          ts = 1100L,
+          text = s"node $kw",
+          extra = """{"role":"ai"}"""
+        )
+      )
+    )
 
     for
-      all   <- SearchIndexService.query("chat", SearchIndexService.Query(kw, kinds = List("message")))
-      main  <- SearchIndexService.query("chat", SearchIndexService.Query(kw, kinds = List("message")))
-      cur   <- SearchIndexService.query("chat", SearchIndexService.Query(kw, sid = Some("node-1a2b3c4d")))
+      all <- SearchIndexService.query("chat", SearchIndexService.Query(kw, kinds = List("message")))
+      main <- SearchIndexService.query("chat", SearchIndexService.Query(kw, kinds = List("message")))
+      cur <- SearchIndexService.query("chat", SearchIndexService.Query(kw, sid = Some("node-1a2b3c4d")))
     yield
       assertEquals(all.toOption.get.hits.map(_.sid), List("d7c3cb54-dd90-4f3f-bbf6-e7898c425cff"))
-      assertEquals(all.toOption.get.total, 1)   // total 与 hits 同谓词计数，不虚高
+      assertEquals(all.toOption.get.total, 1) // total 与 hits 同谓词计数，不虚高
       // current 档（浮钮面板 scope=current）同样收口：即便 sid 明指后台会话也零命中
       assertEquals(cur.toOption.get.hits, Nil)
       assertEquals(cur.toOption.get.total, 0)
@@ -156,8 +185,10 @@ class SessionSearchScopeSpec extends CatsEffectSuite:
   test("⑤ 数据源收口：搜索范围清单只含主会话；兄弟入口（侧边栏 / 弹窗全量）行为不变") {
     val store = new SessionStore(sessionsDir, root / "tasks")
     def write(sid: String, name: String): Unit =
-      os.write(sessionsDir / s"$sid.ui.json",
-        List[UiMessage](UiMessage.User(text = name, timestamp = 1000L)).asJson.noSpaces)
+      os.write(
+        sessionsDir / s"$sid.ui.json",
+        List[UiMessage](UiMessage.User(text = name, timestamp = 1000L)).asJson.noSpaces
+      )
 
     write("d7c3cb54-dd90-4f3f-bbf6-e7898c425cff", "主会话")
     write("delegate-nebflow-1a2b3c4d", "后台 delegate")
@@ -166,17 +197,24 @@ class SessionSearchScopeSpec extends CatsEffectSuite:
 
     for
       scope <- store.listSearchScopeSessions
-      full  <- store.listSessionsIncludeUnindexed
+      full <- store.listSessionsIncludeUnindexed
       index <- store.listSessions
     yield
       // 搜索范围：只剩主会话（跨日/跨重启无关——清单来源是盘 + 索引，不按时间过滤）
       assertEquals(scope.map(_.id), List("d7c3cb54-dd90-4f3f-bbf6-e7898c425cff"))
       // 兄弟入口：全量并集不受影响（bg-agent / flow 弹窗面口径不变）
-      assertEquals(full.map(_.id).sorted, List(
-        "d7c3cb54-dd90-4f3f-bbf6-e7898c425cff", "delegate-nebflow-1a2b3c4d",
-        "node-1a2b3c4d", "subagent-1a2b3c4d").sorted)
+      assertEquals(
+        full.map(_.id).sorted,
+        List(
+          "d7c3cb54-dd90-4f3f-bbf6-e7898c425cff",
+          "delegate-nebflow-1a2b3c4d",
+          "node-1a2b3c4d",
+          "subagent-1a2b3c4d"
+        ).sorted
+      )
       // 侧边栏（索引全量；本夹具 index 为空 → 空表，恒不等于 full）
       assertEquals(index, Nil)
+    end for
   }
 
 end SessionSearchScopeSpec

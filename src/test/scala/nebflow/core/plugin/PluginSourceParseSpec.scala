@@ -10,13 +10,13 @@ import munit.FunSuite
 class PluginSourceParseSpec extends FunSuite:
 
   private val commit40 = "a" * 40
-  private val sha64    = "b" * 64
+  private val sha64 = "b" * 64
   private val digest64 = "c" * 64
 
   private def codeOf(raw: String): String =
     PluginSourceSpec.parse(raw) match
       case Left(err) => err.code
-      case Right(s)  => fail(s"expected a Left, got Right: $s")
+      case Right(s) => fail(s"expected a Left, got Right: $s")
 
   // ── 正例（三态各形态）──────────────────────────────────────
 
@@ -102,15 +102,24 @@ class PluginSourceParseSpec extends FunSuite:
       codeOf("""{"kind":"official","id":"visual-report","index":"ftp://mystand.space/index.json"}"""),
       PluginSourceSpec.CodeOfficialIndexInvalid
     )
-    assertEquals(codeOf("""{"kind":"official","id":"visual-report","index":42}"""), PluginSourceSpec.CodeOfficialIndexInvalid)
+    assertEquals(
+      codeOf("""{"kind":"official","id":"visual-report","index":42}"""),
+      PluginSourceSpec.CodeOfficialIndexInvalid
+    )
 
   test("反例: git 面（url 缺失 / url 不像 remote / 禁浮动 HEAD / pin 非 object）"):
     assertEquals(codeOf("""{"kind":"git"}"""), PluginSourceSpec.CodeGitUrlMissing)
     assertEquals(codeOf("""{"kind":"git","url":"ftp://example.com/r"}"""), PluginSourceSpec.CodeGitUrlInvalid)
     // 浮动 HEAD 禁令（§2.2B）：pin 缺失 / null / 非对象都是同一拒绝面
     assertEquals(codeOf("""{"kind":"git","url":"https://github.com/o/r.git"}"""), PluginSourceSpec.CodePinMissing)
-    assertEquals(codeOf("""{"kind":"git","url":"https://github.com/o/r.git","pin":null}"""), PluginSourceSpec.CodePinMissing)
-    assertEquals(codeOf("""{"kind":"git","url":"https://github.com/o/r.git","pin":"v1.0"}"""), PluginSourceSpec.CodePinMissing)
+    assertEquals(
+      codeOf("""{"kind":"git","url":"https://github.com/o/r.git","pin":null}"""),
+      PluginSourceSpec.CodePinMissing
+    )
+    assertEquals(
+      codeOf("""{"kind":"git","url":"https://github.com/o/r.git","pin":"v1.0"}"""),
+      PluginSourceSpec.CodePinMissing
+    )
 
   test("反例: git pin 面（commit 缺失 / 非 40-hex / tag 空白）与 path 围栏（绝对 / .. 段）"):
     val u = """{"kind":"git","url":"https://github.com/o/r.git","pin":PH}"""
@@ -122,8 +131,14 @@ class PluginSourceParseSpec extends FunSuite:
       PluginSourceSpec.CodePinTagInvalid
     )
     val p = """{"kind":"git","url":"https://github.com/o/r.git","pin":{"commit":"COMMIT"},"path":PATH}"""
-    assertEquals(codeOf(p.replace("COMMIT", commit40).replace("PATH", """"/etc/passwd"""")), PluginSourceSpec.CodePathInvalid)
-    assertEquals(codeOf(p.replace("COMMIT", commit40).replace("PATH", """"../escape"""")), PluginSourceSpec.CodePathInvalid)
+    assertEquals(
+      codeOf(p.replace("COMMIT", commit40).replace("PATH", """"/etc/passwd"""")),
+      PluginSourceSpec.CodePathInvalid
+    )
+    assertEquals(
+      codeOf(p.replace("COMMIT", commit40).replace("PATH", """"../escape"""")),
+      PluginSourceSpec.CodePathInvalid
+    )
     assertEquals(codeOf(p.replace("COMMIT", commit40).replace("PATH", """"a//b"""")), PluginSourceSpec.CodePathInvalid)
 
   test("反例: https 面（archive / sha256 / digest / sizeBytes 各自的错误码）"):

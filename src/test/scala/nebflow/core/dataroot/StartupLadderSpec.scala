@@ -63,7 +63,9 @@ class StartupLadderSpec extends munit.FunSuite:
     assertEquals(NeblinkEnrollment.accountCutoverRefusal(flat, None, true), None)
     // 未登录层：fail-closed，稳定码 = enroll-refused-no-account-root（该层不铸设备身份，契约 §6.2）
     assert(
-      NeblinkEnrollment.accountCutoverRefusal(unauth, Some(Sub), true).exists(_.startsWith("enroll-refused-no-account-root:")),
+      NeblinkEnrollment
+        .accountCutoverRefusal(unauth, Some(Sub), true)
+        .exists(_.startsWith("enroll-refused-no-account-root:")),
       "未登录层拒绝必须带稳定码头（分类面按它映射三段式）"
     )
     // 未登录层 + 显式无身份：同样拒（有主根收无主凭据 = 串号面）

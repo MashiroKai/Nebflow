@@ -426,7 +426,7 @@ class FreezeSilenceSpec extends CatsEffectSuite:
         parentRef
       )
       // 控制行：配置失效族（403 无订阅）同环境冻结——供应商恢复后它**必须**仍冻着
-      //（改订阅要人，自动续跑一个必然再失败的会话只会烧唤醒次数）。
+      // （改订阅要人，自动续跑一个必然再失败的会话只会烧唤醒次数）。
       configCmds <- Ref.of[IO, List[AgentCommand]](Nil)
       _ <- freezeDelegate(
         resources,

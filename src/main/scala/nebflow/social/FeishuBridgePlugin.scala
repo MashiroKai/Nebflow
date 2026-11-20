@@ -225,8 +225,10 @@ final class FeishuBridgePlugin(
   private[social] val turnTextRef = cats.effect.Ref.unsafe[IO, Map[String, Int]](Map.empty)
   private[social] val turnOutboundRef = cats.effect.Ref.unsafe[IO, Set[String]](Set.empty)
 
-  /** 本轮出站已发起——段级/尾段在**入队时刻**记账（异步 runner 完成时刻太晚，
-    * `done` 会读到 0 并误报）。 */
+  /**
+   * 本轮出站已发起——段级/尾段在**入队时刻**记账（异步 runner 完成时刻太晚，
+   * `done` 会读到 0 并误报）。
+   */
   private def markTurnOutbound(sessionId: String): IO[Unit] =
     turnOutboundRef.update(_ + sessionId)
 
@@ -724,6 +726,7 @@ final class FeishuBridgePlugin(
         s"feishu bridge: handshake failed — registered but unconnected region=$region " +
           s"detail=${Option(res.detail).getOrElse("")}"
       )
+    end if
 
   end openListener
 
@@ -784,8 +787,12 @@ final class FeishuBridgePlugin(
   def onAgentEvent(sessionId: String, event: Json): IO[Unit] =
     val c = event.hcursor
     val rememberSource =
-      c.downField("isRoot").as[Boolean].toOption.fold(IO.unit)(root =>
-        sourceRootRef.update(m => if m.get(sessionId).contains(root) then m else m.updated(sessionId, root)))
+      c.downField("isRoot")
+        .as[Boolean]
+        .toOption
+        .fold(IO.unit)(root =>
+          sourceRootRef.update(m => if m.get(sessionId).contains(root) then m else m.updated(sessionId, root))
+        )
     rememberSource *> (c.downField("type").as[String].getOrElse("") match
       case "textDelta" =>
         c.downField("delta").as[String].getOrElse("") match
@@ -831,7 +838,7 @@ final class FeishuBridgePlugin(
             val verdict = OutputBlock.extractGated(text, root)
             val tail = verdict match
               case OutputBlock.Extracted(inner) => inner
-              case _                            => ""
+              case _ => ""
             val textLeg =
               if tail.trim.isEmpty then IO.unit
               else markTurnOutbound(sessionId) *> pacer.enqueue(reply(sessionId, tail))
@@ -850,7 +857,7 @@ final class FeishuBridgePlugin(
                   else
                     verdict match
                       case OutputBlock.Extracted(_) => IO.unit // 空块 ⇒ 无话可说，不是丢失
-                      case v                        => noteTurnSuppressed(sessionId, v, had)
+                      case v => noteTurnSuppressed(sessionId, v, had)
                 }
               }
             richLeg *> textLeg *> lossFace
@@ -1090,20 +1097,26 @@ final class FeishuBridgePlugin(
                 )
                 if delivered then IO(failed)
                 else
-                  logger.warn(
-                    s"feishu bridge: ask attachment media leg did not deliver (${results.count(_.ok)}/${results.size} calls ok) — keeping the path line"
-                  ).as(failed :+ p)
+                  logger
+                    .warn(
+                      s"feishu bridge: ask attachment media leg did not deliver (${results.count(_.ok)}/${results.size} calls ok) — keeping the path line"
+                    )
+                    .as(failed :+ p)
               }
           case RichKind.Unknown(reason) =>
-            logger.warn(
-              "feishu bridge: ask attachment not carriable by the media leg — keeping the path line"
-            ).as(failed :+ p)
+            logger
+              .warn(
+                "feishu bridge: ask attachment not carriable by the media leg — keeping the path line"
+              )
+              .as(failed :+ p)
           case other =>
             // Card cannot occur on an ask attachment (the classification reads
             // an empty content here) — this arm is the total-function backstop.
-            logger.warn(
-              "feishu bridge: ask attachment not delivered — keeping the path line"
-            ).as(failed :+ p)
+            logger
+              .warn(
+                "feishu bridge: ask attachment not delivered — keeping the path line"
+              )
+              .as(failed :+ p)
         end match
       }
     }
@@ -1441,18 +1454,20 @@ final class FeishuBridgePlugin(
    * 语义，同一实现源。
    */
   private def flushSegment(sessionId: String): IO[Unit] =
-    isRootSource(sessionId).flatMap(root => pendingRef.modify { m =>
-      val text = m.getOrElse(sessionId, "")
-      OutputBlock.extractGated(text, root) match
-        case OutputBlock.Unbalanced => (m, IO.unit)
-        case OutputBlock.NoBlocks => (m - sessionId, IO.unit)
-        case OutputBlock.Extracted(inner) =>
-          (
-            m - sessionId,
-            if inner.trim.isEmpty then IO.unit
-            else markTurnOutbound(sessionId) *> pacer.enqueueAsync(reply(sessionId, inner, isSegment = true))
-          )
-    }.flatten)
+    isRootSource(sessionId).flatMap(root =>
+      pendingRef.modify { m =>
+        val text = m.getOrElse(sessionId, "")
+        OutputBlock.extractGated(text, root) match
+          case OutputBlock.Unbalanced => (m, IO.unit)
+          case OutputBlock.NoBlocks => (m - sessionId, IO.unit)
+          case OutputBlock.Extracted(inner) =>
+            (
+              m - sessionId,
+              if inner.trim.isEmpty then IO.unit
+              else markTurnOutbound(sessionId) *> pacer.enqueueAsync(reply(sessionId, inner, isSegment = true))
+            )
+      }.flatten
+    )
 
   /**
    * 逐段即时推送批：段级失败的「注明」腿——失败的段不补发（超时可能已送达，
@@ -1514,9 +1529,9 @@ final class FeishuBridgePlugin(
         case None => IO.unit // 不是飞书流量：本就无所欠
         case Some(chatId) =>
           val label = verdict match
-            case OutputBlock.NoBlocks   => "no-report-block"
+            case OutputBlock.NoBlocks => "no-report-block"
             case OutputBlock.Unbalanced => "unbalanced-report-block"
-            case _                      => "empty-report-block"
+            case _ => "empty-report-block"
           noteOutboundFailure(
             sessionId,
             chatId,
@@ -1579,7 +1594,8 @@ final class FeishuBridgePlugin(
             "strikes" -> rest.asJson
           )
         )
-    }.handleError(_ => false).as(())
+    }.handleError(_ => false)
+      .as(())
 
   private def strikes(): List[Json] =
     SocialChannels

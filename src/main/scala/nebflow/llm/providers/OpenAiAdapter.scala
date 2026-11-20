@@ -91,7 +91,9 @@ class OpenAiAdapter(
           // GLM uses its own `thinking` parameter, not OpenAI's `reasoning_effort`
           Json.obj("thinking" -> Json.obj("type" -> "enabled".asJson))
         else
-          resolved.filter(_.enabled).flatMap(_.effort)
+          resolved
+            .filter(_.enabled)
+            .flatMap(_.effort)
             .filter(e => effortAllowlist.flatMap(_.get(endpoint)).flatMap(_.get(model)).exists(_.contains(e)))
             .fold(Json.obj())(e => Json.obj("reasoning_effort" -> e.wireName.asJson))
       case _ => Json.obj()
@@ -108,7 +110,8 @@ class OpenAiAdapter(
     if text != null && text.nonEmpty then Some(Json.obj("role" -> "system".asJson, "content" -> text.asJson))
     else None
 
-  /** Shared by streaming and non-streaming sends; context follows all tool results.
+  /**
+   * Shared by streaming and non-streaming sends; context follows all tool results.
    *
    * cache-warmup 批（2026-11-06）：临时段顺序 = REQUEST-ONLY 提醒段 → systemDynamic，
    * 一律排在持久历史之后（OpenAI 兼容面是隐式前缀缓存：拼在尾部即保前缀逐字节
@@ -168,20 +171,22 @@ class OpenAiAdapter(
 
           if toolUseParts.nonEmpty then
             List(
-              Json.obj(
-                "role" -> "assistant".asJson,
-                "content" -> (if textParts.nonEmpty then textParts.mkString("\n").asJson else Json.Null),
-                "tool_calls" -> Json.fromValues(toolUseParts.map { case (id, name, input) =>
-                  Json.obj(
-                    "id" -> id.asJson,
-                    "type" -> "function".asJson,
-                    "function" -> Json.obj(
-                      "name" -> name.asJson,
-                      "arguments" -> Json.fromJsonObject(input).noSpaces.asJson
+              Json
+                .obj(
+                  "role" -> "assistant".asJson,
+                  "content" -> (if textParts.nonEmpty then textParts.mkString("\n").asJson else Json.Null),
+                  "tool_calls" -> Json.fromValues(toolUseParts.map { case (id, name, input) =>
+                    Json.obj(
+                      "id" -> id.asJson,
+                      "type" -> "function".asJson,
+                      "function" -> Json.obj(
+                        "name" -> name.asJson,
+                        "arguments" -> Json.fromJsonObject(input).noSpaces.asJson
+                      )
                     )
-                  )
-                })
-              ).deepMerge(reasoningText.map(r => Json.obj("reasoning_content" -> r.asJson)).getOrElse(Json.obj()))
+                  })
+                )
+                .deepMerge(reasoningText.map(r => Json.obj("reasoning_content" -> r.asJson)).getOrElse(Json.obj()))
             )
           else if toolResultParts.nonEmpty then
             // OpenAI requires each tool result to be a separate message with its own tool_call_id
@@ -210,6 +215,8 @@ class OpenAiAdapter(
           end if
       end match
     }
+
+  end toOpenAiMessages
 
   private def toolDefJson(t: ToolDefinition): Json =
     val base = Json.obj(
@@ -354,7 +361,10 @@ class OpenAiAdapter(
           .as[String]
           .toOption
           .orElse(
-            tc.hcursor.downField("function").downField("arguments").focus
+            tc.hcursor
+              .downField("function")
+              .downField("arguments")
+              .focus
               .filter(j => j.isObject || j.isArray)
               .map(_.noSpaces)
           )
@@ -494,7 +504,12 @@ class OpenAiAdapter(
                           // cache-hit 批（2026-11-06）：非流腿此前丢 cached_tokens（只有流腿解析
                           // prompt_tokens_details）——命中率聚合读数要求两腿同口径。
                           val cachedTokens =
-                            u.hcursor.downField("prompt_tokens_details").downField("cached_tokens").as[Option[Int]].toOption.flatten
+                            u.hcursor
+                              .downField("prompt_tokens_details")
+                              .downField("cached_tokens")
+                              .as[Option[Int]]
+                              .toOption
+                              .flatten
                           TokenUsage(
                             inputTokens = u.hcursor.downField("prompt_tokens").as[Int].getOrElse(0),
                             outputTokens = u.hcursor.downField("completion_tokens").as[Int].getOrElse(0),
@@ -540,6 +555,7 @@ class OpenAiAdapter(
                       }
                 }
         }
+    end attempt
 
     // 单 provider 失败不许打死整批（作者令 17:45 第 3 条）：形状可自愈的一类
     // 失败就地降级重试一次（补回 reasoning_content），再谈向上抛。
@@ -571,12 +587,14 @@ class OpenAiAdapter(
         .getOrElse(Nil)
         .flatMap { b =>
           WireShape.classifyBlock(b) match
-            case WireShape.Block.Text(t)       => Some(t)
+            case WireShape.Block.Text(t) => Some(t)
             case WireShape.Block.Thinking(_, _) => None
-            case WireShape.Block.Opaque(_)     => None
+            case WireShape.Block.Opaque(_) => None
         }
         .mkString("")
     }
+
+  end textOfMessage
 
   def sendMessageStream(params: SendMessageParams): Stream[IO, StreamChunk] =
     def attempt(p: SendMessageParams, passback: Boolean): Stream[IO, StreamChunk] =
@@ -651,6 +669,7 @@ class OpenAiAdapter(
                     .onFinalize(flushEmptyIdNameSummaries(toolCallState, p))
           }
         }
+    end attempt
 
     // 降级重试（同 anthropic 面接缝论证：4xx 在响应头即判定，零块已发出 ⇒ 重试
     // 不会拼接两家输出）。
@@ -660,14 +679,16 @@ class OpenAiAdapter(
             e.statusCode.code,
             Option(e.body).map(_.toString).getOrElse("")
           ) =>
-        Stream.eval(
-          nebflow.shared.NebflowLogger
-            .forName("nebflow.llm.openai")
-            .warn(
-              s"thinking-passback rejection — degraded retry with reasoning_content replay: " +
-                WireShape.routeLine(providerId, params.model)
-            )
-        ).drain ++ attempt(thinkingPassbackParams(params), passback = true)
+        Stream
+          .eval(
+            nebflow.shared.NebflowLogger
+              .forName("nebflow.llm.openai")
+              .warn(
+                s"thinking-passback rejection — degraded retry with reasoning_content replay: " +
+                  WireShape.routeLine(providerId, params.model)
+              )
+          )
+          .drain ++ attempt(thinkingPassbackParams(params), passback = true)
       case other => Stream.raiseError(other)
     }
 
@@ -738,18 +759,23 @@ class OpenAiAdapter(
               // 字符串 ⇒ 数组形态的正文整段丢失。统一走 WireShape 降级。
               // Whitespace-only deltas carry Markdown boundaries and must survive streaming.
               val textChunks =
-                d.hcursor.downField("content").as[String].toOption
+                d.hcursor
+                  .downField("content")
+                  .as[String]
+                  .toOption
                   .orElse {
                     d.hcursor
                       .downField("content")
                       .as[List[Json]]
                       .toOption
-                      .map(_.flatMap(b =>
-                        WireShape.classifyBlock(b) match
-                          case WireShape.Block.Text(t)    => Some(t)
-                          case WireShape.Block.Thinking(_, _) => None
-                          case WireShape.Block.Opaque(_)  => None
-                      ).mkString(""))
+                      .map(
+                        _.flatMap(b =>
+                          WireShape.classifyBlock(b) match
+                            case WireShape.Block.Text(t) => Some(t)
+                            case WireShape.Block.Thinking(_, _) => None
+                            case WireShape.Block.Opaque(_) => None
+                        ).mkString("")
+                      )
                   }
                   .filter(_.nonEmpty)
                   .toList

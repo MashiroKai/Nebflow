@@ -41,26 +41,26 @@ private[gateway] object ReaderAnnoStore:
   /** load 应答帧（content = 件文本；None = 件不存在/空库起步）。 */
   def loadedFrame(reqId: String, content: Option[String]): io.circe.Json =
     io.circe.Json.obj(
-      "type"    -> "readerAnno".asJson,
-      "reqId"   -> reqId.asJson,
-      "ok"      -> true.asJson,
+      "type" -> "readerAnno".asJson,
+      "reqId" -> reqId.asJson,
+      "ok" -> true.asJson,
       "content" -> content.asJson
     )
 
   /** save 成功应答帧。 */
   def savedFrame(reqId: String): io.circe.Json =
     io.circe.Json.obj(
-      "type"  -> "readerAnno".asJson,
+      "type" -> "readerAnno".asJson,
       "reqId" -> reqId.asJson,
-      "ok"    -> true.asJson
+      "ok" -> true.asJson
     )
 
   /** 失败应答帧（load/save 共用；拒绝也落 ok:false + error，禁静默）。 */
   def errorFrame(reqId: String, error: String): io.circe.Json =
     io.circe.Json.obj(
-      "type"  -> "readerAnno".asJson,
+      "type" -> "readerAnno".asJson,
       "reqId" -> reqId.asJson,
-      "ok"    -> false.asJson,
+      "ok" -> false.asJson,
       "error" -> error.asJson
     )
 

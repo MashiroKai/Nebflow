@@ -212,7 +212,8 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
           )
         )
         plain = AgentCommand.ImmediateInput("plain-user-text", source = None, fromUser = true)
-        preparedCarrier <- nebflow.core.mail.ProducerInput.persist(sid, carrier, nebflow.core.mail.ProducerInput.identity(sid, "busy-batch"))
+        preparedCarrier <- nebflow.core.mail.ProducerInput
+          .persist(sid, carrier, nebflow.core.mail.ProducerInput.identity(sid, "busy-batch"))
         _ <- ref ! preparedCarrier
         _ <- ref ! plain
         // R1：**队列层读数**（真持久化快照，非内存探测）——载体占 **1 槽**，载荷 2 件
@@ -235,7 +236,13 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
         _ <- IO.sleep(700.millis)
         afterCarrier <- requests.get
         accepted <- nebflow.core.mail.InputMailbox.deliveredContains(sid, preparedCarrier.clientMessageId.toSet)
-        _ <- IO(assertEquals(accepted, preparedCarrier.clientMessageId.toSet, "batch intake is durably acknowledged after transcript checkpoint"))
+        _ <- IO(
+          assertEquals(
+            accepted,
+            preparedCarrier.clientMessageId.toSet,
+            "batch intake is durably acknowledged after transcript checkpoint"
+          )
+        )
         framesAfterCarrier <- frames.get
         queueAfterCarrier <- CompactionQueueStore.load(sid).map(_.map(_.imms).getOrElse(Nil))
 
@@ -454,12 +461,16 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
 
         // phase 2: the window-flush carrier arrives while the agent is IDLE
         // (the production-nominal arrival for node notifications).
-        preparedCarrier <- nebflow.core.mail.ProducerInput.persist(sid, carrierPayload(
-          List(
-            ("BODY_ONE", "node-1", "completed", "rootnotifyproj/node-1"),
-            ("BODY_TWO", "node-2", "failed", "rootnotifyproj/node-2")
-          )
-        ), nebflow.core.mail.ProducerInput.identity(sid, "idle-batch"))
+        preparedCarrier <- nebflow.core.mail.ProducerInput.persist(
+          sid,
+          carrierPayload(
+            List(
+              ("BODY_ONE", "node-1", "completed", "rootnotifyproj/node-1"),
+              ("BODY_TWO", "node-2", "failed", "rootnotifyproj/node-2")
+            )
+          ),
+          nebflow.core.mail.ProducerInput.identity(sid, "idle-batch")
+        )
         _ <- ref ! preparedCarrier
         _ <- waitUntil(30.seconds, 25.millis)("carrier turn started")(
           requests.get.map(_.size >= wakesAfterTurn1 + 1)
@@ -580,6 +591,7 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
       os.remove.all(tmp)
     end try
   }
+
   test("a notification persisted before actor loss is replayed into the restored session") {
     val system = ActorSystem("producer-replay-root")
     val tmp = os.temp.dir()
@@ -593,16 +605,22 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
         frames <- Ref.of[IO, List[Json]](Nil)
         gate <- Semaphore[IO](10)
         resources <- mkResources(system, tmp, new GatedLlm(requests, gate))
-        _ <- nebflow.core.mail.ProducerInput.persist(sid,
-          AgentCommand.ImmediateInput("RECOVERED-NOTIFICATION", source = Some("node")), identity)
-        ref <- system.spawn(AgentActor(
-          agentDef = AgentDef(name = "Nebula", description = "restored root", tools = List("Read"), systemPrompt = ""),
-          resources = resources, wsSend = j => frames.update(_ :+ j), depth = 0,
-          sessionId = Some(sid), sessionName = Some("restored root")
-        ), sid)
+        _ <- nebflow.core.mail.ProducerInput
+          .persist(sid, AgentCommand.ImmediateInput("RECOVERED-NOTIFICATION", source = Some("node")), identity)
+        ref <- system.spawn(
+          AgentActor(
+            agentDef =
+              AgentDef(name = "Nebula", description = "restored root", tools = List("Read"), systemPrompt = ""),
+            resources = resources,
+            wsSend = j => frames.update(_ :+ j),
+            depth = 0,
+            sessionId = Some(sid),
+            sessionName = Some("restored root")
+          ),
+          sid
+        )
         _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Root, sid, None)))
-        _ <- waitUntil(20.seconds)("replayed input completed")(
-          frames.get.map(f => idleFrames(f).nonEmpty))
+        _ <- waitUntil(20.seconds)("replayed input completed")(frames.get.map(f => idleFrames(f).nonEmpty))
         received <- requests.get
         delivered <- nebflow.core.mail.InputMailbox.deliveredContains(sid, Set(identity))
         saved <- resources.sessionStore.loadMessagesForSession(sid)
@@ -615,6 +633,7 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
     finally
       PathUtil.setDataRoot(originalRoot)
       os.remove.all(tmp)
+    end try
   }
 
 end RootNotifyWindowExpansionSpec

@@ -28,14 +28,14 @@ object SystemReminders:
    * Collect per-turn reminders including a summary of pending scheduled
    * tasks for this session. IO because it queries the scheduled-task store.
    *
- * Cache-optimization v2: dynamic values moved OUT of the per-turn system
- * prompt are injected here instead — request-level reminders (never persisted).
- * Clock injection is not a reminder: only real-user input conversion attaches it.
+   * Cache-optimization v2: dynamic values moved OUT of the per-turn system
+   * prompt are injected here instead — request-level reminders (never persisted).
+   * Clock injection is not a reminder: only real-user input conversion attaches it.
    *
    * Reminder refactor (audit
    * finding: system reminders wasted a large token share per half-day):
- *  - time: 不属于 reminder collection；时钟只在真实用户输入转消息时附加。
- *    Mail / 节点消息 / 定时事件 / 外部事件 / 工具往返与空转轮均不产生时钟。
+   *  - time: 不属于 reminder collection；时钟只在真实用户输入转消息时附加。
+   *    Mail / 节点消息 / 定时事件 / 外部事件 / 工具往返与空转轮均不产生时钟。
    *  - tasks: team sessions only, real-user turns only (task redesign
    *    — moved from Nebula to team members); the caller supplies
    *    pre-rendered full/delta/unchanged text (change detection lives in

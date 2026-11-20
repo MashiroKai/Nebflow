@@ -28,8 +28,8 @@ import java.nio.charset.StandardCharsets
 class IndexConditionalServeSpec extends FunSuite:
 
   private val ETagH = CIString("ETag")
-  private val CCH   = CIString("Cache-Control")
-  private val INM   = "If-None-Match"
+  private val CCH = CIString("Cache-Control")
+  private val INM = "If-None-Match"
 
   private def get(inm: Option[String]): Response[IO] =
     val base = Request[IO](Method.GET, Uri.unsafeFromString("http://127.0.0.1:6138/"))

@@ -24,6 +24,7 @@ import scala.io.Source
 
 /** 评估判定。Met = 条件为真（注入）；Unmet = 未满足（静默顺延，零注入）。 */
 sealed trait ConditionVerdict
+
 object ConditionVerdict:
   case object Met extends ConditionVerdict
   case object Unmet extends ConditionVerdict
@@ -84,10 +85,7 @@ object ShellProbeEvaluator extends TaskConditionEvaluator:
         logger.warnSync(s"Condition probe timed out (${ProbeTimeoutSecs}s) — treated as unmet: ${condition.take(80)}")
         false
       else p.exitValue() == 0
-    }
-      .handleErrorWith(e =>
-        logger.warn(s"Condition probe failed — treated as unmet: ${e.getMessage}").as(false)
-      )
+    }.handleErrorWith(e => logger.warn(s"Condition probe failed — treated as unmet: ${e.getMessage}").as(false))
       .map(met => ConditionOutcome(if met then ConditionVerdict.Met else ConditionVerdict.Unmet, None))
 
 end ShellProbeEvaluator
@@ -129,24 +127,30 @@ object GitTipChangeEvaluator extends TaskConditionEvaluator:
             logger.info(s"git-tip sentinel fired for task ${task.id}: ${prev.take(12)} -> ${tip.take(12)}")
             IO.pure(ConditionOutcome(ConditionVerdict.Met, Some(tip)))
       case Left(err) =>
-        logger.warn(s"git-tip probe failed — treated as unmet: $err").as(
-          ConditionOutcome(ConditionVerdict.Unmet, None) // 失败不推进基线
-        )
+        logger
+          .warn(s"git-tip probe failed — treated as unmet: $err")
+          .as(
+            ConditionOutcome(ConditionVerdict.Unmet, None) // 失败不推进基线
+          )
     }
 
-  private def currentTip(repo: String, branch: String): IO[Either[String, String]] = IO.blocking {
-    val pb = new ProcessBuilder("git", "-C", repo, "rev-parse", branch)
-    pb.redirectErrorStream(true)
-    val p = pb.start()
-    val out = Source.fromInputStream(p.getInputStream).mkString.trim
-    val finished = p.waitFor(GitTimeoutSecs, java.util.concurrent.TimeUnit.SECONDS)
-    if !finished then
-      p.destroyForcibly()
-      Left(s"git rev-parse timed out (${GitTimeoutSecs}s): $repo#$branch")
-    else if p.exitValue() != 0 then Left(s"git rev-parse failed (${p.exitValue()}): ${out.take(160)}")
-    else if out.isEmpty then Left(s"git rev-parse returned empty output: $repo#$branch")
-    else Right(out)
-  }.handleErrorWith(e => IO.pure(Left(s"git probe error: ${e.getMessage}")))
+  end evaluate
+
+  private def currentTip(repo: String, branch: String): IO[Either[String, String]] = IO
+    .blocking {
+      val pb = new ProcessBuilder("git", "-C", repo, "rev-parse", branch)
+      pb.redirectErrorStream(true)
+      val p = pb.start()
+      val out = Source.fromInputStream(p.getInputStream).mkString.trim
+      val finished = p.waitFor(GitTimeoutSecs, java.util.concurrent.TimeUnit.SECONDS)
+      if !finished then
+        p.destroyForcibly()
+        Left(s"git rev-parse timed out (${GitTimeoutSecs}s): $repo#$branch")
+      else if p.exitValue() != 0 then Left(s"git rev-parse failed (${p.exitValue()}): ${out.take(160)}")
+      else if out.isEmpty then Left(s"git rev-parse returned empty output: $repo#$branch")
+      else Right(out)
+    }
+    .handleErrorWith(e => IO.pure(Left(s"git probe error: ${e.getMessage}")))
 
 end GitTipChangeEvaluator
 
@@ -166,8 +170,10 @@ object TaskTerminalEvaluator extends TaskConditionEvaluator:
 
   val Prefix = "task-terminal:"
 
-  /** 终态集（与 nebflow.core.project.NodeLifecycle.Terminal 同口径的本地镜像——
-    * 引包会拉进 project 层依赖，调度面只读字符串，spec 钉死四值。）。 */
+  /**
+   * 终态集（与 nebflow.core.project.NodeLifecycle.Terminal 同口径的本地镜像——
+   * 引包会拉进 project 层依赖，调度面只读字符串，spec 钉死四值。）。
+   */
   val TerminalStatuses: Set[String] = Set("completed", "failed", "cancelled", "blocked")
 
   override def handles(condition: String): Boolean = condition.trim.startsWith(Prefix)
@@ -182,30 +188,36 @@ object TaskTerminalEvaluator extends TaskConditionEvaluator:
           case Right(status) =>
             IO.pure(ConditionOutcome(ConditionVerdict.Unmet, None)) // 非终态，继续等
           case Left(err) =>
-            logger.warn(s"task-terminal probe failed — treated as unmet: $err").as(
-              ConditionOutcome(ConditionVerdict.Unmet, None)
-            )
+            logger
+              .warn(s"task-terminal probe failed — treated as unmet: $err")
+              .as(
+                ConditionOutcome(ConditionVerdict.Unmet, None)
+              )
         }
       case _ =>
         // 形态不对：恒 Unmet（一次性任务 24h 观察窗兜底转 PAUSED，不会无限转）
-        logger.warn(s"Malformed task-terminal condition \"${condition.take(80)}\" — treated as unmet").as(
-          ConditionOutcome(ConditionVerdict.Unmet, None)
-        )
+        logger
+          .warn(s"Malformed task-terminal condition \"${condition.take(80)}\" — treated as unmet")
+          .as(
+            ConditionOutcome(ConditionVerdict.Unmet, None)
+          )
 
   /** 读活动区 flow-map.json，返回目标节点 status。文件缺失/节点不存在 = Left。 */
-  private def nodeStatus(project: String, nodeId: String): IO[Either[String, String]] = IO.blocking {
-    val f = PathUtil.dataRoot / "projects" / project / ".nebflow" / "flow-map.json"
-    if !os.exists(f) then Left(s"flow map not found: $f")
-    else
-      parse(os.read(f)) match
-        case Left(err) => Left(s"flow map parse failed: ${err.getMessage}")
-        case Right(json) =>
-          val status = for
-            nodesObj <- json.hcursor.downField("nodes").focus.flatMap(_.asObject)
-            node <- nodesObj(nodeId)
-            status <- node.hcursor.get[String]("status").toOption
-          yield status
-          status.toRight(s"node \"$nodeId\" not found in flow map of \"$project\"")
-  }.handleErrorWith(e => IO.pure(Left(s"task-terminal probe error: ${e.getMessage}")))
+  private def nodeStatus(project: String, nodeId: String): IO[Either[String, String]] = IO
+    .blocking {
+      val f = PathUtil.dataRoot / "projects" / project / ".nebflow" / "flow-map.json"
+      if !os.exists(f) then Left(s"flow map not found: $f")
+      else
+        parse(os.read(f)) match
+          case Left(err) => Left(s"flow map parse failed: ${err.getMessage}")
+          case Right(json) =>
+            val status = for
+              nodesObj <- json.hcursor.downField("nodes").focus.flatMap(_.asObject)
+              node <- nodesObj(nodeId)
+              status <- node.hcursor.get[String]("status").toOption
+            yield status
+            status.toRight(s"node \"$nodeId\" not found in flow map of \"$project\"")
+    }
+    .handleErrorWith(e => IO.pure(Left(s"task-terminal probe error: ${e.getMessage}")))
 
 end TaskTerminalEvaluator

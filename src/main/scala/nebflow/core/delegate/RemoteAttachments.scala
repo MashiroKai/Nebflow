@@ -125,6 +125,7 @@ object RemoteAttachments:
    */
   trait Transport:
     def probe(target: Target, path: String): IO[Either[String, Json]]
+
     def putChunk(
       target: Target,
       path: String,
@@ -178,6 +179,7 @@ object RemoteAttachments:
             overwrite
           )
         )
+  end Transport
 
   // ============================================================
   // 送达（唯一入口）
@@ -227,6 +229,7 @@ object RemoteAttachments:
     deviceName: String,
     detail: String
   ):
+
     def render(total: Int, done: Int): ToolError =
       val landed =
         if done == 0 then "No file had landed on the device."
@@ -236,6 +239,7 @@ object RemoteAttachments:
           s"(${entry.sizeBytes} B, sha256 ${entry.sha256}): $detail. $landed Nothing was dispatched — the delegate " +
           s"was NOT started (device-leg attachments are all-or-nothing, exactly like the local leg). ($code)"
       )
+  end Failure
 
   // ============================================================
   // 单件：建位 → 探针 → 逐块 → 收口探针
@@ -299,6 +303,8 @@ object RemoteAttachments:
       }
     yield out.map(_ => peerPath)
 
+  end deliverOne
+
   /** 逐块推 + 末块整件摘要 + 收口探针（接收端从**它盘上的字节**重算）。 */
   private def pushChunks(
     entry: DelegateAttachments.Entry,
@@ -319,52 +325,54 @@ object RemoteAttachments:
       IO.blocking {
         val bytes = readRange(entry.stableCopy, chunk.offset, chunk.bytes)
         bytes -> sha256Hex(bytes)
-      }.attempt.flatMap {
-        case Left(e) =>
-          IO.pure(
-            Left(
-              mkFailure(
-                CodeInterrupted,
-                s"cannot read the stable copy on this machine (${e.getClass.getSimpleName}: ${e.getMessage})"
+      }.attempt
+        .flatMap {
+          case Left(e) =>
+            IO.pure(
+              Left(
+                mkFailure(
+                  CodeInterrupted,
+                  s"cannot read the stable copy on this machine (${e.getClass.getSimpleName}: ${e.getMessage})"
+                )
               )
             )
-          )
-        case Right((bytes, chunkSha)) =>
-          val b64 = Base64.getEncoder.encodeToString(bytes)
-          transport
-            .putChunk(
-              target,
-              peerPath,
-              b64,
-              chunk.index,
-              entry.sizeBytes,
-              chunkSize,
-              chunkSha,
-              entry.sha256,
-              overwrite = true
-            )
-            .flatMap {
-              case Right(ack) =>
-                verifyAck(entry, chunk, chunkSha, isLast = chunk.index == total - 1, ack, mkFailure)
-              case Left(err) =>
-                // 单次重试**只给传输层失败**（无结构化错误体：断流 / 超时 / 网线）。接收端的
-                // 结构化 `AttachError` 是**确定性判定**，重试只会拿到次生错误并盖掉真原因
-                // （例：整件摘要不符 ⇒ 接收端已删件 ⇒ 重试变成 OFFSET_OUT_OF_RANGE）。
-                if attempt == 0 && receiverError(err).isEmpty then
-                  logger.warn(
-                    s"RemoteAttachments: chunk ${chunk.index} of ${entry.original} failed on the device " +
-                      s"(${err.take(160)}) — retrying once"
-                  ) *> sendChunk(chunk, 1)
-                else
-                  val (code, detail) = classify(err)
-                  IO.pure(Left(mkFailure(code, s"chunk ${chunk.index} (offset ${chunk.offset}) failed: $detail")))
-            }
-      }
+          case Right((bytes, chunkSha)) =>
+            val b64 = Base64.getEncoder.encodeToString(bytes)
+            transport
+              .putChunk(
+                target,
+                peerPath,
+                b64,
+                chunk.index,
+                entry.sizeBytes,
+                chunkSize,
+                chunkSha,
+                entry.sha256,
+                overwrite = true
+              )
+              .flatMap {
+                case Right(ack) =>
+                  verifyAck(entry, chunk, chunkSha, isLast = chunk.index == total - 1, ack, mkFailure)
+                case Left(err) =>
+                  // 单次重试**只给传输层失败**（无结构化错误体：断流 / 超时 / 网线）。接收端的
+                  // 结构化 `AttachError` 是**确定性判定**，重试只会拿到次生错误并盖掉真原因
+                  // （例：整件摘要不符 ⇒ 接收端已删件 ⇒ 重试变成 OFFSET_OUT_OF_RANGE）。
+                  if attempt == 0 && receiverError(err).isEmpty then
+                    logger.warn(
+                      s"RemoteAttachments: chunk ${chunk.index} of ${entry.original} failed on the device " +
+                        s"(${err.take(160)}) — retrying once"
+                    ) *> sendChunk(chunk, 1)
+                  else
+                    val (code, detail) = classify(err)
+                    IO.pure(Left(mkFailure(code, s"chunk ${chunk.index} (offset ${chunk.offset}) failed: $detail")))
+              }
+        }
 
     def loop(rest: List[AttachContract.ChunkPlan]): IO[Either[Failure, Unit]] =
       rest match
         case Nil => IO.pure(Right(()))
-        case chunk :: tail => sendChunk(chunk, 0).flatMap {
+        case chunk :: tail =>
+          sendChunk(chunk, 0).flatMap {
             case Left(f) => IO.pure(Left(f))
             case Right(_) => loop(tail)
           }
@@ -464,6 +472,7 @@ object RemoteAttachments:
         )
       else Right(())
     IO.pure(result)
+  end verifyAck
 
   // ============================================================
   // 读数 / 分类（纯函数，spec 直测）
@@ -487,8 +496,8 @@ object RemoteAttachments:
         val detail = if text.isEmpty then "" else s" $text"
         if code == AttachContract.Codes.InsufficientDisk then
           (CodeDiskFull, s"the device reported insufficient disk space [$code]$detail")
-        else if code == AttachContract.Codes.ChunkDigestMismatch || code == AttachContract.Codes.WholeDigestMismatch then
-          (CodeDigest, s"the device recomputed the bytes it received and they do not match [$code]$detail")
+        else if code == AttachContract.Codes.ChunkDigestMismatch || code == AttachContract.Codes.WholeDigestMismatch
+        then (CodeDigest, s"the device recomputed the bytes it received and they do not match [$code]$detail")
         else if code == AttachContract.Codes.UnsupportedProtocol then
           (CodeTooOld, s"the device's engine does not speak this channel [$code]$detail")
         else (CodeRefused, s"the device's receiver refused this chunk [$code]$detail")
@@ -500,9 +509,12 @@ object RemoteAttachments:
             s"the device's engine does not implement the receiver side of this channel (${trim(msg)}) — upgrade the " +
               "engine on that device and re-dispatch"
           )
-        else if isOffline(lower) then
-          (CodeOffline, s"the device could not be reached on either leg (${trim(msg)})")
+        else if isOffline(lower) then (CodeOffline, s"the device could not be reached on either leg (${trim(msg)})")
         else (CodeInterrupted, s"the transfer broke (${trim(msg)})")
+
+    end match
+
+  end classify
 
   /** 接收端结构化错误体（`AttachContract.AttachError.toJson`）→ (code, message)。 */
   def receiverError(raw: String): Option[(String, String)] =

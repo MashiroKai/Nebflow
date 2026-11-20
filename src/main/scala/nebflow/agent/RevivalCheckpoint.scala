@@ -57,12 +57,13 @@ object RevivalCheckpoint:
 
   /** 机器可读断点读数（纯函数；spec 判红锚）。 */
   final case class Facts(
-      cursor: Int,
-      completedTurns: Int,
-      completedToolRounds: Int,
-      completedSteps: List[String],
-      lastAssistantHead: Option[String]
+    cursor: Int,
+    completedTurns: Int,
+    completedToolRounds: Int,
+    completedSteps: List[String],
+    lastAssistantHead: Option[String]
   ):
+
     /** 一句话断点事实（nudge 用；模型可见）。 */
     def describe: String =
       s"$cursor transcript messages, $completedTurns completed assistant turn(s) and " +
@@ -82,6 +83,8 @@ object RevivalCheckpoint:
         "lastAssistantHead" -> lastAssistantHead.fold(io.circe.Json.Null)(io.circe.Json.fromString)
       )
 
+  end Facts
+
   /** 首行摘要（去换行、截断；空文本 = None）。 */
   private def headOf(text: String, limit: Int = HeadChars): Option[String] =
     val line = text.linesIterator.map(_.trim).find(_.nonEmpty).getOrElse("")
@@ -94,7 +97,7 @@ object RevivalCheckpoint:
       .flatMap(_.content.toOption.getOrElse(Nil))
       .count {
         case _: ContentBlock.ToolResult => true
-        case _                          => false
+        case _ => false
       }
     Facts(
       cursor = transcript.size,
@@ -103,6 +106,8 @@ object RevivalCheckpoint:
       completedSteps = assistantTurns.reverse.flatMap(m => headOf(m.textContent)).reverse.takeRight(StepHeadLimit),
       lastAssistantHead = assistantTurns.reverse.headOption.flatMap(m => headOf(m.textContent, 200))
     )
+
+  end factsOf
 
   /**
    * 写断点台账（复活腿调用；fail-soft —— 任何故障只 WARN，复活照常继续）。

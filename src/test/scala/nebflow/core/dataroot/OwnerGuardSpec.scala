@@ -61,6 +61,8 @@ class OwnerGuardSpec extends munit.FunSuite:
       case Right(_) =>
         fail("账号与凭据 owner 不等时必须拒启 —— 静默降级 = 用 A 的凭据跑在 B 的账号根上")
 
+    end match
+
   test("V2: 凭据里没有 owner 锚（None）⇒ fail-open 放行，不新增拒绝面"):
     assertEquals(
       OwnerGuard.check(ServedSub, None),

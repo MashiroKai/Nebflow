@@ -508,6 +508,8 @@ final class NeblinkPresenceService(
         route = Some(plan.summary)
       )
 
+  end routeSkippedRound
+
   /** 档位过滤后的真拨一轮（F-D 剔除窗 + 共用负缓存 + 并发拨号的既有语义，零改动）。 */
   private def dialGatedRound(
     peer: PeerInfo,
@@ -533,7 +535,7 @@ final class NeblinkPresenceService(
         // P3：共用真源命中 ⇒ **零成本轮**（不拨任何候选、0ms）。改前这里要串行付满
         // 两个候选的预算（4500ms）才能得出同一结论。
         case Some(leftMs) => cacheSkippedRound(peer, gated, skipped, leftMs, plan)
-        case None         => liveRound(peer, toTry, skipped, id, startedAtMs, probeOnly, plan)
+        case None => liveRound(peer, toTry, skipped, id, startedAtMs, probeOnly, plan)
       }
 
   end dialGatedRound
@@ -581,6 +583,8 @@ final class NeblinkPresenceService(
         ledgerNote = None,
         route = Some(plan.summary)
       )
+
+  end cacheSkippedRound
 
   /** 真拨一轮：跑候选 → 写轮记录 → 写共用账本 → 一条结构化行（P4）。 */
   private def liveRound(
@@ -638,6 +642,8 @@ final class NeblinkPresenceService(
              else IO.unit)
         }
     }
+
+  end liveRound
 
   /**
    * P3 写面：本轮结论写回**共用账本**（`Success` ⇒ 立刻清账；全不通 ⇒ 负证据 +1 阶）。
@@ -755,7 +761,9 @@ final class NeblinkPresenceService(
                 IO.pure(DialRoundOutcome(List(endpoint), truncated = false, Nil, Some(endpoint)))
               case DialAttempt.LostRace(_, _) =>
                 // 串行口径没有竞速者：LostRace 只可能来自发布闸拒绝，按失败处理。
-                IO.pure(DialRoundOutcome(List(endpoint), truncated = false, List((endpoint, DialFailureClass.Other)), None))
+                IO.pure(
+                  DialRoundOutcome(List(endpoint), truncated = false, List((endpoint, DialFailureClass.Other)), None)
+                )
               case DialAttempt.Failed(_, failure) =>
                 dialCandidatesSerial(peer, rest, id, startedAtMs, probeOnly).map {
                   case DialRoundOutcome(attempted, truncated, failures, winner, failureReasons) =>
@@ -796,34 +804,37 @@ final class NeblinkPresenceService(
         // 每轮的本地收账表（不用字段：同一 service 可能并发服务多个设备的轮）。
         Ref.of[IO, Vector[(String, DialAttempt)]](Vector.empty).flatMap { acc =>
           val racers: List[IO[(String, DialAttempt)]] = batch.map { endpoint =>
-            dialOne(peer, endpoint, id, probeOnly, publishGate, writeStatus = false).flatMap { attempt =>
-              acc.update(_ :+ (endpoint -> attempt)) *>
-                // 首胜放行：先填 won 再返回；late loser 的 complete 是幂等的 no-op
-                //（`get` 的那臂已经拿到赢家）。
-                (attempt match
-                  case DialAttempt.Won(_) => won.complete(endpoint).void.as((endpoint, attempt))
-                  case other              => IO.pure((endpoint, other))
+            dialOne(peer, endpoint, id, probeOnly, publishGate, writeStatus = false)
+              .flatMap { attempt =>
+                acc.update(_ :+ (endpoint -> attempt)) *>
+                  // 首胜放行：先填 won 再返回；late loser 的 complete 是幂等的 no-op
+                  // （`get` 的那臂已经拿到赢家）。
+                  (attempt match
+                    case DialAttempt.Won(_) => won.complete(endpoint).void.as((endpoint, attempt))
+                    case other => IO.pure((endpoint, other)))
+              }
+              .handleErrorWith(e =>
+                // 拨号体自身异常（池满等）按失败收账，绝不让一个候选炸掉整轮。
+                val f = DialFailure(
+                  s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}",
+                  DialFailureClass.Other
                 )
-            }.handleErrorWith(e =>
-              // 拨号体自身异常（池满等）按失败收账，绝不让一个候选炸掉整轮。
-              val f = DialFailure(s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}", DialFailureClass.Other)
-              val att = DialAttempt.Failed(endpoint, f)
-              acc.update(_ :+ (endpoint -> att)) *>
-                IO.raiseError[(String, DialAttempt)](e)
-            )
+                val att = DialAttempt.Failed(endpoint, f)
+                acc.update(_ :+ (endpoint -> att)) *>
+                  IO.raiseError[(String, DialAttempt)](e)
+              )
           }
 
           def finish(winOpt: Option[String]): IO[DialRoundOutcome] =
             acc.get.flatMap { results =>
               val ordered = batch.flatMap(ep => results.collectFirst { case (e, a) if e == ep => (e, a) })
               val failures =
-                if winOpt.isDefined then
-                  ordered.collect { case (ep, DialAttempt.Failed(_, f)) => (ep, f.cls) }
+                if winOpt.isDefined then ordered.collect { case (ep, DialAttempt.Failed(_, f)) => (ep, f.cls) }
                 else
                   ordered.map {
-                    case (ep, DialAttempt.Failed(_, f))   => (ep, f.cls)
+                    case (ep, DialAttempt.Failed(_, f)) => (ep, f.cls)
                     case (ep, DialAttempt.LostRace(_, _)) => (ep, DialFailureClass.Other)
-                    case (ep, DialAttempt.Won(_))         => (ep, DialFailureClass.Other)
+                    case (ep, DialAttempt.Won(_)) => (ep, DialFailureClass.Other)
                   }
               val failureReasons = ordered.collect { case (ep, DialAttempt.Failed(_, f)) => ep -> f.reason }.toMap
               // 🔴 输者**已经在 `openConnection` 里退役了自己的那条 conn**（它根本没进
@@ -855,6 +866,10 @@ final class NeblinkPresenceService(
           IO.race(firstWin, allDone).map(_.merge).flatMap(winOpt => finish(winOpt))
         }
       }
+
+    end if
+
+  end dialCandidatesConcurrent
 
   /**
    * 拨**一条**候选，并把结局（成功 / 失败 / 输掉竞速）连同读数一起收口。
@@ -899,7 +914,8 @@ final class NeblinkPresenceService(
           case Right(_) =>
             noteEndpointSuccess(peer, endpoint) *>
               status(endpoint, None) *>
-              (if endpoint != peer.address then neblinkService.upsertPeer(peer.copy(address = endpoint)) else IO.unit) *>
+              (if endpoint != peer.address then neblinkService.upsertPeer(peer.copy(address = endpoint))
+               else IO.unit) *>
               IO.pure(DialAttempt.Won(endpoint))
           case Left(failure) if failure.reason == NeblinkPresenceService.LostDialRaceReason =>
             // 竞速输者：既不是失败也不该抢 C1 择优 ⇒ 不写 F-D 账本、不覆盖 dialStatus。
@@ -917,6 +933,8 @@ final class NeblinkPresenceService(
           )
           status(endpoint, Some(failure.reason)).as(DialAttempt.Failed(endpoint, failure))
         }
+    end match
+  end dialOne
 
   /**
    * 拨号体的线程归属读数（P2 的取数面）：拨了几次、其中几次落在 `io-compute-*` 上、
@@ -1472,7 +1490,7 @@ final class NeblinkPresenceService(
     if conn != null then conn.lastPong.set(System.currentTimeMillis())
 
   /** Called by the WS listener when a data message arrives from a peer. */
-  private[neblink] def onDataReceived(payload: Json): Unit = {
+  private[neblink] def onDataReceived(payload: Json): Unit =
     // P6 诊断探针批（2026-10-14 步2 · 可观测性修复③）：logger.info 的 IO 在同步
     // Unit 语境被丢弃 ⇒ 「presence data frame from ws」从未输出。改用 infoSync。
     // ⚠ 冲突面：本文件在作者 4 件 WIP 内。
@@ -1480,7 +1498,6 @@ final class NeblinkPresenceService(
       s"presence data frame from ws: channel=${payload.hcursor.downField("channel").as[String].toOption.getOrElse("?")} bytes=${payload.noSpaces.length}"
     )
     dispatcher.unsafeRunAndForget(neblinkService.handleDataMessage(payload))
-  }
 
   /** Check if a direct WS connection exists to the given device. */
   def isConnected(deviceId: String): Boolean =

@@ -50,11 +50,16 @@ class NfThumbLegSpec extends CatsEffectSuite:
 
   private val Immutable = "private, max-age=31536000, immutable"
 
-  /** 独立的临时 thumb 缓存目录（测试绝不写真实 <dataRoot>/cache）。返回 IO（清理挂
-   *  `guarantee`，随被测 IO 跑完才删）——与 [[withSeedFile]] 的运行语义配成一对。 */
+  /**
+   * 独立的临时 thumb 缓存目录（测试绝不写真实 <dataRoot>/cache）。返回 IO（清理挂
+   *  `guarantee`，随被测 IO 跑完才删）——与 [[withSeedFile]] 的运行语义配成一对。
+   */
   private def withCacheDir[A](test: os.Path => IO[A]): IO[A] =
     val p = os.Path(Files.createTempDirectory("nf-thumb-cache"))
-    test(p).guarantee(IO { try os.remove.all(p) catch case _: Throwable => () })
+    test(p).guarantee(IO {
+      try os.remove.all(p)
+      catch case _: Throwable => ()
+    })
 
   private def withSeedFile[A](name: String, bytes: Array[Byte])(test: Path => IO[A]): A =
     val tmp = Files.createTempDirectory("nf-thumb-src")
@@ -95,11 +100,18 @@ class NfThumbLegSpec extends CatsEffectSuite:
     val json = io.circe.parser.parse(resp.bodyText.compile.string.unsafeRunSync()).toOption.get
     val entry = json.hcursor.downField("tickets").downField(path)
     (entry.downField("t").as[String].getOrElse(""), entry.downField("cid").as[String].toOption)
+  end mint
 
   private def mintCid(path: String): String = mint(path)._2.getOrElse(sys.error(s"mint returned no cid for $path"))
 
   /** 直调路由（带注入的 thumb 缓存目录）。 */
-  private def objGet(cacheDir: os.Path, cid: String, name: String, query: String = "", extra: Request[IO] => Request[IO] = identity) =
+  private def objGet(
+    cacheDir: os.Path,
+    cid: String,
+    name: String,
+    query: String = "",
+    extra: Request[IO] => Request[IO] = identity
+  ) =
     val uri = Uri.unsafeFromString(s"/api/nf-obj/$cid/$name" + query)
     NfFileRoutes
       .nfObjRoutes(TokenRef, objects, Sessions, cacheDir)(extra(Request[IO](Method.GET, uri)))
@@ -109,8 +121,10 @@ class NfThumbLegSpec extends CatsEffectSuite:
 
   private def bodyBytes(r: org.http4s.Response[IO]): Array[Byte] =
     r.body.compile.toVector.unsafeRunSync().toArray
+
   private def header(r: org.http4s.Response[IO], name: String): String =
     r.headers.get(org.typelevel.ci.CIString(name)).map(_.head.value).getOrElse("")
+
   private def decodedSize(bytes: Array[Byte]): (Int, Int) =
     val img = ImageIO.read(new ByteArrayInputStream(bytes))
     (img.getWidth, img.getHeight)
@@ -262,3 +276,4 @@ class NfThumbLegSpec extends CatsEffectSuite:
       }
     }
   }
+end NfThumbLegSpec

@@ -163,8 +163,10 @@ object FreezeNotice:
     if head.isEmpty then None
     else DelegateFreeze.All.find(r => head.contains(s"**${DelegateFreeze.reasonLabelEn(r)}**"))
 
-  /** 回执正文里 `WHY:` 之后的摘要（族判定读真实故障形状，不只读原因码；诊断前缀剥除
-    * 后判——`trigger=` / `errorType=` 字样不得替正文选族）。 */
+  /**
+   * 回执正文里 `WHY:` 之后的摘要（族判定读真实故障形状，不只读原因码；诊断前缀剥除
+   * 后判——`trigger=` / `errorType=` 字样不得替正文选族）。
+   */
   private def receiptWhy(payload: String): String =
     Option(payload).toList.flatMap(_.split('\n')).find(_.startsWith("WHY:")).getOrElse("").take(400)
 
@@ -969,14 +971,25 @@ object FreezeNotice:
               if isWaitingRow(e) then (if i == firstIdx then List(mergedRow) else Nil) else List(e)
             }
         IO(writeWaitingAnnounces(parent, nextLedger)) *>
-          verdicts.filter { case (_, _, eff, announced) => eff.isEmpty || announced }.traverse_ {
-            case (fam, rows, eff, announced) => rows.traverse_ { row =>
-              nebflow.core.InjectionChannel.logSuppressed(parent, row.source, row.eventType,
-                row.correlationId.getOrElse(""), "frozen-waiting-ledger",
-                JsonObject("family" -> fam.asJson, "effectiveCount" -> eff.size.asJson,
-                  "alreadyAnnounced" -> announced.asJson))
+          verdicts
+            .filter { case (_, _, eff, announced) => eff.isEmpty || announced }
+            .traverse_ { case (fam, rows, eff, announced) =>
+              rows.traverse_ { row =>
+                nebflow.core.InjectionChannel.logSuppressed(
+                  parent,
+                  row.source,
+                  row.eventType,
+                  row.correlationId.getOrElse(""),
+                  "frozen-waiting-ledger",
+                  JsonObject(
+                    "family" -> fam.asJson,
+                    "effectiveCount" -> eff.size.asJson,
+                    "alreadyAnnounced" -> announced.asJson
+                  )
+                )
+              }
             }
-          }.as((out, suppressedCount))
+            .as((out, suppressedCount))
       }
     end if
 

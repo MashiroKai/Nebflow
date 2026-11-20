@@ -77,8 +77,14 @@ class CardToolReviveFaceSpec extends munit.FunSuite:
     val rows = nonAskRows
     assert(rows.nonEmpty, "the shared readings table lost its non-ask identities")
     rows.foreach { r =>
-      assert(!r.allowedHas("Card"), s"Card leaked onto a non-ask identity (allowed set): ${r.label} => ${r.allowed.toList.sorted}")
-      assert(!r.llmFaceHas("Card"), s"Card leaked onto a non-ask identity (LLM face): ${r.label} => ${r.llmFace.toList.sorted}")
+      assert(
+        !r.allowedHas("Card"),
+        s"Card leaked onto a non-ask identity (allowed set): ${r.label} => ${r.allowed.toList.sorted}"
+      )
+      assert(
+        !r.llmFaceHas("Card"),
+        s"Card leaked onto a non-ask identity (LLM face): ${r.label} => ${r.llmFace.toList.sorted}"
+      )
     }
 
   test("②c the plugin builtin whitelist and the remote-executable set cannot smuggle Card in"):

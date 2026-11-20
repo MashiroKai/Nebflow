@@ -52,15 +52,21 @@ class TerminalNotifyDedupSpec extends CatsEffectSuite:
       eventType = eventType,
       payload = s"payload $id",
       metadata = recoveredBy match
-        case Some(v) => JsonObject.fromIterable(List(
-          "taskId" -> id.asJson,
-          "agentName" -> s"agent-$id".asJson,
-          "recoveredBy" -> v.asJson
-        ))
-        case None => JsonObject.fromIterable(List(
-          "taskId" -> id.asJson,
-          "agentName" -> s"agent-$id".asJson
-        )),
+        case Some(v) =>
+          JsonObject.fromIterable(
+            List(
+              "taskId" -> id.asJson,
+              "agentName" -> s"agent-$id".asJson,
+              "recoveredBy" -> v.asJson
+            )
+          )
+        case None =>
+          JsonObject.fromIterable(
+            List(
+              "taskId" -> id.asJson,
+              "agentName" -> s"agent-$id".asJson
+            )
+          ),
       correlationId = Some(id)
     )
 
@@ -100,12 +106,11 @@ class TerminalNotifyDedupSpec extends CatsEffectSuite:
     for
       _ <- MailboxDrain.terminalNotifications(burst, ledger("root"))
       out <- MailboxDrain.terminalNotifications(burst, ledger("root"))
-    yield
-      assertEquals(
-        clue(out.filter(_.source == "delegate")),
-        Nil,
-        "already-announced members stay silent on replay"
-      )
+    yield assertEquals(
+      clue(out.filter(_.source == "delegate")),
+      Nil,
+      "already-announced members stay silent on replay"
+    )
   }
 
   test("C: a new member announces exactly once, delta only; ledger accumulates") {
@@ -125,12 +130,11 @@ class TerminalNotifyDedupSpec extends CatsEffectSuite:
   test("D: unreadable ledger fails soft — real terminal state is never swallowed") {
     os.makeDir.all(ledger("broken")) // ledger path occupied by a directory ⇒ read throws
     for out <- MailboxDrain.terminalNotifications(List(term("d1", "failed")), ledger("broken"))
-    yield
-      assertEquals(
-        clue(out.filter(_.source == "delegate")).map(_.correlationId),
-        List(Some("d1")),
-        "fail-soft: ledger failure degrades to per-event bubbles, never silence"
-      )
+    yield assertEquals(
+      clue(out.filter(_.source == "delegate")).map(_.correlationId),
+      List(Some("d1")),
+      "fail-soft: ledger failure degrades to per-event bubbles, never silence"
+    )
   }
 
   test("a new completion generation for the same delegate is announced once") {

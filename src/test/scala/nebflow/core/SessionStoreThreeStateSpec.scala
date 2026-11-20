@@ -58,7 +58,6 @@ class SessionStoreThreeStateSpec extends FunSuite:
     assert(result.isLeft)
     assertEquals(os.read(blocked / "keep"), "old")
 
-
   test("failed dirty flush keeps the pending snapshot available for a later retry"):
     val home = os.temp.dir(prefix = "ss-flush-retry")
     val store = SessionStore(home / "sessions", home / "tasks")
@@ -85,8 +84,7 @@ class SessionStoreThreeStateSpec extends FunSuite:
     // 单条目缓存 ⇒ s-1 被后续会话挤出去（loadUiMessages 走盘读路 = 收编面）。
     val store = SessionStore(home / "sessions", home / "tasks", uiCacheMaxEntries = 1)
     val io = for
-      _ <- store.appendUiMessages("s-1", List(
-        UiMessage.Ai("hello ui"), UiMessage.Ai("second line")))
+      _ <- store.appendUiMessages("s-1", List(UiMessage.Ai("hello ui"), UiMessage.Ai("second line")))
       _ <- IO.sleep(1200.millis) // debounce(500ms) flush ⇒ 落盘
       uiFile = home / "sessions" / "s-1.ui.json"
       _ = assert(os.exists(uiFile), "前置：ui.json 在场")
@@ -94,8 +92,10 @@ class SessionStoreThreeStateSpec extends FunSuite:
       _ <- store.appendUiMessages("s-2", List(UiMessage.Ai("evictor"))) // 挤出 s-1 缓存
       _ <- IO.sleep(1200.millis)
       got <- store.getUiMessages("s-1", 0, 50)
-      _ = assert(corruptNames(home / "sessions").exists(_.startsWith("s-1.ui.json.corrupt-")),
-        s"坏 ui 档必须隔离留档，实际=${os.list(home / "sessions").map(_.last).mkString(",")}")
+      _ = assert(
+        corruptNames(home / "sessions").exists(_.startsWith("s-1.ui.json.corrupt-")),
+        s"坏 ui 档必须隔离留档，实际=${os.list(home / "sessions").map(_.last).mkString(",")}"
+      )
       _ = assertEquals(got._1.size, 0, "无影子 ⇒ 隔离后按缺席（旁档+WARN 可观测，非静默）")
     yield ()
     io.unsafeRunSync()
@@ -108,18 +108,21 @@ class SessionStoreThreeStateSpec extends FunSuite:
     val idA = "11111111-2222-3333-4444-55555555555a"
     val idB = "11111111-2222-3333-4444-55555555555b"
     os.write(home / "sessions" / s"$idA.json", List.empty[Message].asJson.noSpaces)
-    os.write(home / "sessions" / s"$idB.json",
-      List(Message(MessageRole.User, Left("recovered me"), now - 1000)).asJson.noSpaces)
+    os.write(
+      home / "sessions" / s"$idB.json",
+      List(Message(MessageRole.User, Left("recovered me"), now - 1000)).asJson.noSpaces
+    )
     os.write(home / "sessions" / "_index.json", "{GARBAGE-NOT-JSON")
     val store = SessionStore(home / "sessions", home / "tasks")
     val io = for
       _ <- store.load
       sessions <- store.listSessions
-      _ = assert(corruptNames(home / "sessions").exists(_.startsWith("_index.json.corrupt-")),
-        s"坏索引必须隔离，实际=${os.list(home / "sessions").map(_.last).mkString(",")}")
+      _ = assert(
+        corruptNames(home / "sessions").exists(_.startsWith("_index.json.corrupt-")),
+        s"坏索引必须隔离，实际=${os.list(home / "sessions").map(_.last).mkString(",")}"
+      )
       ids = sessions.map(_.id).toSet
-      _ = assert(ids.contains(idA) && ids.contains(idB),
-        s"索引坏==无时代孤儿恢复必须兜住两面，实际=$ids")
+      _ = assert(ids.contains(idA) && ids.contains(idB), s"索引坏==无时代孤儿恢复必须兜住两面，实际=$ids")
     yield ()
     io.unsafeRunSync()
 
@@ -133,8 +136,10 @@ class SessionStoreThreeStateSpec extends FunSuite:
       msgs <- store.loadMessagesForSession(id)
       _ = assertEquals(msgs.size, 0)
       names = os.list(home / "sessions").map(_.last).toList
-      _ = assert(names.exists(_.startsWith(s"$id.json.corrupt-")),
-        s"旧隔离形 .corrupted.<ts> 已归一为 .corrupt-<ts> helper，实际=$names")
+      _ = assert(
+        names.exists(_.startsWith(s"$id.json.corrupt-")),
+        s"旧隔离形 .corrupted.<ts> 已归一为 .corrupt-<ts> helper，实际=$names"
+      )
       _ = assert(!names.exists(_.contains(".corrupted.")), "旧命名不再产出（单点归一）")
     yield ()
     io.unsafeRunSync()
@@ -146,8 +151,7 @@ class SessionStoreThreeStateSpec extends FunSuite:
     try
       val store = SessionStore(home / "sessions", home / "tasks", dbOverride = Some(db))
       val io = for
-        _ <- store.appendUiMessages("s-sh", List(
-          UiMessage.Ai("shadow line one"), UiMessage.Ai("shadow line two")))
+        _ <- store.appendUiMessages("s-sh", List(UiMessage.Ai("shadow line one"), UiMessage.Ai("shadow line two")))
         _ <- IO.sleep(1200.millis) // debounce flush ⇒ 写穿
         shadow <- db.readSession("s-sh", SessionEnvelope.StreamUi)
         _ = shadow match
@@ -158,15 +162,17 @@ class SessionStoreThreeStateSpec extends FunSuite:
         _ = os.write.over(home / "sessions" / "s-sh.ui.json", "[OOPS BROKEN")
         store2 = SessionStore(home / "sessions", home / "tasks", dbOverride = Some(db))
         got <- store2.getUiMessages("s-sh", 0, 50)
-        _ = assert(got._1.exists {
+        _ = assert(
+          got._1.exists {
             case ai: UiMessage.Ai => ai.text.contains("shadow line one")
             case _ => false
           },
-          s"坏 ui 档 ⇒ db 影子恢复（非空），实得 ${got._1.size} 帧")
-        _ = assert(corruptNames(home / "sessions").exists(_.startsWith("s-sh.ui.json.corrupt-")),
-          "恢复路径同样先隔离（坏≠无）")
+          s"坏 ui 档 ⇒ db 影子恢复（非空），实得 ${got._1.size} 帧"
+        )
+        _ = assert(corruptNames(home / "sessions").exists(_.startsWith("s-sh.ui.json.corrupt-")), "恢复路径同样先隔离（坏≠无）")
       yield ()
       io.unsafeRunSync()
     finally db.close()
+    end try
 
 end SessionStoreThreeStateSpec

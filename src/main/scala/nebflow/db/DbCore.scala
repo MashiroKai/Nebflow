@@ -4,8 +4,7 @@ import cats.effect.IO
 import cats.effect.kernel.Deferred
 import io.circe.syntax.*
 import io.circe.{Json, parser}
-import nebflow.db.format.{EventEnvelope, GuardDocs, PendingRecord, ScheduleRecord,
-  SessionEnvelope}
+import nebflow.db.format.{EventEnvelope, GuardDocs, PendingRecord, ScheduleRecord, SessionEnvelope}
 import org.slf4j.LoggerFactory
 
 import java.nio.file.{Files, Path}
@@ -43,8 +42,7 @@ object Db:
     try
       // V1 补课：启动清扫 orphan tmp（进程崩溃残留 *.tmp-*）。
       val swept = WriteFace.sweepOrphanTmp(dbRoot)
-      if swept.nonEmpty then
-        DbCore.log.warn("orphan tmp swept at open: {} file(s) — {}", swept.size, swept)
+      if swept.nonEmpty then DbCore.log.warn("orphan tmp swept at open: {} file(s) — {}", swept.size, swept)
       // §3.11 步 2：计数器（缺+树有数据 / 坏 ⇒ 拒启——不得从 0 重号）。
       val counter = SeqCounter.open(
         dbRoot.resolve("seq").resolve("counter.json"),
@@ -64,6 +62,7 @@ object Db:
       case e: Throwable =>
         lock.release()
         throw e
+    end try
   }
 
   /** db 树是否已承载数据（排除锁档与 seq/ 自身——「只有锁没有计数器」= 全新根）。 */
@@ -113,6 +112,7 @@ final case class SessionIndex(
 ):
   def totalLines: Long = shards.map(_.lines).sum
   def totalBytes: Long = shards.map(_.bytes).sum
+
 object SessionIndex:
   final case class ShardIndex(no: Int, lines: Long, bytes: Long)
 
@@ -127,6 +127,7 @@ final case class VerifyReport(
   corrupt: List[String],
   idxFresh: Boolean
 ):
+
   def ok: Boolean =
     dupSeq.isEmpty && nonMonotonic.isEmpty && orphanTmp == 0 && corrupt.isEmpty &&
       idxFresh && counterNext > maxSeqSeen
@@ -145,68 +146,102 @@ final case class DbStats(
 trait DbWriteFace:
   /** 事件流追加（事实面：PerRecord fsync）。返回全局 seq。 */
   def appendEvent(event: Json, dedupKey: Option[String]): IO[Long]
+
   /** 会话消息追加（stream ∈ llm|ui；ui = Batched 档、llm = PerRecord 档）。 */
   def appendMessage(sessionId: String, stream: String, payload: Json): IO[Long]
+
   /** 压缩点行（进 llm 流；payload = beforeRef/afterRef/tokens，快照本体另由 writeSnapshot 落）。 */
-  def appendCompactPoint(sessionId: String, beforeRef: String, afterRef: String,
-    tokens: Long): IO[Long]
+  def appendCompactPoint(sessionId: String, beforeRef: String, afterRef: String, tokens: Long): IO[Long]
+
   /** 压缩前后快照整档写（五步写；返回分配的快照号 n → `snapshots/<n>.json`）。 */
   def writeSnapshot(sessionId: String, content: String): IO[Int]
+
   /** 待审单开单（payload 只入摘要；返回 seq）。 */
   def openPending(card: PendingRecord.PendingCard): IO[Long]
+
   /** 待审单闭单（追加决议事件行，不改写原行；目标不在/已闭 ⇒ false，幂等）。 */
-  def closePending(stream: PendingStream, requestId: String, closedBy: String,
-    closeReason: String, now: Long): IO[Boolean]
+  def closePending(
+    stream: PendingStream,
+    requestId: String,
+    closedBy: String,
+    closeReason: String,
+    now: Long
+  ): IO[Boolean]
+
   /** 调度任务行追加（taskDef 须携带 id；复活 = 重新 append 同 id 完整行——天然 upsert）。 */
   def appendScheduleTask(sessionId: String, taskDef: Json, now: Long): IO[Long]
+
   /** 调度任务逻辑删除（追加 tombstone 行；无该活任务 ⇒ false）。 */
   def tombstoneScheduleTask(sessionId: String, taskId: String, now: Long): IO[Boolean]
+
   /** notify-guard 小档写（锁内五步整档；坏档在场 ⇒ 写拒绝〔V3〕——先隔离）。 */
   def writeNotifyGuard(doc: GuardDocs.NotifyGuardDoc): IO[Unit]
+
   /** provider-avoid 小档写（同上）。 */
   def writeAvoidGuard(doc: GuardDocs.AvoidGuardDoc): IO[Unit]
+
   /** Batched 档收口 flush（rotate/close 之外的手动落盘点）。 */
   def flush(): IO[Unit]
+
+end DbWriteFace
 
 /** 读面 trait（D-3 稳定面之二；全部三态）。 */
 trait DbReadFace:
   /** 事件流读（logical=true 过滤已 tombstone 单位；撕裂尾显式计数；中间坏帧 ⇒ Corrupt）。 */
   def readEvents(fromSeq: Long, limit: Int, logical: Boolean): IO[ReadResult[StreamRead[EventEnvelope]]]
+
   /** 会话流读（坏帧 ⇒ Corrupt；撕裂尾计数）。 */
   def readSession(sessionId: String, stream: String): IO[ReadResult[StreamRead[SessionEnvelope]]]
+
   /** 快照整档读（三态；Present = 原文文本）。 */
   def readSnapshot(sessionId: String, n: Int): IO[ReadResult[String]]
+
   /** 待审单读（两文件面之一；不可再生面——Corrupt ⇒ 显式拒绝处置）。 */
   def readPending(stream: PendingStream): IO[ReadResult[StreamRead[PendingRecord]]]
+
   /** 调度原始行读。 */
   def readSchedule(sessionId: String): IO[ReadResult[StreamRead[ScheduleRecord]]]
+
   /** 调度逻辑视图（同 id 最后一行定生死；tombstone 行不出现）。 */
   def liveScheduleTasks(sessionId: String): IO[ReadResult[List[ScheduleRecord]]]
+
   /** notify-guard 读（三态）。 */
   def readNotifyGuard(source: String): IO[ReadResult[GuardDocs.NotifyGuardDoc]]
+
   /** provider-avoid 读（三态）。 */
   def readAvoidGuard(source: String): IO[ReadResult[GuardDocs.AvoidGuardDoc]]
+
   /** 会话惰性水合索引（帧面扫描，不解码——boot 只载索引的同形）。 */
   def sessionIndex(sessionId: String, stream: String): IO[SessionIndex]
+
   /** 事件分片索引（派生面③）。 */
   def eventIndex(): IO[List[Shards.IdxRow]]
+
+end DbReadFace
 
 /** 恢复面 trait（D-3 稳定面之三；§3.11 表的执行腿）。 */
 trait DbRecovery:
   /** 步 3（D-8 工作默认）：permission 重装 + ask 过期关闭（本腿为其追加终态行）。 */
   def recoverPendingD8(): IO[Recovery.PendingPlan]
+
   /** 不变式探针（V6）：ask 面未闭合行数——恢复腿跑后 == 0。 */
   def orphanOpenAsks(): IO[Int]
+
   /** 步 5（D-10）：guard 读三态折保守向（坏 ⇒ 隔离 + 保守值「全部仍在冷却」）。 */
   def recoverNotifyGuardConservative(source: String, now: Long): IO[GuardDocs.NotifyGuardDoc]
+
   /** 步 4：idx 全量重建（派生面③）。 */
   def rebuildEventIndex(): IO[List[Shards.IdxRow]]
+
   /** 隔离动作族（.corrupt-<ts> 就地改名，全字节保留）。 */
   def quarantineEventShard(shardNo: Int, now: Long): IO[Option[Path]]
   def quarantinePending(stream: PendingStream, now: Long): IO[Option[Path]]
   def quarantineGuardDoc(source: String, now: Long): IO[Option[Path]]
+
   /** 全树核验（V4：重号/回退探针 + 计数器交叉 + idx 新鲜度 + Corrupt 清单）。 */
   def verify(): IO[VerifyReport]
+
+end DbRecovery
 
 /**
  * 库句柄（一个数据根一个；生命周期 = open…close）。写路径统一穿三层闸
@@ -219,7 +254,10 @@ final class DbHandle private[db] (
   instanceLock: InstanceLock,
   private[db] val counter: SeqCounter,
   initialTmpSwept: Int = 0
-) extends DbWriteFace, DbReadFace, DbRecovery, AutoCloseable:
+) extends DbWriteFace,
+      DbReadFace,
+      DbRecovery,
+      AutoCloseable:
 
   import DbCore.log
 
@@ -261,7 +299,8 @@ final class DbHandle private[db] (
       lostGeneration = true
       throw DbError.ReadOnly(
         s"instance lock lost (generation ${instanceLock.generation} superseded) — this handle " +
-          "is read-only now (design §3.9 hot-restart window: 旧实例只读、新实例持锁后开写)")
+          "is read-only now (design §3.9 hot-restart window: 旧实例只读、新实例持锁后开写)"
+      )
 
   private def withGates[A](streamKey: String)(body: => A): A =
     val g = streamGates.computeIfAbsent(streamKey, _ => new Semaphore(1))
@@ -296,11 +335,14 @@ final class DbHandle private[db] (
 
   private def safeSeg(id: String): String =
     val cleaned = id.replaceAll("[^A-Za-z0-9._-]", "_")
-    require(cleaned.nonEmpty && cleaned != "." && cleaned != ".." && !cleaned.startsWith("."),
-      s"unsafe db path segment: $id")
+    require(
+      cleaned.nonEmpty && cleaned != "." && cleaned != ".." && !cleaned.startsWith("."),
+      s"unsafe db path segment: $id"
+    )
     cleaned
 
   private def guardSlug(source: String): String = source.replaceAll("[^A-Za-z0-9._-]", "-")
+
   private def notifyGuardPath(source: String): Path =
     guardDir.resolve(s"notify-${guardSlug(source)}.json")
   private val avoidGuardPath: Path = guardDir.resolve("provider-avoid.json")
@@ -319,8 +361,7 @@ final class DbHandle private[db] (
   private def decodeAs[A](using io.circe.Decoder[A])(line: String): Either[String, A] =
     parser.parse(line).flatMap(_.as[A]).left.map(e => s"decode: ${e.getMessage}")
 
-  private def decodeLines[A](lines: List[String], decode: String => Either[String, A]):
-  Either[String, List[A]] =
+  private def decodeLines[A](lines: List[String], decode: String => Either[String, A]): Either[String, List[A]] =
     val out = List.newBuilder[A]
     var bad: Option[String] = None
     lines.foreach { l =>
@@ -341,8 +382,7 @@ final class DbHandle private[db] (
           decode(text) match
             case Right(a) => ReadResult.Present(a)
             case Left(why) => ReadResult.Corrupt(s"corrupt: $why", file)
-      catch
-        case e: Exception => ReadResult.Corrupt(s"unreadable: ${e.getMessage}", file)
+      catch case e: Exception => ReadResult.Corrupt(s"unreadable: ${e.getMessage}", file)
 
   // ── JSONL 追加单点（分片族 / 单文件两形；V1「无半行入库」+ V3 拒写在此）────
 
@@ -357,12 +397,18 @@ final class DbHandle private[db] (
       case WriteFace.TailState.BadTail(why) =>
         throw DbError.StreamCorrupt(
           s"append refused: tail frame of ${file.getFileName} invalid ($why) — quarantine " +
-            "first (design §3.7: 读失败不得参与下一次写)", file)
+            "first (design §3.7: 读失败不得参与下一次写)",
+          file
+        )
       case other => noteTail(other)
 
-  private def appendSharded(dir: Path, base: String, streamKey: String,
-    tier: WriteFace.FsyncTier, validate: String => Either[String, Unit])
-    (lineForSeq: Long => String): Long =
+  private def appendSharded(
+    dir: Path,
+    base: String,
+    streamKey: String,
+    tier: WriteFace.FsyncTier,
+    validate: String => Either[String, Unit]
+  )(lineForSeq: Long => String): Long =
     withGates(streamKey) {
       val cur = Shards.currentShardNo(dir, base)
       if cur >= 1 then prepareOrRefuse(Shards.shardPath(dir, base, cur), validate)
@@ -370,17 +416,25 @@ final class DbHandle private[db] (
       val line = lineForSeq(seq)
       val out = Shards.appendLine(dir, base, line, tier, cfg.shardMaxBytes)
       if out.oversized then
-        log.warn("oversized single line ({} B > cap {} B) admitted to its own shard {}.{}",
-          line.getBytes("UTF-8").length.toLong, cfg.shardMaxBytes, base, out.shardNo)
+        log.warn(
+          "oversized single line ({} B > cap {} B) admitted to its own shard {}.{}",
+          line.getBytes("UTF-8").length.toLong,
+          cfg.shardMaxBytes,
+          base,
+          out.shardNo
+        )
       if tier == WriteFace.FsyncTier.Batched then
         dirtyBatched.put(Shards.shardPath(dir, base, out.shardNo), java.lang.Boolean.TRUE)
       appendsN.incrementAndGet()
       seq
     }
 
-  private def appendSingle(file: Path, streamKey: String,
-    tier: WriteFace.FsyncTier, validate: String => Either[String, Unit])
-    (lineForSeq: Long => String): Long =
+  private def appendSingle(
+    file: Path,
+    streamKey: String,
+    tier: WriteFace.FsyncTier,
+    validate: String => Either[String, Unit]
+  )(lineForSeq: Long => String): Long =
     withGates(streamKey) {
       if Files.exists(file) then prepareOrRefuse(file, validate)
       val seq = counter.next()
@@ -390,8 +444,7 @@ final class DbHandle private[db] (
     }
 
   /** 已持闸追加 N 行（恢复腿/闭单用；闸由调用方持有）。 */
-  private def appendRowsUnderGate(file: Path, validate: String => Either[String, Unit],
-    lines: List[String]): Unit =
+  private def appendRowsUnderGate(file: Path, validate: String => Either[String, Unit], lines: List[String]): Unit =
     if lines.isEmpty then ()
     else
       if Files.exists(file) then prepareOrRefuse(file, validate)
@@ -401,16 +454,21 @@ final class DbHandle private[db] (
   // ── 事件流（案 B 类②；D-12：外层存储 envelope，内核 event 原样）────────────
 
   def appendEvent(event: Json, dedupKey: Option[String]): IO[Long] = IO.blocking {
-    appendSharded(eventsDir, "events", "events", WriteFace.FsyncTier.PerRecord,
-      line => decodeEventLine(line).map(_ => ()))(seq => // 尾帧校验含 checksum（与读面同判据）
-        EventEnvelope.wrap(seq, event, dedupKey).asJson.noSpaces)
+    appendSharded(
+      eventsDir,
+      "events",
+      "events",
+      WriteFace.FsyncTier.PerRecord,
+      line => decodeEventLine(line).map(_ => ())
+    )(seq => // 尾帧校验含 checksum（与读面同判据）
+      EventEnvelope.wrap(seq, event, dedupKey).asJson.noSpaces
+    )
   }
 
   def readEvents(fromSeq: Long, limit: Int, logical: Boolean): IO[ReadResult[StreamRead[EventEnvelope]]] =
     IO.blocking(readEventsSync(fromSeq, limit, logical))
 
-  private def readEventsSync(fromSeq: Long, limit: Int,
-    logical: Boolean): ReadResult[StreamRead[EventEnvelope]] =
+  private def readEventsSync(fromSeq: Long, limit: Int, logical: Boolean): ReadResult[StreamRead[EventEnvelope]] =
     val nos = Shards.listShardNos(eventsDir, "events")
     if nos.isEmpty then ReadResult.Absent()
     else
@@ -424,8 +482,7 @@ final class DbHandle private[db] (
             decodeLines(fr.records, decodeEventLine) match
               case Right(envs) => all ++= envs
               case Left(why) =>
-                corrupt = Some(ReadResult.Corrupt(s"bad-frame:$why",
-                  Shards.shardPath(eventsDir, "events", n)))
+                corrupt = Some(ReadResult.Corrupt(s"bad-frame:$why", Shards.shardPath(eventsDir, "events", n)))
           }
       }
       corrupt match
@@ -446,9 +503,17 @@ final class DbHandle private[db] (
               val filtered =
                 if logical then all.result().filter(env => !forgotten.contains(unitKeyOf(env)))
                 else all.result()
-              val paged = filtered.filter(_.seq >= fromSeq).sortBy(_.seq)
+              val paged = filtered
+                .filter(_.seq >= fromSeq)
+                .sortBy(_.seq)
                 .take(math.max(0, limit))
               ReadResult.Present(StreamRead(paged, torn))
+
+      end match
+
+    end if
+
+  end readEventsSync
 
   /** 事件单位键（判定单位按 subject+type 分域；内核字段 best-effort 抽取——D-12 对拍位）。 */
   def unitKeyOf(env: EventEnvelope): String =
@@ -480,8 +545,7 @@ final class DbHandle private[db] (
     if rows.isEmpty then 0
     else
       withGates("events-tombstones") {
-        appendRowsUnderGate(tombstonesFile, validatorFor[Retention.TombstoneRow],
-          rows.map(_.asJson.noSpaces))
+        appendRowsUnderGate(tombstonesFile, validatorFor[Retention.TombstoneRow], rows.map(_.asJson.noSpaces))
       }
       rows.size
 
@@ -497,22 +561,41 @@ final class DbHandle private[db] (
     if stream == SessionEnvelope.StreamUi then cfg.uiFsyncTier else WriteFace.FsyncTier.PerRecord
 
   def appendMessage(sessionId: String, stream: String, payload: Json): IO[Long] = IO.blocking {
-    appendSharded(sessionDir(sessionId), sessionBase(stream), s"session:$sessionId:$stream",
-      sessionTier(stream), validatorFor[SessionEnvelope]) { seq =>
-        SessionEnvelope(seq, System.currentTimeMillis(), sessionId, stream,
-          SessionEnvelope.KindMessageAppend, payload).asJson.noSpaces
-      }
+    appendSharded(
+      sessionDir(sessionId),
+      sessionBase(stream),
+      s"session:$sessionId:$stream",
+      sessionTier(stream),
+      validatorFor[SessionEnvelope]
+    ) { seq =>
+      SessionEnvelope(
+        seq,
+        System.currentTimeMillis(),
+        sessionId,
+        stream,
+        SessionEnvelope.KindMessageAppend,
+        payload
+      ).asJson.noSpaces
+    }
   }
 
-  def appendCompactPoint(sessionId: String, beforeRef: String, afterRef: String,
-    tokens: Long): IO[Long] = IO.blocking {
-    appendSharded(sessionDir(sessionId), sessionBase(SessionEnvelope.StreamLlm),
-      s"session:$sessionId:llm", WriteFace.FsyncTier.PerRecord,
-      validatorFor[SessionEnvelope]) { seq =>
-        SessionEnvelope(seq, System.currentTimeMillis(), sessionId,
-          SessionEnvelope.StreamLlm, SessionEnvelope.KindCompactPoint,
-          SessionEnvelope.CompactPoint(beforeRef, afterRef, tokens).asJson).asJson.noSpaces
-      }
+  def appendCompactPoint(sessionId: String, beforeRef: String, afterRef: String, tokens: Long): IO[Long] = IO.blocking {
+    appendSharded(
+      sessionDir(sessionId),
+      sessionBase(SessionEnvelope.StreamLlm),
+      s"session:$sessionId:llm",
+      WriteFace.FsyncTier.PerRecord,
+      validatorFor[SessionEnvelope]
+    ) { seq =>
+      SessionEnvelope(
+        seq,
+        System.currentTimeMillis(),
+        sessionId,
+        SessionEnvelope.StreamLlm,
+        SessionEnvelope.KindCompactPoint,
+        SessionEnvelope.CompactPoint(beforeRef, afterRef, tokens).asJson
+      ).asJson.noSpaces
+    }
   }
 
   def writeSnapshot(sessionId: String, content: String): IO[Int] = IO.blocking {
@@ -523,9 +606,12 @@ final class DbHandle private[db] (
         if Files.exists(dir) then
           val s = Files.list(dir)
           try
-            s.iterator().asScala.toList
+            s.iterator()
+              .asScala
+              .toList
               .flatMap(p => p.getFileName.toString.stripSuffix(".json").toIntOption)
-              .maxOption.getOrElse(0)
+              .maxOption
+              .getOrElse(0)
           finally s.close()
         else 0
       val n = next + 1
@@ -535,8 +621,10 @@ final class DbHandle private[db] (
   }
 
   def readSnapshot(sessionId: String, n: Int): IO[ReadResult[String]] = IO.blocking {
-    readWholeDoc(snapshotsDir(sessionId).resolve(s"$n.json"), text =>
-      if parser.parse(text).isRight then Right(text) else Left("not JSON"))
+    readWholeDoc(
+      snapshotsDir(sessionId).resolve(s"$n.json"),
+      text => if parser.parse(text).isRight then Right(text) else Left("not JSON")
+    )
   }
 
   def readSession(sessionId: String, stream: String): IO[ReadResult[StreamRead[SessionEnvelope]]] =
@@ -556,13 +644,13 @@ final class DbHandle private[db] (
               decodeLines(fr.records, decodeAs[SessionEnvelope]) match
                 case Right(envs) => all ++= envs
                 case Left(why) =>
-                  corrupt = Some(ReadResult.Corrupt(s"bad-frame:$why",
-                    Shards.shardPath(dir, base, n)))
+                  corrupt = Some(ReadResult.Corrupt(s"bad-frame:$why", Shards.shardPath(dir, base, n)))
             }
         }
         corrupt match
           case Some(c) => c
           case None => ReadResult.Present(StreamRead(all.result().sortBy(_.seq), torn))
+      end if
     }
 
   def sessionIndex(sessionId: String, stream: String): IO[SessionIndex] = IO.blocking {
@@ -573,8 +661,11 @@ final class DbHandle private[db] (
       val f = Shards.shardPath(dir, base, n)
       val framed = Shards.scanShard(f)
       framed.foreach(fr => torn += fr.tornTailDropped)
-      SessionIndex.ShardIndex(n, framed.map(_.records.size.toLong).getOrElse(0L),
-        if Files.exists(f) then Files.size(f) else 0L)
+      SessionIndex.ShardIndex(
+        n,
+        framed.map(_.records.size.toLong).getOrElse(0L),
+        if Files.exists(f) then Files.size(f) else 0L
+      )
     }
     SessionIndex(sessionId, stream, shards, torn)
   }
@@ -587,31 +678,44 @@ final class DbHandle private[db] (
         PendingStream.Permission
       case PendingRecord.KindAskUser => PendingStream.Ask
       case k => throw new IllegalArgumentException(s"unknown pending kind: $k")
-    appendSingle(pendingFile(stream), s"pending:${stream.fileName}",
-      WriteFace.FsyncTier.PerRecord, validatorFor[PendingRecord]) { seq =>
-        PendingRecord.openRow(seq, card, System.currentTimeMillis()).asJson.noSpaces
-      }
+    appendSingle(
+      pendingFile(stream),
+      s"pending:${stream.fileName}",
+      WriteFace.FsyncTier.PerRecord,
+      validatorFor[PendingRecord]
+    ) { seq =>
+      PendingRecord.openRow(seq, card, System.currentTimeMillis()).asJson.noSpaces
+    }
   }
 
-  def closePending(stream: PendingStream, requestId: String, closedBy: String,
-    closeReason: String, now: Long): IO[Boolean] = IO.blocking {
+  def closePending(
+    stream: PendingStream,
+    requestId: String,
+    closedBy: String,
+    closeReason: String,
+    now: Long
+  ): IO[Boolean] = IO.blocking {
     withGates(s"pending:${stream.fileName}") {
       readLatestPending(stream) match
         case ReadResult.Corrupt(kind, ev) =>
           throw DbError.StreamCorrupt(
             s"close refused: $kind at ${ev.getFileName} — pending 面不可再生，" +
-              "quarantine 后由调用方裁定", ev)
+              "quarantine 后由调用方裁定",
+            ev
+          )
         case ReadResult.Absent() => false
         case ReadResult.Present(rows) =>
           rows.find(_.requestId == requestId) match
             case Some(row) if row.state == PendingRecord.StateOpen =>
               val seq = counter.next()
-              appendRowsUnderGate(pendingFile(stream), validatorFor[PendingRecord],
-                List(PendingRecord.closeRow(row, seq, now, closedBy, closeReason)
-                  .asJson.noSpaces))
+              appendRowsUnderGate(
+                pendingFile(stream),
+                validatorFor[PendingRecord],
+                List(PendingRecord.closeRow(row, seq, now, closedBy, closeReason).asJson.noSpaces)
+              )
               true
             case _ => false // 已闭（幂等）或不存在
-      }
+    }
   }
 
   def readPending(stream: PendingStream): IO[ReadResult[StreamRead[PendingRecord]]] =
@@ -640,10 +744,14 @@ final class DbHandle private[db] (
 
   def appendScheduleTask(sessionId: String, taskDef: Json, now: Long): IO[Long] = IO.blocking {
     require(taskDef.hcursor.downField("id").as[String].isRight, "taskDef must carry an id field")
-    appendSingle(scheduleFile(sessionId), s"schedule:$sessionId",
-      WriteFace.FsyncTier.PerRecord, validatorFor[ScheduleRecord]) { seq =>
-        ScheduleRecord(seq, sessionId, taskDef, now, None).asJson.noSpaces
-      }
+    appendSingle(
+      scheduleFile(sessionId),
+      s"schedule:$sessionId",
+      WriteFace.FsyncTier.PerRecord,
+      validatorFor[ScheduleRecord]
+    ) { seq =>
+      ScheduleRecord(seq, sessionId, taskDef, now, None).asJson.noSpaces
+    }
   }
 
   def tombstoneScheduleTask(sessionId: String, taskId: String, now: Long): IO[Boolean] =
@@ -657,8 +765,11 @@ final class DbHandle private[db] (
             val (live, _) = ScheduleRecord.foldLive(rows)
             if live.exists(ScheduleRecord.taskIdOf(_).contains(taskId)) then
               val seq = counter.next()
-              appendRowsUnderGate(scheduleFile(sessionId), validatorFor[ScheduleRecord],
-                List(ScheduleRecord.tombstoneRow(seq, sessionId, taskId, now).asJson.noSpaces))
+              appendRowsUnderGate(
+                scheduleFile(sessionId),
+                validatorFor[ScheduleRecord],
+                List(ScheduleRecord.tombstoneRow(seq, sessionId, taskId, now).asJson.noSpaces)
+              )
               true
             else false
       }
@@ -694,27 +805,26 @@ final class DbHandle private[db] (
   // ── guard 小档（案 B 类⑥；锁内 RMW 整档五步写；V3 拒写在此）───────────────
 
   def writeNotifyGuard(doc: GuardDocs.NotifyGuardDoc): IO[Unit] = IO.blocking {
-    writeGuardDoc(notifyGuardPath(doc.source), doc.asJson.noSpaces + "\n",
-      guardDecoder[GuardDocs.NotifyGuardDoc])
+    writeGuardDoc(notifyGuardPath(doc.source), doc.asJson.noSpaces + "\n", guardDecoder[GuardDocs.NotifyGuardDoc])
   }
 
   def writeAvoidGuard(doc: GuardDocs.AvoidGuardDoc): IO[Unit] = IO.blocking {
-    writeGuardDoc(avoidGuardPath, doc.asJson.noSpaces + "\n",
-      guardDecoder[GuardDocs.AvoidGuardDoc])
+    writeGuardDoc(avoidGuardPath, doc.asJson.noSpaces + "\n", guardDecoder[GuardDocs.AvoidGuardDoc])
   }
 
   private def guardDecoder[A](text: String)(using io.circe.Decoder[A]): Either[String, A] =
     parser.parse(text).flatMap(_.as[A]).left.map(e => s"decode: ${e.getMessage}")
 
-  private def writeGuardDoc[A](file: Path, content: String,
-    validate: String => Either[String, A]): Unit =
+  private def writeGuardDoc[A](file: Path, content: String, validate: String => Either[String, A]): Unit =
     withGates(s"guard:${file.getFileName}") {
       // V3：坏档在场 ⇒ 写拒绝——先隔离（quarantineGuardDoc）再写。
       readWholeDoc(file, validate) match
         case ReadResult.Corrupt(kind, ev) =>
           throw DbError.StreamCorrupt(
             s"guard write refused: $kind at $ev — quarantine first " +
-              "(design §3.7: 读失败不得参与下一次写)", ev)
+              "(design §3.7: 读失败不得参与下一次写)",
+            ev
+          )
         case _ => ()
       WriteFace.writeFiveStepText(file, content)
     }
@@ -731,8 +841,7 @@ final class DbHandle private[db] (
           GuardDocs.NotifyGuardDoc(1, source, Nil, 0L, now) // 真·全新：无窗口态
         case ReadResult.Corrupt(kind, ev) =>
           // 坏 ⇒ 保守向（宁可少发不可风暴）+ 隔离留档。
-          log.warn("guard recovery: {} corrupt ({}) — conservative all-cooling + quarantined",
-            source, kind)
+          log.warn("guard recovery: {} corrupt ({}) — conservative all-cooling + quarantined", source, kind)
           Quarantine.quarantine(ev, now).foreach(_ => quarantinedN.incrementAndGet())
           Recovery.conservativeNotifyGuard(source, now)
     }
@@ -759,8 +868,13 @@ final class DbHandle private[db] (
       case ReadResult.Absent() =>
         GuardDocs.AvoidGuardDoc(1, Db.AvoidGuardSource, Map.empty, now, Map.empty) // 真·全新
       case ReadResult.Corrupt(kind, ev) =>
-        log.warn("guard recovery: provider-avoid corrupt ({}) — conservative bounded avoid " +
-          "({} key(s), {}ms) + quarantined", kind, conservativeKeys.size, conservativeWindowMs)
+        log.warn(
+          "guard recovery: provider-avoid corrupt ({}) — conservative bounded avoid " +
+            "({} key(s), {}ms) + quarantined",
+          kind,
+          conservativeKeys.size,
+          conservativeWindowMs
+        )
         Quarantine.quarantine(ev, now).foreach(_ => quarantinedN.incrementAndGet())
         GuardDocs.AvoidGuardDoc(
           version = 1,
@@ -782,7 +896,9 @@ final class DbHandle private[db] (
             Quarantine.quarantine(ev, now).foreach(_ => quarantinedN.incrementAndGet())
             throw DbError.StreamCorrupt(
               s"pending recovery refused: ${stream.fileName} $kind — 已隔离 $ev；" +
-                "pending 面不可再生，处置（重放/人工核档）由调用方裁定后重试", ev)
+                "pending 面不可再生，处置（重放/人工核档）由调用方裁定后重试",
+              ev
+            )
           case _ => ()
       }
       val permLatest = readLatestPending(PendingStream.Permission) match
@@ -794,16 +910,21 @@ final class DbHandle private[db] (
       val plan = Recovery.planPendingRecovery(permLatest ++ askLatest)
       // ask 过期关闭：本腿为其追加终态行（V6 不变式：孤儿 ask == 0）。
       withGates(s"pending:${PendingStream.Ask.fileName}") {
-        appendRowsUnderGate(pendingFile(PendingStream.Ask), validatorFor[PendingRecord],
+        appendRowsUnderGate(
+          pendingFile(PendingStream.Ask),
+          validatorFor[PendingRecord],
           plan.expiredAsks.map { row =>
             val seq = counter.next()
-            PendingRecord.closeRow(row, seq, now, Recovery.ExpiredCloseBy,
-              Recovery.ExpiredCloseReason).asJson.noSpaces
-          })
+            PendingRecord.closeRow(row, seq, now, Recovery.ExpiredCloseBy, Recovery.ExpiredCloseReason).asJson.noSpaces
+          }
+        )
       }
       if plan.reinstall.nonEmpty then
-        log.warn("pending recovery (D-8): {} permission card(s) to reinstall: {}",
-          plan.reinstall.size, plan.reinstall.map(_.requestId).mkString(","))
+        log.warn(
+          "pending recovery (D-8): {} permission card(s) to reinstall: {}",
+          plan.reinstall.size,
+          plan.reinstall.map(_.requestId).mkString(",")
+        )
       plan
     }.flatMap { plan =>
       // 避让门开锁（幂等）：恢复腿成功 ⇒ 遗忘刀调度可起步（S16→S17）。
@@ -834,12 +955,20 @@ final class DbHandle private[db] (
           case Some(fr) =>
             decodeLines(fr.records, decodeEventLine) match
               case Right(envs) =>
-                List(Shards.IdxRow(n, envs.headOption.map(_.seq).getOrElse(0L),
-                  envs.lastOption.map(_.seq).getOrElse(0L), Files.size(f), envs.size.toLong))
+                List(
+                  Shards.IdxRow(
+                    n,
+                    envs.headOption.map(_.seq).getOrElse(0L),
+                    envs.lastOption.map(_.seq).getOrElse(0L),
+                    Files.size(f),
+                    envs.size.toLong
+                  )
+                )
               case Left(why) =>
                 log.warn("events.idx rebuild: shard {} undecodable ({}) — skipped", n, why)
                 Nil
           case None => Nil
+        end match
       }
       Shards.writeIdx(eventsDir, rows)
       rows
@@ -882,8 +1011,9 @@ final class DbHandle private[db] (
       }
     }
     if counter.reconcileWith(maxSeen) then
-      log.warn("seq counter reconciled to >= {} (counter lagged streams — 交叉校验以大者为准)",
-        maxSeen + 1L)
+      log.warn("seq counter reconciled to >= {} (counter lagged streams — 交叉校验以大者为准)", maxSeen + 1L)
+
+  end reconcileCounterAtOpen
 
   private def listScheduleFiles(): List[Path] =
     if !Files.exists(scheduleDir) then Nil
@@ -908,7 +1038,8 @@ final class DbHandle private[db] (
   }
 
   def quarantineGuardDoc(source: String, now: Long): IO[Option[Path]] = IO.blocking {
-    val out = Quarantine.quarantine(notifyGuardPath(source), now)
+    val out = Quarantine
+      .quarantine(notifyGuardPath(source), now)
       .orElse(Quarantine.quarantine(avoidGuardPath, now))
     out.foreach(_ => quarantinedN.incrementAndGet())
     out
@@ -927,16 +1058,17 @@ final class DbHandle private[db] (
         case ReadResult.Present(sr) => sr.records
         case _ => Nil
       val candidates = envs.map { env =>
-        Retention.Candidate(unitKeyOf(env), tsOf(env), Retention.Domain.EventStream,
-          kernelTypeOf(env))
+        Retention.Candidate(unitKeyOf(env), tsOf(env), Retention.Domain.EventStream, kernelTypeOf(env))
       }
       val decisions = Retention.plan(candidates, retentionCfg, now)
-      val toForget = candidates.zip(decisions).collect {
-        case (c, Retention.Decision.DropByAge) => c.unitId
-        case (c, Retention.Decision.DropBySampling) => c.unitId
-      }.distinct
-      val appended = appendTombstoneRows(toForget.map(u =>
-        Retention.TombstoneRow(u, now, revived = false)))
+      val toForget = candidates
+        .zip(decisions)
+        .collect {
+          case (c, Retention.Decision.DropByAge) => c.unitId
+          case (c, Retention.Decision.DropBySampling) => c.unitId
+        }
+        .distinct
+      val appended = appendTombstoneRows(toForget.map(u => Retention.TombstoneRow(u, now, revived = false)))
       val exempt = countPendingRows() + countSnapshotFiles() + countAllQuarantined()
       def cnt(d: Retention.Decision): Long = decisions.count(_ == d)
       Retention.SweepReport(
@@ -954,7 +1086,9 @@ final class DbHandle private[db] (
     env.event.hcursor.downField("type").as[String].getOrElse("")
 
   private def tsOf(env: EventEnvelope): Long =
-    env.event.hcursor.downField("occurredAt").as[Long]
+    env.event.hcursor
+      .downField("occurredAt")
+      .as[Long]
       .orElse(env.event.hcursor.downField("ts").as[Long])
       .getOrElse(0L)
 
@@ -967,17 +1101,25 @@ final class DbHandle private[db] (
     if !Files.exists(sessionsDir) then 0L
     else
       val walk = Files.walk(sessionsDir)
-      try walk.iterator().asScala.count(p =>
-        Files.isRegularFile(p) && p.getParent != null &&
-          p.getParent.getFileName.toString == "snapshots")
+      try
+        walk
+          .iterator()
+          .asScala
+          .count(p =>
+            Files.isRegularFile(p) && p.getParent != null &&
+              p.getParent.getFileName.toString == "snapshots"
+          )
       finally walk.close()
 
   private def countAllQuarantined(): Long =
     if !Files.exists(dbRoot) then 0L
     else
       val walk = Files.walk(dbRoot)
-      try walk.iterator().asScala.count(p =>
-        Files.isRegularFile(p) && Quarantine.isQuarantinedName(p.getFileName.toString))
+      try
+        walk
+          .iterator()
+          .asScala
+          .count(p => Files.isRegularFile(p) && Quarantine.isQuarantinedName(p.getFileName.toString))
       finally walk.close()
 
   /**
@@ -1000,8 +1142,9 @@ final class DbHandle private[db] (
               case Right(env) =>
                 // 保留 = 未被逻辑遗忘 ∨ 欠债豁免（失败样本不可丢——遗忘刀永不追杀欠债档）。
                 val keep = !forgotten.contains(unitKeyOf(env)) ||
-                  Retention.hasDebt(Retention.Candidate(unitKeyOf(env), tsOf(env),
-                    Retention.Domain.EventStream, kernelTypeOf(env)))
+                  Retention.hasDebt(
+                    Retention.Candidate(unitKeyOf(env), tsOf(env), Retention.Domain.EventStream, kernelTypeOf(env))
+                  )
                 if keep then kept += line else n += 1L
               case Left(_) =>
                 kept += line // 坏行原样保留（purge 不处置损坏——隔离面管辖）
@@ -1083,10 +1226,11 @@ final class DbHandle private[db] (
     try flushSync()
     catch case scala.util.control.NonFatal(e) => failure = Some(e)
     try instanceLock.release()
-    catch case scala.util.control.NonFatal(e) =>
-      failure match
-        case Some(first) => first.addSuppressed(e)
-        case None => failure = Some(e)
+    catch
+      case scala.util.control.NonFatal(e) =>
+        failure match
+          case Some(first) => first.addSuppressed(e)
+          case None => failure = Some(e)
     failure.foreach(throw _)
 
 end DbHandle

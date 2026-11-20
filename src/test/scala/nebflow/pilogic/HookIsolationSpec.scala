@@ -17,7 +17,8 @@ class HookIsolationSpec extends CatsEffectSuite:
       Ref.of[IO, Vector[String]](Vector.empty).flatMap { ran =>
         val throwing: Observer[IO] = _ => IO.raiseError(new RuntimeException("observer boom"))
         val normal: Observer[IO] = _ => ran.update(_ :+ "second")
-        val registry = HookRegistry.empty[IO]
+        val registry = HookRegistry
+          .empty[IO]
           .withObserver(HookPoint.MessageDelta, throwing)
           .withObserver(HookPoint.MessageDelta, normal)
         HookDispatch.dispatch(HookPoint.MessageDelta, input, registry.snapshot, sink).flatMap { res =>
@@ -39,11 +40,11 @@ class HookIsolationSpec extends CatsEffectSuite:
         collected.map { events =>
           assertEquals(
             res,
-            DispatchResult.Decided(HookEffect.Block("hook failed: tool hook boom", terminate = false)),
+            DispatchResult.Decided(HookEffect.Block("hook failed: tool hook boom", terminate = false))
           )
           assert(events.exists {
             case LoopEvent.HookErrored(p, _, c) => p == "tool.Pre" && c == "tool hook boom"
-            case _                               => false
+            case _ => false
           })
         }
       }
@@ -68,7 +69,8 @@ class HookIsolationSpec extends CatsEffectSuite:
     Ref.of[IO, Vector[String]](Vector.empty).flatMap { ran =>
       val blocker: Interceptor[IO] = _ => IO.pure(HookEffect.Block("no", terminate = true))
       val never: Interceptor[IO] = _ => ran.update(_ :+ "should-not-run").as(HookEffect.Proceed)
-      val registry = HookRegistry.empty[IO]
+      val registry = HookRegistry
+        .empty[IO]
         .withInterceptor(HookPoint.ToolPre, blocker)
         .withInterceptor(HookPoint.ToolPre, never)
       HookDispatch.dispatch(HookPoint.ToolPre, input, registry.snapshot, EventSink.noop[IO]).flatMap { res =>
@@ -81,27 +83,26 @@ class HookIsolationSpec extends CatsEffectSuite:
 
   test("preRequest.Context 链式改写：后者见前者结果，最终 Modify 为链尾值（Chain 聚合）"):
     Ref.of[IO, Vector[Json]](Vector.empty).flatMap { seen =>
-      val first: Interceptor[IO] = in =>
-        IO.pure(HookEffect.Modify(in.deepMerge(Json.obj("step" -> "1".asJson))))
-      val second: Interceptor[IO] = in =>
-        seen.update(_ :+ in).as(HookEffect.Modify(in.deepMerge(Json.obj("step" -> "2".asJson))))
-      val registry = HookRegistry.empty[IO]
+      val first: Interceptor[IO] = in => IO.pure(HookEffect.Modify(in.deepMerge(Json.obj("step" -> "1".asJson))))
+      val second: Interceptor[IO] =
+        in => seen.update(_ :+ in).as(HookEffect.Modify(in.deepMerge(Json.obj("step" -> "2".asJson))))
+      val registry = HookRegistry
+        .empty[IO]
         .withInterceptor(HookPoint.PreRequestContext, first)
         .withInterceptor(HookPoint.PreRequestContext, second)
-      HookDispatch.dispatch(HookPoint.PreRequestContext, input, registry.snapshot, EventSink.noop[IO]).flatMap {
-        res =>
-          seen.get.map { s =>
-            assertEquals(
-              res,
-              DispatchResult.Decided(
-                HookEffect.Modify(
-                  input
-                    .deepMerge(Json.obj("step" -> "1".asJson))
-                    .deepMerge(Json.obj("step" -> "2".asJson)),
-                ),
-              ),
+      HookDispatch.dispatch(HookPoint.PreRequestContext, input, registry.snapshot, EventSink.noop[IO]).flatMap { res =>
+        seen.get.map { s =>
+          assertEquals(
+            res,
+            DispatchResult.Decided(
+              HookEffect.Modify(
+                input
+                  .deepMerge(Json.obj("step" -> "1".asJson))
+                  .deepMerge(Json.obj("step" -> "2".asJson))
+              )
             )
-            assertEquals(s, Vector(input.deepMerge(Json.obj("step" -> "1".asJson))))
+          )
+          assertEquals(s, Vector(input.deepMerge(Json.obj("step" -> "1".asJson))))
         }
       }
     }
@@ -109,7 +110,9 @@ class HookIsolationSpec extends CatsEffectSuite:
   test("Reserved.SessionOps.BeforeSwitch 预留位可分派：Veto 首个即胜（G-1 格子——有类型无触发点）"):
     val vetoer: Interceptor[IO] = _ => IO.pure(HookEffect.Veto("not now"))
     val registry = HookRegistry.empty[IO].withInterceptor(Reserved.SessionOps.BeforeSwitch, vetoer)
-    HookDispatch.dispatch(Reserved.SessionOps.BeforeSwitch, input, registry.snapshot, EventSink.noop[IO])
+    HookDispatch
+      .dispatch(Reserved.SessionOps.BeforeSwitch, input, registry.snapshot, EventSink.noop[IO])
       .flatMap { res =>
         IO(assertEquals(res, DispatchResult.Decided(HookEffect.Veto("not now"))))
       }
+end HookIsolationSpec

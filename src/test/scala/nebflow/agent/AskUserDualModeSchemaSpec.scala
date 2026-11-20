@@ -74,6 +74,7 @@ class AskUserDualModeSchemaSpec extends FunSuite:
   private val executorNodeFace = CoreProbe.face(defNamed(executorName), depth = 1, flowNodeSession = true)
   private val executorPlainFace = CoreProbe.face(defNamed(executorName), depth = 1)
   private val nebulaNamedNodeFace = CoreProbe.face(defNamed("Nebula"), depth = 1, flowNodeSession = true)
+
   // 仍持 AskUserQuestion 的身份横断面（root 判据 = 名 ∧ depth，按名成员资格）
   private val askHoldingFaces = List(
     "Nebula-root" -> rootFace,
@@ -230,6 +231,7 @@ class AskUserDualModeSchemaSpec extends FunSuite:
         if name == s"$executorName node" || name == s"$executorName plain" then "AskHost"
         else AskUserQuestionTool.Name
       assert(names.contains(expectAsk), s"$name 丢了 $expectAsk 成员资格")
+    end for
   }
 
   test("禁第二份表达式: 谓词字面量只许出现在单点文件内 + 消费点均为委托") {

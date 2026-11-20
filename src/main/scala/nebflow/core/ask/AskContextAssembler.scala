@@ -258,8 +258,7 @@ ${toolListSection()}
    */
   def pdfAddendumFor(fileName: String): String =
     if !AskSessions.isPdf(fileName) then ""
-    else
-      """
+    else """
 
 ═══ PDF 模式（本文件是 PDF，规则覆盖上文文件读取方式）═══
 · 不要用 Read 读这个 PDF（二进制，读出来是乱码）。取原文唯一入口 = PdfPage 工具

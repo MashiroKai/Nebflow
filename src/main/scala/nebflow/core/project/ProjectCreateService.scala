@@ -149,6 +149,7 @@ object ProjectCreateService:
             case None => emitAndMount(resolvedName, workspace, description, identity)
           }
         case Some(d) => createRemote(resolvedName, workspace, description, d, identity)
+    end if
   end create
 
   // ============================================================
@@ -208,7 +209,13 @@ object ProjectCreateService:
               val executorOpt = RemoteExecutor.current
               executorOpt match
                 case None =>
-                  IO.pure(Left(ToolError("Remote executor is not initialized on this host — remote project creation unavailable. (DEVICE_ROUTE_UNAVAILABLE)")))
+                  IO.pure(
+                    Left(
+                      ToolError(
+                        "Remote executor is not initialized on this host — remote project creation unavailable. (DEVICE_ROUTE_UNAVAILABLE)"
+                      )
+                    )
+                  )
                 case Some(executor) =>
                   // ② 目录校验（元数据列举——零字节；失败 = 显式失败，零本侧写入）。
                   executor.transferListScoped(peer, workspace).flatMap {
@@ -248,65 +255,67 @@ object ProjectCreateService:
                         // 2026-10-26 #901 批去重）。
                         executor.ensureRemoteScaffold(peer, workspace).flatMap {
                           case Left(err) => IO.pure(Left(ToolError(s"Remote scaffold failed: $err")))
-                          case Right(remoteReport) => scaffoldRemote(executor, peer, workspace, resolvedName, listing).flatMap {
-                          case Left(err) =>
-                            IO.pure(
-                              Left(
-                                ToolError(
-                                  s"Project '$resolvedName' was NOT created: scaffold write on device '${peer.deviceName}' failed — $err. " +
-                                    s"Earlier remote scaffold items: $remoteReport. (REMOTE_SCAFFOLD_FAILED)"
+                          case Right(remoteReport) =>
+                            scaffoldRemote(executor, peer, workspace, resolvedName, listing).flatMap {
+                              case Left(err) =>
+                                IO.pure(
+                                  Left(
+                                    ToolError(
+                                      s"Project '$resolvedName' was NOT created: scaffold write on device '${peer.deviceName}' failed — $err. " +
+                                        s"Earlier remote scaffold items: $remoteReport. (REMOTE_SCAFFOLD_FAILED)"
+                                    )
+                                  )
                                 )
-                              )
-                            )
-                          case Right(report) =>
-                            // ④ 原子写定义（G.13：最后落笔）。失败时远端脚手架件残留
-                            //   但幂等（缺件才补）——重试安全，本侧零半态。
-                            ProjectStore
-                              .createWithScaffold(
-                                resolvedName,
-                                workspace,
-                                description,
-                                AgentMdTemplateFull,
-                                origin = Some(ProjectOrigin(peer.deviceId, stripTrailingSlashes(workspace)))
-                              )
-                              .flatMap {
-                                case Right((pd, _)) =>
-                                  // ⑤ 挂载（跨设备批新语义）：大脑在引擎侧。挂载面经
-                                  // 设备通道复检 + 全部引擎存储锚本机大脑根。失败 =
-                                  // 定义已在但未挂载（幂等，重试走 create 幂等分支）——
-                                  // 显式降级为带告警的成功（🔴 不抛：定义已落盘，抛错
-                                  // 会让调用方误以为零创建；文本点名重挂路径）。
-                                  mountDefinition(pd, identity, created = true, scaffold = None)
-                                    .handleErrorWith { e =>
-                                      IO.pure(
-                                        Right(
-                                          s"Project '${pd.name}' was created on device '${peer.deviceName}' at " +
-                                            s"${pd.origin.map(_.path).getOrElse(workspace)} (definition on this host), " +
-                                            s"but the mount step FAILED — project is NOT mounted: ${e.getMessage}. " +
-                                            "Re-invoke the same create (idempotent re-mount) once the device is reachable."
-                                        )
-                                      )
-                                    }
-                                    .map {
-                                      case Right(msg) =>
-                                        val scaffoldNote =
-                                          if report.createdCount > 0 then s" Scaffold on device: ${report.render}."
-                                          else " Scaffold on device: nothing to do (all pieces already present)."
-                                        Right(
-                                          msg +
-                                            (if msg.contains("NOT mounted") then ""
-                                             else
-                                               s" Workspace lives on device '${peer.deviceName}' at ${pd.origin.map(_.path).getOrElse(workspace)} " +
-                                                 "(file/Bash tools route there via the device channel; this host's data root " +
-                                                 s"holds only the brain ledgers under projects/${pd.name}/brain).") +
-                                            scaffoldNote + s" Remote scaffold items: $remoteReport"
-                                        )
-                                      case l @ Left(_) => l
-                                    }
-                                case Left(err) => IO.pure(Left(ToolError(err)))
-                              }
-                          }
+                              case Right(report) =>
+                                // ④ 原子写定义（G.13：最后落笔）。失败时远端脚手架件残留
+                                //   但幂等（缺件才补）——重试安全，本侧零半态。
+                                ProjectStore
+                                  .createWithScaffold(
+                                    resolvedName,
+                                    workspace,
+                                    description,
+                                    AgentMdTemplateFull,
+                                    origin = Some(ProjectOrigin(peer.deviceId, stripTrailingSlashes(workspace)))
+                                  )
+                                  .flatMap {
+                                    case Right((pd, _)) =>
+                                      // ⑤ 挂载（跨设备批新语义）：大脑在引擎侧。挂载面经
+                                      // 设备通道复检 + 全部引擎存储锚本机大脑根。失败 =
+                                      // 定义已在但未挂载（幂等，重试走 create 幂等分支）——
+                                      // 显式降级为带告警的成功（🔴 不抛：定义已落盘，抛错
+                                      // 会让调用方误以为零创建；文本点名重挂路径）。
+                                      mountDefinition(pd, identity, created = true, scaffold = None)
+                                        .handleErrorWith { e =>
+                                          IO.pure(
+                                            Right(
+                                              s"Project '${pd.name}' was created on device '${peer.deviceName}' at " +
+                                                s"${pd.origin.map(_.path).getOrElse(workspace)} (definition on this host), " +
+                                                s"but the mount step FAILED — project is NOT mounted: ${e.getMessage}. " +
+                                                "Re-invoke the same create (idempotent re-mount) once the device is reachable."
+                                            )
+                                          )
+                                        }
+                                        .map {
+                                          case Right(msg) =>
+                                            val scaffoldNote =
+                                              if report.createdCount > 0 then s" Scaffold on device: ${report.render}."
+                                              else " Scaffold on device: nothing to do (all pieces already present)."
+                                            Right(
+                                              msg +
+                                                (if msg.contains("NOT mounted") then ""
+                                                 else
+                                                   s" Workspace lives on device '${peer.deviceName}' at ${pd.origin.map(_.path).getOrElse(workspace)} " +
+                                                     "(file/Bash tools route there via the device channel; this host's data root " +
+                                                     s"holds only the brain ledgers under projects/${pd.name}/brain).") +
+                                                scaffoldNote + s" Remote scaffold items: $remoteReport"
+                                            )
+                                          case l @ Left(_) => l
+                                        }
+                                    case Left(err) => IO.pure(Left(ToolError(err)))
+                                  }
+                            }
                         }
+                      end if
                   }
               end match
         }
@@ -328,29 +337,44 @@ object ProjectCreateService:
     listing: Json
   ): IO[Either[String, ProjectStore.ScaffoldReport]] =
     val existing: Set[String] =
-      listing.hcursor.downField("entries").as[List[Json]].toOption.getOrElse(Nil).flatMap { e =>
-        e.hcursor.downField("name").as[String].toOption
-      }.toSet
+      listing.hcursor
+        .downField("entries")
+        .as[List[Json]]
+        .toOption
+        .getOrElse(Nil)
+        .flatMap { e =>
+          e.hcursor.downField("name").as[String].toOption
+        }
+        .toSet
     val wanted: List[(String, String)] = List(
       ("AGENTS.md", AgentMdTemplateFull)
     )
     val missing = wanted.filterNot((name, _) => existing.contains(name))
     if missing.isEmpty then
-      IO.pure(Right(ProjectStore.ScaffoldReport(wanted.map(n => ProjectStore.ScaffoldItem(n._1, created = false, detail = "already present")))))
+      IO.pure(
+        Right(
+          ProjectStore.ScaffoldReport(
+            wanted.map(n => ProjectStore.ScaffoldItem(n._1, created = false, detail = "already present"))
+          )
+        )
+      )
     else
-      missing.foldLeft(IO.pure(Right(Nil): Either[String, List[ProjectStore.ScaffoldItem]])) { (acc, item) =>
-        acc.flatMap {
-          case l @ Left(_) => IO.pure(l)
-          case Right(items) =>
-            writeRemoteFile(executor, peer, s"${stripTrailingSlashes(workspace)}/${item._1}", item._2).map {
-              case Right(_) => Right(items :+ ProjectStore.ScaffoldItem(item._1, created = true))
-              case Left(err) => Left(err)
-            }
+      missing
+        .foldLeft(IO.pure(Right(Nil): Either[String, List[ProjectStore.ScaffoldItem]])) { (acc, item) =>
+          acc.flatMap {
+            case l @ Left(_) => IO.pure(l)
+            case Right(items) =>
+              writeRemoteFile(executor, peer, s"${stripTrailingSlashes(workspace)}/${item._1}", item._2).map {
+                case Right(_) => Right(items :+ ProjectStore.ScaffoldItem(item._1, created = true))
+                case Left(err) => Left(err)
+              }
+          }
         }
-      }.map {
-        case Right(items) => Right(ProjectStore.ScaffoldReport(items))
-        case Left(err) => Left(err)
-      }
+        .map {
+          case Right(items) => Right(ProjectStore.ScaffoldReport(items))
+          case Left(err) => Left(err)
+        }
+    end if
   end scaffoldRemote
 
   /** 对端单文件 Write（remote-exec Write 工具；projectRoot = 该项目 workspace）。 */

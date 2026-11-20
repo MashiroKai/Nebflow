@@ -37,7 +37,7 @@ object OrphanChainPolicy:
   def action: String =
     sys.props.getOrElse("nebflow.boot.orphanChain.action", "pause").trim.toLowerCase match
       case "resume" => "resume"
-      case _        => "pause"
+      case _ => "pause"
 
   /** 是否按暂停语义处置（false = 回滚开关，走改前续跑腿）。 */
   def pauseEnabled: Boolean = action == "pause"
@@ -49,17 +49,19 @@ object OrphanChainPolicy:
   trait Port:
     /** 作用域内的链号（去重）+ 剩余非终态节点数。 */
     def scopeState: IO[(List[String], Int)]
+
     /** 落链控 `paused`（暂停推进）。 */
     def pauseChain(chainId: String): IO[Unit]
+
     /** 审计事件（chain-orphaned）。 */
     def event(chainId: String, remaining: Int): IO[Unit]
+
     /** 根会话通知（含链号 / 父会话 id / 剩余节点数）。 */
     def notifyRoot(scope: String, chains: List[String], remaining: Int): IO[Unit] = IO.unit
 
   /** 单作用域处置：暂停每条链 → 留痕 → 通知根。返回被暂停的链数。 */
   def handle(port: Port, scope: String): IO[Int] =
-    if !pauseEnabled then
-      logger.info(s"[orphan-chain] scope '$scope': 处置语义 = resume（回滚配置）— 走改前续跑腿").as(0)
+    if !pauseEnabled then logger.info(s"[orphan-chain] scope '$scope': 处置语义 = resume（回滚配置）— 走改前续跑腿").as(0)
     else
       port.scopeState.flatMap { case (chains, remaining) =>
         chains.traverse { cid =>

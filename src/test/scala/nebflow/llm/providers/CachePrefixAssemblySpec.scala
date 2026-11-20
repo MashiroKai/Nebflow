@@ -40,7 +40,7 @@ import scala.collection.mutable
 class CachePrefixAssemblySpec extends FunSuite:
 
   private def anthropic: AnthropicAdapter = new AnthropicAdapter("http://localhost:0", "k", null)
-  private def openai: OpenAiAdapter       = new OpenAiAdapter("http://localhost:0", "k", null)
+  private def openai: OpenAiAdapter = new OpenAiAdapter("http://localhost:0", "k", null)
 
   // ── fixtures：三轮真实场景 ────────────────────────────────────────────
   // 历史只追加（assistant/tool_result）；提醒出现→变化→消失；每轮真实 TimeAnchor。
@@ -49,8 +49,10 @@ class CachePrefixAssemblySpec extends FunSuite:
 
   private def userText(t: String): Message = Message(MessageRole.User, Left(t))
   private def asstText(t: String): Message = Message(MessageRole.Assistant, Left(t))
+
   private def toolUse(id: String): Message =
     Message(MessageRole.Assistant, Right(List(ContentBlock.ToolUse(id, "Read", JsonObject.empty))))
+
   private def toolResult(id: String, t: String): Message =
     Message(MessageRole.User, Right(List(ContentBlock.ToolResult(id, t, Some(false)))))
 
@@ -71,8 +73,10 @@ class CachePrefixAssemblySpec extends FunSuite:
   private val r2 = List(contextReminder("schedule: 2 pending tasks (report at 22:00, backup at 23:00)"))
   private val r3 = List.empty[Message]
 
-  /** 每轮真实换 epoch 的临时动态串（禁固定字符串夹具）。时钟简化批（2026-11-06）：
-    * 动态段时钟退役后 TimeAnchor.block 不复存在，夹具改等价字面串（仍逐轮换 epoch）。 */
+  /**
+   * 每轮真实换 epoch 的临时动态串（禁固定字符串夹具）。时钟简化批（2026-11-06）：
+   * 动态段时钟退役后 TimeAnchor.block 不复存在，夹具改等价字面串（仍逐轮换 epoch）。
+   */
   private def clock(turn: Int): Option[String] =
     Some(s"[request-level dynamic ctx turn $turn] epoch_ms ${1793970000000L + turn * 61000L}")
 
@@ -116,7 +120,11 @@ class CachePrefixAssemblySpec extends FunSuite:
 
   /** wire body 的全部消息内容块（跨消息拍平，按 wire 顺序）。 */
   private def blocksOf(body: Json): Vector[Json] =
-    body.hcursor.downField("messages").focus.map(_.asArray.getOrElse(Vector.empty)).getOrElse(Vector.empty)
+    body.hcursor
+      .downField("messages")
+      .focus
+      .map(_.asArray.getOrElse(Vector.empty))
+      .getOrElse(Vector.empty)
       .flatMap(m => m.hcursor.downField("content").focus.flatMap(_.asArray).getOrElse(Vector.empty))
 
   private def markedIndex(blocks: Vector[Json]): Int =
@@ -129,13 +137,18 @@ class CachePrefixAssemblySpec extends FunSuite:
 
   private class MockPrefixCache:
     private val entries = mutable.Map.empty[Int, Long]
+
     def writeAtBreakpoint(blocks: Vector[Json]): Unit =
       val marked = markedIndex(blocks)
       // Anthropic 语义：断点覆盖**含标记块在内的闭前缀**（prefix = blocks[0..marked]）
       if marked >= 0 then entries.update(marked + 1, prefixHash(blocks, marked + 1))
+
     def hitLen(blocks: Vector[Json], marked: Int): Int =
-      (1 to math.min(marked + 1, blocks.length)).filter(l => entries.get(l).exists(_ == prefixHash(blocks, l))).maxOption
+      (1 to math.min(marked + 1, blocks.length))
+        .filter(l => entries.get(l).exists(_ == prefixHash(blocks, l)))
+        .maxOption
         .getOrElse(0)
+
     private def prefixHash(blocks: Vector[Json], len: Int): Long =
       blocks.take(len).foldLeft(0xcbf29ce484222325L)((a, b) => (a ^ hashJson(b)) * 0x100000001b3L)
 
@@ -146,8 +159,8 @@ class CachePrefixAssemblySpec extends FunSuite:
       val cache = new MockPrefixCache
       val turns = List((h1, r1), (h2, r2), (h3, r3))
       val bodies = turns.zipWithIndex.map { case ((h, r), i) => anthropic.bodyOf(production(h, r, i), streaming) }
-      val seqs            = bodies.map(b => blocksOf(b))
-      val marks           = seqs.map(markedIndex)
+      val seqs = bodies.map(b => blocksOf(b))
+      val marks = seqs.map(markedIndex)
       val persistedCounts = turns.map { case (h, _) => blocksOf(anthropic.bodyOf(paramsNoDyn(h), streaming)).length }
       val persistedTails =
         turns.map { case (h, _) => blocksOf(anthropic.bodyOf(paramsNoDyn(h), streaming)).last }
@@ -190,21 +203,29 @@ class CachePrefixAssemblySpec extends FunSuite:
   // ── C3（Anthropic 面）：已有历史前缀跨轮逐块不变 ─────────────────────
 
   test("③ anthropic: appending turns leaves every earlier persisted block unchanged (modulo marker)"):
-    val turns  = List((h1, r1), (h2, r2), (h3, r3))
+    val turns = List((h1, r1), (h2, r2), (h3, r3))
     val bodies = turns.zipWithIndex.map { case ((h, r), i) => anthropic.bodyOf(production(h, r, i), streaming = false) }
-    val seqs   = bodies.map(b => blocksOf(b))
-    val pc     = turns.map { case (h, _) => blocksOf(anthropic.bodyOf(paramsNoDyn(h), streaming = false)).length }
+    val seqs = bodies.map(b => blocksOf(b))
+    val pc = turns.map { case (h, _) => blocksOf(anthropic.bodyOf(paramsNoDyn(h), streaming = false)).length }
     // 上一轮持久块在本轮 wire 上逐块指纹相等（位置不变）
     for i <- 1 until turns.length do
       val prevBlocks = seqs(i - 1).take(pc(i - 1))
       prevBlocks.zipWithIndex.foreach { case (pb, bi) =>
-        assertEquals(hashJson(seqs(i)(bi)), hashJson(pb), s"turn${i + 1} block[$bi] changed vs turn${i} persisted prefix")
+        assertEquals(
+          hashJson(seqs(i)(bi)),
+          hashJson(pb),
+          s"turn${i + 1} block[$bi] changed vs turn${i} persisted prefix"
+        )
       }
     // marker 移动 ≠ 语义变更：剥 cache_control 后上一轮持久块逐字节可复现
-    assertEquals(stripMarkers(seqs(1).take(pc(0))), stripMarkers(seqs(0).take(pc(0))),
-      "persisted prefix bytes changed across turns (beyond marker metadata)")
+    assertEquals(
+      stripMarkers(seqs(1).take(pc(0))),
+      stripMarkers(seqs(0).take(pc(0))),
+      "persisted prefix bytes changed across turns (beyond marker metadata)"
+    )
 
   private def stripMarkers(blocks: Vector[Json]): Vector[Json] = blocks.map(stripMarker)
+
   private def stripMarker(json: Json): Json = json.fold(
     json,
     _ => json,
@@ -212,15 +233,17 @@ class CachePrefixAssemblySpec extends FunSuite:
     _ => json,
     arr => Json.fromValues(arr.map(stripMarker).toList),
     obj =>
-      val filtered = JsonObject.fromIterable(obj.toList.collect { case (k, v) if k != "cache_control" => k -> stripMarker(v) })
+      val filtered = JsonObject.fromIterable(obj.toList.collect {
+        case (k, v) if k != "cache_control" => k -> stripMarker(v)
+      })
       Json.fromJsonObject(filtered)
   )
 
   // ── C4（Anthropic 面）：临时段不进持久历史；断点预算不超限 ────────────
 
   test("④ anthropic: ephemeral tail stays after the breakpoint; marker budget ≤ endpoint limit"):
-    val body   = anthropic.bodyOf(production(h1, r1, 0), streaming = false)
-    val n      = countMarkersDeep(body)
+    val body = anthropic.bodyOf(production(h1, r1, 0), streaming = false)
+    val n = countMarkersDeep(body)
     assert(n <= 4, s"marker budget: got $n")
     val blocks = blocksOf(body)
     val marked = markedIndex(blocks)
@@ -228,39 +251,55 @@ class CachePrefixAssemblySpec extends FunSuite:
     blocks.drop(marked + 1).zipWithIndex.foreach { case (b, k) =>
       assert(b.hcursor.downField("cache_control").focus.isEmpty, s"ephemeral block[$k] must not carry a marker")
     }
-    assert(blocks.drop(marked + 1).exists(_.hcursor.get[String]("text").toOption.exists(_.contains("<system-reminder>"))),
-      "request-only reminder must be on the wire after the breakpoint")
-    assert(blocks.drop(marked + 1).exists(_.hcursor.get[String]("text").toOption.exists(_.contains("epoch_ms"))),
-      "request-level clock must be on the wire after the breakpoint")
+    assert(
+      blocks.drop(marked + 1).exists(_.hcursor.get[String]("text").toOption.exists(_.contains("<system-reminder>"))),
+      "request-only reminder must be on the wire after the breakpoint"
+    )
+    assert(
+      blocks.drop(marked + 1).exists(_.hcursor.get[String]("text").toOption.exists(_.contains("epoch_ms"))),
+      "request-level clock must be on the wire after the breakpoint"
+    )
     // C4: 请求级提醒不在 params.messages（持久历史）里
     assert(production(h1, r1, 0).messages == h1, "request-only reminders must never ride in params.messages")
 
   private def countMarkersDeep(json: Json): Int =
-    json.fold(0, _ => 0, _ => 0, _ => 0, arr => arr.foldLeft(0)((acc, j) => acc + countMarkersDeep(j)), obj =>
-      val self = if obj("cache_control").isDefined then 1 else 0
-      obj.values.foldLeft(self)((acc, j) => acc + countMarkersDeep(j))
+    json.fold(
+      0,
+      _ => 0,
+      _ => 0,
+      _ => 0,
+      arr => arr.foldLeft(0)((acc, j) => acc + countMarkersDeep(j)),
+      obj =>
+        val self = if obj("cache_control").isDefined then 1 else 0
+        obj.values.foldLeft(self)((acc, j) => acc + countMarkersDeep(j))
     )
 
   // ── C2/C3（OpenAI 面）：隐式前缀缓存 — 持久历史逐条目保持，临时段只在尾部 ──
 
   test("⑤ openai ×passback: persisted history list preserved across turns; ephemeral only at the tail"):
     for passback <- List(false, true) do
-      val turns          = List((h1, r1), (h2, r2), (h3, r3))
-      val fulls          = turns.zipWithIndex.map { case ((h, r), i) => openai.requestMessages(production(h, r, i), passback) }
+      val turns = List((h1, r1), (h2, r2), (h3, r3))
+      val fulls = turns.zipWithIndex.map { case ((h, r), i) => openai.requestMessages(production(h, r, i), passback) }
       val persistedLists = turns.map { case (h, _) => openai.requestMessages(paramsNoDyn(h), passback) }
       // 上一轮已发的持久列表在本轮逐条目原样保留（隐式缓存复用面）
       for i <- 1 until turns.length do
         val pre = persistedLists(i - 1)
         val cur = fulls(i).take(pre.length)
-        assertEquals(cur, pre, s"turn${i + 1}: first ${pre.length} wire entries changed (openai face, passback=$passback)")
+        assertEquals(
+          cur,
+          pre,
+          s"turn${i + 1}: first ${pre.length} wire entries changed (openai face, passback=$passback)"
+        )
       // 临时段只出现在持久段之后（顺序：提醒段 → 时间锚）
       turns.zipWithIndex.foreach { case ((_, r), i) =>
-        val tailCount    = fulls(i).length - persistedLists(i).length
+        val tailCount = fulls(i).length - persistedLists(i).length
         val expectedTail = r.map(_.textContent).count(_.nonEmpty) + clock(i).count(_.nonEmpty)
         assertEquals(tailCount, expectedTail, s"turn${i + 1}: ephemeral tail entry count (openai face)")
         if r.nonEmpty then
           assert(
-            fulls(i).drop(persistedLists(i).length).exists(_.hcursor.get[String]("content").toOption.exists(_.contains("<system-reminder>"))),
+            fulls(i)
+              .drop(persistedLists(i).length)
+              .exists(_.hcursor.get[String]("content").toOption.exists(_.contains("<system-reminder>"))),
             s"turn${i + 1}: request-only reminder must be in the ephemeral tail (openai face)"
           )
       }
@@ -309,22 +348,26 @@ class CachePrefixAssemblySpec extends FunSuite:
           backend = backend,
           providerHeaders = None
         )
-        if streaming then
-          adapter.sendMessageStream(production(h1, r1, 0)).compile.drain.unsafeRunSync()
-        else
-          adapter.sendMessage(production(h1, r1, 0)).unsafeRunSync()
-        val wire  = io.circe.parser.parse(seenBody.get()).getOrElse(Json.Null)
+        if streaming then adapter.sendMessageStream(production(h1, r1, 0)).compile.drain.unsafeRunSync()
+        else adapter.sendMessage(production(h1, r1, 0)).unsafeRunSync()
+        val wire = io.circe.parser.parse(seenBody.get()).getOrElse(Json.Null)
         val wireBlocks = blocksOf(wire)
         val marked = markedIndex(wireBlocks)
         val persisted = blocksOf(anthropic.bodyOf(paramsNoDyn(h1), streaming = false))
         assert(wireBlocks.nonEmpty, "mock server captured no body")
-        assertEquals(marked, persisted.length - 1,
-          s"actual wire breakpoint must sit on the persisted tail (streaming=$streaming), got $marked of ${wireBlocks.length}")
+        assertEquals(
+          marked,
+          persisted.length - 1,
+          s"actual wire breakpoint must sit on the persisted tail (streaming=$streaming), got $marked of ${wireBlocks.length}"
+        )
         assert(
-          wireBlocks.drop(marked + 1).exists(_.hcursor.get[String]("text").toOption.exists(_.contains("<system-reminder>"))),
+          wireBlocks
+            .drop(marked + 1)
+            .exists(_.hcursor.get[String]("text").toOption.exists(_.contains("<system-reminder>"))),
           s"actual wire must carry the reminder AFTER the breakpoint (streaming=$streaming)"
         )
       finally server.stop(0)
+      end try
 
   // ── ⑦ K3（kernel-spec 批 2026-11-19）：单发腿断点三态 ──────────────────
   //
@@ -334,7 +377,9 @@ class CachePrefixAssemblySpec extends FunSuite:
   // ——避免空转写」）。三态由 `SendMessageParams.cacheBreakpoints` 声明；缺省
   // `Conversation` = 本批前逐字行为（C1–C4 那一组判据钉的就是它）。
 
-  test("⑦ K3: single-shot legs — StablePrefix marks only the stable prefix, None_ marks nothing, Conversation is untouched"):
+  test(
+    "⑦ K3: single-shot legs — StablePrefix marks only the stable prefix, None_ marks nothing, Conversation is untouched"
+  ):
     val base =
       SendMessageParams(
         messages = List(userText("varying task brief v1")),
@@ -344,7 +389,7 @@ class CachePrefixAssemblySpec extends FunSuite:
       )
 
     val conversationBody = anthropic.bodyOf(base, streaming = false)
-    val conversation     = blocksOf(conversationBody)
+    val conversation = blocksOf(conversationBody)
     assertEquals(
       countMarkersDeep(conversationBody),
       3,
@@ -367,7 +412,9 @@ class CachePrefixAssemblySpec extends FunSuite:
 
   // ── ⑧ K3/B2（2026-11-19）：辅腿新形态 —— 常量前导在 system、正文在 user ──
 
-  test("⑧ K3/B2: the auxiliary allocator leg's new shape puts the constant preamble in `system` and keeps it out of `messages`"):
+  test(
+    "⑧ K3/B2: the auxiliary allocator leg's new shape puts the constant preamble in `system` and keeps it out of `messages`"
+  ):
     val preamble =
       "You are auditing task dispatch in an agent-orchestration platform. Below are (1) one dispatched node task brief."
     val body = "=== TASK BRIEF ===\nTASK-1: deliver the batch\n=== INSTALLED PLUGIN CAPABILITY CATALOG ===\n### pkg"
@@ -383,9 +430,9 @@ class CachePrefixAssemblySpec extends FunSuite:
       provider = ProviderConfig("https://x", "k", LlmProtocol.Anthropic),
       model = "m"
     )
-    val params  = LlmKernel.assemble(call, candidate)
-    val wire    = anthropic.bodyOf(params, streaming = false)
-    val system  = wire.hcursor.downField("system").focus.map(_.asArray.getOrElse(Vector.empty)).getOrElse(Vector.empty)
+    val params = LlmKernel.assemble(call, candidate)
+    val wire = anthropic.bodyOf(params, streaming = false)
+    val system = wire.hcursor.downField("system").focus.map(_.asArray.getOrElse(Vector.empty)).getOrElse(Vector.empty)
     val sysText = system.flatMap(_.hcursor.get[String]("text").toOption).mkString("\n")
     assert(sysText.contains(preamble), "the constant preamble must ride in the `system` field")
     assert(
@@ -398,7 +445,9 @@ class CachePrefixAssemblySpec extends FunSuite:
   // （临时段永不进 messages）；wire 级判据（断点落在**最后一条持久块**、跨发逐块
   // 不变、临时尾长稳定）需要 `AnthropicAdapter.bodyOf` 的包内访问权 ⇒ 落本 spec。
 
-  test("⑨ K4: two kernel-assembled calls differing only in the ephemeral tail keep the persisted boundary byte-identical"):
+  test(
+    "⑨ K4: two kernel-assembled calls differing only in the ephemeral tail keep the persisted boundary byte-identical"
+  ):
     val candidate = ModelCandidate(
       providerId = "p",
       provider = ProviderConfig("https://x", "k", LlmProtocol.Anthropic),
@@ -415,8 +464,8 @@ class CachePrefixAssemblySpec extends FunSuite:
       )
       anthropic.bodyOf(LlmKernel.assemble(call, candidate), streaming = false)
 
-    val b1     = blocksOf(body(1))
-    val b2     = blocksOf(body(2))
+    val b1 = blocksOf(body(1))
+    val b2 = blocksOf(body(2))
     val marked = markedIndex(b1)
     assert(marked >= 0, "the persisted tail must carry the breakpoint")
     assertEquals(

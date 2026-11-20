@@ -103,5 +103,6 @@ private[gateway] object FleetUpdateRoutes:
               }
         }
     }
+  end routes
 
 end FleetUpdateRoutes

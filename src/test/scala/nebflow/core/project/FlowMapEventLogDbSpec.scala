@@ -45,7 +45,14 @@ class FlowMapEventLogDbSpec extends FunSuite:
       assert(db.isDefined, "前置：共享句柄已注册（生产同形）")
       for
         _ <- FlowMapEventLog.append(ws.toString, "ev-proj", "n-1", "node-failed", "boom one")
-        _ <- FlowMapEventLog.append(ws.toString, "ev-proj", "n-2", "node-completed", "done two", chainId = Some("chain-x"))
+        _ <- FlowMapEventLog.append(
+          ws.toString,
+          "ev-proj",
+          "n-2",
+          "node-completed",
+          "done two",
+          chainId = Some("chain-x")
+        )
         // 主档零改动：两行旧形 {ts,type,project,nodeId,summary(,chainId)}。
         legacy = os.read.lines(ws / ".nebflow" / "flow-map-events.jsonl").toList
         _ = assertEquals(legacy.size, 2, "主档照常逐行")
@@ -60,24 +67,39 @@ class FlowMapEventLogDbSpec extends FunSuite:
         _ = assertEquals(envs.size, 2, "db events 流两行在场")
         e1 = envs.head
         _ = assert(e1.seq < envs(1).seq, s"存储层 seq 单调（${e1.seq} < ${envs(1).seq}）")
-        _ = assertEquals(e1.dedupKey, Some("ev-proj:n-1:node-failed:" +
-          io.circe.parser.parse(legacy(0)).toOption.get.hcursor.downField("ts").as[Long].toOption.get),
-          "dedupKey = project:node:type:ts（重放锚）")
+        _ = assertEquals(
+          e1.dedupKey,
+          Some(
+            "ev-proj:n-1:node-failed:" +
+              io.circe.parser.parse(legacy(0)).toOption.get.hcursor.downField("ts").as[Long].toOption.get
+          ),
+          "dedupKey = project:node:type:ts（重放锚）"
+        )
         // 内核 wire 对拍（KernelEvent Encoder 五键）。
         inner = e1.event
         keys = inner.asObject.map(_.keys.toList).getOrElse(Nil).sorted
-        _ = assertEquals(keys, List("occurredAt", "payload", "seqInSession", "sessionId", "type"),
-          s"内核 envelope 五键逐字对拍（subject 归 payload），got=$keys")
+        _ = assertEquals(
+          keys,
+          List("occurredAt", "payload", "seqInSession", "sessionId", "type"),
+          s"内核 envelope 五键逐字对拍（subject 归 payload），got=$keys"
+        )
         c = inner.hcursor
         _ = assertEquals(c.downField("type").as[String].toOption, Some("node-failed"))
         _ = assertEquals(c.downField("sessionId").as[String].toOption, Some("ev-proj"))
         _ = assertEquals(c.downField("seqInSession").as[Long].toOption, Some(1L), "会话内序从 1 起")
-        _ = assertEquals(c.downField("payload").downField("subject").as[String].toOption, Some("n-1"),
-          "subject 归 payload（KernelEvent 定稿裁定）")
+        _ = assertEquals(
+          c.downField("payload").downField("subject").as[String].toOption,
+          Some("n-1"),
+          "subject 归 payload（KernelEvent 定稿裁定）"
+        )
         _ = assertEquals(c.downField("payload").downField("summary").as[String].toOption, Some("boom one"))
-        _ = assertEquals(envs(1).event.hcursor.downField("payload").downField("chainId").as[Option[String]].toOption,
-          Some(Some("chain-x")), "chainId 透传入 payload")
+        _ = assertEquals(
+          envs(1).event.hcursor.downField("payload").downField("chainId").as[Option[String]].toOption,
+          Some(Some("chain-x")),
+          "chainId 透传入 payload"
+        )
       yield ()
+      end for
     }.unsafeRunSync()
 
   test("C5: no registered handle ⇒ legacy append untouched, zero db output (peek 只查不开)"):
@@ -91,8 +113,7 @@ class FlowMapEventLogDbSpec extends FunSuite:
         _ <- FlowMapEventLog.append(ws.toString, "quiet", "n-1", "escalated", "no db here")
         legacy = os.read.lines(ws / ".nebflow" / "flow-map-events.jsonl").toList
         _ = assertEquals(legacy.size, 1, "主档照常（影子缺席零影响）")
-        _ = assert(!java.nio.file.Files.exists(root.toNIO.resolve("db")),
-          "未注册句柄 ⇒ 影子腿完全不落任何东西（peek 不开根——测试安全边界）")
+        _ = assert(!java.nio.file.Files.exists(root.toNIO.resolve("db")), "未注册句柄 ⇒ 影子腿完全不落任何东西（peek 不开根——测试安全边界）")
       yield ()
       io.unsafeRunSync()
     finally PathUtil.setDataRoot(prev)

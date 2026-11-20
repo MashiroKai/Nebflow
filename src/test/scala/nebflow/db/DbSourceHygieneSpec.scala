@@ -14,14 +14,18 @@ import scala.jdk.CollectionConverters.*
 class DbSourceHygieneSpec extends FunSuite:
 
   private val dbSourceRoot: Path =
-    Path.of(sys.props("user.dir")).resolve("src").resolve("main").resolve("scala")
-      .resolve("nebflow").resolve("db")
+    Path
+      .of(sys.props("user.dir"))
+      .resolve("src")
+      .resolve("main")
+      .resolve("scala")
+      .resolve("nebflow")
+      .resolve("db")
 
   private def mainSources: List[Path] =
     require(Files.isDirectory(dbSourceRoot), s"db source root missing: $dbSourceRoot")
     val walk = Files.walk(dbSourceRoot)
-    try walk.iterator().asScala.filter(p =>
-      Files.isRegularFile(p) && p.getFileName.toString.endsWith(".scala")).toList
+    try walk.iterator().asScala.filter(p => Files.isRegularFile(p) && p.getFileName.toString.endsWith(".scala")).toList
     finally walk.close()
 
   test("V7: no getOrElse(Nil) / getOrElse(Json.obj()) anywhere in the db tree"):
@@ -44,19 +48,18 @@ class DbSourceHygieneSpec extends FunSuite:
           s"$rel:${idx + 1}: ${line.trim}"
       }
     }
-    assertEquals(offenders, List.empty[String],
-      "写面单点：只允许 WriteFace 的 FileChannel 五步写/追加腿")
+    assertEquals(offenders, List.empty[String], "写面单点：只允许 WriteFace 的 FileChannel 五步写/追加腿")
 
   test("R20: db tree has zero nebflow-internal imports (zero-coupling contract)"):
     val offenders = mainSources.flatMap { f =>
       val rel = dbSourceRoot.relativize(f).toString
       Files.readAllLines(f).asScala.zipWithIndex.collect {
-        case (line, idx) if line.trim.startsWith("import nebflow.") &&
-          !line.trim.startsWith("import nebflow.db") =>
+        case (line, idx)
+            if line.trim.startsWith("import nebflow.") &&
+              !line.trim.startsWith("import nebflow.db") =>
           s"$rel:${idx + 1}: ${line.trim}"
       }
     }
-    assertEquals(offenders, List.empty[String],
-      "依赖方向单向：db → 仅 cats-effect/circe/JDK（设计 §3.2a）；nebflow 内部零依赖")
+    assertEquals(offenders, List.empty[String], "依赖方向单向：db → 仅 cats-effect/circe/JDK（设计 §3.2a）；nebflow 内部零依赖")
 
 end DbSourceHygieneSpec

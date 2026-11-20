@@ -21,7 +21,8 @@ class HookRegistrySpec extends CatsEffectSuite:
 
   test("错误档只可收紧不可放宽：ToolPre 缺省 Block，注册给 Continue ⇒ 拒（§Ⅲ.4）"):
     intercept[IllegalArgumentException] {
-      HookRegistry.empty[IO]
+      HookRegistry
+        .empty[IO]
         .withInterceptor(HookPoint.ToolPre, proc, errorPolicy = Some(HookErrorPolicy.Continue))
     }
 
@@ -33,13 +34,14 @@ class HookRegistrySpec extends CatsEffectSuite:
     assertEquals(r1.snapshot.hookIdsAt(HookPoint.MessageDelta).size, 1)
 
   test("总序确定性：Priority(rank) 先于 Append，同档按注册序"):
-    val r = HookRegistry.empty[IO]
-      .withInterceptor(HookPoint.ToolPre, proc)                                 // Append, idx0
-      .withInterceptor(HookPoint.ToolPre, proc, order = HookOrder.Priority(2))  // idx1
-      .withInterceptor(HookPoint.ToolPre, proc, order = HookOrder.Priority(1))  // idx2
+    val r = HookRegistry
+      .empty[IO]
+      .withInterceptor(HookPoint.ToolPre, proc) // Append, idx0
+      .withInterceptor(HookPoint.ToolPre, proc, order = HookOrder.Priority(2)) // idx1
+      .withInterceptor(HookPoint.ToolPre, proc, order = HookOrder.Priority(1)) // idx2
     assertEquals(
       r.snapshot.hookIdsAt(HookPoint.ToolPre),
-      Vector(HookId("hook-2"), HookId("hook-1"), HookId("hook-0")),
+      Vector(HookId("hook-2"), HookId("hook-1"), HookId("hook-0"))
     )
 
   test("without 注销 = 新快照，原注册表不受影响（COW）"):
@@ -47,3 +49,4 @@ class HookRegistrySpec extends CatsEffectSuite:
     val r2 = r1.without(HookId("hook-0"))
     assertEquals(r1.snapshot.size, 1)
     assertEquals(r2.snapshot.size, 0)
+end HookRegistrySpec

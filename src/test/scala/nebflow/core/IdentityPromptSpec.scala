@@ -30,25 +30,30 @@ class IdentityPromptSpec extends FunSuite:
     val store = new nebflow.core.scheduler.ScheduledTaskStore(
       os.pwd / "target" / "test-identity-prompt" / "sched"
     )
-    val none = SystemReminders.collectAllIO(
-      isUserTurn = true,
-      taskStore = store,
-      sessionId = None,
-      identityDelta = ""
-    ).map(_.filter(_.category == "identity")).unsafeRunSync()
+    val none = SystemReminders
+      .collectAllIO(
+        isUserTurn = true,
+        taskStore = store,
+        sessionId = None,
+        identityDelta = ""
+      )
+      .map(_.filter(_.category == "identity"))
+      .unsafeRunSync()
     assertEquals(none.isEmpty, true)
-    val some = SystemReminders.collectAllIO(
-      isUserTurn = true,
-      taskStore = store,
-      sessionId = None,
-      identityDelta = SystemReminders.renderIdentityChange("", "- Display name: \"小雨\"")
-    ).map(_.filter(_.category == "identity")).unsafeRunSync()
-    some match {
+    val some = SystemReminders
+      .collectAllIO(
+        isUserTurn = true,
+        taskStore = store,
+        sessionId = None,
+        identityDelta = SystemReminders.renderIdentityChange("", "- Display name: \"小雨\"")
+      )
+      .map(_.filter(_.category == "identity"))
+      .unsafeRunSync()
+    some match
       case r :: Nil =>
         assert(r.content.contains("小雨"))
         assert(r.content.contains("authoritative"))
       case other => fail(s"expected exactly one identity reminder, got: $other")
-    }
 
   test("renderIdentityChange: current values authoritative, previous superseded, one line per fact"):
     val prev = AgentIdentityStore.selfSectionText("Nebula", Some("旧名"), Some("aa11bb22"))

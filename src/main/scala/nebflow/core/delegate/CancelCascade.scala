@@ -59,6 +59,7 @@ object CancelCascade:
    */
   trait Port:
     def registry: IO[Map[String, AgentRecord]]
+
     /** 已在案的取消墓碑 id 集（`DelegateRegistry.cancelRequestedAt` 非空）。 */
     def tombstoned: IO[Set[String]]
     def cancelChild(rec: AgentRecord, why: String): IO[Either[String, Unit]]
@@ -74,7 +75,9 @@ object CancelCascade:
   def cascade(port: Port, parentId: String, extraSeeds: List[String] = Nil): IO[List[Step]] =
     def walk(id: String, depth: Int): IO[List[Step]] =
       if depth > MaxDepth then
-        logger.warn(s"cancel-cascade: depth limit $MaxDepth reached below '$parentId' — deeper levels not walked").as(Nil)
+        logger
+          .warn(s"cancel-cascade: depth limit $MaxDepth reached below '$parentId' — deeper levels not walked")
+          .as(Nil)
       else
         port.registry.flatMap { reg =>
           // 顶层额外种子（项目域：dispatcher/node 会话在注册表里没有 parentSessionId
@@ -120,6 +123,8 @@ object CancelCascade:
         }
     walk(parentId, 0)
 
+  end cascade
+
   /** 报告行（追加到 cancel 成功文案尾部；零子会话 = 空串，旧文案逐字不变）。 */
   def report(steps: List[Step]): String =
     if steps.isEmpty then ""
@@ -156,6 +161,12 @@ object CancelCascade:
       .filter(_.kind != AgentKind.External)
       .filter(r => terminalParentIds.contains(r.parentSessionId))
       .sortBy(_.sessionId)
-      .map(r => Orphan(r, r.parentSessionId, "parent session is terminal (cancel tombstone / archived) but this child is still registered"))
+      .map(r =>
+        Orphan(
+          r,
+          r.parentSessionId,
+          "parent session is terminal (cancel tombstone / archived) but this child is still registered"
+        )
+      )
 
 end CancelCascade

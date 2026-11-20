@@ -1049,7 +1049,13 @@ class WebSocketRoutes(
     ) <+> StaticRoutes.jsRoutes <+> StaticRoutes.assetsRoutes <+> NfFileRoutes.nfFileRoutes(
       nfTicketStore,
       nfPathPolicy
-    ) <+> NfFileRoutes.nfTicketRoutes(tokenRef, nfTicketStore, nfPathPolicy, sessions, objects = nfObjStore) <+> NfFileRoutes
+    ) <+> NfFileRoutes.nfTicketRoutes(
+      tokenRef,
+      nfTicketStore,
+      nfPathPolicy,
+      sessions,
+      objects = nfObjStore
+    ) <+> NfFileRoutes
       .nfObjRoutes(
         tokenRef,
         nfObjStore,
@@ -1189,8 +1195,7 @@ class WebSocketRoutes(
                       )
                       // Conflict detection must never suppress content delivery.
                       // Write authorization is enforced separately by the Canvas API.
-                      gatedWsSend = (text: String, isStream: Boolean) =>
-                        perConnWsSend(text, isStream)
+                      gatedWsSend = (text: String, isStream: Boolean) => perConnWsSend(text, isStream)
                       hubConnId <- wsHub.register(gatedWsSend)
 
                       // A1: the hub now hands connections pre-serialized text. The
@@ -2175,7 +2180,12 @@ class WebSocketRoutes(
                                   case (Some(access), Some(sid), Some(bytes), Some(key)) =>
                                     AttachmentCommitService
                                       .at(uploadRoot)
-                                      .commit(access, key, s"$sid/${key.value}", new java.io.ByteArrayInputStream(bytes))
+                                      .commit(
+                                        access,
+                                        key,
+                                        s"$sid/${key.value}",
+                                        new java.io.ByteArrayInputStream(bytes)
+                                      )
                                       .attempt
                                       .flatMap {
                                         case Right(path) =>
@@ -2277,31 +2287,33 @@ class WebSocketRoutes(
                               // (file/document/html-element) into [引用: …]
                               // injection blocks; refType=task fail-open 跳过。
                               processRefs(json, blocks, msgSessionId).flatMap { _ =>
-                                ConsoleQuoteResolver.resolve(content, sharedResources.scheduledTaskStore, sharedResources.msgTokens).flatMap { resolvedContent =>
-                                if content.nonEmpty then blocks.update(0, ContentBlock.Text(resolvedContent))
-                                // device-provenance 批：标记块前插为首块（正文块逐字不动；
-                                // 会话显示面已在上方 appendUiMessages 落裸正文）。None =
-                                // 未声明设备 ⇒ 逐字节现状。
-                                val blocksList = deviceResolved.fold(blocks.toList)(
-                                  nebflow.bridge.DeviceProvenance.prependMarker(_, blocks.toList)
-                                )
-                                // 输入框直通退役（2026-09-14 作者令）：typeless 帧不再探
-                                // hub 的 pending AskUser 槽位 —— 文本一律按普通消息投
-                                // AgentCommand.UserInput（= 引入直通之前的既有通道）。
-                                // 曾以直通覆盖的「刷新后 busy 标志丢失」窗口（#43-domain）
-                                // 随之回到功能前口径：pending 卡保持 pending、须点卡作答。
-                                // ref/附件携带帧本就只走本通道，形态逐字节不变。
-                                ensureAgent(msgSessionId)(ref =>
-                                  ref ! AgentCommand
-                                    .UserInput(
-                                      content,
-                                      None,
-                                      clientMessageId,
-                                      Some(blocksList).filter(_.nonEmpty),
-                                      chatWidth
+                                ConsoleQuoteResolver
+                                  .resolve(content, sharedResources.scheduledTaskStore, sharedResources.msgTokens)
+                                  .flatMap { resolvedContent =>
+                                    if content.nonEmpty then blocks.update(0, ContentBlock.Text(resolvedContent))
+                                    // device-provenance 批：标记块前插为首块（正文块逐字不动；
+                                    // 会话显示面已在上方 appendUiMessages 落裸正文）。None =
+                                    // 未声明设备 ⇒ 逐字节现状。
+                                    val blocksList = deviceResolved.fold(blocks.toList)(
+                                      nebflow.bridge.DeviceProvenance.prependMarker(_, blocks.toList)
                                     )
-                                )
-                                }
+                                    // 输入框直通退役（2026-09-14 作者令）：typeless 帧不再探
+                                    // hub 的 pending AskUser 槽位 —— 文本一律按普通消息投
+                                    // AgentCommand.UserInput（= 引入直通之前的既有通道）。
+                                    // 曾以直通覆盖的「刷新后 busy 标志丢失」窗口（#43-domain）
+                                    // 随之回到功能前口径：pending 卡保持 pending、须点卡作答。
+                                    // ref/附件携带帧本就只走本通道，形态逐字节不变。
+                                    ensureAgent(msgSessionId)(ref =>
+                                      ref ! AgentCommand
+                                        .UserInput(
+                                          content,
+                                          None,
+                                          clientMessageId,
+                                          Some(blocksList).filter(_.nonEmpty),
+                                          chatWidth
+                                        )
+                                    )
+                                  }
                               }
                             }
                         }
@@ -2575,7 +2587,8 @@ class WebSocketRoutes(
       maybeSessionKick(sessionId, s"userMessage:$source") *>
       // device-provenance 批：标记只进模型面（text 前缀，BridgeOrigin.compose 同序
       // ——标记块、空行、正文）；上方 UiMessage 行保持裸正文（两 face 分离原律）。
-      (if fromUser then ConsoleQuoteResolver.resolve(content, sharedResources.scheduledTaskStore, sharedResources.msgTokens)
+      (if fromUser then
+         ConsoleQuoteResolver.resolve(content, sharedResources.scheduledTaskStore, sharedResources.msgTokens)
        else IO.pure(content)).flatMap { resolvedContent =>
         ensureAgent(sessionId)(ref =>
           ref ! AgentCommand.ImmediateInput(
@@ -2699,9 +2712,15 @@ class WebSocketRoutes(
     refs.traverse_ { ref =>
       val refType = ref.hcursor.downField("refType").as[String].getOrElse("")
       if refType == "chat-message" then
-        ConsoleQuoteResolver.structured(ref, sessionId, sharedResources.msgTokens).map(block => blocks += ContentBlock.Text(block)).void
-      else IO { if refType != "task" then RefResolver.resolve(ref).foreach(block => blocks += ContentBlock.Text(block)) }
+        ConsoleQuoteResolver
+          .structured(ref, sessionId, sharedResources.msgTokens)
+          .map(block => blocks += ContentBlock.Text(block))
+          .void
+      else
+        IO { if refType != "task" then RefResolver.resolve(ref).foreach(block => blocks += ContentBlock.Text(block)) }
     }
+
+  end processRefs
 
   /**
    * quote-message 一期（2026-10-09，spec §3.3）：帧 refs 里 refType==='chat-message'
@@ -2991,7 +3010,14 @@ class WebSocketRoutes(
                       sessionId,
                       List(
                         UiMessage
-                          .Ai(text, None, None, Option.when(thinking.nonEmpty)(thinking), System.currentTimeMillis(), isRoot = hc.get[Boolean]("isRoot").toOption)
+                          .Ai(
+                            text,
+                            None,
+                            None,
+                            Option.when(thinking.nonEmpty)(thinking),
+                            System.currentTimeMillis(),
+                            isRoot = hc.get[Boolean]("isRoot").toOption
+                          )
                       )
                     )
                   }
@@ -3020,7 +3046,14 @@ class WebSocketRoutes(
                     sessionId,
                     List(
                       UiMessage
-                        .Ai(text, None, None, Option.when(thinking.nonEmpty)(thinking), System.currentTimeMillis(), isRoot = hc.get[Boolean]("isRoot").toOption)
+                        .Ai(
+                          text,
+                          None,
+                          None,
+                          Option.when(thinking.nonEmpty)(thinking),
+                          System.currentTimeMillis(),
+                          isRoot = hc.get[Boolean]("isRoot").toOption
+                        )
                     )
                   )
                 }
@@ -3059,7 +3092,15 @@ class WebSocketRoutes(
                         // 回放折叠不再靠渲染期徽章启发式反推（裸面 1/2/5 根治）。
                         List(
                           UiMessage
-                            .Ai(text, durationMs, model, thinkingOpt, System.currentTimeMillis(), terminal = Some(true), isRoot = hc.get[Boolean]("isRoot").toOption)
+                            .Ai(
+                              text,
+                              durationMs,
+                              model,
+                              thinkingOpt,
+                              System.currentTimeMillis(),
+                              terminal = Some(true),
+                              isRoot = hc.get[Boolean]("isRoot").toOption
+                            )
                         )
                       )
                     else if durationMs.isDefined then

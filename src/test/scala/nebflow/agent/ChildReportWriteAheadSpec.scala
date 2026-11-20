@@ -37,10 +37,11 @@ class ChildReportWriteAheadSpec extends FunSuite:
 
     val firstEvent = ChildReport.event(first, "progress", "child")
     val redispatched = ChildReport.event(retry, "progress", "child")
-    assertEquals(firstEvent.correlationId, redispatched.correlationId,
-      "同一逻辑槽的重派件必须同 correlation id")
-    assert(DeliveredReceiptLedger.isDuplicateIdentity(Set.empty, List(firstEvent), redispatched),
-      "父端必须能把重派件识别为重复（否则用户看到两条同正文进度）")
+    assertEquals(firstEvent.correlationId, redispatched.correlationId, "同一逻辑槽的重派件必须同 correlation id")
+    assert(
+      DeliveredReceiptLedger.isDuplicateIdentity(Set.empty, List(firstEvent), redispatched),
+      "父端必须能把重派件识别为重复（否则用户看到两条同正文进度）"
+    )
   }
 
   test("RED-2 crash recovery redelivers with the ORIGINAL identity and folds") {
@@ -54,8 +55,10 @@ class ChildReportWriteAheadSpec extends FunSuite:
     val recoveryEvent = ChildReport.event(recovered.pendingRecovery().head._1, "progress before crash", "child")
     assertEquals(recoveryEvent.correlationId, Some(originalId), "恢复重投必须沿用原身份")
     val liveEvent = ChildReport.event(originalId, "progress before crash", "child")
-    assert(DeliveredReceiptLedger.isDuplicateIdentity(Set.empty, List(liveEvent), recoveryEvent),
-      "崩溃前已投过的件在恢复重投时必须被父端折叠")
+    assert(
+      DeliveredReceiptLedger.isDuplicateIdentity(Set.empty, List(liveEvent), recoveryEvent),
+      "崩溃前已投过的件在恢复重投时必须被父端折叠"
+    )
 
     // 恢复协议：先冲账（一次性 markFlushed）再允许新槽。
     recovered.markFlushed(slot)
@@ -75,8 +78,7 @@ class ChildReportWriteAheadSpec extends FunSuite:
     val e1 = ChildReport.event(id1, "same body", "child")
     val e2 = ChildReport.event(id2, "same body", "child")
     assertNotEquals(e1.correlationId, e2.correlationId)
-    assert(!DeliveredReceiptLedger.isDuplicateIdentity(Set.empty, List(e1), e2),
-      "不同消息绝不能被判重折叠掉")
+    assert(!DeliveredReceiptLedger.isDuplicateIdentity(Set.empty, List(e1), e2), "不同消息绝不能被判重折叠掉")
   }
 
   test("RED-4 crash mid-delivery flushes the prepared report before any new request") {
@@ -95,3 +97,4 @@ class ChildReportWriteAheadSpec extends FunSuite:
     assertNotEquals(next, slot)
     assertEquals(recovered.pendingRecovery(), Nil)
   }
+end ChildReportWriteAheadSpec

@@ -92,6 +92,7 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
     val nodeSessions: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
     val turnCount: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
     @volatile var res: SharedResources = null
+
     /** death-watch 批 fixture 收尾：行对应真进程——杀后台进程 + 毁会话（幂等）。 */
     def cleanupBg: IO[Unit] =
       for
@@ -104,7 +105,6 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
             ShellSession.destroySession(sid).attempt.void
         }
       yield ()
-
 
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
@@ -126,9 +126,9 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
                           case Some(rec) =>
                             val jobId = s"dead-reap-spec-${java.util.UUID.randomUUID().toString.take(8)}"
                             ShellSession.forSession(rec.sessionId).flatMap { shell =>
-                            shell.executeBackground("sleep 3600", jobIdOverride = Some(jobId)) *>
-                              BgTaskRegistry.register(jobId, rec.sessionId, "spec bg task", "local", "nebula-root")
-                          } *>
+                              shell.executeBackground("sleep 3600", jobIdOverride = Some(jobId)) *>
+                                BgTaskRegistry.register(jobId, rec.sessionId, "spec bg task", "local", "nebula-root")
+                            } *>
                               jobIds.update(_ :+ jobId) *> nodeSessions.update(_ :+ rec.sessionId)
                           case None =>
                             IO.raiseError(new RuntimeException("node session record not found at first LLM request"))

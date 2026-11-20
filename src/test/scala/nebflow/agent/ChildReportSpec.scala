@@ -41,3 +41,4 @@ class ChildReportSpec extends FunSuite:
     assertEquals(ChildReport.body("streaming <report>half closed", continues = true), None)
     assertEquals(ChildReport.body("<report>   </report>", continues = true), None)
   }
+end ChildReportSpec

@@ -50,7 +50,11 @@ class WsUnitSpec extends CatsEffectSuite:
       assertEquals(frame.hcursor.get[String]("query").toOption, Some(""))
       assertEquals(frame.hcursor.get[Boolean]("truncated").toOption, Some(false))
       assertEquals(frame.hcursor.get[Int]("total").toOption, Some(2))
-      val names = frame.hcursor.downField("entries").as[List[Json]].toOption.map(_.flatMap(_.hcursor.get[String]("name").toOption))
+      val names = frame.hcursor
+        .downField("entries")
+        .as[List[Json]]
+        .toOption
+        .map(_.flatMap(_.hcursor.get[String]("name").toOption))
       assertEquals(names, Some(List("Beta", "alpha")))
     }
 

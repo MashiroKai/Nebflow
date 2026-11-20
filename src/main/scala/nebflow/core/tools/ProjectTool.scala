@@ -60,7 +60,8 @@ object ProjectTool extends Tool:
       "properties" -> Json.obj(
         "action" -> Json.obj(
           "type" -> "string".asJson,
-          "enum" -> Json.arr("create".asJson, "list".asJson, "show".asJson, "update".asJson, "unmount".asJson, "remount".asJson),
+          "enum" -> Json
+            .arr("create".asJson, "list".asJson, "show".asJson, "update".asJson, "unmount".asJson, "remount".asJson),
           "description" -> "create (default): create / re-mount a project from `workspace`. list: list non-archived/non-unmounted projects with their device annotation (unmounted projects appear in a trailing section). show: one project's full definition (requires `name`). update: rewrite ONLY the description field (requires `name` + `description`; idempotent). unmount: hard-unmount the mounted project `name` — stops its in-flight work first (nodes, chains, dispatcher/delegate sessions), then removes it from the mount face; every workspace file is kept (zero deletion). remount: restore the unmounted project `name` — clears the unmount marker and re-mounts per the on-disk definition (archived projects are not revived). Ignored for create: `workspace`/`description`.".asJson
         ),
         "name" -> Json.obj(
@@ -119,6 +120,7 @@ object ProjectTool extends Tool:
             )
           )
         )
+    end match
 
   end call
 
@@ -144,18 +146,23 @@ object ProjectTool extends Tool:
           (selfEntry ++ peerEntries).filter((_, n) => n.nonEmpty)
         }
 
-  /** `action="list"`：非归档/非卸载项目逐台一行（设备归属标注 + 挂载态）；
+  /**
+   * `action="list"`：非归档/非卸载项目逐台一行（设备归属标注 + 挂载态）；
    *  unmount-console 面板批 2026-11-02：尾部追加「Unmounted」节（卸载态可见性——
-   *  名字/工作区/卸载时刻 + remount 指路），卸载后不再对 agent 凭空消失。 */
+   *  名字/工作区/卸载时刻 + remount 指路），卸载后不再对 agent 凭空消失。
+   */
   private def listFace(ctx: ToolContext): IO[Either[ToolError, String]] =
     for
       names <- rosterNameMap(ctx)
       projects <- ProjectStore.list()
-      unmounted <- ProjectStore.listAll().map(_.filter(pd => pd.unmounted.contains(true) && !pd.archived.contains(true)))
+      unmounted <- ProjectStore
+        .listAll()
+        .map(_.filter(pd => pd.unmounted.contains(true) && !pd.archived.contains(true)))
       mounted <- ProjectRuntimeRegistry.all.map(_.map(rt => rt.project.name).toSet)
     yield
       val body =
-        if projects.isEmpty then "No mounted projects (当前无挂载项目). Create one with action=\"create\" and a workspace path."
+        if projects.isEmpty then
+          "No mounted projects (当前无挂载项目). Create one with action=\"create\" and a workspace path."
         else
           val lines = projects.sortBy(_.name).map { pd =>
             val dev = ProjectStore.displayDevice(ProjectStore.effectiveDevice(pd), names.get)
@@ -171,10 +178,13 @@ object ProjectTool extends Tool:
         if unmounted.isEmpty then ""
         else
           "\n\nUnmounted (out of context, not dispatchable; files kept byte-for-byte — action=\"remount\", name=<project>, to restore):" +
-            unmounted.sortBy(_.name).map { pd =>
-              val at = pd.unmountedAt.getOrElse(0L)
-              s"- ${pd.name} [unmounted at $at] ${pd.workspace}"
-            }.mkString("\n")
+            unmounted
+              .sortBy(_.name)
+              .map { pd =>
+                val at = pd.unmountedAt.getOrElse(0L)
+                s"- ${pd.name} [unmounted at $at] ${pd.workspace}"
+              }
+              .mkString("\n")
       Right(body + unmountedSection)
 
   /** `action="show"`：单项目全量定义（含设备归属的存储值 + 显示名 + 大脑根）。 */
@@ -195,7 +205,11 @@ object ProjectTool extends Tool:
           pd <- ProjectStore.load(proj)
         yield pd match
           case None =>
-            Left(ToolError(s"Project '$proj' not found (no projects/$proj/project.json). action=\"list\" shows existing projects."))
+            Left(
+              ToolError(
+                s"Project '$proj' not found (no projects/$proj/project.json). action=\"list\" shows existing projects."
+              )
+            )
           case Some(d) =>
             val devRaw = ProjectStore.effectiveDevice(d)
             val devDisplay = ProjectStore.displayDevice(devRaw, names.get)
@@ -210,8 +224,10 @@ object ProjectTool extends Tool:
             b ++= s"  brainRoot: ${ProjectStore.brainWorkspace(d)} (engine-side ledger anchor; = workspace for local projects)\n"
             b ++= s"  agentFile: ${d.agentFile}\n"
             b ++= s"  mounted: ${if mounted then "yes" else "no"}\n"
-            if d.archived.contains(true) then b ++= "  archived: yes (hidden from the Projects list; remount does not revive it)\n"
-            if d.unmounted.contains(true) then b ++= "  unmounted: yes (hard-unmounted; out of context — action=\"remount\" to restore)\n"
+            if d.archived.contains(true) then
+              b ++= "  archived: yes (hidden from the Projects list; remount does not revive it)\n"
+            if d.unmounted.contains(true) then
+              b ++= "  unmounted: yes (hard-unmounted; out of context — action=\"remount\" to restore)\n"
             b ++= s"  createdAt: ${d.createdAt}\n"
             Right(b.toString)
 
@@ -244,7 +260,9 @@ object ProjectTool extends Tool:
               case Right("unchanged") =>
                 Right(s"Project '$proj' description unchanged (already set — idempotent no-op, zero write).")
               case Right(_) =>
-                Right(s"Project '$proj' description updated (only the description field changed — every other project.json field is byte-for-byte).")
+                Right(
+                  s"Project '$proj' description updated (only the description field changed — every other project.json field is byte-for-byte)."
+                )
             }
 
   /** create 面（原 ProjectCreate 语义，逐字保持）。 */
@@ -295,7 +313,8 @@ object ProjectTool extends Tool:
           case (Some(res), Some(_)) =>
             // actor 留痕（unmount-console 面板批）：工具腿 = 调用会话 id（回答审计行
             // 「谁卸的」；rootSessionId 兜底——两者同值时自然合一）。
-            val actorId = ctx.sessionId.filter(_.nonEmpty).orElse(ctx.rootSessionId.filter(_.nonEmpty)).getOrElse("tool")
+            val actorId =
+              ctx.sessionId.filter(_.nonEmpty).orElse(ctx.rootSessionId.filter(_.nonEmpty)).getOrElse("tool")
             ProjectUnmount
               .unmount(
                 proj,
@@ -426,7 +445,6 @@ object ProjectTool extends Tool:
       ),
       device = device
     )
-
 
   /** '~' 展开（仅前缀语义，防 API 差异；非 ~ 开头原样返回）。 */
   def expandTilde(path: String): String =

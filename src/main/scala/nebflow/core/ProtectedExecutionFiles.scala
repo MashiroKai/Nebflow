@@ -33,8 +33,10 @@ object ProtectedExecutionFiles:
   def apply(roots: Iterable[Path]): ProtectedExecutionFiles =
     new ProtectedExecutionFiles(roots.toList.map(canonicalRoot).distinct)
 
-  /** Engine roots must land in the same canonical form as canonicalTarget's
-    * resolution (macOS /var → /private/var), or the prefix comparison misses. */
+  /**
+   * Engine roots must land in the same canonical form as canonicalTarget's
+   * resolution (macOS /var → /private/var), or the prefix comparison misses.
+   */
   private def canonicalRoot(root: Path): Path =
     val absolute = root.toAbsolutePath.normalize()
     if Files.exists(absolute, LinkOption.NOFOLLOW_LINKS) then absolute.toRealPath() else absolute
@@ -49,3 +51,4 @@ object ProtectedExecutionFiles:
       val real = probe.toRealPath()
       if probe == absolute then real
       else real.resolve(probe.relativize(absolute)).normalize()
+end ProtectedExecutionFiles

@@ -413,6 +413,7 @@ class MailNodeSubAddressSpec extends CatsEffectSuite:
         s"the error must name the retired team face (standalone has no Mail face): ${r.left.map(_.message)}"
       )
     finally system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
+    end try
   }
 
   // ── M9 挂载面（授权扩＝创建者 delegate；零 over-grant）────────────────────

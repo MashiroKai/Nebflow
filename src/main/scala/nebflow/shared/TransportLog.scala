@@ -57,13 +57,14 @@ object TransportLog:
     case Debug extends Mode("debug")
 
   object Mode:
+
     def parse(raw: String): Option[Mode] =
       Option(raw).map(_.trim.toLowerCase) match
         case Some("aggregate") | Some("agg") | Some("quiet") => Some(Mode.Aggregate)
         case Some("per-line") | Some("perline") | Some("line") | Some("verbose") =>
           Some(Mode.PerLine)
         case Some("debug") => Some(Mode.Debug)
-        case _             => None
+        case _ => None
 
   /** 模式开关（系统属性优先，其次 env，最后缺省 aggregate）。 */
   final val ModeProperty: String = "nebflow.log.transport.mode"
@@ -180,6 +181,8 @@ object TransportLog:
     /** 仅测试用：当前未冲刷的调用数。 */
     def pendingTotal: Long = lock.synchronized(total)
 
+  end FamilyState
+
   /** 一个窗口的读数（`counts` 键 = 家族自有维度键）。 */
   final case class FamilyReading(
     counts: Map[String, Long],
@@ -189,6 +192,7 @@ object TransportLog:
     windowStartMs: Long,
     windowEndMs: Long
   ):
+
     def windowSec: Long =
       math.max(1L, math.round((windowEndMs - windowStartMs) / 1000.0))
 
@@ -223,6 +227,8 @@ object TransportLog:
       targets = 0
     )
 
+  end presenceSendData
+
   /**
    * `session-sync push` 的一次记账（**只记日志，不碰推送**）。
    *
@@ -250,7 +256,7 @@ object TransportLog:
   ): Unit =
     currentMode match
       case Mode.PerLine => log.infoSync(msg)
-      case Mode.Debug   => log.debugSync(msg)
+      case Mode.Debug => log.debugSync(msg)
       case Mode.Aggregate =>
         if state.logger eq null then state.logger = log
         state.record(log, key, bytes, targets)
@@ -309,6 +315,8 @@ object TransportLog:
     s"session-sync push ×${r.total} in ${r.windowSec}s (sessions=$sessions " +
       s"status{$statusStr} targetsAvg=$targetsAvg bytesAvg=$bytesAvg top[$top])"
 
+  end sessionSyncSummary
+
   /** 计数从高到低取前 [[TopListSize]] 条，余量折成 `+N more`。 */
   private def topList(entries: List[(String, Long)]): String =
     val sorted = entries.sortBy(e => (-e._2, e._1))
@@ -327,8 +335,9 @@ object TransportLog:
     val ex = Executors.newSingleThreadScheduledExecutor(factory)
     val periodMs = math.max(1L, windowSec) * 1000L
     ex.scheduleWithFixedDelay(
-      () => { try flushNow() catch case _: Throwable => () },
-      periodMs,
+      () =>
+        try flushNow()
+        catch case _: Throwable => (), periodMs,
       periodMs,
       TimeUnit.MILLISECONDS
     )
@@ -338,12 +347,15 @@ object TransportLog:
     try
       Runtime.getRuntime.addShutdownHook(
         new Thread(
-          () => { try flushNow() catch case _: Throwable => () },
-          "nebflow-log-noise-flush-on-stop"
+          () =>
+            try flushNow()
+            catch case _: Throwable => (), "nebflow-log-noise-flush-on-stop"
         )
       )
     catch case _: Throwable => ()
     ex
+
+  end scheduler
 
   private def ensureFlusher(): Unit =
     // 触碰即初始化（单线程 daemon，幂等）。日志面任何异常都不许逃回业务调用者
@@ -368,3 +380,4 @@ object TransportLog:
       PresenceFamily -> presenceState.pendingTotal,
       SessionSyncFamily -> sessionSyncState.pendingTotal
     )
+end TransportLog

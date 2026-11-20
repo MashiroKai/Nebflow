@@ -47,10 +47,11 @@ object DelegateLedgerReconcile:
 
   /** 腿 3 汇总（boot 日志行 + 测试断言面）。 */
   final case class Report(
-      settledByLedger: List[String] = Nil,
-      settledByMerge: List[String] = Nil,
-      kept: List[String] = Nil
+    settledByLedger: List[String] = Nil,
+    settledByMerge: List[String] = Nil,
+    kept: List[String] = Nil
   ):
+
     def summary: String =
       s"ledger=${settledByLedger.size} merge=${settledByMerge.size} kept=${kept.size}"
 
@@ -134,11 +135,12 @@ object DelegateLedgerReconcile:
                   from = nebflow.core.project.TaskLedgerHistory.Origins.Nebula,
                   actor = nebflow.core.project.TaskLedgerHistory.Actors.Nebula
                 )
-            ).attempt.flatMap {
-              case Right(_) => IO.unit
-              case Left(err) =>
-                logger.warn(s"[ledger-reconcile] settlement note failed for $delegateId (ledger entry '$tid'): $err")
-            }
+            ).attempt
+              .flatMap {
+                case Right(_) => IO.unit
+                case Left(err) =>
+                  logger.warn(s"[ledger-reconcile] settlement note failed for $delegateId (ledger entry '$tid'): $err")
+              }
         }
 
   // ── 腿 3：boot 对账（假中断候选的逐条裁定）─────────────────────────────
@@ -149,26 +151,26 @@ object DelegateLedgerReconcile:
       DelegateRegistry
         .list()
         .filter(r => r.restartInterruptedAt.isDefined && !DelegateVisibility.settledOf(r))
-    )
-      .flatMap { candidates =>
-        if candidates.isEmpty then IO.pure(Report())
-        else
-          logger.info(s"[ledger-reconcile] boot reconcile: ${candidates.size} restart-interrupted row(s) to adjudicate") *>
-            candidates.traverse(c => adjudicateOne(store, c)).map { reports =>
-              val merged = reports.foldLeft(Report())((a, b) =>
-                Report(
-                  settledByLedger = a.settledByLedger ++ b.settledByLedger,
-                  settledByMerge = a.settledByMerge ++ b.settledByMerge,
-                  kept = a.kept ++ b.kept
-                )
+    ).flatMap { candidates =>
+      if candidates.isEmpty then IO.pure(Report())
+      else
+        logger.info(
+          s"[ledger-reconcile] boot reconcile: ${candidates.size} restart-interrupted row(s) to adjudicate"
+        ) *>
+          candidates.traverse(c => adjudicateOne(store, c)).map { reports =>
+            val merged = reports.foldLeft(Report())((a, b) =>
+              Report(
+                settledByLedger = a.settledByLedger ++ b.settledByLedger,
+                settledByMerge = a.settledByMerge ++ b.settledByMerge,
+                kept = a.kept ++ b.kept
               )
-              logger.info(s"[ledger-reconcile] boot reconcile done: ${merged.summary}")
-              merged
-            }
-      }
-      .handleErrorWith(e =>
-        logger.warn(s"[ledger-reconcile] boot reconcile failed (flags left as-is): ${e.getMessage}").as(Report())
-      )
+            )
+            logger.info(s"[ledger-reconcile] boot reconcile done: ${merged.summary}")
+            merged
+          }
+    }.handleErrorWith(e =>
+      logger.warn(s"[ledger-reconcile] boot reconcile failed (flags left as-is): ${e.getMessage}").as(Report())
+    )
 
   /** 单条假中断候选的裁定（逐条 fail-soft 不串扰）。 */
   private def adjudicateOne(store: nebflow.core.SubAgentTaskStorePort, rec: DelegateRegistry.Record): IO[Report] =
@@ -196,11 +198,12 @@ object DelegateLedgerReconcile:
                     from = nebflow.core.project.TaskLedgerHistory.Origins.Nebula,
                     actor = nebflow.core.project.TaskLedgerHistory.Actors.Nebula
                   )
-              ).attempt.flatMap {
-                case Left(err) =>
-                  logger.warn(s"[ledger-reconcile] merge-evidence note failed for '$tid': $err")
-                case Right(_) => IO.unit
-              } *> clearInterruptMark(rec.id, reason = "branch merged into base").as(
+              ).attempt
+                .flatMap {
+                  case Left(err) =>
+                    logger.warn(s"[ledger-reconcile] merge-evidence note failed for '$tid': $err")
+                  case Right(_) => IO.unit
+                } *> clearInterruptMark(rec.id, reason = "branch merged into base").as(
                 Report(settledByMerge = List(rec.id))
               )
             else IO.pure(Report(kept = List(rec.id))) // 真中断——旗保留
@@ -209,7 +212,9 @@ object DelegateLedgerReconcile:
             IO.pure(Report(kept = List(rec.id)))
         }
     ).handleErrorWith(e =>
-      logger.warn(s"[ledger-reconcile] adjudicate failed for '${rec.id}': ${e.getMessage}").as(Report(kept = List(rec.id)))
+      logger
+        .warn(s"[ledger-reconcile] adjudicate failed for '${rec.id}': ${e.getMessage}")
+        .as(Report(kept = List(rec.id)))
     )
 
   /** 合并佐证：分支 ∧ 基分支 ∧ 工作区可解析 ∧ 分支已并入基分支（isAncestor）。 */

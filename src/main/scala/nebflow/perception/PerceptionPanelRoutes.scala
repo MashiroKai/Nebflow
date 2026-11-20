@@ -52,21 +52,23 @@ object PerceptionPanelRoutes:
               trustedSenders = optStrList(body, "trustedSenders")
             ).flatMap {
               case Right((acc, stats)) =>
-                Ok(Json.obj(
-                  "ok" -> true.asJson,
-                  "account" -> Json.obj(
-                    "id" -> acc.id.asJson,
-                    "address" -> acc.address.asJson,
-                    "provider" -> acc.provider.asJson,
-                    "enabled" -> acc.enabled.asJson
-                  ),
-                  // 连接成功态统计（报障 2026-10-28：连接卡显示「已连接：
-                  // 收件箱 N 封、M 封未读」；unseen 缺席 = null，前端降级文案）
-                  "mailbox" -> Json.obj(
-                    "exists" -> stats.exists.asJson,
-                    "unseen" -> stats.unseen.asJson
+                Ok(
+                  Json.obj(
+                    "ok" -> true.asJson,
+                    "account" -> Json.obj(
+                      "id" -> acc.id.asJson,
+                      "address" -> acc.address.asJson,
+                      "provider" -> acc.provider.asJson,
+                      "enabled" -> acc.enabled.asJson
+                    ),
+                    // 连接成功态统计（报障 2026-10-28：连接卡显示「已连接：
+                    // 收件箱 N 封、M 封未读」；unseen 缺席 = null，前端降级文案）
+                    "mailbox" -> Json.obj(
+                      "exists" -> stats.exists.asJson,
+                      "unseen" -> stats.unseen.asJson
+                    )
                   )
-                ))
+                )
               case Left(err) => BadRequest(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
             }
           }
@@ -76,7 +78,7 @@ object PerceptionPanelRoutes:
         gated(resolve) { c =>
           req.as[Json].flatMap { body =>
             c.toggleAccount(str(body, "id"), bool(body, "enabled")).flatMap {
-              case Right(_)  => Ok(Json.obj("ok" -> true.asJson))
+              case Right(_) => Ok(Json.obj("ok" -> true.asJson))
               case Left(err) => BadRequest(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
             }
           }
@@ -86,7 +88,7 @@ object PerceptionPanelRoutes:
         gated(resolve) { c =>
           req.as[Json].flatMap { body =>
             c.removeAccount(str(body, "id")).flatMap {
-              case Right(_)  => Ok(Json.obj("ok" -> true.asJson))
+              case Right(_) => Ok(Json.obj("ok" -> true.asJson))
               case Left(err) => BadRequest(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
             }
           }
@@ -101,20 +103,26 @@ object PerceptionPanelRoutes:
             val requestId = str(body, "requestId")
             val windowSec = optInt(body, "windowSec").getOrElse(PerceptionService.OtpWindowSec)
             if requestId.isBlank then BadRequest(Json.obj("error" -> "requestId required".asJson))
-            else c.openOtpWindow(requestId, math.max(30, math.min(windowSec, 3600))).flatMap { w =>
-              c.windowHitMeta(w.windowId).flatMap { hit =>
-                val fields: Vector[(String, Json)] = Vector(
-                  "windowId" -> w.windowId.asJson,
-                  "expiresAt" -> w.expiresAt.asJson,
-                  "hasHit" -> hit.isDefined.asJson
-                ) ++ hit.map(h => Vector(
-                  "from" -> h.from.asJson,
-                  "fromDomain" -> h.fromDomain.asJson,
-                  "receivedAt" -> h.receivedAt.asJson
-                )).getOrElse(Vector.empty)
-                Ok(Json.fromJsonObject(io.circe.JsonObject.fromIterable(fields)))
+            else
+              c.openOtpWindow(requestId, math.max(30, math.min(windowSec, 3600))).flatMap { w =>
+                c.windowHitMeta(w.windowId).flatMap { hit =>
+                  val fields: Vector[(String, Json)] = Vector(
+                    "windowId" -> w.windowId.asJson,
+                    "expiresAt" -> w.expiresAt.asJson,
+                    "hasHit" -> hit.isDefined.asJson
+                  ) ++ hit
+                    .map(h =>
+                      Vector(
+                        "from" -> h.from.asJson,
+                        "fromDomain" -> h.fromDomain.asJson,
+                        "receivedAt" -> h.receivedAt.asJson
+                      )
+                    )
+                    .getOrElse(Vector.empty)
+                  Ok(Json.fromJsonObject(io.circe.JsonObject.fromIterable(fields)))
+                }
               }
-            }
+            end if
           }
         }
 
@@ -124,12 +132,14 @@ object PerceptionPanelRoutes:
           val windowId = req.params.getOrElse("windowId", "")
           c.consumeOtp(windowId).flatMap {
             case Some(hit) =>
-              Ok(Json.obj(
-                "code" -> hit.code.asJson,
-                "from" -> hit.from.asJson,
-                "fromDomain" -> hit.fromDomain.asJson,
-                "receivedAt" -> hit.receivedAt.asJson
-              ))
+              Ok(
+                Json.obj(
+                  "code" -> hit.code.asJson,
+                  "from" -> hit.from.asJson,
+                  "fromDomain" -> hit.fromDomain.asJson,
+                  "receivedAt" -> hit.receivedAt.asJson
+                )
+              )
             case None => NotFound(Json.obj("error" -> "no code".asJson))
           }
         }
@@ -140,29 +150,31 @@ object PerceptionPanelRoutes:
           c.draftView(draftId).flatMap {
             case None => NotFound(Json.obj("error" -> "draft not found".asJson))
             case Some(v) =>
-              Ok(Json.obj(
-                "draftId" -> v.record.draftId.asJson,
-                "state" -> v.record.state.asJson,
-                "content" -> v.content.asJson,
-                "mtimeMs" -> v.mtimeMs.asJson,
-                "snapshotAt" -> v.record.snapshotAt.asJson,
-                "stale" -> v.stale.asJson,
-                "doc" -> (v.doc.toOption match
-                  case Some(d) => Json.obj(
-                      "to" -> d.to.asJson,
-                      "cc" -> d.cc.asJson,
-                      "bcc" -> d.bcc.asJson,
-                      "subject" -> d.subject.asJson,
-                      "bodyHtml" -> d.bodyHtml.asJson,
-                      "quoteHtml" -> d.quoteHtml.getOrElse("").asJson,
-                      "attachments" -> d.attachments.asJson
-                    )
-                  case None => Json.Null
-                ),
-                // 附件在位性 + 大小（快照卡/画布 chip 的标红与禁发判据，r2 §7.3；
-                // 旧引擎/降级形态缺字段 = 前端按未知大小降级展示）。
-                "attachmentStats" -> v.attachmentStats.asJson
-              ))
+              Ok(
+                Json.obj(
+                  "draftId" -> v.record.draftId.asJson,
+                  "state" -> v.record.state.asJson,
+                  "content" -> v.content.asJson,
+                  "mtimeMs" -> v.mtimeMs.asJson,
+                  "snapshotAt" -> v.record.snapshotAt.asJson,
+                  "stale" -> v.stale.asJson,
+                  "doc" -> (v.doc.toOption match
+                    case Some(d) =>
+                      Json.obj(
+                        "to" -> d.to.asJson,
+                        "cc" -> d.cc.asJson,
+                        "bcc" -> d.bcc.asJson,
+                        "subject" -> d.subject.asJson,
+                        "bodyHtml" -> d.bodyHtml.asJson,
+                        "quoteHtml" -> d.quoteHtml.getOrElse("").asJson,
+                        "attachments" -> d.attachments.asJson
+                      )
+                    case None => Json.Null),
+                  // 附件在位性 + 大小（快照卡/画布 chip 的标红与禁发判据，r2 §7.3；
+                  // 旧引擎/降级形态缺字段 = 前端按未知大小降级展示）。
+                  "attachmentStats" -> v.attachmentStats.asJson
+                )
+              )
           }
         }
 
@@ -171,7 +183,7 @@ object PerceptionPanelRoutes:
           req.as[Json].flatMap { body =>
             c.saveDraft(draftId, str(body, "content")).flatMap {
               case Right(mtime) => Ok(Json.obj("ok" -> true.asJson, "mtimeMs" -> mtime.asJson))
-              case Left(err)    => Conflict(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
+              case Left(err) => Conflict(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
             }
           }
         }
@@ -179,7 +191,7 @@ object PerceptionPanelRoutes:
       case req @ POST -> Root / "mail" / "drafts" / draftId / "abandon" =>
         gated(resolve) { c =>
           c.abandonDraft(draftId).flatMap {
-            case Right(_)  => Ok(Json.obj("ok" -> true.asJson))
+            case Right(_) => Ok(Json.obj("ok" -> true.asJson))
             case Left(err) => Conflict(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
           }
         }
@@ -192,25 +204,31 @@ object PerceptionPanelRoutes:
             val snapshot = bool(body, "snapshot")
             c.sendDraft(draftId, snapshot).flatMap {
               case Right(rec) =>
-                Ok(Json.obj(
-                  "ok" -> true.asJson,
-                  "messageId" -> rec.messageId.asJson,
-                  "sentAt" -> rec.sentAt.asJson,
-                  "to" -> rec.toSummary.asJson,
-                  "subject" -> rec.subject.asJson,
-                  "attachments" -> rec.attachmentCount.asJson
-                ))
+                Ok(
+                  Json.obj(
+                    "ok" -> true.asJson,
+                    "messageId" -> rec.messageId.asJson,
+                    "sentAt" -> rec.sentAt.asJson,
+                    "to" -> rec.toSummary.asJson,
+                    "subject" -> rec.subject.asJson,
+                    "attachments" -> rec.attachmentCount.asJson
+                  )
+                )
               case Left(f) =>
                 val (status, code) = f match
-                  case PerceptionModel.SendFailure.Stale      => (Status.Conflict, "stale_snapshot")
+                  case PerceptionModel.SendFailure.Stale => (Status.Conflict, "stale_snapshot")
                   case PerceptionModel.SendFailure.AuthFailed => (Status.Conflict, "auth_failed")
                   case _: PerceptionModel.SendFailure.Invalid => (Status.BadRequest, "invalid")
-                  case _                                      => (Status.BadGateway, "send_failed")
-                Response[IO](status).withEntity(Json.obj(
-                  "ok" -> false.asJson,
-                  "code" -> code.asJson,
-                  "error" -> PerceptionModel.SendFailure.readable(f).asJson
-                )).pure[IO]
+                  case _ => (Status.BadGateway, "send_failed")
+                Response[IO](status)
+                  .withEntity(
+                    Json.obj(
+                      "ok" -> false.asJson,
+                      "code" -> code.asJson,
+                      "error" -> PerceptionModel.SendFailure.readable(f).asJson
+                    )
+                  )
+                  .pure[IO]
             }
           }
         }

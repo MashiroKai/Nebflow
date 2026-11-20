@@ -53,5 +53,6 @@ object ChainsRowsFixture:
         )
         .noSpaces
     )
+  end main
 
 end ChainsRowsFixture

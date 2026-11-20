@@ -89,11 +89,13 @@ class NodeMessagePersistenceSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(originalRoot)
       os.remove.all(tmp)
 
+  end withFx
+
   private def probeBehavior(seen: Ref[IO, List[String]]): nebflow.actor.Behavior[AgentCommand] =
     lazy val b: nebflow.actor.Behavior[AgentCommand] =
       Behaviors.receiveMessage[AgentCommand] {
         case m: AgentCommand.ImmediateInput => seen.update(_ :+ m.text) *> IO.pure(b)
-        case _                              => IO.unit.as(b)
+        case _ => IO.unit.as(b)
       }
     b
 
@@ -159,9 +161,16 @@ class NodeMessagePersistenceSpec extends CatsEffectSuite:
           s"ledger path = ${NodeMessageLedger.path(ws.toString)}"
         )
         _ = assert(res.isRight, s"S1: delivery to a live running node must succeed, got: $res")
-        _ = assert(rows.nonEmpty, "S1: a successful delivery must leave ledger rows on disk (the loss window is closed)")
+        _ = assert(
+          rows.nonEmpty,
+          "S1: a successful delivery must leave ledger rows on disk (the loss window is closed)"
+        )
         _ = assertEquals(entries.size, 1, s"S1: exactly one ledgered message expected, got ${entries.size}")
-        _ = assertEquals(entries.head.event, NodeMessageLedger.Injected, "S1: the tell accepted ⇒ state advances to injected")
+        _ = assertEquals(
+          entries.head.event,
+          NodeMessageLedger.Injected,
+          "S1: the tell accepted ⇒ state advances to injected"
+        )
         _ = assertEquals(entries.head.text, "S1_BODY keep going", "S1: the ledger carries the resolved message body")
         _ = assert(
           delivered.exists(_.contains(NodeMessageLedger.markerOf(entries.head.id))),
@@ -172,6 +181,7 @@ class NodeMessagePersistenceSpec extends CatsEffectSuite:
           "S1: the marker must be detectable from a transcript-shaped surface"
         )
       yield ()
+      end for
     }
   }
 
@@ -240,7 +250,11 @@ class NodeMessagePersistenceSpec extends CatsEffectSuite:
           prompt1.contains("history restored from disk (2 messages"),
           "S2: node context recovery — the resume prompt still restores the pre-crash transcript"
         )
-        _ = assertEquals(ledger1.find(_.id == msgId).map(_.event), Some(NodeMessageLedger.Replayed), "S2: replay is recorded")
+        _ = assertEquals(
+          ledger1.find(_.id == msgId).map(_.event),
+          Some(NodeMessageLedger.Replayed),
+          "S2: replay is recorded"
+        )
         _ = assert(claim2.isDefined, "S2: boot#2 also claims (the node crashed again after the replay)")
         _ = assert(
           !prompt2.contains(NodeMessageLedger.markerOf(msgId)),
@@ -251,8 +265,13 @@ class NodeMessagePersistenceSpec extends CatsEffectSuite:
           Some(NodeMessageLedger.Consumed),
           "S2: the transcript is authoritative — consumed closes the ledger permanently"
         )
-        _ = assertEquals(turns.size, 1, "S2: the live-session route fired exactly once (replay goes through the resume prompt)")
+        _ = assertEquals(
+          turns.size,
+          1,
+          "S2: the live-session route fired exactly once (replay goes through the resume prompt)"
+        )
       yield ()
+      end for
     }
   }
 
@@ -295,6 +314,7 @@ class NodeMessagePersistenceSpec extends CatsEffectSuite:
           "S3: nothing is appended to a terminal node's task"
         )
       yield ()
+      end for
     }
   }
 

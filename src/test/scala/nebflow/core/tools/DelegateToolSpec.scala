@@ -109,6 +109,7 @@ class DelegateToolSpec extends CatsEffectSuite:
       assertEquals(absentResult, attachmentError)
       assertEquals(emptyResult, attachmentError)
       assertEquals(legacyResult, attachmentError)
+    end for
 
   // ---------- 1. schema 面 ----------
 

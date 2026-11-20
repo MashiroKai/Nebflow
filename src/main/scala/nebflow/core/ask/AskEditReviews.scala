@@ -142,16 +142,14 @@ object AskEditReviews:
                 val bytes = Files.readAllBytes(p)
                 if bytes.length > MaxFileChars then
                   refuse(s"the document is larger than ${MaxFileChars} chars (ask edit face cap)", d.canonical)
-                else if bytes.contains(0.toByte) then
-                  refuse("binary content (NUL byte) is not editable", d.canonical)
+                else if bytes.contains(0.toByte) then refuse("binary content (NUL byte) is not editable", d.canonical)
                 else
                   val decoder = StandardCharsets.UTF_8.newDecoder()
                   try
                     val text = decoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString
                     audit(d.canonical, allowed = true, reason = "")
                     Right(Capture(d.canonical, binding.fileName, text))
-                  catch
-                    case NonFatal(_) => refuse("binary content (not valid UTF-8) is not editable", d.canonical)
+                  catch case NonFatal(_) => refuse("binary content (not valid UTF-8) is not editable", d.canonical)
             catch
               case NonFatal(e) =>
                 logger.warn(s"ask edit capture failed: ${e.getMessage}")

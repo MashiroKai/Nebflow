@@ -31,6 +31,7 @@ class ChainWedgedReceiptSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
+
   os.write.over(
     tempRoot / "agents" / "general" / "agent.json",
     """{"name":"general","description":"chain-wedged spec agent","tools":[],"category":"standalone"}"""
@@ -102,7 +103,9 @@ class ChainWedgedReceiptSpec extends CatsEffectSuite:
       }
     go(System.currentTimeMillis() + timeoutMs)
 
-  test("chain-wedged: a chain-owned downstream wedged by a terminal upstream emits ONE chain-wedged event (chain=/node=/wedgedBy=, top-level chainId) AND ONE root receipt carrying the chainId — the second terminal write point on the same chain emits nothing more") {
+  test(
+    "chain-wedged: a chain-owned downstream wedged by a terminal upstream emits ONE chain-wedged event (chain=/node=/wedgedBy=, top-level chainId) AND ONE root receipt carrying the chainId — the second terminal write point on the same chain emits nothing more"
+  ) {
     val ws = tempRoot / "ws-wedged"
     os.makeDir.all(ws)
     val system = ActorSystem(s"cw-${scala.util.Random.nextInt(100000)}")
@@ -175,7 +178,11 @@ class ChainWedgedReceiptSpec extends CatsEffectSuite:
       // blocked 终态已退役，BLOCKED 标签不再产生），文本三要素齐备
       assertEquals(imms.size, 1, s"exactly one root receipt expected, got ${imms.map(_.eventType)}")
       val receipt = imms.head
-      assertEquals(receipt.eventType, Some(DispatchNotify.NoticeEventType), "receipt status must be `notice` (supervision receipt)")
+      assertEquals(
+        receipt.eventType,
+        Some(DispatchNotify.NoticeEventType),
+        "receipt status must be `notice` (supervision receipt)"
+      )
       assert(receipt.text.contains("chain-wedged"), s"receipt must say chain-wedged: ${receipt.text.take(300)}")
       assert(receipt.text.contains("c-77"), "receipt must carry the chainId")
       assert(receipt.text.contains("n-b") || receipt.text.contains("n-c"), "receipt must carry the wedged node id")
@@ -184,9 +191,12 @@ class ChainWedgedReceiptSpec extends CatsEffectSuite:
       assert(receipt.text.contains("rewire"), "receipt must state the rewire action")
       assert(receipt.text.contains("abandon"), "receipt must state the abandon action")
       assert(rootSid.nonEmpty)
+    end for
   }
 
-  test("chain-wedged: a downstream with NO chainId produces zero chain-wedged events and zero root receipts (behaviour identical to before)") {
+  test(
+    "chain-wedged: a downstream with NO chainId produces zero chain-wedged events and zero root receipts (behaviour identical to before)"
+  ) {
     val ws = tempRoot / "ws-nochain"
     os.makeDir.all(ws)
     val system = ActorSystem(s"cw-nc-${scala.util.Random.nextInt(100000)}")
@@ -228,6 +238,12 @@ class ChainWedgedReceiptSpec extends CatsEffectSuite:
         0,
         s"no chain attribution ⇒ no chain-wedged event, got ${events.map(typ)}"
       )
-      assertEquals(events.count(j => typ(j) == "barrier-blocked"), 1, "the pre-existing barrier-blocked line is unchanged")
+      assertEquals(
+        events.count(j => typ(j) == "barrier-blocked"),
+        1,
+        "the pre-existing barrier-blocked line is unchanged"
+      )
       assertEquals(imms.size, 0, s"no chain attribution ⇒ no root receipt, got ${imms.map(_.eventType)}")
+    end for
   }
+end ChainWedgedReceiptSpec

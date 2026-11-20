@@ -57,7 +57,8 @@ class ChatSearchRoutesSpec extends CatsEffectSuite:
       fileLockManager = FileLockManager.create.unsafeRunSync(),
       sessionModelOverrides = cats.effect.Ref.unsafe[IO, Map[String, ModelCandidate]](Map.empty),
       providerRegistry = new nebflow.llm.ProviderRegistry(
-        cats.effect.Ref.unsafe[IO, NebflowServiceConfig](NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))),
+        cats.effect.Ref
+          .unsafe[IO, NebflowServiceConfig](NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))),
         NullBackend
       ),
       healthMonitor = nebflow.llm.ProviderHealthMonitor(null),
@@ -90,10 +91,13 @@ class ChatSearchRoutesSpec extends CatsEffectSuite:
     os.remove.all(tempRoot)
 
   private def seed(): Unit =
-    os.write.over(sessionsDir / "seed-a.ui.json", List(
-      UiMessage.User(text = "聊天记录检索很慢", timestamp = 1000L),
-      UiMessage.Ai(text = "delegate dispatch note", timestamp = 1100L)
-    ).asJson.noSpaces)
+    os.write.over(
+      sessionsDir / "seed-a.ui.json",
+      List(
+        UiMessage.User(text = "聊天记录检索很慢", timestamp = 1000L),
+        UiMessage.Ai(text = "delegate dispatch note", timestamp = 1100L)
+      ).asJson.noSpaces
+    )
     SearchIndexService.unsafeInsertDocs("chat", adapter.extractSession("seed-a").getOrElse(Nil))
 
   private def req(path: String, ifNoneMatch: Option[String] = None): Request[IO] =
@@ -127,8 +131,8 @@ class ChatSearchRoutesSpec extends CatsEffectSuite:
   }
 
   test("304：If-None-Match 命中 ⇒ 零体重发（§6 跨设备判据）") {
-    val first  = serve(req("/api/search/chat?q=delegate&kinds=message"))
-    val etag   = first.headers.get(CIString("ETag")).map(_.head.value).getOrElse("")
+    val first = serve(req("/api/search/chat?q=delegate&kinds=message"))
+    val etag = first.headers.get(CIString("ETag")).map(_.head.value).getOrElse("")
     val second = serve(req("/api/search/chat?q=delegate&kinds=message", Some(etag)))
     assertEquals(second.status, Status.NotModified)
     val body = second.bodyText.compile.string.unsafeRunSync()
@@ -139,10 +143,13 @@ class ChatSearchRoutesSpec extends CatsEffectSuite:
     val first = serve(req("/api/search/chat?q=delegate&kinds=message"))
     val etag1 = first.headers.get(CIString("ETag")).map(_.head.value).getOrElse("")
     // 变更会话内容 → version bump
-    os.write.over(sessionsDir / "seed-a.ui.json", List(
-      UiMessage.User(text = "聊天记录检索很慢", timestamp = 1000L),
-      UiMessage.Ai(text = "delegate dispatch note two", timestamp = 1200L)
-    ).asJson.noSpaces)
+    os.write.over(
+      sessionsDir / "seed-a.ui.json",
+      List(
+        UiMessage.User(text = "聊天记录检索很慢", timestamp = 1000L),
+        UiMessage.Ai(text = "delegate dispatch note two", timestamp = 1200L)
+      ).asJson.noSpaces
+    )
     SearchIndexService.unsafeInsertDocs("chat", adapter.extractSession("seed-a").getOrElse(Nil))
     val second = serve(req("/api/search/chat?q=delegate&kinds=message", Some(etag1)))
     assertEquals(second.status, Status.Ok, "会话变更 ⇒ ETag 必变（§4.4 精确失效）")
@@ -170,16 +177,24 @@ class ChatSearchRoutesSpec extends CatsEffectSuite:
     // 模拟改动前入库的残留行：直接灌一条 kind="tool" 文档（adapter 已不再产出）。
     // 用 since/until 谓词而非 sid——sid 谓词会触发惰性对账把无源残留行清掉，
     // 这里要验的恰是对账覆盖不到的情形。
-    SearchIndexService.unsafeInsertDocs("chat", List(
-      SearchIndexService.IndexDoc(sid = "seed-stale", ord = 0, kind = "tool", ts = 0L,
-        text = "staletool delegate noise", extra = "{\"tool\":\"Bash\"}")
-    ))
+    SearchIndexService.unsafeInsertDocs(
+      "chat",
+      List(
+        SearchIndexService.IndexDoc(
+          sid = "seed-stale",
+          ord = 0,
+          kind = "tool",
+          ts = 0L,
+          text = "staletool delegate noise",
+          extra = "{\"tool\":\"Bash\"}"
+        )
+      )
+    )
     val resp = serve(req(s"/api/search/chat?q=staletool&since=0&until=${Long.MaxValue}"))
     assertEquals(resp.status, Status.Ok)
     val json = bodyJson(resp)
     val hits = json.hcursor.downField("hits").as[List[Json]].getOrElse(Nil)
-    assert(hits.forall(_.hcursor.downField("kind").as[String].toOption != Some("tool")),
-      "残留 tool 行必须被过滤（不入结果）")
+    assert(hits.forall(_.hcursor.downField("kind").as[String].toOption != Some("tool")), "残留 tool 行必须被过滤（不入结果）")
     assertEquals(json.hcursor.downField("total").as[Int].toOption, Some(0))
   }
 
@@ -203,8 +218,13 @@ class ChatSearchRoutesSpec extends CatsEffectSuite:
     val total = 620
     val docs = (0 until total).toList.map { i =>
       // i=0 ⇒ 最早（最小 ts）+ ord=620：排序 ts DESC ⇒ 它必须落在最后一页。
-      SearchIndexService.IndexDoc("pagewalk-sid", total - i, "message",
-        1_760_000_000_000L + i * 1_000L, s"pagewalk hit $i")
+      SearchIndexService.IndexDoc(
+        "pagewalk-sid",
+        total - i,
+        "message",
+        1_760_000_000_000L + i * 1_000L,
+        s"pagewalk hit $i"
+      )
     }
     SearchIndexService.unsafeInsertDocs("chat", docs)
     var cursor = ""
@@ -215,8 +235,7 @@ class ChatSearchRoutesSpec extends CatsEffectSuite:
       val json = bodyJson(resp)
       val hits = json.hcursor.downField("hits").as[List[Json]].getOrElse(Nil)
       val keys = hits.map { h =>
-        (h.hcursor.downField("sid").as[String].getOrElse(""),
-         h.hcursor.downField("ord").as[Int].getOrElse(-1))
+        (h.hcursor.downField("sid").as[String].getOrElse(""), h.hcursor.downField("ord").as[Int].getOrElse(-1))
       }
       cursor = json.hcursor.downField("nextCursor").as[Option[String]].toOption.flatten.getOrElse("")
       (json.hcursor.downField("total").as[Int].getOrElse(-1), keys)

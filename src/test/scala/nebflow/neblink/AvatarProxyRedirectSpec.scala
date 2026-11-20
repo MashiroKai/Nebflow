@@ -135,7 +135,10 @@ class AvatarProxyRedirectSpec extends CatsEffectSuite:
 
   test("resolveRedirect：相对地址按 RFC 3986 相对当前 URL 解析；畸形/空 ⇒ Left") {
     val from = URI.create("https://mashiro.staging.nebflow.space/avatars/u1.png")
-    assertEquals(AvatarProxy.resolveRedirect(from, "/a.png").map(_.toString), Right("https://mashiro.staging.nebflow.space/a.png"))
+    assertEquals(
+      AvatarProxy.resolveRedirect(from, "/a.png").map(_.toString),
+      Right("https://mashiro.staging.nebflow.space/a.png")
+    )
     assertEquals(
       AvatarProxy.resolveRedirect(from, "https://staging.mystand.space/avatars/u1.png").map(_.toString),
       Right("https://staging.mystand.space/avatars/u1.png")

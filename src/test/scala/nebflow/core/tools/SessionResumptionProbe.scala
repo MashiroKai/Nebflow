@@ -2,11 +2,13 @@ package nebflow.core.tools
 
 import nebflow.core.delegate.SessionResumption
 
-/** 真实四代会话链（bb1a8bbb → 556fef54 → 5dcbf6c5 → 836a475e）修复后对照读数。
+/**
+ * 真实四代会话链（bb1a8bbb → 556fef54 → 5dcbf6c5 → 836a475e）修复后对照读数。
  *  只读 ~/.stand/delegates 下四份记录，打印每代原始 displayName 与 displayTitle 归一结果。
  *  用法：sbt "Test/runMain nebflow.core.tools.SessionResumptionProbe"
  */
 object SessionResumptionProbe:
+
   def main(args: Array[String]): Unit =
     val gen = List(
       "bb1a8bbb" -> "/Users/kaiyu/.stand/delegates/delegate-nebflow-bb1a8bbb.json",
@@ -24,8 +26,12 @@ object SessionResumptionProbe:
         val raw = field("displayTitle", "title")
         val clean = SessionResumption.displayTitle(raw, "<fallback>")
         val sid = field("sessionId")
-        println(s"$id | rawLen=${raw.length} | prefixHits=${"continuation".r.findAllIn(raw).size} | title=${clean.take(46)}")
+        println(
+          s"$id | rawLen=${raw.length} | prefixHits=${"continuation".r.findAllIn(raw).size} | title=${clean.take(46)}"
+        )
         Some(clean)
     }
     println(s"distinct normalized titles = ${normalized.distinct.size} (of ${normalized.size} generations)")
     println(s"zero continuation marks = ${normalized.forall(!_.toLowerCase.contains("continuation"))}")
+  end main
+end SessionResumptionProbe

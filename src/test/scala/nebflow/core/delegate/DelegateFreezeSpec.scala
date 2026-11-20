@@ -88,6 +88,10 @@ class DelegateFreezeSpec extends CatsEffectSuite:
       voiceMutedRef = voiceMuted
     )
 
+    end for
+
+  end mkResources
+
   private def mkRecord(id: String, parent: String, cwd: String) =
     DelegateRegistry.Record(
       id = id,
@@ -117,9 +121,12 @@ class DelegateFreezeSpec extends CatsEffectSuite:
 
   // ── ① 原因词表：四类错误各一例 ─────────────────────────────────────────
 
-  test("classify: one case per frozen reason (llm / tool / engine / quota) — the reason is machine-readable, never a fuzzy judgement") {
+  test(
+    "classify: one case per frozen reason (llm / tool / engine / quota) — the reason is machine-readable, never a fuzzy judgement"
+  ) {
     assertEquals(
-      DelegateFreeze.classify("LlmFailed", "provider anthropic/model claude-x 529 overloaded, all candidates exhausted"),
+      DelegateFreeze
+        .classify("LlmFailed", "provider anthropic/model claude-x 529 overloaded, all candidates exhausted"),
       DelegateFreeze.Reason.LlmFailure
     )
     assertEquals(
@@ -156,7 +163,9 @@ class DelegateFreezeSpec extends CatsEffectSuite:
     assertEquals(DelegateFreeze.parse("delegate-frozen:nonsense"), None)
   }
 
-  test("reasonForTrigger: supervisor-internal triggers map onto engine-fault / quota (unknown ⇒ None, classify decides)") {
+  test(
+    "reasonForTrigger: supervisor-internal triggers map onto engine-fault / quota (unknown ⇒ None, classify decides)"
+  ) {
     assertEquals(DelegateFreeze.reasonForTrigger("supervision-exhausted"), Some(DelegateFreeze.Reason.EngineFault))
     assertEquals(DelegateFreeze.reasonForTrigger("respawn-failed"), Some(DelegateFreeze.Reason.EngineFault))
     assertEquals(DelegateFreeze.reasonForTrigger("cancelled-by-quota"), Some(DelegateFreeze.Reason.CancelledByQuota))
@@ -165,7 +174,9 @@ class DelegateFreezeSpec extends CatsEffectSuite:
 
   // ── ①' 触发源诊断（engine-fault 冻结报错补详批 · 第二波）──────────────────
 
-  test("trigger diagnosis: builder formats, extraction reads back, prefix-strip leaves the raw error text (the raw errorType is never swallowed)") {
+  test(
+    "trigger diagnosis: builder formats, extraction reads back, prefix-strip leaves the raw error text (the raw errorType is never swallowed)"
+  ) {
     assertEquals(DelegateFreeze.triggerDiagnosis("failed-event", "Timeout"), "trigger=failed-event; errorType=Timeout")
     assertEquals(DelegateFreeze.triggerDiagnosis("managed-workspace-stopped", ""), "trigger=managed-workspace-stopped")
     assertEquals(DelegateFreeze.triggerDiagnosis("", "Terminated"), "errorType=Terminated")
@@ -183,7 +194,9 @@ class DelegateFreezeSpec extends CatsEffectSuite:
     assertEquals(DelegateFreeze.classify("Timeout", "turn exceeded the wall clock"), DelegateFreeze.Reason.EngineFault)
   }
 
-  test("parse: the diagnostic wire suffix is audit-only — every reason code parses through the bracket, unknown codes still refuse") {
+  test(
+    "parse: the diagnostic wire suffix is audit-only — every reason code parses through the bracket, unknown codes still refuse"
+  ) {
     assertEquals(
       DelegateFreeze.parse("delegate-frozen:llm-failure[trigger=failed-event; errorType=LlmFailed]"),
       Some(DelegateFreeze.Reason.LlmFailure)
@@ -226,7 +239,8 @@ class DelegateFreezeSpec extends CatsEffectSuite:
       parentSessionId = "parent-diag-2",
       title = "alert trigger line",
       reason = "engine-fault",
-      detail = "trigger=supervision-exhausted; errorType=Terminated; the agent crashed and could not recover after 2 restarts",
+      detail =
+        "trigger=supervision-exhausted; errorType=Terminated; the agent crashed and could not recover after 2 restarts",
       tier = FreezeNotice.Tier.Escalate,
       infra = false,
       frozenSince = 0L,
@@ -298,7 +312,9 @@ class DelegateFreezeSpec extends CatsEffectSuite:
 
   // ── ③ 冻结落盘 ─────────────────────────────────────────────────────────
 
-  test("park: writes the registry frozen slot + the task row status=frozen (a status the boot salvage sweep never sees)") {
+  test(
+    "park: writes the registry frozen slot + the task row status=frozen (a status the boot salvage sweep never sees)"
+  ) {
     mkResources("park").flatMap { res =>
       val parent = "freeze-parent-park"
       val id = "delegate-freeze-park"
@@ -306,7 +322,14 @@ class DelegateFreezeSpec extends CatsEffectSuite:
         _ <- res.sessionStore.getOrCreateSession(parent, "freeze spec parent", agentName = Some("Nebula"))
         _ <- res.subAgentTaskStore.recordTask(mkTask(id, parent))
         _ <- IO(DelegateRegistry.put(mkRecord(id, parent, tmp.toString)))
-        ts <- DelegateFreeze.park(res, id, parent, DelegateFreeze.Reason.LlmFailure, "provider 401 unauthorized", trigger = "failed-event")
+        ts <- DelegateFreeze.park(
+          res,
+          id,
+          parent,
+          DelegateFreeze.Reason.LlmFailure,
+          "provider 401 unauthorized",
+          trigger = "failed-event"
+        )
         _ = assert(ts.isDefined, "park returns the freeze timestamp for a real record")
         rec <- IO(DelegateRegistry.find(id).get)
         _ = assertEquals(rec.frozenSince, ts)
@@ -322,6 +345,7 @@ class DelegateFreezeSpec extends CatsEffectSuite:
         _ = assertEquals(row.map(_.status), Some(DelegateFreeze.TaskStatus))
         _ = assertEquals(DelegateFreeze.TaskStatus, "frozen")
       yield ()
+      end for
     }
   }
 
@@ -350,7 +374,9 @@ class DelegateFreezeSpec extends CatsEffectSuite:
 
   // ── ④ 唤醒收口 ─────────────────────────────────────────────────────────
 
-  test("onWoken: clears the frozen slot, resets the registry status to Idle and the task row to running (wake = a new execution window)") {
+  test(
+    "onWoken: clears the frozen slot, resets the registry status to Idle and the task row to running (wake = a new execution window)"
+  ) {
     mkResources("wake").flatMap { res =>
       val parent = "freeze-parent-wake"
       val id = "delegate-freeze-wake"
@@ -373,7 +399,14 @@ class DelegateFreezeSpec extends CatsEffectSuite:
             rootSessionId = parent
           ))
         }
-        _ <- DelegateFreeze.park(res, id, parent, DelegateFreeze.Reason.ToolFailure, "tool pipeline died", trigger = "failed-event")
+        _ <- DelegateFreeze.park(
+          res,
+          id,
+          parent,
+          DelegateFreeze.Reason.ToolFailure,
+          "tool pipeline died",
+          trigger = "failed-event"
+        )
         _ <- DelegateFreeze.markRegistryState(res, id, DelegateFreeze.Reason.ToolFailure)
         frozenRec <- res.agentRegistry.get
         _ = assertEquals(
@@ -386,7 +419,11 @@ class DelegateFreezeSpec extends CatsEffectSuite:
         )
         _ <- DelegateFreeze.onWoken(res, id, "spec")
         wokeReg <- res.agentRegistry.get
-        _ = assertEquals(wokeReg.get(id).map(_.status), Some(nebflow.actor.AgentStatus.Idle), "registry status back to Idle")
+        _ = assertEquals(
+          wokeReg.get(id).map(_.status),
+          Some(nebflow.actor.AgentStatus.Idle),
+          "registry status back to Idle"
+        )
         _ = assertEquals(wokeReg.get(id).flatMap(_.frozenReason), None, "registry frozen slot cleared")
         rec <- IO(DelegateRegistry.find(id).get)
         _ = assertEquals(rec.frozenSince, None, "frozenSince cleared")
@@ -396,6 +433,7 @@ class DelegateFreezeSpec extends CatsEffectSuite:
         row <- res.subAgentTaskStore.findByTaskId(id)
         _ = assertEquals(row.map(_.status), Some("running"), "the ledger row is honestly in-flight again")
       yield ()
+      end for
     }
   }
 
@@ -429,12 +467,15 @@ class DelegateFreezeSpec extends CatsEffectSuite:
         _ = assertEquals(reg.get(id).map(_.status), Some(nebflow.actor.AgentStatus.Frozen), "schedule freeze untouched")
         _ = assertEquals(reg.get(id).flatMap(_.frozenReason), Some("schedule"))
       yield ()
+      end for
     }
   }
 
   // ── ⑤ 兜底：长期无人唤醒 ───────────────────────────────────────────────
 
-  test("staleDormant: Active → Dormant (panel prompt) → Expired (retention archive); open-ended retention keeps only the prompt") {
+  test(
+    "staleDormant: Active → Dormant (panel prompt) → Expired (retention archive); open-ended retention keeps only the prompt"
+  ) {
     val remind = 24L * 3600 * 1000
     val retain = 14L * 24 * 3600 * 1000
     val now = 1_000_000_000_000L

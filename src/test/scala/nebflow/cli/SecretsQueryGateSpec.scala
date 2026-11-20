@@ -37,8 +37,10 @@ import java.nio.file.Files
  */
 class SecretsQueryGateSpec extends FunSuite:
 
-  /** The value files' content. Never asserted-present anywhere — only
-   *  asserted-ABSENT, which is the whole point of the gate. */
+  /**
+   * The value files' content. Never asserted-present anywhere — only
+   *  asserted-ABSENT, which is the whole point of the gate.
+   */
   private val Sentinel = "SENTINEL-DO-NOT-LEAK-8f3a41"
   private val MockA = s"$Sentinel-a"
   private val MockB = s"$Sentinel-b"
@@ -70,7 +72,9 @@ class SecretsQueryGateSpec extends FunSuite:
           .unsafeRunSync()
           .isRight
       )
-      assert(store.setMetadata("vercel-token", None, Some("Vercel deploy token"), List("deploy")).unsafeRunSync().isRight)
+      assert(
+        store.setMetadata("vercel-token", None, Some("Vercel deploy token"), List("deploy")).unsafeRunSync().isRight
+      )
       f(root)
     finally
       PathUtil.setDataRoot(previous)
@@ -79,20 +83,30 @@ class SecretsQueryGateSpec extends FunSuite:
     end try
   end withRoot
 
-  /** Every byte one CLI invocation would put on stdout, across both faces.
+  /**
+   * Every byte one CLI invocation would put on stdout, across both faces.
    *  `CliResult.Text` lines and `CliResult.Json` (spaces2) are exactly what
    *  `CliRouter.renderResult` prints, so asserting over these asserts over
-   *  the real output. */
-  private def cliOutputs(sub: CliSubcommand, args: Map[String, String] = Map.empty, positional: List[String] = Nil): List[String] =
+   *  the real output.
+   */
+  private def cliOutputs(
+    sub: CliSubcommand,
+    args: Map[String, String] = Map.empty,
+    positional: List[String] = Nil
+  ): List[String] =
     cliResults(sub, args, positional).map {
-      case CliResult.Text(lines)      => lines.mkString("\n")
-      case CliResult.Json(j)          => j.spaces2
+      case CliResult.Text(lines) => lines.mkString("\n")
+      case CliResult.Json(j) => j.spaces2
       case CliResult.Error(msg, code) => s"error($code): $msg"
-      case CliResult.Exit(code, out)  => s"exit($code): $out"
-      case CliResult.Success          => ""
+      case CliResult.Exit(code, out) => s"exit($code): $out"
+      case CliResult.Success => ""
     }
 
-  private def cliResults(sub: CliSubcommand, args: Map[String, String] = Map.empty, positional: List[String] = Nil): List[CliResult] =
+  private def cliResults(
+    sub: CliSubcommand,
+    args: Map[String, String] = Map.empty,
+    positional: List[String] = Nil
+  ): List[CliResult] =
     List(false, true).map(jsonMode => sub.run(ctx(args, positional, jsonMode)).unsafeRunSync())
 
   private def assertSentinelFree(label: String, outputs: Iterable[String]): Unit =
@@ -123,7 +137,7 @@ class SecretsQueryGateSpec extends FunSuite:
     withRoot { _ =>
       val text = SecretsList.run(ctx()).unsafeRunSync() match
         case CliResult.Text(lines) => lines.mkString("\n")
-        case other                 => fail(s"expected text output, got $other")
+        case other => fail(s"expected text output, got $other")
       assert(text.contains("aliyun-oss"), text)
       assert(text.contains("#cloud") && text.contains("#deploy") && text.contains("#oss"), text)
       assert(text.contains("OSS access key for the docs bucket"), text)
@@ -133,11 +147,12 @@ class SecretsQueryGateSpec extends FunSuite:
 
       val payload = SecretsList.run(ctx(jsonMode = true)).unsafeRunSync() match
         case CliResult.Json(j) => j
-        case other             => fail(s"expected json output, got $other")
+        case other => fail(s"expected json output, got $other")
       assertEquals(payload.hcursor.downField("count").as[Int].toOption, Some(3))
       assertEquals(payload.hcursor.downField("total").as[Int].toOption, Some(3))
       val rows = payload.hcursor.downField("secrets").values.map(_.toList).getOrElse(Nil)
-      val aliyun = rows.find(_.hcursor.downField("name").as[String].toOption.contains("aliyun-oss")).getOrElse(fail("row missing"))
+      val aliyun =
+        rows.find(_.hcursor.downField("name").as[String].toOption.contains("aliyun-oss")).getOrElse(fail("row missing"))
       assertEquals(aliyun.hcursor.downField("tags").as[List[String]].toOption, Some(List("cloud", "deploy", "oss")))
       assert(aliyun.hcursor.downField("description").as[String].toOption.exists(_.nonEmpty))
       assert(aliyun.hcursor.downField("path").as[String].toOption.exists(_.endsWith("/secrets/aliyun-oss")))
@@ -152,14 +167,23 @@ class SecretsQueryGateSpec extends FunSuite:
       def names(args: Map[String, String]): List[String] =
         SecretsList.run(ctx(args, jsonMode = true)).unsafeRunSync() match
           case CliResult.Json(j) =>
-            j.hcursor.downField("secrets").values.map(_.toList).getOrElse(Nil).flatMap(_.hcursor.downField("name").as[String].toOption)
+            j.hcursor
+              .downField("secrets")
+              .values
+              .map(_.toList)
+              .getOrElse(Nil)
+              .flatMap(_.hcursor.downField("name").as[String].toOption)
           case other => fail(s"expected json, got $other")
 
       assertEquals(names(Map("tag" -> "deploy")).sorted, List("aliyun-oss", "vercel-token"))
       assertEquals(names(Map("tag" -> "deploy,cloud")).sorted, List("aliyun-oss"))
       // "Deploy" folds to "deploy" — the SAME query as the lowercase form, so
       // it selects every secret carrying that tag (both of them here).
-      assertEquals(names(Map("tag" -> "Deploy")).sorted, List("aliyun-oss", "vercel-token"), "tag matching is normalized, not case sensitive")
+      assertEquals(
+        names(Map("tag" -> "Deploy")).sorted,
+        List("aliyun-oss", "vercel-token"),
+        "tag matching is normalized, not case sensitive"
+      )
       assertEquals(names(Map("tag" -> "deploy,oss,nope")), Nil)
       assertEquals(names(Map("keyword" -> "vercel")), List("vercel-token"))
       assertEquals(names(Map("keyword" -> "docs bucket")), List("aliyun-oss"))
@@ -172,7 +196,7 @@ class SecretsQueryGateSpec extends FunSuite:
     withRoot { _ =>
       val out = SecretsList.run(ctx(Map("tag" -> "nope"))).unsafeRunSync() match
         case CliResult.Text(lines) => lines.mkString("\n")
-        case other                 => fail(s"expected text, got $other")
+        case other => fail(s"expected text, got $other")
       assert(out.contains("No secrets match this query."), out)
       assert(out.contains("tags=nope"), out)
       assertSentinelFree("no-match face", List(out))
@@ -267,7 +291,7 @@ class SecretsQueryGateSpec extends FunSuite:
       assert(!store.list().unsafeRunSync().toOption.get.exists(_.name == "askuser-gate-1"))
       val show = SecretsShow.run(ctx(positional = List("askuser-gate-1"), jsonMode = true)).unsafeRunSync() match
         case CliResult.Json(j) => j.spaces2
-        case other             => fail(s"expected json, got $other")
+        case other => fail(s"expected json, got $other")
       assertSentinelFree("show (managed name)", List(show))
       assert(show.contains("from-askuser"), show)
     }
@@ -279,10 +303,12 @@ class SecretsQueryGateSpec extends FunSuite:
     withRoot { root =>
       val before = os.read(root / "secrets" / "vercel-token")
       val out = SecretsMeta
-        .run(ctx(Map("name" -> "vercel-token", "description" -> "Deploy token for the docs site", "tag" -> "ci,Deploy")))
+        .run(
+          ctx(Map("name" -> "vercel-token", "description" -> "Deploy token for the docs site", "tag" -> "ci,Deploy"))
+        )
         .unsafeRunSync() match
         case CliResult.Text(lines) => lines.mkString("\n")
-        case other                 => fail(s"expected text, got $other")
+        case other => fail(s"expected text, got $other")
       assertSentinelFree("meta output", List(out))
       assertEquals(os.read(root / "secrets" / "vercel-token"), before, "the value file must be byte-identical")
       val store = new nebflow.core.secrets.SecretsStore(root / "secrets")

@@ -1,6 +1,7 @@
 package nebflow.neblink.core
 
 import nebflow.neblink.logto.*
+
 /**
  * Wire-contract constants for the device-interop subsystem (L3 rebrand
  * batch 3, 2026-08-17). D2 decision: the neblink subsystem name and its

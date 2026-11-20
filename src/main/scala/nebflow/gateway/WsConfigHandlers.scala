@@ -276,8 +276,13 @@ private[gateway] object WsConfigHandlers:
               val persistCfg = IO.blocking {
                 cfgJson.mapObject { obj =>
                   obj("apiKey").flatMap(_.asString) match
-                    case Some(value) => obj.add("apiKey", Json.fromString(
-                      nebflow.core.secrets.ConfigCredentialStore.persist(nebflow.shared.PathUtil.dataRoot, value)))
+                    case Some(value) =>
+                      obj.add(
+                        "apiKey",
+                        Json.fromString(
+                          nebflow.core.secrets.ConfigCredentialStore.persist(nebflow.shared.PathUtil.dataRoot, value)
+                        )
+                      )
                     case None => obj
                 }
               }

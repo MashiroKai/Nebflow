@@ -26,6 +26,7 @@ import scala.concurrent.duration.*
 class PendingDbWiringSpec extends CatsEffectSuite:
 
   extension (h: nebflow.db.DbHandle)
+
     private def foldState(stream: PendingStream, requestId: String): IO[Option[PendingRecord]] =
       h.readPending(stream).map {
         case ReadResult.Present(sr) =>
@@ -44,8 +45,11 @@ class PendingDbWiringSpec extends CatsEffectSuite:
     InteractionRequest(
       requestId = rid,
       kind = InteractionKind.Permission,
-      payload = Json.obj("type" -> Json.fromString("askPermission"),
-        "toolName" -> Json.fromString("Bash"), "summary" -> Json.fromString("rm -rf scratch")),
+      payload = Json.obj(
+        "type" -> Json.fromString("askPermission"),
+        "toolName" -> Json.fromString("Bash"),
+        "summary" -> Json.fromString("rm -rf scratch")
+      ),
       reply = InteractionReply.PermissionReply(deferred),
       rootSessionId = "root-db",
       sourceAgent = "stand",
@@ -65,8 +69,11 @@ class PendingDbWiringSpec extends CatsEffectSuite:
         _ <- recordCard(ledger, req, "允许执行该命令吗？")
         row1 <- db.foldState(PendingStream.Permission, "r-wt-1")
         _ = assertEquals(row1.map(_.state), Some(PendingRecord.StateOpen), "开单行应为 open")
-        _ = assertEquals(row1.map(_.payloadDigest), Some(PendingRecord.digestOf(req.payload)),
-          "digest 对拍 = payload 摘要（全文不入库）")
+        _ = assertEquals(
+          row1.map(_.payloadDigest),
+          Some(PendingRecord.digestOf(req.payload)),
+          "digest 对拍 = payload 摘要（全文不入库）"
+        )
         _ <- ledger.remove("r-wt-1")
         row2 <- db.foldState(PendingStream.Permission, "r-wt-1")
         _ = assertEquals(row2.map(_.state), Some(PendingRecord.StateClosed), "销账 ⇒ 决议行 closed")
@@ -77,10 +84,15 @@ class PendingDbWiringSpec extends CatsEffectSuite:
           case ReadResult.Present(sr) => assert(sr.records.size >= 2, "开单+闭单两行同在（append 语义）")
           case other => fail(s"expected Present, got $other")
       yield ()
+      end for
     }
 
   // Pending contract: restart permission orphan handling A/B awaits ruling; preserve assertions.
-  test("C3: restart keeps permission ticket reinstallable-and-answerable; ask expired-closed".tag(munit.Tag("pending-contract")).ignore):
+  test(
+    "C3: restart keeps permission ticket reinstallable-and-answerable; ask expired-closed"
+      .tag(munit.Tag("pending-contract"))
+      .ignore
+  ):
     openDbAt().flatMap { case (_, db) =>
       val path = os.temp.dir() / "pending-asks.json"
       // ── 第一代进程：两张挂起单（permission + ask），无任何收口路径（模拟重启杀进程）。
@@ -89,11 +101,17 @@ class PendingDbWiringSpec extends CatsEffectSuite:
         d1 <- Deferred[IO, Boolean]
         _ <- recordCard(ledger1, permCard("r-perm-1", d1), "允许写文件吗？")
         askReq = InteractionRequest(
-          requestId = "r-ask-1", kind = InteractionKind.AskUser,
-          payload = Json.obj("type" -> Json.fromString("askUser"),
-            "items" -> Json.arr(Json.obj("question" -> Json.fromString("选哪个方案?")))),
+          requestId = "r-ask-1",
+          kind = InteractionKind.AskUser,
+          payload = Json.obj(
+            "type" -> Json.fromString("askUser"),
+            "items" -> Json.arr(Json.obj("question" -> Json.fromString("选哪个方案?")))
+          ),
           reply = InteractionReply.AskUserReply(None),
-          rootSessionId = "root-db", sourceAgent = "stand", sourceSession = "src-1")
+          rootSessionId = "root-db",
+          sourceAgent = "stand",
+          sourceSession = "src-1"
+        )
         _ <- recordCard(ledger1, askReq, "选哪个方案?")
         // ── 「重启」：新 hub + 新台账实例（同根同 db）。
         system = nebflow.actor.ActorSystem("pending-restart")
@@ -116,25 +134,33 @@ class PendingDbWiringSpec extends CatsEffectSuite:
         orphans <- db.orphanOpenAsks()
         _ = assertEquals(orphans, 0, "V6：恢复腿跑后孤儿 ask == 0")
         bc <- broadcasts.get
-        _ = assert(bc.exists(_.hcursor.downField("requestId").as[String].toOption.contains("r-ask-1")),
-          "ask 过期广播帧在场（expired-orphan 语义保持）")
+        _ = assert(
+          bc.exists(_.hcursor.downField("requestId").as[String].toOption.contains("r-ask-1")),
+          "ask 过期广播帧在场（expired-orphan 语义保持）"
+        )
         // permission：重装回 hub ⇒ 可答（走既有 Answered 收口链）。McpPermission/
         // AskUser 进全局快照（snapshotFrames 口径）；Permission 卡走答复链验证。
         _ <- IO.sleep(150.millis) // hub forkTurn 异步登记重装槽
         snap <- hub.?[List[Json]](reply => InteractionHubCommand.ListAllPendingAsks(reply))
-        _ = assert(!snap.exists(_.hcursor.downField("requestId").as[String].toOption.contains("r-ask-1")),
-          "已过期 ask 不在 pending 快照")
+        _ = assert(
+          !snap.exists(_.hcursor.downField("requestId").as[String].toOption.contains("r-ask-1")),
+          "已过期 ask 不在 pending 快照"
+        )
         _ <- hub ! InteractionHubCommand.Answered(
-          InteractionAnswered(requestId = "r-perm-1", rootSessionId = "root-db",
-            payload = Json.obj("approved" -> Json.fromBoolean(true))))
+          InteractionAnswered(
+            requestId = "r-perm-1",
+            rootSessionId = "root-db",
+            payload = Json.obj("approved" -> Json.fromBoolean(true))
+          )
+        )
         _ <- IO.sleep(200.millis) // hub forkTurn 异步收口
         permRow <- db.foldState(PendingStream.Permission, "r-perm-1")
-        _ = assertEquals(permRow.map(_.state), Some(PendingRecord.StateClosed),
-          "重装的 permission 卡被答复 ⇒ db 闭单行（重装且可答闭环）")
+        _ = assertEquals(permRow.map(_.state), Some(PendingRecord.StateClosed), "重装的 permission 卡被答复 ⇒ db 闭单行（重装且可答闭环）")
         // 原槽 deferred 不被复活（数据面恢复不复活会话身份）——答复走的是重装卡
         // 的一次性 deferred（无人等待，随槽位收口自然弃用），故不断言 d1。
         _ <- system.stopAll
       yield ()
+      end for
     }
 
   test("C3: corrupt pending doc — explicit refusal (quarantine + WARN), never silent-empty"):
@@ -161,6 +187,7 @@ class PendingDbWiringSpec extends CatsEffectSuite:
         report <- ledger.bootReconcile(_ => IO.unit, (_, _) => IO.unit, _ => IO.unit)
         _ = assertEquals(report.dbReinstalled, 0, "db 面失败时 plan 归零（legacy 兜底语义）")
       yield ()
+      end for
     }
 
 end PendingDbWiringSpec

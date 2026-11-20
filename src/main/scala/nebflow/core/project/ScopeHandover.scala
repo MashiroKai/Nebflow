@@ -111,8 +111,7 @@ object ScopeHandover:
           val dstActive = nodeCountOf(dstJson)
           if dstActive > 0 then
             Left(s"target scope '$toDelegateId' already holds $dstActive active node(s) — refusing to overwrite")
-          else if srcDir == dstDir then
-            Right(HandoverReport(fromDelegateId, toDelegateId, active, archived, 0))
+          else if srcDir == dstDir then Right(HandoverReport(fromDelegateId, toDelegateId, active, archived, 0))
           else
             var moved = 0
             os.makeDir.all(dstDir)
@@ -167,6 +166,9 @@ object ScopeHandover:
               s"[scope-handover] '$fromDelegateId' → '$toDelegateId' moved (active=$active, archived=$archived, files=$moved)"
             )
             Right(HandoverReport(fromDelegateId, toDelegateId, active, archived, moved))
+          end if
+        end if
+      end if
     }.handleErrorWith(e =>
       logger
         .warn(
@@ -174,6 +176,8 @@ object ScopeHandover:
         )
         .as(Left(s"scope handover failed: ${e.getMessage}"))
     )
+
+  end handover
 
   /**
    * 派生腿的完整接线：卸旧宿主（如在册）→ 移交盘面 → 重挂新宿主（重开已换图的
@@ -214,7 +218,9 @@ object ScopeHandover:
               wsSend = wsSend
             )
             .handleErrorWith(e =>
-              logger.warn(s"[scope-handover] remount after handover failed for '$toDelegateId': ${e.getMessage}").as(None)
+              logger
+                .warn(s"[scope-handover] remount after handover failed for '$toDelegateId': ${e.getMessage}")
+                .as(None)
             )
             .void
         case Right(_) =>

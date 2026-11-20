@@ -194,25 +194,35 @@ final class ConsoleTakeover(
   // [[ConsoleTakeover.settle]]（连接入账时）自己管，两件事互不触碰。
   // expectedEpoch 仍是严格 compare-and-set（并发同 epoch 只有一个赢家）；它为真且不等于
   // 当前 epoch ⇒ None（只读，路由回 `writer_already_held` 这一真实保存失败面）。
-  def claimCanvas(principal: String, client: String, tab: String, expectedEpoch: Option[Long] = None): IO[Option[Long]] =
+  def claimCanvas(
+    principal: String,
+    client: String,
+    tab: String,
+    expectedEpoch: Option[Long] = None
+  ): IO[Option[Long]] =
     canvasExclusive {
-      controlRef.modify { state =>
-        val mine = state.writer.exists(w => w.principal == principal && w.clientId == client && w.tabInstanceId == tab)
-        if expectedEpoch.exists(_ != state.canvasEpoch) then (state, None)
-        else
-          val displaced = if mine then None else state.writer
-          val next = Math.addExact(state.canvasEpoch, 1L)
-          val writer = ConsoleTakeover.CanvasWriter(principal, client, tab, next)
-          (state.copy(canvasEpoch = next, writer = Some(writer)), Some((next, displaced)))
-      }.flatMap {
-        case None                    => IO.pure(None)
-        case Some((epoch, displaced)) =>
-          notifyDisplacedWriter(displaced, epoch).as(Some(epoch))
-      }
+      controlRef
+        .modify { state =>
+          val mine =
+            state.writer.exists(w => w.principal == principal && w.clientId == client && w.tabInstanceId == tab)
+          if expectedEpoch.exists(_ != state.canvasEpoch) then (state, None)
+          else
+            val displaced = if mine then None else state.writer
+            val next = Math.addExact(state.canvasEpoch, 1L)
+            val writer = ConsoleTakeover.CanvasWriter(principal, client, tab, next)
+            (state.copy(canvasEpoch = next, writer = Some(writer)), Some((next, displaced)))
+        }
+        .flatMap {
+          case None => IO.pure(None)
+          case Some((epoch, displaced)) =>
+            notifyDisplacedWriter(displaced, epoch).as(Some(epoch))
+        }
     }
 
   def canvasRole(principal: String, client: String, tab: String): IO[Option[Long]] =
-    controlRef.get.map(_.writer.filter(w => w.principal == principal && w.clientId == client && w.tabInstanceId == tab).map(_.epoch))
+    controlRef.get.map(
+      _.writer.filter(w => w.principal == principal && w.clientId == client && w.tabInstanceId == tab).map(_.epoch)
+    )
 
   def releaseCanvas(principal: String, client: String, tab: String, epoch: Long): IO[Boolean] =
     canvasExclusive(controlRef.modify { state =>
@@ -339,9 +349,12 @@ final class ConsoleTakeover(
     onIdentifyDeclared(sessionId, connId, clientId.map(cid => ConsoleTakeover.ClientMeta(clientId = Some(cid))))
 
   /** 在带声明腿（带端指纹/自动化声明的完整身份形态；`None` = 声明缺席）。 */
-  def onIdentifyDeclared(sessionId: String, connId: String, meta: Option[ConsoleTakeover.ClientMeta]): IO[Option[String]] =
-    if !enabled then
-      IO.pure(Some(ConsoleTakeover.holderOf(sessionId, meta.flatMap(_.clientId))))
+  def onIdentifyDeclared(
+    sessionId: String,
+    connId: String,
+    meta: Option[ConsoleTakeover.ClientMeta]
+  ): IO[Option[String]] =
+    if !enabled then IO.pure(Some(ConsoleTakeover.holderOf(sessionId, meta.flatMap(_.clientId))))
     else
       meta.flatMap(_.clientId) match
         case None =>
@@ -454,8 +467,12 @@ final class ConsoleTakeover(
                 prevOwner
               )
             else
-              ConsoleTakeover.verdict(me.flatMap(_.clientId), prev.flatMap(_.clientId),
-                me.flatMap(_.endprint), prev.flatMap(_.endprint)) match
+              ConsoleTakeover.verdict(
+                me.flatMap(_.clientId),
+                prev.flatMap(_.clientId),
+                me.flatMap(_.endprint),
+                prev.flatMap(_.endprint)
+              ) match
                 case ConsoleTakeover.Verdict.SameEnd =>
                   claim(key) *> logWith(
                     s"console-takeover: ${label(key)} same-end handover from ${label(prevOwner)} " +
@@ -503,7 +520,13 @@ final class ConsoleTakeover(
    * 返回 true = 键确实变了（调用方据此跑一次重裁决）；false = 握手已带同一身份
    * （直连脸/老路径），零重复裁决。
    */
-  private def migrateConn(connId: String, key: String, sessionId: String, meta: ConsoleTakeover.ClientMeta, now: Long): IO[Boolean] =
+  private def migrateConn(
+    connId: String,
+    key: String,
+    sessionId: String,
+    meta: ConsoleTakeover.ClientMeta,
+    now: Long
+  ): IO[Boolean] =
     instancesRef.get.flatMap { m =>
       val oldKey = m.collectFirst { case (k, i) if i.conns.contains(connId) => k }
       if oldKey.contains(key) then addConn(key, sessionId, meta, connId, now).as(false)
@@ -522,19 +545,28 @@ final class ConsoleTakeover(
           }
           // 所有权与历史随标签走：迁移是**同一次落地的换键**（在带声明腿），不是身份
           // 变化，故 owner 随迁、写者席位不动（写入由 epoch 栅栏判定，与 holder 键无关）。
-          _ <- oldKey.traverse_(old => canvasExclusive(controlRef.update(s => if s.owner.contains(old) then s.copy(owner = Some(key)) else s)))
+          _ <- oldKey.traverse_(old =>
+            canvasExclusive(controlRef.update(s => if s.owner.contains(old) then s.copy(owner = Some(key)) else s))
+          )
           _ <- oldKey.traverse_ { old =>
-                 pastOwnersRef.update { v =>
-                   v.map { case (k, t) => (if k == old then key else k, t) }
-                     .foldLeft(Vector.empty[(String, Long)]) { (acc, e) =>
-                       if acc.exists(_._1 == e._1) then acc else acc :+ e
-                     }
-                 }
-               }
+            pastOwnersRef.update { v =>
+              v.map { case (k, t) => (if k == old then key else k, t) }
+                .foldLeft(Vector.empty[(String, Long)]) { (acc, e) =>
+                  if acc.exists(_._1 == e._1) then acc else acc :+ e
+                }
+            }
+          }
         yield true
+      end if
     }
 
-  private def addConn(key: String, sessionId: String, meta: ConsoleTakeover.ClientMeta, connId: String, now: Long): IO[Unit] =
+  private def addConn(
+    key: String,
+    sessionId: String,
+    meta: ConsoleTakeover.ClientMeta,
+    connId: String,
+    now: Long
+  ): IO[Unit] =
     instancesRef.update { m =>
       val prev = m.get(key).getOrElse(ConsoleTakeover.Instance(key, sessionId, None, Set.empty, now))
       m.updated(key, ConsoleTakeover.merged(prev, sessionId, meta, Set(connId), now))
@@ -616,20 +648,22 @@ final class ConsoleTakeover(
           .map(m => m.get(holderKey).map(_.conns.toList.sorted).getOrElse(Nil))
           .flatMap(_.traverse_(cid => sendTo(cid, ConsoleTakeover.writerChangedFrame(newEpoch))))
 
-  /** 记 owner + pastOwners 账（LRU 帽内淘汰最旧）。写者席位与 owner 标签解耦
-   *  （2026-11-18；静默接管批 2026-11-19 补齐反向：席位变更**不**翻 owner、**不**出帧）。 */
+  /**
+   * 记 owner + pastOwners 账（LRU 帽内淘汰最旧）。写者席位与 owner 标签解耦
+   *  （2026-11-18；静默接管批 2026-11-19 补齐反向：席位变更**不**翻 owner、**不**出帧）。
+   */
   private def claim(key: String): IO[Unit] =
-    canvasExclusive(controlRef.update(s =>
-      if s.owner.contains(key) then s else s.copy(owner = Some(key))
-    )) *> recordOwner(key)
+    canvasExclusive(
+      controlRef.update(s => if s.owner.contains(key) then s else s.copy(owner = Some(key)))
+    ) *> recordOwner(key)
 
   private def recordOwner(key: String): IO[Unit] =
     nowMs().flatMap { now =>
-        pastOwnersRef.update { v =>
-          val pruned = v.filterNot(_._1 == key) :+ ((key, now))
-          if pruned.length > ConsoleTakeover.PastOwnerCap then pruned.drop(pruned.length - ConsoleTakeover.PastOwnerCap)
-          else pruned
-        }
+      pastOwnersRef.update { v =>
+        val pruned = v.filterNot(_._1 == key) :+ ((key, now))
+        if pruned.length > ConsoleTakeover.PastOwnerCap then pruned.drop(pruned.length - ConsoleTakeover.PastOwnerCap)
+        else pruned
+      }
     }
 
   private def nowMs(): IO[Long] = IO.realTime.map(_.toMillis)
@@ -642,7 +676,12 @@ end ConsoleTakeover
 object ConsoleTakeover:
 
   final case class CanvasWriter(principal: String, clientId: String, tabInstanceId: String, epoch: Long)
-  final case class ControlState(owner: Option[String] = None, canvasEpoch: Long = 0L, writer: Option[CanvasWriter] = None)
+
+  final case class ControlState(
+    owner: Option[String] = None,
+    canvasEpoch: Long = 0L,
+    writer: Option[CanvasWriter] = None
+  )
 
   /**
    * 实例账（holder → 活跃连接 + 身份 + 最后入账时刻 + 端指纹 + 可见活动戳）。
@@ -767,15 +806,19 @@ object ConsoleTakeover:
     case Conflict
     case Undecidable(why: String)
 
-  def verdict(mine: Option[String], prev: Option[String],
-              mineEnd: Option[String] = None, prevEnd: Option[String] = None): Verdict =
+  def verdict(
+    mine: Option[String],
+    prev: Option[String],
+    mineEnd: Option[String] = None,
+    prevEnd: Option[String] = None
+  ): Verdict =
     if sameEnd(mineEnd, prevEnd) then Verdict.SameEnd
     else
       (mine, prev) match
         case (Some(a), Some(b)) if a != b => Verdict.Conflict
-        case (Some(_), Some(_))           => Verdict.Undecidable("same client id (refresh / second tab / reseat)")
-        case (None, _)                    => Verdict.Undecidable("joining page carries no client id (legacy cache)")
-        case (_, None)                    => Verdict.Undecidable("incumbent carries no client id (legacy cache)")
+        case (Some(_), Some(_)) => Verdict.Undecidable("same client id (refresh / second tab / reseat)")
+        case (None, _) => Verdict.Undecidable("joining page carries no client id (legacy cache)")
+        case (_, None) => Verdict.Undecidable("incumbent carries no client id (legacy cache)")
 
   /** pastOwners 账帽（淘汰最旧）：内存态、会话 ≤30d 寿命，64 富余。 */
   val PastOwnerCap: Int = 64

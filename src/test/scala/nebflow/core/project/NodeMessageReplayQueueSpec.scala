@@ -150,9 +150,17 @@ class NodeMessageReplayQueueSpec extends CatsEffectSuite:
           task1.contains("S4_QUEUED_INSTRUCTION") && task1.contains(marker),
           "S4: the replay lands in the durable carrier (task「分发器补充」section) with its marker"
         )
-        _ = assertEquals(ledger1.find(_.id == id).map(_.event), Some(NodeMessageLedger.Appended), "S4: state closes as appended")
+        _ = assertEquals(
+          ledger1.find(_.id == id).map(_.event),
+          Some(NodeMessageLedger.Appended),
+          "S4: state closes as appended"
+        )
         _ = assertEquals(n2, 0, "S4 IDEMPOTENCY: a second boot must replay nothing")
-        _ = assertEquals(occurrences(task2, marker), 1, "S4 IDEMPOTENCY: the body is appended exactly once across two boots")
+        _ = assertEquals(
+          occurrences(task2, marker),
+          1,
+          "S4 IDEMPOTENCY: the body is appended exactly once across two boots"
+        )
       yield ()
     try io.unsafeRunSync()
     finally

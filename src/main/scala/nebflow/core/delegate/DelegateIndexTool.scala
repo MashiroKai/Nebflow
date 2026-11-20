@@ -39,12 +39,12 @@ object DelegateIndexTool:
         PathUtil.setDataRoot(root)
         println(s"[delegate-index] tool cmd=$cmd root=$root index=${DelegateIndex.dbPathOf(root)}")
         val code = cmd match
-          case "dedup"    => runDedup(root)
-          case "migrate"  => runMigrate(root, expect)
-          case "verify"   => runVerify(root)
-          case "bench"    => runBench(root)
+          case "dedup" => runDedup(root)
+          case "migrate" => runMigrate(root, expect)
+          case "verify" => runVerify(root)
+          case "bench" => runBench(root)
           case "rollback" => runRollback(root)
-          case _          => 2
+          case _ => 2
         sys.exit(code)
 
   private def parseArgs(args: List[String]): Either[String, (String, os.Path, Map[String, Long])] =
@@ -68,38 +68,50 @@ object DelegateIndexTool:
 
   private def runDedup(root: os.Path): Int =
     val d = DelegateIndex.validateDedup(root)
-    println(s"identity zone : files=${d.identityFiles} distinctIds=${d.distinctIds} " +
-      s"archived=${d.archivedIdentities} nonArchived=${d.nonArchivedIdentities}")
-    println(s"  idFieldMismatches=${d.idFieldMismatches.size} duplicateIds=${d.duplicateIds.size} " +
-      s"undecodable=${d.undecodableIdentities.size}")
-    println(s"ledger zone   : files=${d.ledgerFiles} lines=${d.ledgerLines} withIdentity=${d.ledgerIdsWithIdentity} " +
-      s"orphans=${d.ledgerOrphanIds.size}")
-    println(s"  roundLines=${d.roundLines} distinctRounds=${d.distinctRounds} " +
-      s"droppedDuplicateLines=${d.droppedDuplicateLines} staleRoundLines=${d.staleRoundLines}")
+    println(
+      s"identity zone : files=${d.identityFiles} distinctIds=${d.distinctIds} " +
+        s"archived=${d.archivedIdentities} nonArchived=${d.nonArchivedIdentities}"
+    )
+    println(
+      s"  idFieldMismatches=${d.idFieldMismatches.size} duplicateIds=${d.duplicateIds.size} " +
+        s"undecodable=${d.undecodableIdentities.size}"
+    )
+    println(
+      s"ledger zone   : files=${d.ledgerFiles} lines=${d.ledgerLines} withIdentity=${d.ledgerIdsWithIdentity} " +
+        s"orphans=${d.ledgerOrphanIds.size}"
+    )
+    println(
+      s"  roundLines=${d.roundLines} distinctRounds=${d.distinctRounds} " +
+        s"droppedDuplicateLines=${d.droppedDuplicateLines} staleRoundLines=${d.staleRoundLines}"
+    )
     d.idFieldMismatches.take(10).foreach(m => println(s"  MISMATCH $m"))
     d.undecodableIdentities.take(10).foreach(m => println(s"  UNDECODABLE $m"))
     d.ledgerOrphanIds.take(10).foreach(m => println(s"  ORPHAN-LEDGER $m"))
     d.notes.foreach(n => println(s"  note: $n"))
-    println("DEDUP_JSON " + json(
-      List(
-        "identityFiles" -> d.identityFiles.toString,
-        "distinctIds" -> d.distinctIds.toString,
-        "idFieldMismatches" -> d.idFieldMismatches.size.toString,
-        "duplicateIds" -> d.duplicateIds.size.toString,
-        "undecodable" -> d.undecodableIdentities.size.toString,
-        "archived" -> d.archivedIdentities.toString,
-        "nonArchived" -> d.nonArchivedIdentities.toString,
-        "ledgerFiles" -> d.ledgerFiles.toString,
-        "ledgerLines" -> d.ledgerLines.toString,
-        "ledgerWithIdentity" -> d.ledgerIdsWithIdentity.toString,
-        "ledgerOrphans" -> d.ledgerOrphanIds.size.toString,
-        "roundLines" -> d.roundLines.toString,
-        "distinctRounds" -> d.distinctRounds.toString,
-        "droppedDuplicateLines" -> d.droppedDuplicateLines.toString,
-        "staleRoundLines" -> d.staleRoundLines.toString,
-        "ok" -> d.ok.toString
-      )))
+    println(
+      "DEDUP_JSON " + json(
+        List(
+          "identityFiles" -> d.identityFiles.toString,
+          "distinctIds" -> d.distinctIds.toString,
+          "idFieldMismatches" -> d.idFieldMismatches.size.toString,
+          "duplicateIds" -> d.duplicateIds.size.toString,
+          "undecodable" -> d.undecodableIdentities.size.toString,
+          "archived" -> d.archivedIdentities.toString,
+          "nonArchived" -> d.nonArchivedIdentities.toString,
+          "ledgerFiles" -> d.ledgerFiles.toString,
+          "ledgerLines" -> d.ledgerLines.toString,
+          "ledgerWithIdentity" -> d.ledgerIdsWithIdentity.toString,
+          "ledgerOrphans" -> d.ledgerOrphanIds.size.toString,
+          "roundLines" -> d.roundLines.toString,
+          "distinctRounds" -> d.distinctRounds.toString,
+          "droppedDuplicateLines" -> d.droppedDuplicateLines.toString,
+          "staleRoundLines" -> d.staleRoundLines.toString,
+          "ok" -> d.ok.toString
+        )
+      )
+    )
     if d.ok then 0 else 1
+  end runDedup
 
   // ── migrate（可逆迁移 + 漂移报数）───────────────────────────────────────
 
@@ -109,19 +121,24 @@ object DelegateIndexTool:
         println(s"MIGRATE_REFUSED $err")
         1
       case Right(r) =>
-        println(s"imported: identities=${r.importedIdentities} ledgers=${r.importedLedgers} lines=${r.importedLines} " +
-          s"in ${r.ms}ms")
+        println(
+          s"imported: identities=${r.importedIdentities} ledgers=${r.importedLedgers} lines=${r.importedLines} " +
+            s"in ${r.ms}ms"
+        )
         r.skipped.foreach(s => println(s"  skipped $s"))
         r.drift.foreach(d => println(s"  drift ${d.field} expected=${d.expected} actual=${d.actual} delta=${d.delta}"))
-        println("MIGRATE_JSON " + json(
-          List(
-            "identities" -> r.importedIdentities.toString,
-            "ledgers" -> r.importedLedgers.toString,
-            "lines" -> r.importedLines.toString,
-            "skipped" -> r.skipped.size.toString,
-            "driftRows" -> r.drift.count(_.delta != 0L).toString,
-            "ms" -> r.ms.toString
-          ) ++ r.drift.map(d => s"drift_${d.field}" -> d.delta.toString)))
+        println(
+          "MIGRATE_JSON " + json(
+            List(
+              "identities" -> r.importedIdentities.toString,
+              "ledgers" -> r.importedLedgers.toString,
+              "lines" -> r.importedLines.toString,
+              "skipped" -> r.skipped.size.toString,
+              "driftRows" -> r.drift.count(_.delta != 0L).toString,
+              "ms" -> r.ms.toString
+            ) ++ r.drift.map(d => s"drift_${d.field}" -> d.delta.toString)
+          )
+        )
         0
 
   // ── verify（逐记录 + 计数 + 两窗分区对账）───────────────────────────────
@@ -133,33 +150,42 @@ object DelegateIndexTool:
         1
       case Some(v) =>
         println(s"identities: source=${v.sourceIdentities} index=${v.indexIdentities}")
-        println(s"ledgers   : source=${v.sourceLedgers} index=${v.indexLedgers} " +
-          s"lines source=${v.sourceLines} index=${v.indexLines}")
-        println(s"windows   : active=${v.windowActive} history=${v.windowHistory} " +
-          s"total=${v.windowTotal} partitionOk=${v.partitionOk}")
-        println(s"per-record mismatches: identity=${v.recordMismatches.size} " +
-          s"ledger=${v.roundMismatches.size} extraRows=${v.extraRows.size}")
+        println(
+          s"ledgers   : source=${v.sourceLedgers} index=${v.indexLedgers} " +
+            s"lines source=${v.sourceLines} index=${v.indexLines}"
+        )
+        println(
+          s"windows   : active=${v.windowActive} history=${v.windowHistory} " +
+            s"total=${v.windowTotal} partitionOk=${v.partitionOk}"
+        )
+        println(
+          s"per-record mismatches: identity=${v.recordMismatches.size} " +
+            s"ledger=${v.roundMismatches.size} extraRows=${v.extraRows.size}"
+        )
         v.recordMismatches.take(10).foreach(m => println(s"  MISMATCH ${m.zone} ${m.id}: ${m.reason}"))
         v.roundMismatches.take(10).foreach(m => println(s"  MISMATCH ${m.zone} ${m.id}: ${m.reason}"))
         v.extraRows.take(10).foreach(m => println(s"  EXTRA-ROW $m"))
-        println("VERIFY_JSON " + json(
-          List(
-            "sourceIdentities" -> v.sourceIdentities.toString,
-            "indexIdentities" -> v.indexIdentities.toString,
-            "sourceLedgers" -> v.sourceLedgers.toString,
-            "indexLedgers" -> v.indexLedgers.toString,
-            "sourceLines" -> v.sourceLines.toString,
-            "indexLines" -> v.indexLines.toString,
-            "identityMismatches" -> v.recordMismatches.size.toString,
-            "ledgerMismatches" -> v.roundMismatches.size.toString,
-            "extraRows" -> v.extraRows.size.toString,
-            "windowActive" -> v.windowActive.toString,
-            "windowHistory" -> v.windowHistory.toString,
-            "windowTotal" -> v.windowTotal.toString,
-            "partitionOk" -> v.partitionOk.toString,
-            "countsMatch" -> v.countsMatch.toString,
-            "ok" -> v.ok.toString
-          )))
+        println(
+          "VERIFY_JSON " + json(
+            List(
+              "sourceIdentities" -> v.sourceIdentities.toString,
+              "indexIdentities" -> v.indexIdentities.toString,
+              "sourceLedgers" -> v.sourceLedgers.toString,
+              "indexLedgers" -> v.indexLedgers.toString,
+              "sourceLines" -> v.sourceLines.toString,
+              "indexLines" -> v.indexLines.toString,
+              "identityMismatches" -> v.recordMismatches.size.toString,
+              "ledgerMismatches" -> v.roundMismatches.size.toString,
+              "extraRows" -> v.extraRows.size.toString,
+              "windowActive" -> v.windowActive.toString,
+              "windowHistory" -> v.windowHistory.toString,
+              "windowTotal" -> v.windowTotal.toString,
+              "partitionOk" -> v.partitionOk.toString,
+              "countsMatch" -> v.countsMatch.toString,
+              "ok" -> v.ok.toString
+            )
+          )
+        )
         if v.ok then 0 else 1
 
   // ── bench（迁移前/后：delegate 专属启动加载计数与耗时对照）───────────────
@@ -174,48 +200,63 @@ object DelegateIndexTool:
     DelegateIndex.close()
     DelegateIndex.resetCounters()
     val before = DelegateIndex.benchSourceScan(root)
-    println(f"① source scan (pre-stage-③ read face) : records=${before.records} parses=${before.sourceParses} " +
-      f"stats=${before.sourceStats} ${before.ms}ms")
+    println(
+      f"① source scan (pre-stage-③ read face) : records=${before.records} parses=${before.sourceParses} " +
+        f"stats=${before.sourceStats} ${before.ms}ms"
+    )
 
     DelegateIndex.migrate(root) match
       case Left(err) =>
         println(s"   migrate refused: $err")
         1
       case Right(r) =>
-        println(s"   migrate: identities=${r.importedIdentities} ledgers=${r.importedLedgers} " +
-          s"lines=${r.importedLines} drift=${r.drift.count(_.delta != 0L)} ${r.ms}ms")
+        println(
+          s"   migrate: identities=${r.importedIdentities} ledgers=${r.importedLedgers} " +
+            s"lines=${r.importedLines} drift=${r.drift.count(_.delta != 0L)} ${r.ms}ms"
+        )
 
         DelegateIndex.close()
         DelegateIndex.resetCounters()
         val cold = DelegateIndex.listRecords()
         val coldStats = DelegateIndex.lastLoadStats
-        println(f"② index cold load (fresh process shape) : records=${coldStats.records} " +
-          f"parses=${coldStats.sourceParses} stats=${coldStats.sourceStats} dbReads=${coldStats.dbReads} ${coldStats.ms}ms")
+        println(
+          f"② index cold load (fresh process shape) : records=${coldStats.records} " +
+            f"parses=${coldStats.sourceParses} stats=${coldStats.sourceStats} dbReads=${coldStats.dbReads} ${coldStats.ms}ms"
+        )
 
         DelegateIndex.resetCounters()
         val warm = DelegateIndex.listRecords()
         val warmStats = DelegateIndex.lastLoadStats
-        println(f"③ index warm load (steady state)       : records=${warmStats.records} " +
-          f"parses=${warmStats.sourceParses} stats=${warmStats.sourceStats} dbReads=${warmStats.dbReads} ${warmStats.ms}ms")
+        println(
+          f"③ index warm load (steady state)       : records=${warmStats.records} " +
+            f"parses=${warmStats.sourceParses} stats=${warmStats.sourceStats} dbReads=${warmStats.dbReads} ${warmStats.ms}ms"
+        )
 
         val parity = cold.exists(c => warm.exists(w => c.map(_.id).sorted == w.map(_.id).sorted))
-        println("   parity(cold/warm)=" + parity +
-          " excludedStartupItems=(918 mounts, 9402 search reconcile, 212 subagent parent files)")
-        println("BENCH_JSON " + json(
-          List(
-            "sourceScanRecords" -> before.records.toString,
-            "sourceScanParses" -> before.sourceParses.toString,
-            "sourceScanMs" -> before.ms.toString,
-            "indexColdRecords" -> coldStats.records.toString,
-            "indexColdParses" -> coldStats.sourceParses.toString,
-            "indexColdStats" -> coldStats.sourceStats.toString,
-            "indexColdMs" -> coldStats.ms.toString,
-            "indexWarmRecords" -> warmStats.records.toString,
-            "indexWarmParses" -> warmStats.sourceParses.toString,
-            "indexWarmMs" -> warmStats.ms.toString,
-            "parity" -> parity.toString
-          )))
+        println(
+          "   parity(cold/warm)=" + parity +
+            " excludedStartupItems=(918 mounts, 9402 search reconcile, 212 subagent parent files)"
+        )
+        println(
+          "BENCH_JSON " + json(
+            List(
+              "sourceScanRecords" -> before.records.toString,
+              "sourceScanParses" -> before.sourceParses.toString,
+              "sourceScanMs" -> before.ms.toString,
+              "indexColdRecords" -> coldStats.records.toString,
+              "indexColdParses" -> coldStats.sourceParses.toString,
+              "indexColdStats" -> coldStats.sourceStats.toString,
+              "indexColdMs" -> coldStats.ms.toString,
+              "indexWarmRecords" -> warmStats.records.toString,
+              "indexWarmParses" -> warmStats.sourceParses.toString,
+              "indexWarmMs" -> warmStats.ms.toString,
+              "parity" -> parity.toString
+            )
+          )
+        )
         if parity && coldStats.records == before.records then 0 else 1
+    end match
+  end runBench
 
   // ── rollback（撤索引回源码；源零字节变化）───────────────────────────────
 
@@ -225,8 +266,11 @@ object DelegateIndexTool:
     DelegateIndex.resetCounters()
     val after = DelegateIndex.benchSourceScan(root)
     println(s"post-rollback read face: source scan records=${after.records} parses=${after.sourceParses} ${after.ms}ms")
-    println("ROLLBACK_JSON " + json(
-      List("dropped" -> r.dropped.toString, "backup" -> r.backup.getOrElse(""), "records" -> after.records.toString)))
+    println(
+      "ROLLBACK_JSON " + json(
+        List("dropped" -> r.dropped.toString, "backup" -> r.backup.getOrElse(""), "records" -> after.records.toString)
+      )
+    )
     0
 
   private def json(pairs: List[(String, String)]): String =

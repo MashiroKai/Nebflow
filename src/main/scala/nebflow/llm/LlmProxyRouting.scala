@@ -2,7 +2,7 @@ package nebflow.llm
 
 import java.io.IOException
 import java.net.{Proxy, ProxySelector, SocketAddress, URI}
-import java.util.{List as JList}
+import java.util.List as JList
 
 import nebflow.shared.NebflowServiceConfig
 
@@ -40,8 +40,12 @@ object LlmProxyRouting:
 
   /** URL 字符串的 host（小写），无法解析则 None。 */
   def hostOf(url: String): Option[String] =
-    try Option(url).map(_.trim).filter(_.nonEmpty).flatMap(u => Option(new URI(u).getHost))
-      .map(_.toLowerCase)
+    try
+      Option(url)
+        .map(_.trim)
+        .filter(_.nonEmpty)
+        .flatMap(u => Option(new URI(u).getHost))
+        .map(_.toLowerCase)
     catch case _: Throwable => None
 
   /** provider baseUrl 集合 → 直连 host 集（小写、去重、剔除不可解析项）。 */
@@ -53,8 +57,8 @@ object LlmProxyRouting:
    * `fallback`（通常 = JVM 默认选择器 = 系统代理）。`fallback` 为 null 时其余
    * host 亦直连（兜底不炸）。
    */
-  final class HostDirectProxySelector(val direct: Set[String], val fallback: ProxySelector)
-      extends ProxySelector:
+  final class HostDirectProxySelector(val direct: Set[String], val fallback: ProxySelector) extends ProxySelector:
+
     override def select(uri: URI): JList[Proxy] =
       val h = Option(uri).flatMap(u => Option(u.getHost)).map(_.toLowerCase)
       if h.exists(direct.contains) then JList.of(Proxy.NO_PROXY)
@@ -84,7 +88,7 @@ object LlmProxyRouting:
         // 而非自我套娃；否则用默认选择器（通常是系统代理 DefaultProxySelector）。
         val base = ProxySelector.getDefault() match
           case h: HostDirectProxySelector => h.fallback
-          case other                      => other
+          case other => other
         Some(new HostDirectProxySelector(hosts, base))
   end fromConfig
 

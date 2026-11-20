@@ -34,12 +34,15 @@ class ModelAvailabilitySpec extends FunSuite:
   test("T1 边界：14:00 整即禁（含起点）") {
     assert(ModelAvailability.isUnavailable(List(w("14:00", "18:00")), at(thu, 14, 0)))
   }
+
   test("T2 边界：13:59 仍可用") {
     assert(!ModelAvailability.isUnavailable(List(w("14:00", "18:00")), at(thu, 13, 59)))
   }
+
   test("T3 边界：18:00 整即解（不含终点）") {
     assert(!ModelAvailability.isUnavailable(List(w("14:00", "18:00")), at(thu, 18, 0)))
   }
+
   test("T4 边界：17:59 仍禁") {
     assert(ModelAvailability.isUnavailable(List(w("14:00", "18:00")), at(thu, 17, 59)))
   }
@@ -53,6 +56,7 @@ class ModelAvailabilitySpec extends FunSuite:
     assert(!ModelAvailability.isUnavailable(win, at(fri, 7, 0)), "07:00 整即解")
     assert(!ModelAvailability.isUnavailable(win, at(thu, 22, 59)), "开窗前")
   }
+
   test("T6 跨午夜 + days：清晨腿归昨天的星期（周四 23:00 开窗 → 周五 06:59 仍禁；周五 23:00 开窗、周六 06:59 禁）") {
     val win = List(w("23:00", "07:00", days = List(4))) // 仅周四
     assert(ModelAvailability.isUnavailable(win, at(thu, 23, 30)), "周四晚腿（today=周四）")
@@ -78,6 +82,7 @@ class ModelAvailabilitySpec extends FunSuite:
     assert(ModelAvailability.isUnavailable(wins, at(thu, 15, 0)))
     assert(!ModelAvailability.isUnavailable(wins, at(thu, 13, 30)), "两窗之间可用")
   }
+
   test("T9 缺省（空列表）= 无限制（缺省零行为变化铁律）") {
     assert(!ModelAvailability.isUnavailable(Nil, at(thu, 15, 0)))
   }
@@ -88,11 +93,13 @@ class ModelAvailabilitySpec extends FunSuite:
     assert(!ModelAvailability.isUnavailable(List(w("14:00", "14:00")), at(thu, 15, 0)))
     assert(!ModelAvailability.isValidWindow(w("14:00", "14:00")))
   }
+
   test("T11 非法时刻格式 fail-safe：永不命中、不抛") {
     assert(!ModelAvailability.isUnavailable(List(w("25:00", "18:00")), at(thu, 15, 0)))
     assert(!ModelAvailability.isUnavailable(List(w("14:00", "xx:00")), at(thu, 15, 0)))
     assert(!ModelAvailability.isValidWindow(w("bad", "18:00")))
   }
+
   test("T12 非法条不拖累合法条：合法条照常生效") {
     val wins = List(w("bad", "18:00"), w("14:00", "18:00"))
     assert(ModelAvailability.isUnavailable(wins, at(thu, 15, 0)))
@@ -103,8 +110,12 @@ class ModelAvailabilitySpec extends FunSuite:
   test("T13 describeWindow/Windows：可读形态") {
     assertEquals(ModelAvailability.describeWindow(w("14:00", "18:00")), "14:00-18:00")
     assertEquals(ModelAvailability.describeWindow(w("23:00", "07:00", days = List(6, 7))), "23:00-07:00(周6,周7)")
-    assertEquals(ModelAvailability.describeWindows(List(w("12:00", "13:00"), w("14:00", "18:00"))), "12:00-13:00, 14:00-18:00")
+    assertEquals(
+      ModelAvailability.describeWindows(List(w("12:00", "13:00"), w("14:00", "18:00"))),
+      "12:00-13:00, 14:00-18:00"
+    )
   }
+
   test("T14 activeWindowDesc：命中返回该窗描述，未命中 None") {
     assertEquals(ModelAvailability.activeWindowDesc(List(w("14:00", "18:00")), at(thu, 15, 0)), Some("14:00-18:00"))
     assertEquals(ModelAvailability.activeWindowDesc(List(w("14:00", "18:00")), at(thu, 19, 0)), None)

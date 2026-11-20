@@ -431,10 +431,12 @@ class InteractionHubSpec extends CatsEffectSuite:
   }
 
   // ===== permission-landing 批 P0（2026-11-18）：不可达 root 的落点重定锚 =====
-  //（取代 F4 #433 的全 root fallback 扇出——全局 toast = 原生弹窗形态，弹窗禁令后
+  // （取代 F4 #433 的全 root fallback 扇出——全局 toast = 原生弹窗形态，弹窗禁令后
   // 不再存在；现口径 = 单一确定性可达落点 + 原因标，答复按 requestId 收口。）
 
-  test("P0 retarget: unreachable root lands the card on the lexicographically-first reachable root, no fallback frame") {
+  test(
+    "P0 retarget: unreachable root lands the card on the lexicographically-first reachable root, no fallback frame"
+  ) {
     val system = nebflow.actor.ActorSystem("hub-test-landing-a")
     for
       hub <- mkHub(system)

@@ -54,12 +54,12 @@ class InterruptRecoveryClosureSpec extends CatsEffectSuite:
       fs2.Stream(StreamChunk.TextDelta("IR_CLOSURE_STUB_TURN"), StreamChunk.Done(None, None))
 
   private final case class Fx(
-      store: SubAgentTaskStore,
-      sessionStore: SessionStore,
-      resources: SharedResources,
-      system: nebflow.actor.ActorSystem,
-      tmp: os.Path,
-      seat: os.Path
+    store: SubAgentTaskStore,
+    sessionStore: SessionStore,
+    resources: SharedResources,
+    system: nebflow.actor.ActorSystem,
+    tmp: os.Path,
+    seat: os.Path
   )
 
   private def withFx(name: String)(body: Fx => IO[Unit]): Unit =
@@ -113,6 +113,8 @@ class InterruptRecoveryClosureSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(originalRoot)
       os.remove.all(tmp)
       os.remove.all(seat)
+
+  end withFx
 
   private def mkTask(id: String, parent: String, status: String = "running", revivalCount: Option[Int] = None) =
     SubAgentTask(
@@ -170,7 +172,9 @@ class InterruptRecoveryClosureSpec extends CatsEffectSuite:
   // ① V4 — 断点台账（机器可读「已完成到哪」+ 随 nudge 交付）
   // ══════════════════════════════════════════════════════════════════════════
 
-  test("V4/checkpoint: revival writes a machine-readable completed-work ledger AND carries its readout into the revival nudge") {
+  test(
+    "V4/checkpoint: revival writes a machine-readable completed-work ledger AND carries its readout into the revival nudge"
+  ) {
     withFx("v4") { fx =>
       val child = "delegate-nebflow-cp"
       val preCrash = List(
@@ -187,7 +191,11 @@ class InterruptRecoveryClosureSpec extends CatsEffectSuite:
         _ <- IO(DelegateRegistry.put(mkRecord(child, parent.id, fx.seat.toString)))
         _ <- fx.sessionStore.saveMessagesForSession(child, preCrash)
         report <- sweepWith(fx)
-        _ = assertEquals(report.revived, List(child), s"fixture must revive: ${report.summary} / ${report.revivalSkipped}")
+        _ = assertEquals(
+          report.revived,
+          List(child),
+          s"fixture must revive: ${report.summary} / ${report.revivalSkipped}"
+        )
         // 台账落盘面（判据：<dataRoot>/sessions/<sid>/revival-checkpoint.json）。
         ledgerPath = RevivalCheckpoint.pathFor(child)
         _ = assert(os.exists(ledgerPath), s"a machine-readable checkpoint ledger must exist at $ledgerPath")
@@ -201,7 +209,9 @@ class InterruptRecoveryClosureSpec extends CatsEffectSuite:
         _ = assert(raw.contains("CP_ROUND_3_DONE"), s"ledger must list completed steps; got: $raw")
         // nudge 面（模型可见）：断点读数必须随复活注入。
         _ <- waitUntil(20.seconds, "revival nudge") {
-          fx.sessionStore.loadMessagesForSession(child).map(_.exists(_.textContent.contains("engine process restarted")))
+          fx.sessionStore
+            .loadMessagesForSession(child)
+            .map(_.exists(_.textContent.contains("engine process restarted")))
         }
         transcript <- fx.sessionStore.loadMessagesForSession(child)
         nudge = transcript.find(_.textContent.contains("engine process restarted")).map(_.textContent).getOrElse("")
@@ -211,6 +221,7 @@ class InterruptRecoveryClosureSpec extends CatsEffectSuite:
         )
         _ = assert(nudge.contains("must NOT be redone"), "the nudge must say the completed steps are not to be redone")
       yield ()
+      end for
     }
   }
 
@@ -218,7 +229,9 @@ class InterruptRecoveryClosureSpec extends CatsEffectSuite:
   // ② V5 — 完成未报告收尾腿（cb580112 形态）正反两用例
   // ══════════════════════════════════════════════════════════════════════════
 
-  test("V5/finalize: completed ∧ workReport ∧ reportStatus 缺席 → boot leg closes it (work report to the parent mailbox) + idempotent") {
+  test(
+    "V5/finalize: completed ∧ workReport ∧ reportStatus 缺席 → boot leg closes it (work report to the parent mailbox) + idempotent"
+  ) {
     withFx("v5") { fx =>
       val child = "delegate-nebflow-fin"
       val marker = "FIN_WORKREPORT_MARKER: branch merged, all checks green"
@@ -228,7 +241,11 @@ class InterruptRecoveryClosureSpec extends CatsEffectSuite:
         _ <- IO(
           DelegateRegistry.put(
             mkRecord(child, parent.id, fx.seat.toString)
-              .copy(workReport = Some(marker), reportStatus = None, archivedAt = Some(System.currentTimeMillis() - 10_000L))
+              .copy(
+                workReport = Some(marker),
+                reportStatus = None,
+                archivedAt = Some(System.currentTimeMillis() - 10_000L)
+              )
           )
         )
         _ <- fx.sessionStore.saveMessagesForSession(
@@ -242,21 +259,31 @@ class InterruptRecoveryClosureSpec extends CatsEffectSuite:
         report2 <- sweepWith(fx)
         events2 <- mailboxEvents(fx, parent.id).map(_.filter(_.correlationId.contains(child)))
         rec2 <- IO(DelegateRegistry.find(child))
-        _ = assert(events1.nonEmpty, s"the finished-but-unreported delegate must be announced to the parent: ${events1.size}")
+        _ = assert(
+          events1.nonEmpty,
+          s"the finished-but-unreported delegate must be announced to the parent: ${events1.size}"
+        )
         _ = assert(
           events1.exists(_.payload.contains("FIN_WORKREPORT_MARKER")),
           "the notification must carry the recorded work report verbatim"
         )
-        _ = assertEquals(rec1.flatMap(_.reportStatus), Some("finish"), "the record lands the delivered state (reportStatus=finish)")
+        _ = assertEquals(
+          rec1.flatMap(_.reportStatus),
+          Some("finish"),
+          "the record lands the delivered state (reportStatus=finish)"
+        )
         _ = assertEquals(rec1.flatMap(_.workReport), Some(marker), "the work report is preserved (never overwritten)")
         _ = assertEquals(events2.size, events1.size, "second boot must not duplicate the notice (idempotent)")
         _ = assertEquals(rec2.flatMap(_.reportStatus), Some("finish"))
         _ = assertEquals(report2.terminalized, Nil, "an already-closed row is never touched again")
       yield ()
+      end for
     }
   }
 
-  test("V5/negative: work NOT finished (in-flight row) → revives, never finalized, no 'completed' notice to the parent") {
+  test(
+    "V5/negative: work NOT finished (in-flight row) → revives, never finalized, no 'completed' notice to the parent"
+  ) {
     withFx("v5n") { fx =>
       val child = "delegate-nebflow-open"
       for
@@ -276,11 +303,20 @@ class InterruptRecoveryClosureSpec extends CatsEffectSuite:
         events <- mailboxEvents(fx, parent.id).map(_.filter(_.correlationId.contains(child)))
         rec <- IO(DelegateRegistry.find(child))
         row <- fx.store.loadTasks(parent.id).map(_.find(_.taskId == child).get)
-        _ = assertEquals(report.revived, List(child), s"in-flight work still goes through the revival leg: ${report.summary}")
+        _ = assertEquals(
+          report.revived,
+          List(child),
+          s"in-flight work still goes through the revival leg: ${report.summary}"
+        )
         _ = assertEquals(row.status, "running", "the revived row is Processing, not finalized")
-        _ = assertEquals(rec.flatMap(_.reportStatus), None, "no delivered-report state may be invented for unfinished work")
+        _ = assertEquals(
+          rec.flatMap(_.reportStatus),
+          None,
+          "no delivered-report state may be invented for unfinished work"
+        )
         _ = assertEquals(events, Nil, s"no 'completed' notice may reach the parent for unfinished work: $events")
       yield ()
+      end for
     }
   }
 
@@ -288,7 +324,9 @@ class InterruptRecoveryClosureSpec extends CatsEffectSuite:
   // ③ D1 — 收殓回执重感知（持久提醒账 + 压缩处重述，有界）
   // ══════════════════════════════════════════════════════════════════════════
 
-  test("D1/recap: a delivered restart-loss notice is restated AFTER compaction, and the retelling is bounded (≤2, then silent)") {
+  test(
+    "D1/recap: a delivered restart-loss notice is restated AFTER compaction, and the retelling is bounded (≤2, then silent)"
+  ) {
     withFx("d1") { fx =>
       val lostId = "delegate-nebflow-d1-lost"
       for
@@ -311,12 +349,18 @@ class InterruptRecoveryClosureSpec extends CatsEffectSuite:
         // 且**不消耗**重述预算（下一拍压缩仍可重述）。
         _ = assert(
           !RestartLossLedger.appendSafeAtTail(
-            List(Message(MessageRole.Assistant, Right(List[ContentBlock](ContentBlock.ToolUse("t9", "Bash", io.circe.JsonObject.empty)))))
+            List(
+              Message(
+                MessageRole.Assistant,
+                Right(List[ContentBlock](ContentBlock.ToolUse("t9", "Bash", io.circe.JsonObject.empty)))
+              )
+            )
           ),
           "an assistant tail carrying a pending tool_use must not take an appended user message"
         )
         _ = assert(RestartLossLedger.appendSafeAtTail(List(Message(MessageRole.Assistant, Left("plain text tail")))))
       yield ()
+      end for
     }
   }
 
@@ -324,7 +368,9 @@ class InterruptRecoveryClosureSpec extends CatsEffectSuite:
   // 收殓链的父投递腿 + 持久提醒账（RestartLossLedger.record）随零通知语义整体摘除——
   // 父邮箱零条目、台账零记录；呈现面 = 任务行（failed + 指纹 + 「parent NOT notified」
   // 诚实文案）。原「delivered notice + ledger 记录」断言随批退役（原断言逐字见 git 历史）。
-  test("D1/receipt(重写): the salvage leg terminalizes honestly — zero parent notify, zero ledger notice, the row says so") {
+  test(
+    "D1/receipt(重写): the salvage leg terminalizes honestly — zero parent notify, zero ledger notice, the row says so"
+  ) {
     withFx("d1r") { fx =>
       val child = "delegate-nebflow-d1-salvage"
       val lost = s"${SubAgentStartupRecovery.RestartLossFingerprint} — partial result salvaged"
@@ -361,6 +407,7 @@ class InterruptRecoveryClosureSpec extends CatsEffectSuite:
           s"the row must NOT claim a delivery that no longer happens: ${row.lastError}"
         )
       yield ()
+      end for
     }
   }
 

@@ -62,20 +62,34 @@ class ModelRolesSpec extends FunSuite:
   test("small LLM fallback logs WARN while configured selection does not") {
     val original = nebflow.shared.PathUtil.dataRoot
     val tmp = os.temp.dir(prefix = "nb-small-llm-warn-")
-    val logger = org.slf4j.LoggerFactory.getLogger("nebflow.model.small-llm")
+    val logger = org.slf4j.LoggerFactory
+      .getLogger("nebflow.model.small-llm")
       .asInstanceOf[ch.qos.logback.classic.Logger]
     val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
     appender.start()
     logger.addAppender(appender)
     try
       nebflow.shared.PathUtil.setDataRoot(tmp)
-      os.write.over(tmp / "agents" / "Nebula" / "agent.json", """{"model":{"preferred":"p/main"}}""", createFolders = true)
+      os.write.over(
+        tmp / "agents" / "Nebula" / "agent.json",
+        """{"model":{"preferred":"p/main"}}""",
+        createFolders = true
+      )
       assertEquals(SchemePolicy.smallLlmModel().preferred, Some("p/main"))
       val events = appender.list.asScala.toList
-      assertEquals(events.count(e => e.getLevel == ch.qos.logback.classic.Level.WARN &&
-        e.getFormattedMessage.contains("falling back to the main model")), 1)
+      assertEquals(
+        events.count(e =>
+          e.getLevel == ch.qos.logback.classic.Level.WARN &&
+            e.getFormattedMessage.contains("falling back to the main model")
+        ),
+        1
+      )
       appender.list.clear()
-      os.write.over(tmp / "agents" / "small-llm" / "agent.json", """{"model":{"preferred":"p/small"}}""", createFolders = true)
+      os.write.over(
+        tmp / "agents" / "small-llm" / "agent.json",
+        """{"model":{"preferred":"p/small"}}""",
+        createFolders = true
+      )
       assertEquals(SchemePolicy.smallLlmModel().preferred, Some("p/small"))
       assert(!appender.list.asScala.exists(_.getLevel == ch.qos.logback.classic.Level.WARN))
     finally
@@ -83,6 +97,7 @@ class ModelRolesSpec extends FunSuite:
       appender.stop()
       nebflow.shared.PathUtil.setDataRoot(original)
       os.remove.all(tmp)
+    end try
   }
 
   test("五槽 wire 名 = main/kernel/dispatcher/node/subagent；sidecar 槽名与 wire 名解耦") {
@@ -206,8 +221,16 @@ class ModelRolesSpec extends FunSuite:
       "映射表词表 = 作者名出的四类（DelegateModeWires 单点）"
     )
     // 四条：mode ⇒ 槽名（文件:行依据见 ModelRoles.DelegateModeWires 头注的表）。
-    assertEquals(ModelRoles.slotOfDelegateMode(Some("kernel")), Some("kernel"), "① mode=kernel ⇒ kernel 槽（DualMode.scala:23）")
-    assertEquals(ModelRoles.slotOfDelegateMode(Some("node")), Some("node"), "② mode=node ⇒ node 槽（NodeEngineContract.scala:270 的 node- 族）")
+    assertEquals(
+      ModelRoles.slotOfDelegateMode(Some("kernel")),
+      Some("kernel"),
+      "① mode=kernel ⇒ kernel 槽（DualMode.scala:23）"
+    )
+    assertEquals(
+      ModelRoles.slotOfDelegateMode(Some("node")),
+      Some("node"),
+      "② mode=node ⇒ node 槽（NodeEngineContract.scala:270 的 node- 族）"
+    )
     assertEquals(
       ModelRoles.slotOfDelegateMode(Some("dispatcher")),
       Some("project-dispatcher"),
@@ -292,8 +315,16 @@ class ModelRolesSpec extends FunSuite:
     val mainId = "d7c3cb54-dd90-4f3f-bbf6-e7898c425cff"
     try
       nebflow.shared.PathUtil.setDataRoot(tmp)
-      os.write.over(tmp / "agents" / "kernel" / "agent.json", """{"model":{"preferred":"slot/kernel"}}""", createFolders = true)
-      os.write.over(tmp / "agents" / "subagent" / "agent.json", """{"model":{"preferred":"slot/subagent"}}""", createFolders = true)
+      os.write.over(
+        tmp / "agents" / "kernel" / "agent.json",
+        """{"model":{"preferred":"slot/kernel"}}""",
+        createFolders = true
+      )
+      os.write.over(
+        tmp / "agents" / "subagent" / "agent.json",
+        """{"model":{"preferred":"slot/subagent"}}""",
+        createFolders = true
+      )
       val delegated = "delegate-nebflow-1a2b3c4d"
       // ① 已归槽 + 槽已配置 ⇒ 槽链压过钉链（既有优先级，本批未动）。
       assertEquals(

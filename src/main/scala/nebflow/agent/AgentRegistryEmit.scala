@@ -51,8 +51,9 @@ private[agent] trait AgentRegistryEmit:
     state.sessionId match
       case Some(sid) if resources.protectedExecutions.contains(sid) =>
         IO.raiseError(new IllegalStateException("protected-transcript-projection-not-authorized"))
-      case Some(sid) => resources.sessionStore.saveMessagesForSession(sid, state.messages) *>
-        nebflow.core.tools.AskHostLedger.closeCommittedResults(sid, state.messages)
+      case Some(sid) =>
+        resources.sessionStore.saveMessagesForSession(sid, state.messages) *>
+          nebflow.core.tools.AskHostLedger.closeCommittedResults(sid, state.messages)
       case None => IO.unit
 
   private[agent] def emitStream(
@@ -135,11 +136,22 @@ private[agent] trait AgentRegistryEmit:
                 )
               case None =>
                 if clearToolPhase then
-                  withTurn.copy(currentToolName = None, currentToolStartedAt = 0L, currentToolDeadlineMs = 0L, currentToolCallId = None)
+                  withTurn.copy(
+                    currentToolName = None,
+                    currentToolStartedAt = 0L,
+                    currentToolDeadlineMs = 0L,
+                    currentToolCallId = None
+                  )
                 else withTurn
             val phased =
               if status == AgentStatus.Processing then withPhase
-              else withPhase.copy(currentToolName = None, currentToolStartedAt = 0L, currentToolDeadlineMs = 0L, currentToolCallId = None)
+              else
+                withPhase.copy(
+                  currentToolName = None,
+                  currentToolStartedAt = 0L,
+                  currentToolDeadlineMs = 0L,
+                  currentToolCallId = None
+                )
             (m.updated(sid, phased.copy(status = status, lastActivityMs = now)), ())
           case None => (m, ())
       }

@@ -165,8 +165,8 @@ class AskConcurrencyReworkSpec extends CatsEffectSuite:
       // 创建序的确定性前提（permission-landing 批续做 2026-11-18 已在源上收口）：hub 对每条
       // Request 各 fork 一个 turn（`ctx.forkTurn`），并发下「槽注册序 ≠ 发送序」——原序键取的是
       // **注册时刻**（createdAt）⇒ 背靠背连发两条时 sortBy 的输入本身就是竞态产物
-      //（全量负载片曾实证 req2 先于 req1 注册、下面的顺序断言红）。现序键 = 分支处理时同步取号
-      //（`PendingRequest.fifoSeq`，= 邮箱序）⇒ 顺序断言钉的已是实现契约本身，不再是调度运气。
+      // （全量负载片曾实证 req2 先于 req1 注册、下面的顺序断言红）。现序键 = 分支处理时同步取号
+      // （`PendingRequest.fifoSeq`，= 邮箱序）⇒ 顺序断言钉的已是实现契约本身，不再是调度运气。
       // 下面的 awaitCond 保留：它等的是**槽已在册**（handleRequest 先注册槽再渲染 ⇒ 卡可见即槽在册），
       // 那是快照断言的前置条件。
       _ <- awaitCond(sent.get.map(_.exists(isCard("askUser", req1.requestId))), "第一张卡未渲染")

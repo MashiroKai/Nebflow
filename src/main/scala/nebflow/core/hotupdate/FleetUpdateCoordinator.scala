@@ -62,11 +62,10 @@ final class FleetUpdateCoordinator(
   /** 设备来源（装配方给：本机 + neblink 名册；在线态在此判好）。 */
   listDevices: () => IO[List[FleetUpdateCoordinator.Peer]],
   /** 单机探测：`/api/health` 的 version + `fleet.hotUpdate` 自报（失败 ⇒ 全 None）。 */
-  probe: FleetUpdateCoordinator.Peer => IO[FleetUpdateCoordinator.ProbeResult] =
-    FleetUpdateCoordinator.probeHealth,
+  probe: FleetUpdateCoordinator.Peer => IO[FleetUpdateCoordinator.ProbeResult] = FleetUpdateCoordinator.probeHealth,
   /** 远端推送入口（装配方给；返回 `Left` = 拒/失败，`Right` = 对端已受理并重启）。 */
-  pushRemote: (FleetUpdateCoordinator.Peer, Boolean, String) => IO[Either[String, String]] =
-    (_, _, _) => IO.pure(Left("remote push is not wired in this instance")),
+  pushRemote: (FleetUpdateCoordinator.Peer, Boolean, String) => IO[Either[String, String]] = (_, _, _) =>
+    IO.pure(Left("remote push is not wired in this instance")),
   /** 最新版本（复用 [[VersionCheck.fetchLatestVersion]]；None ⇒ 目标版本未知）。 */
   latestVersion: () => IO[Option[String]] = () => VersionCheck.fetchLatestVersion(),
   /** 当前版本（唯一来源 `nebflow.Version.string`）。 */
@@ -199,9 +198,14 @@ final class FleetUpdateCoordinator(
             _ <- stateRef.set(Some(job))
             _ <- persist(job)
             _ <- audit(
-              AuditEntry(now, "fleet-start", id, source,
+              AuditEntry(
+                now,
+                "fleet-start",
+                id,
+                source,
                 s"devices=${p.devices.length} push=${p.summary.pushCount} manual=${p.summary.manualCount} " +
-                  s"queued=${p.summary.pendingOnlineCount} target=${p.targetVersion.getOrElse("unknown")}")
+                  s"queued=${p.summary.pendingOnlineCount} target=${p.targetVersion.getOrElse("unknown")}"
+              )
             )
             _ <- broadcastState()
             _ <- execute(job, p, beta).start.flatMap(f => inflightRef.update(_ + (id -> f)))
@@ -216,9 +220,9 @@ final class FleetUpdateCoordinator(
         .parTraverse_ { d =>
           cancelRef.get.flatMap {
             case true => markStage(job.id, d.deviceId, FleetStage.Cancelled, None, "cancelled before dispatch")
-            case false => runOneDevice(job, d, beta).handleErrorWith(e =>
-                markFailed(job.id, d.deviceId, FleetFailure.Unknown, msg(e))
-              )
+            case false =>
+              runOneDevice(job, d, beta)
+                .handleErrorWith(e => markFailed(job.id, d.deviceId, FleetFailure.Unknown, msg(e)))
           }
         }
       _ <- finalize(job.id)
@@ -249,23 +253,24 @@ final class FleetUpdateCoordinator(
         // 同一版本」，重复按「全部更新」时已经同版的设备再装一次只会得到一个 5 分钟的
         // 假失败（装完版本号不变 ⇒ 自检窗里等不到版本变新 ⇒ 被判 healthcheck-failed）。
         // 判据复用纯逻辑层的 `versionState`（目标版本未知 ⇒ unknown ⇒ 照常推）。
-        _ <- if d.versionState == "in-sync" then
-          markStage(
-            job.id,
-            d.deviceId,
-            FleetStage.Completed,
-            Some(1.0),
-            s"already on the target version ${d.version.getOrElse("?")} — nothing to install"
-          )
-        else
-          markStage(
-            job.id,
-            d.deviceId,
-            FleetStage.Preparing,
-            None,
-            if d.isLocal then "local instance — handing the request to the update orchestrator"
-            else s"dispatching to ${d.deviceName} over the existing remote-update action"
-          )
+        _ <-
+          if d.versionState == "in-sync" then
+            markStage(
+              job.id,
+              d.deviceId,
+              FleetStage.Completed,
+              Some(1.0),
+              s"already on the target version ${d.version.getOrElse("?")} — nothing to install"
+            )
+          else
+            markStage(
+              job.id,
+              d.deviceId,
+              FleetStage.Preparing,
+              None,
+              if d.isLocal then "local instance — handing the request to the update orchestrator"
+              else s"dispatching to ${d.deviceName} over the existing remote-update action"
+            )
         _ <-
           if d.versionState == "in-sync" then IO.unit
           else if d.isLocal then runLocal(job, d, beta)
@@ -278,6 +283,7 @@ final class FleetUpdateCoordinator(
             )
           else runRemote(job, d, peer, beta)
       yield ()
+      end for
     }
 
   /** 本机腿：交既有编排器（相位经 [[onLocalPhase]] 映射到本卡；此处只等结果）。 */
@@ -337,13 +343,17 @@ final class FleetUpdateCoordinator(
         markFailed(job.id, d.deviceId, FleetFailureClassify.of(err), err)
       case Right(msg) =>
         for
-          _ <- markStage(job.id, d.deviceId, FleetStage.Restarting, None,
-            s"install action accepted on the device ($msg) — waiting for it to come back")
+          _ <- markStage(
+            job.id,
+            d.deviceId,
+            FleetStage.Restarting,
+            None,
+            s"install action accepted on the device ($msg) — waiting for it to come back"
+          )
           outcome <- awaitVersionBump(peer, d.version, beta)
           _ <- outcome match
             case Right(v) =>
-              markStage(job.id, d.deviceId, FleetStage.Completed, Some(1.0),
-                s"device is back on $v")
+              markStage(job.id, d.deviceId, FleetStage.Completed, Some(1.0), s"device is back on $v")
             case Left(f) =>
               markFailed(
                 job.id,
@@ -356,6 +366,8 @@ final class FleetUpdateCoordinator(
               )
         yield ()
     }
+
+  end runRemote
 
   /** 等对端版本变新（健康自检档）：轮询 `/api/health` 直至版本 ≠ 旧版本或在窗内失联。 */
   private def awaitVersionBump(
@@ -380,6 +392,7 @@ final class FleetUpdateCoordinator(
             else IO.sleep(pollInterval) *> loop(elapsed + pollInterval.toMillis)
       }
     loop(0L)
+  end awaitVersionBump
 
   // ── 中断 / 重试 ────────────────────────────────────────────────────────
 
@@ -387,12 +400,20 @@ final class FleetUpdateCoordinator(
   def cancel(): IO[Either[String, Json]] =
     stateRef.get.flatMap {
       case None => IO.pure(Left("no fleet update to cancel"))
-      case Some(j) if j.status != FleetJobStatus.Running => IO.pure(Left(s"job ${j.id} already finished (${j.status.wire})"))
+      case Some(j) if j.status != FleetJobStatus.Running =>
+        IO.pure(Left(s"job ${j.id} already finished (${j.status.wire})"))
       case Some(j) =>
         for
           _ <- cancelRef.set(true)
-          _ <- audit(AuditEntry(System.currentTimeMillis(), "fleet-cancel", j.id, "console",
-            "cancel requested — no NEW dispatches will start; already-dispatched device installs cannot be recalled"))
+          _ <- audit(
+            AuditEntry(
+              System.currentTimeMillis(),
+              "fleet-cancel",
+              j.id,
+              "console",
+              "cancel requested — no NEW dispatches will start; already-dispatched device installs cannot be recalled"
+            )
+          )
           _ <- markRemainingCancelled(j.id)
           _ <- finalize(j.id)
           snap <- snapshot
@@ -409,8 +430,7 @@ final class FleetUpdateCoordinator(
         val failed = j.runs.filter(_.stage == FleetStage.Failed)
         val retryable = failed.filter(_.failure.forall(_.retryable))
         val skipped = failed.filterNot(_.failure.forall(_.retryable))
-        if retryable.isEmpty then
-          IO.pure(Left("no retryable failures (rolled-back devices need a manual update)"))
+        if retryable.isEmpty then IO.pure(Left("no retryable failures (rolled-back devices need a manual update)"))
         else
           for
             _ <- cancelRef.set(false)
@@ -418,12 +438,20 @@ final class FleetUpdateCoordinator(
             _ <- retryable.traverse_(r =>
               bumpAttempt(j.id, r.deviceId) *> markStage(j.id, r.deviceId, FleetStage.Preparing, None, "retrying")
             )
-            _ <- audit(AuditEntry(now, "fleet-retry", j.id, "console",
-              s"retrying=${retryable.map(_.deviceName).mkString(",")} skipped=${skipped.map(_.deviceName).mkString(",")}"))
+            _ <- audit(
+              AuditEntry(
+                now,
+                "fleet-retry",
+                j.id,
+                "console",
+                s"retrying=${retryable.map(_.deviceName).mkString(",")} skipped=${skipped.map(_.deviceName).mkString(",")}"
+              )
+            )
             _ <- reopen(j.id)
             _ <- restartFailed(retryable.map(_.deviceId).toSet, j, now)
             snap <- snapshot
           yield Right(snap)
+        end if
     }
 
   private def restartFailed(ids: Set[String], job: FleetJob, now: Long): IO[Unit] =
@@ -444,7 +472,9 @@ final class FleetUpdateCoordinator(
             val seenVersion = byPlan.get(id).flatMap(_.version).orElse(p.version)
             // 能力判据优先用本轮计划里那台设备的**同一次**读数（同一判据、同一实现）；
             // 计划里没有它（名册抖动）才退回版本门槛，保守侧永远是不支持。
-            val cap = byPlan.get(id).map(_.capability)
+            val cap = byPlan
+              .get(id)
+              .map(_.capability)
               .getOrElse(UpdateCapability.verdict(seenVersion, selfReported = false))
             val view = FleetDeviceView(
               p.deviceId,
@@ -462,7 +492,13 @@ final class FleetUpdateCoordinator(
               inSyncWith = job.targetVersion
             )
             if !p.online then
-              markStage(job.id, id, FleetStage.WaitingOnline, None, "device is offline — queued for the online sentinel")
+              markStage(
+                job.id,
+                id,
+                FleetStage.WaitingOnline,
+                None,
+                "device is offline — queued for the online sentinel"
+              )
             else
               runOneDevice(job, view, beta = false, addressOverride = Some(p.address).filter(_.nonEmpty))
                 .handleErrorWith(e => markFailed(job.id, id, FleetFailure.Unknown, msg(e)))
@@ -487,71 +523,118 @@ final class FleetUpdateCoordinator(
         // 一台设备上线却不补推时，日志里既没有「哨兵看过」也没有「为什么不动」。
         logger.info(
           s"[fleet] sentinel consulted for $deviceId (job pending: " +
-            cur.map(j => if j.pending.isEmpty then "none" else j.pending.map(_.deviceId).mkString(",")).getOrElse("no job") +
+            cur
+              .map(j => if j.pending.isEmpty then "none" else j.pending.map(_.deviceId).mkString(","))
+              .getOrElse("no job") +
             ")"
         )
-        cur match {
-        case Some(job) if job.pending.exists(_.deviceId == deviceId) =>
-          for
-            _ <- logger.info(
-              s"[fleet] sentinel: $deviceId is queued (job ${job.id}) — re-checking its version before any push"
-            )
-            peers <- listDevices().handleErrorWith(_ => IO.pure(Nil))
-            target = job.targetVersion
-            peerOpt = peers.find(_.deviceId == deviceId)
-            _ <- peerOpt match
-              case None =>
-                // 待上线行却不在名册里：如实留痕（否则「为什么没补推」只能靠猜）
-                logger.info(s"[fleet] sentinel: $deviceId is queued but absent from the roster — nothing to push")
-              case Some(p) if !p.online =>
-                logger.info(s"[fleet] sentinel: $deviceId is queued but the roster still reports it offline")
-              case Some(p) =>
-                probe(p).flatMap { r =>
-                  val v = r.version.orElse(p.version)
-                  val cap = UpdateCapability.verdict(v, r.selfReported)
-                  if v.exists(x => target.exists(t =>
-                      VersionCheck.compareVersions(x.stripPrefix("v"), t.stripPrefix("v")) == 0
-                    ))
-                  then
-                    // 已经一致（对端自己更新过）⇒ 从待推送移出，标记完成（不重复推送）
-                    for
-                      _ <- removeFromPending(job.id, deviceId)
-                      _ <- markStage(job.id, deviceId, FleetStage.Completed, Some(1.0),
-                        s"device came online already at $v — no push needed")
-                      _ <- audit(AuditEntry(System.currentTimeMillis(), "fleet-sentinel", job.id, "sentinel",
-                        s"$deviceId came online at $v (already consistent) — push skipped"))
-                      _ <- finalize(job.id)
-                    yield ()
-                  else if cap.supported then
-                    for
-                      _ <- audit(AuditEntry(System.currentTimeMillis(), "fleet-sentinel", job.id, "sentinel",
-                        s"$deviceId came online (version=${v.getOrElse("unknown")}) — pushing queued update"))
-                      _ <- reopen(job.id)
-                      _ <- removeFromPending(job.id, deviceId)
-                      view = FleetDeviceView(p.deviceId, p.deviceName, p.platform, p.isLocal, true, v, cap,
-                        FleetDispatch.Branch.Push, None)
-                      _ <- runOneDevice(job, view, beta = false, addressOverride = Some(p.address).filter(_.nonEmpty))
-                        .handleErrorWith(e => markFailed(job.id, deviceId, FleetFailure.Unknown, msg(e)))
-                      _ <- finalize(job.id)
-                    yield ()
-                  else
-                    // 能力不过闸 ⇒ 转「需手动更新」（离线排队转手动是作者令的明确分支）
-                    for
-                      _ <- audit(AuditEntry(System.currentTimeMillis(), "fleet-sentinel", job.id, "sentinel",
-                        s"$deviceId came online but is not remotely updatable (version=${v.getOrElse("unknown")}) — moved to manual"))
-                      _ <- moveToManual(job.id, view0(p, v, cap))
-                      _ <- finalize(job.id)
-                    yield ()
-                }
-          yield ()
-        case _ => IO.unit
-        }
+        cur match
+          case Some(job) if job.pending.exists(_.deviceId == deviceId) =>
+            for
+              _ <- logger.info(
+                s"[fleet] sentinel: $deviceId is queued (job ${job.id}) — re-checking its version before any push"
+              )
+              peers <- listDevices().handleErrorWith(_ => IO.pure(Nil))
+              target = job.targetVersion
+              peerOpt = peers.find(_.deviceId == deviceId)
+              _ <- peerOpt match
+                case None =>
+                  // 待上线行却不在名册里：如实留痕（否则「为什么没补推」只能靠猜）
+                  logger.info(s"[fleet] sentinel: $deviceId is queued but absent from the roster — nothing to push")
+                case Some(p) if !p.online =>
+                  logger.info(s"[fleet] sentinel: $deviceId is queued but the roster still reports it offline")
+                case Some(p) =>
+                  probe(p).flatMap { r =>
+                    val v = r.version.orElse(p.version)
+                    val cap = UpdateCapability.verdict(v, r.selfReported)
+                    if v.exists(x =>
+                        target.exists(t => VersionCheck.compareVersions(x.stripPrefix("v"), t.stripPrefix("v")) == 0)
+                      )
+                    then
+                      // 已经一致（对端自己更新过）⇒ 从待推送移出，标记完成（不重复推送）
+                      for
+                        _ <- removeFromPending(job.id, deviceId)
+                        _ <- markStage(
+                          job.id,
+                          deviceId,
+                          FleetStage.Completed,
+                          Some(1.0),
+                          s"device came online already at $v — no push needed"
+                        )
+                        _ <- audit(
+                          AuditEntry(
+                            System.currentTimeMillis(),
+                            "fleet-sentinel",
+                            job.id,
+                            "sentinel",
+                            s"$deviceId came online at $v (already consistent) — push skipped"
+                          )
+                        )
+                        _ <- finalize(job.id)
+                      yield ()
+                    else if cap.supported then
+                      for
+                        _ <- audit(
+                          AuditEntry(
+                            System.currentTimeMillis(),
+                            "fleet-sentinel",
+                            job.id,
+                            "sentinel",
+                            s"$deviceId came online (version=${v.getOrElse("unknown")}) — pushing queued update"
+                          )
+                        )
+                        _ <- reopen(job.id)
+                        _ <- removeFromPending(job.id, deviceId)
+                        view = FleetDeviceView(
+                          p.deviceId,
+                          p.deviceName,
+                          p.platform,
+                          p.isLocal,
+                          true,
+                          v,
+                          cap,
+                          FleetDispatch.Branch.Push,
+                          None
+                        )
+                        _ <- runOneDevice(job, view, beta = false, addressOverride = Some(p.address).filter(_.nonEmpty))
+                          .handleErrorWith(e => markFailed(job.id, deviceId, FleetFailure.Unknown, msg(e)))
+                        _ <- finalize(job.id)
+                      yield ()
+                    else
+                      // 能力不过闸 ⇒ 转「需手动更新」（离线排队转手动是作者令的明确分支）
+                      for
+                        _ <- audit(
+                          AuditEntry(
+                            System.currentTimeMillis(),
+                            "fleet-sentinel",
+                            job.id,
+                            "sentinel",
+                            s"$deviceId came online but is not remotely updatable (version=${v.getOrElse("unknown")}) — moved to manual"
+                          )
+                        )
+                        _ <- moveToManual(job.id, view0(p, v, cap))
+                        _ <- finalize(job.id)
+                      yield ()
+                    end if
+                  }
+            yield ()
+          case _ => IO.unit
+        end match
       }
       .handleErrorWith(e => logger.warn(s"[fleet] peer-online sentinel failed (ignored): ${msg(e)}"))
 
   private def view0(p: Peer, v: Option[String], cap: UpdateCapability.Verdict): FleetDeviceView =
-    FleetDeviceView(p.deviceId, p.deviceName, p.platform, p.isLocal, p.online, v, cap,
-      FleetDispatch.Branch.Manual, UpdateCapability.reasonOf(cap, v))
+    FleetDeviceView(
+      p.deviceId,
+      p.deviceName,
+      p.platform,
+      p.isLocal,
+      p.online,
+      v,
+      cap,
+      FleetDispatch.Branch.Manual,
+      UpdateCapability.reasonOf(cap, v)
+    )
 
   // ── 状态变更（单点；每次变更都广播 + 落盘）──────────────────────────────
 
@@ -572,8 +655,13 @@ final class FleetUpdateCoordinator(
     detail: String
   ): IO[Unit] =
     updateRun(jobId, deviceId) { r =>
-      r.copy(stage = stage, progress = progress, detail = detail, updatedAt = System.currentTimeMillis(),
-        failure = if stage == FleetStage.Failed then r.failure else None)
+      r.copy(
+        stage = stage,
+        progress = progress,
+        detail = detail,
+        updatedAt = System.currentTimeMillis(),
+        failure = if stage == FleetStage.Failed then r.failure else None
+      )
     }
 
   private def markFailed(jobId: String, deviceId: String, failure: FleetFailure, detail: String): IO[Unit] =
@@ -601,8 +689,10 @@ final class FleetUpdateCoordinator(
       j.copy(runs = j.runs.map(r => if r.deviceId == deviceId then f(r) else r))
     }
 
-  /** 任务级原子变更的**唯一**入口：`f` 在 `stateRef.modify` 内跑（无交错），
-   *  只有真变了才落盘 + 广播。 */
+  /**
+   * 任务级原子变更的**唯一**入口：`f` 在 `stateRef.modify` 内跑（无交错），
+   *  只有真变了才落盘 + 广播。
+   */
   private def mutate(jobId: String)(f: FleetJob => FleetJob): IO[Unit] =
     stateRef
       .modify { cur =>
@@ -638,8 +728,11 @@ final class FleetUpdateCoordinator(
         manual = (j.manual.filterNot(_.deviceId == view.deviceId) :+ view),
         runs = j.runs.map(r =>
           if r.deviceId == view.deviceId then
-            r.copy(stage = FleetStage.Manual, detail = view.reason.getOrElse("manual update required"),
-              updatedAt = System.currentTimeMillis())
+            r.copy(
+              stage = FleetStage.Manual,
+              detail = view.reason.getOrElse("manual update required"),
+              updatedAt = System.currentTimeMillis()
+            )
           else r
         )
       )
@@ -678,14 +771,22 @@ final class FleetUpdateCoordinator(
           val failed = done.runs.count(_.stage == FleetStage.Failed)
           persist(done) *>
             audit(
-              AuditEntry(now, "fleet-finish", done.id, "coordinator",
+              AuditEntry(
+                now,
+                "fleet-finish",
+                done.id,
+                "coordinator",
                 s"status=${done.status.wire} updated=${done.runs.count(_.stage == FleetStage.Completed)} " +
-                  s"failed=$failed manual=${done.manual.length} pending=${done.pending.length}")
+                  s"failed=$failed manual=${done.manual.length} pending=${done.pending.length}"
+              )
             ) *>
             broadcastState()
       }
 
-  /** 收口状态判据（单点；`finalize` 与 `restore` 共用，禁两处各写一套）。
+  end finalize
+
+  /**
+   * 收口状态判据（单点；`finalize` 与 `restore` 共用，禁两处各写一套）。
    *
    * 🔴 「全部做完」才叫 completed：**失败、需手动、待上线**任何一项非空 ⇒ `partial`。
    * 修前只看失败数 ⇒ 一台「离线排队待补推」的设备会让卡读成「已完成」（收口句写着
@@ -735,8 +836,7 @@ final class FleetUpdateCoordinator(
     }
 
   private def broadcastState(): IO[Unit] =
-    snapshot.flatMap(broadcast).handleErrorWith(e =>
-      logger.warn(s"[fleet] fleetUpdate broadcast failed: ${msg(e)}"))
+    snapshot.flatMap(broadcast).handleErrorWith(e => logger.warn(s"[fleet] fleetUpdate broadcast failed: ${msg(e)}"))
 
   // ── 落盘 / 审计 ────────────────────────────────────────────────────────
 
@@ -768,8 +868,7 @@ final class FleetUpdateCoordinator(
       case true => IO.unit // 幂等：只恢复一次（HTTP 快照与 WS 首帧都会碰它）
       case false =>
         IO.blocking {
-          if os.exists(jobPath) then
-            parser.decode[FleetJob](os.read(jobPath)).toOption
+          if os.exists(jobPath) then parser.decode[FleetJob](os.read(jobPath)).toOption
           else None
         }.flatMap {
           case None => IO.unit
@@ -781,9 +880,7 @@ final class FleetUpdateCoordinator(
             // 按失联处理。远端在飞行无法从本进程自证 ⇒ 一概标失联（绝不假装在跑）。
             val here = currentVersion()
             def targetReached: Boolean =
-              j.targetVersion.exists(t =>
-                VersionCheck.compareVersions(here.stripPrefix("v"), t.stripPrefix("v")) == 0
-              )
+              j.targetVersion.exists(t => VersionCheck.compareVersions(here.stripPrefix("v"), t.stripPrefix("v")) == 0)
             val resumed =
               if j.status == FleetJobStatus.Running then
                 // 🔴 收口状态必须按**改写后**的 runs 判：用落盘时的旧值（当时本机行还在
@@ -876,6 +973,7 @@ object FleetUpdateCoordinator:
 
   /** 审计行（只增 JSONL；`at` 毫秒时间戳）。 */
   final case class AuditEntry(at: Long, action: String, jobId: String, source: String, detail: String):
+
     def toJson: Json =
       Json.obj(
         "at" -> at.asJson,

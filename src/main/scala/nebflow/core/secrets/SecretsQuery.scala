@@ -65,8 +65,8 @@ object SecretsQuery:
   /** Does one entry satisfy the terms? */
   def matches(e: SecretsStore.Entry, terms: Terms): Boolean =
     val keywordOk = terms.keyword match
-      case None       => true
-      case Some(kw)   => haystack(e).contains(kw.toLowerCase)
+      case None => true
+      case Some(kw) => haystack(e).contains(kw.toLowerCase)
     val tagsOk = terms.tags.forall(want => e.tags.exists(t => SecretsCatalog.normalizeTag(t) == want))
     keywordOk && tagsOk
 

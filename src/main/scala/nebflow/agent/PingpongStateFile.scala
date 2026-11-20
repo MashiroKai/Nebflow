@@ -36,7 +36,7 @@ private[agent] object PingpongStateFile:
 
   given Encoder[Phase] = Encoder.encodeString.contramap {
     case Compacting => "compacting"
-    case SReady     => "s-ready"
+    case SReady => "s-ready"
   }
 
   given Encoder[Record] = Encoder.instance { r =>
@@ -53,27 +53,29 @@ private[agent] object PingpongStateFile:
 
   given Decoder[Phase] = Decoder.decodeString.emap {
     case "compacting" => Right(Compacting)
-    case "s-ready"    => Right(SReady)
-    case other        => Left(s"unknown pingpong phase: $other")
+    case "s-ready" => Right(SReady)
+    case other => Left(s"unknown pingpong phase: $other")
   }
 
   given Decoder[Record] = Decoder.instance { c =>
     for
-      phase   <- c.downField("phase").as[Phase]
-      sid     <- c.downField("shadowId").as[String]
-      fmc     <- c.downField("forkMsgCount").as[Int]
+      phase <- c.downField("phase").as[Phase]
+      sid <- c.downField("shadowId").as[String]
+      fmc <- c.downField("forkMsgCount").as[Int]
       forkedAt <- c.downField("forkedAt").as[Long]
-      sText   <- c.downField("sText").as[Option[String]]
-      est     <- c.downField("sTokensEst").as[Option[Int]]
-      fails   <- c.downField("ppFailures").as[Option[Int]]
+      sText <- c.downField("sText").as[Option[String]]
+      est <- c.downField("sTokensEst").as[Option[Int]]
+      fails <- c.downField("ppFailures").as[Option[Int]]
     yield Record(phase, sid, fmc, forkedAt, sText, est.getOrElse(0), fails.getOrElse(0))
   }
 
   private def file(sessionId: String): os.Path =
     PathUtil.dataRoot / "sessions" / sessionId / "pingpong" / "state.json"
 
-  /** Persist the record. Failure is logged, never propagated — a sidecar hiccup
-    * must not block the fork/swap leg (the in-memory bits remain authoritative). */
+  /**
+   * Persist the record. Failure is logged, never propagated — a sidecar hiccup
+   * must not block the fork/swap leg (the in-memory bits remain authoritative).
+   */
   def save(sessionId: String, rec: Record): IO[Unit] =
     if sessionId.isEmpty then IO.unit
     else
@@ -81,12 +83,13 @@ private[agent] object PingpongStateFile:
       IO.blocking {
         if !os.exists(f / os.up) then os.makeDir.all(f / os.up)
         AtomicJson.writeSync(f, rec.asJson.noSpaces)
-      }.void.handleErrorWith(e =>
-        logger.warn(s"PingpongStateFile.save failed for $sessionId: ${e.getMessage}").void
-      )
+      }.void
+        .handleErrorWith(e => logger.warn(s"PingpongStateFile.save failed for $sessionId: ${e.getMessage}").void)
 
-  /** Load the record. None if missing or corrupt (corrupt → warn + None ⇒ §E-9
-    * 正常启动语义：阈值判定自然再触发）。 */
+  /**
+   * Load the record. None if missing or corrupt (corrupt → warn + None ⇒ §E-9
+   * 正常启动语义：阈值判定自然再触发）。
+   */
   def load(sessionId: String): IO[Option[Record]] =
     if sessionId.isEmpty then IO.pure(None)
     else
@@ -105,9 +108,8 @@ private[agent] object PingpongStateFile:
       IO.blocking {
         val f = file(sessionId)
         if os.exists(f) then os.remove(f)
-      }.void.handleErrorWith(e =>
-        logger.warn(s"PingpongStateFile.clear failed for $sessionId: ${e.getMessage}").void
-      )
+      }.void
+        .handleErrorWith(e => logger.warn(s"PingpongStateFile.clear failed for $sessionId: ${e.getMessage}").void)
 
   /** Build the s-ready record's S message from the persisted sText (§E-8 续用). */
   def sMessageOf(rec: Record): Option[Message] =

@@ -57,7 +57,11 @@ class WireShapeSpec extends FunSuite:
   }
 
   test("N4: tool_use / image are NEVER degraded to text (tool pairing + image channel intact)") {
-    assert(WireShape.classifyBlock(json("""{"type":"tool_use","id":"a","name":"Bash"}""")).isInstanceOf[WireShape.Block.Opaque])
+    assert(
+      WireShape
+        .classifyBlock(json("""{"type":"tool_use","id":"a","name":"Bash"}"""))
+        .isInstanceOf[WireShape.Block.Opaque]
+    )
     assert(WireShape.classifyBlock(json("""{"type":"image","source":{}}""")).isInstanceOf[WireShape.Block.Opaque])
   }
 
@@ -100,7 +104,9 @@ class WireShapeSpec extends FunSuite:
 
   test("S4: responseShape distinguishes an openai non-stream message from a stream delta") {
     assertEquals(
-      WireShape.responseShape("""{"choices":[{"message":{"role":"assistant","content":"a","reasoning_content":"b"}}]}"""),
+      WireShape.responseShape(
+        """{"choices":[{"message":{"role":"assistant","content":"a","reasoning_content":"b"}}]}"""
+      ),
       "message:content+reasoning_content"
     )
     assertEquals(
@@ -139,7 +145,12 @@ class WireShapeSpec extends FunSuite:
   }
 
   test("P2: other 400s are NOT repairable (no blind retry storm)") {
-    assert(!WireShape.isThinkingPassbackRejection(400, """{"error":{"message":"Model \"x\" is not supported on this endpoint"}}"""))
+    assert(
+      !WireShape.isThinkingPassbackRejection(
+        400,
+        """{"error":{"message":"Model \"x\" is not supported on this endpoint"}}"""
+      )
+    )
     assert(!WireShape.isThinkingPassbackRejection(401, """{"error":{"message":"thinking must be passed back"}}"""))
     assert(!WireShape.isThinkingPassbackRejection(400, ""))
   }
@@ -148,3 +159,4 @@ class WireShapeSpec extends FunSuite:
     val body = """{"error":{"message":"line1\n  line2   spaced"}}"""
     assertEquals(WireShape.upstreamExcerpt(body), "line1 line2 spaced")
   }
+end WireShapeSpec

@@ -44,6 +44,8 @@ class RgHelperSpec extends FunSuite:
       val executable = if windows then Option(System.getenv("ComSpec")) else Some(wrapper.toString)
       RgHelper.runRgWithPath(argv, workDir, processCwd, truncateOnOverflow, executable)
     finally os.remove.all(os.Path(dir))
+    end try
+  end runFixtureRg
 
   /** launchd 最小 PATH（2026-09-21 事发读数，.nebflow/evidence/20260921_env-rg-restore/）。 */
   private val launchdMinimalPath = "/usr/bin:/bin:/usr/sbin:/sbin"
@@ -154,7 +156,11 @@ class RgHelperSpec extends FunSuite:
     finally os.remove.all(tmp)
   }
 
-  test("real host, launchd-minimal PATH: resolution lands on /opt/homebrew/bin/rg when present".tag(munit.Tag("host-smoke"))) {
+  test(
+    "real host, launchd-minimal PATH: resolution lands on /opt/homebrew/bin/rg when present".tag(
+      munit.Tag("host-smoke")
+    )
+  ) {
     assume(sys.env.get("STAND_HOST_SMOKE").contains("1"), "set STAND_HOST_SMOKE=1 to run host-dependent smoke")
     val probeDirs = List("/opt/homebrew/bin", "/usr/local/bin", "/snap/bin")
     val expected = probeDirs.map(d => java.nio.file.Path.of(d, rgName)).find(java.nio.file.Files.isRegularFile(_))
@@ -227,7 +233,8 @@ class RgHelperSpec extends FunSuite:
           assertEquals(code, 0)
           assert(!truncated)
           // Windows rg 输出 ".\" 前缀 + 反斜杠分隔 —— 剥两种相对前缀并归一正斜杠。
-          val lines = stdout.trim.split("\\n").toList.map(l => l.stripPrefix("./").stripPrefix(".\\").replace('\\', '/')).sorted
+          val lines =
+            stdout.trim.split("\\n").toList.map(l => l.stripPrefix("./").stripPrefix(".\\").replace('\\', '/')).sorted
           assertEquals(lines, List("one.txt", "sub/two.txt"), "relative search must list cwd-relative paths")
         case Left(err) => fail(s"unexpected ToolError: ${err.message}")
     finally os.remove.all(tmp)

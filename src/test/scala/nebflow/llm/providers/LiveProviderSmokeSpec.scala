@@ -61,8 +61,27 @@ class LiveProviderSmokeSpec extends CatsEffectSuite:
     // 显式覆盖，同时验证 provider 级 headers 通道真的生效。
     val headers = Some(Map("user-agent" -> "stand/live-smoke (nebflow-llm-client)"))
     if protocol == "anthropic" then
-      AnthropicAdapter(baseUrl, apiKey, backend, requireThinkingPassback = true, providerId = providerId, providerHeaders = headers)
-    else OpenAiAdapter(baseUrl, apiKey, backend, requireThinkingPassback = true, providerId = providerId, providerHeaders = headers)
+      AnthropicAdapter(
+        baseUrl,
+        apiKey,
+        backend,
+        requireThinkingPassback = true,
+        providerId = providerId,
+        providerHeaders = headers
+      )
+    else
+      OpenAiAdapter(
+        baseUrl,
+        apiKey,
+        backend,
+        requireThinkingPassback = true,
+        providerId = providerId,
+        providerHeaders = headers
+      )
+
+    end if
+
+  end adapter
 
   private def guard(run: => Any): Unit =
     if !live then ()
@@ -108,10 +127,13 @@ class LiveProviderSmokeSpec extends CatsEffectSuite:
     guard {
       val r = adapter()
         .sendMessage(
-          baseParams(List(Message(MessageRole.User, Left("Use the Bash tool to run: echo nebflow-live-smoke. Then stop."))))
+          baseParams(
+            List(Message(MessageRole.User, Left("Use the Bash tool to run: echo nebflow-live-smoke. Then stop.")))
+          )
         )
         .unsafeRunSync()
-      println(s"[live-smoke] L2 toolCalls=${r.toolCalls.map(t => s"${t.name}(${t.input.toMap.get("command").flatMap(_.asString).getOrElse("?")})")}")
+      println(s"[live-smoke] L2 toolCalls=${r.toolCalls
+          .map(t => s"${t.name}(${t.input.toMap.get("command").flatMap(_.asString).getOrElse("?")})")}")
       assert(r.toolCalls.nonEmpty, s"expected a tool call, got reply=${r.reply.take(120)}")
       assertEquals(r.toolCalls.head.name, "Bash")
     }
@@ -120,7 +142,9 @@ class LiveProviderSmokeSpec extends CatsEffectSuite:
   test("L3: streaming carries reasoning/thinking AND text (cmdcode's content-empty shape)") {
     guard {
       val chunks = adapter()
-        .sendMessageStream(baseParams(List(Message(MessageRole.User, Left("Think briefly, then reply: stream-ok"))), withTools = false))
+        .sendMessageStream(
+          baseParams(List(Message(MessageRole.User, Left("Think briefly, then reply: stream-ok"))), withTools = false)
+        )
         .compile
         .toList
         .unsafeRunSync()
@@ -143,7 +167,11 @@ class LiveProviderSmokeSpec extends CatsEffectSuite:
           MessageRole.Assistant,
           Right(
             List(
-              ContentBlock.ToolUse("call_live_1", "Bash", io.circe.JsonObject.fromMap(Map("command" -> Json.fromString("echo hello"))))
+              ContentBlock.ToolUse(
+                "call_live_1",
+                "Bash",
+                io.circe.JsonObject.fromMap(Map("command" -> Json.fromString("echo hello")))
+              )
             )
           )
         ),
@@ -155,3 +183,4 @@ class LiveProviderSmokeSpec extends CatsEffectSuite:
       assert(r.reply.trim.nonEmpty || r.toolCalls.nonEmpty, "replay produced nothing")
     }
   }
+end LiveProviderSmokeSpec

@@ -129,7 +129,9 @@ final class WsDispatchCtx(
   browseEntryCapImpl: Int,
   resolveExplorerBaseRootImpl: (String, Option[String]) => IO[String],
   admitWorkOrRefuseImpl: (io.circe.Json => IO[Unit]) => IO[Unit] => IO[Unit],
-  handleUserTextImpl: (String, String, String, Boolean, Option[nebflow.bridge.ResolvedDevice], Option[String]) => IO[Unit],
+  handleUserTextImpl: (String, String, String, Boolean, Option[nebflow.bridge.ResolvedDevice], Option[String]) => IO[
+    Unit
+  ],
   /** device-provenance 批：帧 `device` 键 → 花名册解析读数（缺席 ⇒ None ⇒ 不标注）。 */
   deviceProvenanceImpl: io.circe.Json => IO[Option[nebflow.bridge.ResolvedDevice]],
   skipCurrentFreezeWindowImpl: () => IO[Unit],

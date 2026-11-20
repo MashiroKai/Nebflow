@@ -145,7 +145,7 @@ class BackgroundCompletionCapLedgerSpec extends CatsEffectSuite:
         )
       )
       nebflow.core.delegate.DelegateRegistry.updateReport(childSid, "finish", "cap ledger done", "") match
-        case Left(e)  => throw new RuntimeException(s"seed declared report failed: $e")
+        case Left(e) => throw new RuntimeException(s"seed declared report failed: $e")
         case Right(_) => ()
     }
 

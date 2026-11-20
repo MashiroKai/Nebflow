@@ -39,9 +39,11 @@ private[gateway] object RevealPath:
     case Windows extends Platform("windows", "explorer")
     case Linux extends Platform("linux", "file-manager")
 
-  /** `os.name` → 平台。mac/win 之外的 POSIX（linux/bsd/其他）一律按 Linux 族走
+  /**
+   * `os.name` → 平台。mac/win 之外的 POSIX（linux/bsd/其他）一律按 Linux 族走
    *  `xdg-open`；连打开器都没有时 [[opener]] 返回 None ⇒ 能力面 `supported:false`
-   *  （前端于是不渲染该项，绝不乱执行）。 */
+   *  （前端于是不渲染该项，绝不乱执行）。
+   */
   def platformFrom(osName: String): Option[Platform] =
     val os = Option(osName).getOrElse("").toLowerCase(java.util.Locale.ROOT)
     if os.contains("mac") || os.contains("darwin") then Some(Platform.MacOS)
@@ -71,7 +73,7 @@ private[gateway] object RevealPath:
       // Windows：`explorer.exe` 由 ProcessBuilder 经 PATH / System32 解析（与
       // GatewayMain 的 `rundll32` 先例同法：裸名，不硬编码盘符路径）。
       case Platform.Windows => Some("explorer.exe")
-      case Platform.Linux   => onPath("xdg-open")
+      case Platform.Linux => onPath("xdg-open")
 
   /**
    * argv 构造（**路径 = 单独 token**，零 shell）：
@@ -88,13 +90,15 @@ private[gateway] object RevealPath:
   def argvFor(p: Platform, real: Path): Option[List[String]] =
     opener(p).flatMap(bin => argvWith(bin, p, real))
 
-  /** [[argvFor]] 的纯半边（打开器已解析）：spec 直接喂合成打开器验三档 argv 形态，
-   *  生产侧仍只经 [[opener]] 取真件 —— 一个判据、一个接缝，不复制标量表。 */
+  /**
+   * [[argvFor]] 的纯半边（打开器已解析）：spec 直接喂合成打开器验三档 argv 形态，
+   *  生产侧仍只经 [[opener]] 取真件 —— 一个判据、一个接缝，不复制标量表。
+   */
   def argvWith(bin: String, p: Platform, real: Path): Option[List[String]] =
     p match
-      case Platform.MacOS   => Some(List(bin, "-R", real.toString))
+      case Platform.MacOS => Some(List(bin, "-R", real.toString))
       case Platform.Windows => Some(List(bin, "/select,", real.toString))
-      case Platform.Linux   => Option(real.getParent).map(parent => List(bin, parent.toString))
+      case Platform.Linux => Option(real.getParent).map(parent => List(bin, parent.toString))
 
   /** 结构化拒绝：`code` = 机器读面（稳定），`message` = 人读面（可带原判据原文）。 */
   final case class Refusal(status: Status, code: String, message: String)
@@ -104,7 +108,7 @@ private[gateway] object RevealPath:
       // 凭据两族对外只露一个 code（前端只区分「不存在 / 不许 / 不是文件」三档），
       // 原始判据原文原样带进 message，诊断面不丢信息。
       case "credential-path" | "credential-hardlink" => Refusal(d.status, "path-refused", d.message)
-      case other                                     => Refusal(d.status, other, d.message)
+      case other => Refusal(d.status, other, d.message)
 
   /**
    * 路径判据 = `/api/nf-file` 的**同一份阶梯**（零复制、零旁路，见文件头③）。

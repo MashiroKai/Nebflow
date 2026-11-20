@@ -126,7 +126,10 @@ class FriendsSealSpec extends CatsEffectSuite:
       )
       assert(d.contains("## Scope (author ruling 2026-10-31)"), "the boundary scope section rides the sealed face too")
       assert(d.contains("never go through SendMessage"), "the channel-delivery ban is spelled out on the sealed face")
-      assert(!d.contains("use `Mail` with the `device` parameter"), "stale Mail-device pointer stays gone in both states")
+      assert(
+        !d.contains("use `Mail` with the `device` parameter"),
+        "stale Mail-device pointer stays gone in both states"
+      )
     }
 
   test("forced seal: schema narrows (no friend/group/local prefix docs, overwrite dropped, required intact)"):

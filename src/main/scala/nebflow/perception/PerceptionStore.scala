@@ -57,8 +57,11 @@ class PerceptionStore(val root: Path):
 
   /** 用户可编辑黑名单（域或完整地址，大小写不敏感；文件缺席 = 空表）。 */
   def loadBlacklist(): List[String] =
-    readJson(root / "blacklist.json").flatMap(_.as[List[String]].toOption)
-      .getOrElse(Nil).map(_.trim.toLowerCase).filter(_.nonEmpty)
+    readJson(root / "blacklist.json")
+      .flatMap(_.as[List[String]].toOption)
+      .getOrElse(Nil)
+      .map(_.trim.toLowerCase)
+      .filter(_.nonEmpty)
 
   // ── accounts.json ──────────────────────────────────────────────────────
 
@@ -92,10 +95,8 @@ class PerceptionStore(val root: Path):
       val p = draftsDir / s"$draftId.md"
       val jp = p.toNIO
       val bytes = content.getBytes(StandardCharsets.UTF_8)
-      if Files.exists(jp) then
-        Files.write(jp, bytes, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)
-      else
-        writePrivateNew(jp, bytes)
+      if Files.exists(jp) then Files.write(jp, bytes, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)
+      else writePrivateNew(jp, bytes)
       restrictFile(jp)
       Right(p.toString)
     catch case e: Throwable => Left(s"draft write: ${e.getClass.getSimpleName}: ${e.getMessage}")
@@ -114,8 +115,7 @@ class PerceptionStore(val root: Path):
     try
       val jp = auditFile.toNIO
       val bytes = (line.asJson.noSpaces + "\n").getBytes(StandardCharsets.UTF_8)
-      if Files.notExists(jp) then
-        writePrivateNew(jp, bytes)
+      if Files.notExists(jp) then writePrivateNew(jp, bytes)
       else Files.write(jp, bytes, StandardOpenOption.APPEND)
       restrictFile(jp)
     catch case _: Throwable => ()
@@ -133,12 +133,15 @@ class PerceptionStore(val root: Path):
 
   def spoolList(): List[(String, DeliveryEnvelope)] =
     try
-      os.list(spoolDir).filter(_.ext == "json").flatMap { p =>
-        parser
-          .decode[DeliveryEnvelope](os.read(p))
-          .toOption
-          .map(env => p.last.stripSuffix(".json") -> env)
-      }.toList
+      os.list(spoolDir)
+        .filter(_.ext == "json")
+        .flatMap { p =>
+          parser
+            .decode[DeliveryEnvelope](os.read(p))
+            .toOption
+            .map(env => p.last.stripSuffix(".json") -> env)
+        }
+        .toList
     catch case _: Throwable => Nil
 
   def spoolRemove(id: String): Unit =
@@ -153,16 +156,14 @@ class PerceptionStore(val root: Path):
     try
       val jp = billingFileFor(dateStr).toNIO
       val bytes = (line.asJson.noSpaces + "\n").getBytes(StandardCharsets.UTF_8)
-      if Files.notExists(jp) then
-        writePrivateNew(jp, bytes)
+      if Files.notExists(jp) then writePrivateNew(jp, bytes)
       else Files.write(jp, bytes, StandardOpenOption.APPEND)
       restrictFile(jp)
       Right(())
     catch case e: Throwable => Left(s"billing append: ${e.getMessage}")
 
   def billingRead(dateStr: String): List[BillingLine] =
-    try
-      os.read.lines(billingFileFor(dateStr)).flatMap(l => parser.decode[BillingLine](l).toOption).toList
+    try os.read.lines(billingFileFor(dateStr)).flatMap(l => parser.decode[BillingLine](l).toOption).toList
     catch case _: Throwable => Nil
 
   def billingClear(dateStr: String): Unit =
@@ -229,8 +230,7 @@ object PerceptionStore:
         // temporary file is owner-only before its first byte; rename keeps the
         // old complete value visible until the new complete value is ready.
         replacePrivate(jp, bytes)
-      else
-        writePrivateNew(jp, bytes)
+      else writePrivateNew(jp, bytes)
       restrictFile(jp)
       Right(())
     catch case e: Throwable => Left(s"${p.last}: ${e.getClass.getSimpleName}: ${e.getMessage}")
@@ -240,18 +240,27 @@ object PerceptionStore:
     val parent = jp.getParent
     val tmp = Files.createTempFile(parent, s".${jp.getFileName.toString}.", ".tmp", filePerms)
     try
-      val ch = Files.newByteChannel(tmp, java.util.Set.of(StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING))
+      val ch =
+        Files.newByteChannel(tmp, java.util.Set.of(StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING))
       try
         val buffer = java.nio.ByteBuffer.wrap(bytes)
         while buffer.hasRemaining do ch.write(buffer)
       finally ch.close()
       try
-        Files.move(tmp, jp, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+        Files.move(
+          tmp,
+          jp,
+          java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+          java.nio.file.StandardCopyOption.ATOMIC_MOVE
+        )
       catch
         case _: java.nio.file.AtomicMoveNotSupportedException =>
           Files.move(tmp, jp, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
-    finally
-      Files.deleteIfExists(tmp)
+    finally Files.deleteIfExists(tmp)
+
+    end try
+
+  end replacePrivate
 
   /** CREATE_NEW with 0600 from the first byte (mode from the creation attribute). */
   private[perception] def writePrivateNew(jp: JPath, bytes: Array[Byte]): Unit =
@@ -271,8 +280,10 @@ object PerceptionStore:
     catch case _: Throwable => ()
 
   def restrictDir(p: Path): Unit =
-    try Files.setPosixFilePermissions(
+    try
+      Files.setPosixFilePermissions(
         p.toNIO,
         Set(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE).asJava
       )
     catch case _: Throwable => ()
+end PerceptionStore

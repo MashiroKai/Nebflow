@@ -117,7 +117,12 @@ object ThinkingEffortGate:
    * support only the exact endpoints and high tier below; unknown tiers are
    * omitted rather than mapped using an unproven capability.
    */
-  def effortFragment(kind: ThinkingKind, model: String, effort: Option[ThinkingEffort], endpoint: String): Option[Json] =
+  def effortFragment(
+    kind: ThinkingKind,
+    model: String,
+    effort: Option[ThinkingEffort],
+    endpoint: String
+  ): Option[Json] =
     val m = model.toLowerCase
     val kimiEndpoint = endpoint == "https://api.kimi.com/coding/v1/messages"
     val glmEndpoint = endpoint == "https://open.bigmodel.cn/api/anthropic/v1/messages"
@@ -131,6 +136,7 @@ object ThinkingEffortGate:
           if glmEffort && glmEndpoint && m.contains("glm") && e == ThinkingEffort.High =>
         Some(Json.obj("reasoning_effort" -> EffortWire.threeTier(e).asJson))
       case _ => None
+  end effortFragment
 end ThinkingEffortGate
 
 /** 模型思考面的能力类（设计 §4.2 wire 翻译表的行；AnthropicAdapter 单点翻译）。 */

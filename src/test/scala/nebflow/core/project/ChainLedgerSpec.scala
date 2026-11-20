@@ -97,8 +97,12 @@ class ChainLedgerSpec extends CatsEffectSuite:
     val path = dir / ChainLedger.FileName
     val arch = dir / ChainLedger.ArchiveDirName
     val orphan = ChainLedger.RoundFile(
-      round = 1, at = t0, kind = ChainLedger.RoundCompact, thresholds = ChainLedger.ThresholdsNow,
-      hotBefore = ChainLedger.Totals(entries = 1), hotAfter = ChainLedger.Totals(),
+      round = 1,
+      at = t0,
+      kind = ChainLedger.RoundCompact,
+      thresholds = ChainLedger.ThresholdsNow,
+      hotBefore = ChainLedger.Totals(entries = 1),
+      hotAfter = ChainLedger.Totals(),
       entries = List(entry("uncommitted", "n", t0, List("n")))
     )
     (for
@@ -113,8 +117,12 @@ class ChainLedgerSpec extends CatsEffectSuite:
     val dir = os.temp.dir(prefix = "ledger-snapshot-", deleteOnExit = false)
     val arch = dir / ChainLedger.ArchiveDirName
     val cold = ChainLedger.RoundFile(
-      round = 1, at = t0, kind = ChainLedger.RoundCompact, thresholds = ChainLedger.ThresholdsNow,
-      hotBefore = ChainLedger.Totals(entries = 1), hotAfter = ChainLedger.Totals(),
+      round = 1,
+      at = t0,
+      kind = ChainLedger.RoundCompact,
+      thresholds = ChainLedger.ThresholdsNow,
+      hotBefore = ChainLedger.Totals(entries = 1),
+      hotAfter = ChainLedger.Totals(),
       entries = List(entry("later", "n", t0, List("n")))
     )
     (for
@@ -608,7 +616,11 @@ class ChainLedgerSpec extends CatsEffectSuite:
         "拍 2：4 条链离场（整行下沉）"
       )
       assertEquals(st2.rounds, Nil, "小批不落轮（批化落盘；批持久在台账热态里）")
-      assertEquals(st2.pendingDissolve.entries.map(_.chainId).sorted, List("chain-n0", "chain-n1", "chain-n2", "chain-n3"), "离场行入待落批")
+      assertEquals(
+        st2.pendingDissolve.entries.map(_.chainId).sorted,
+        List("chain-n0", "chain-n1", "chain-n2", "chain-n3"),
+        "离场行入待落批"
+      )
       assertEquals(
         st3.rounds.map(_.kind),
         List(ChainLedger.RoundDissolve, ChainLedger.RoundCompact),
@@ -689,8 +701,18 @@ class ChainLedgerSpec extends CatsEffectSuite:
         List("chain-a"),
         "small batch stays pending (batched flush, no per-event file)"
       )
-      flushed <- seeded.reconcile(Nil, Set.empty, Map.empty, Set.empty, t0 + 1000 + ChainLedger.OfflineFlushAgeMs + 1000)
-      _ = assertEquals(flushed.state.rounds.map(_.kind), List(ChainLedger.RoundDissolve), "age gate flushes the batch as one round")
+      flushed <- seeded.reconcile(
+        Nil,
+        Set.empty,
+        Map.empty,
+        Set.empty,
+        t0 + 1000 + ChainLedger.OfflineFlushAgeMs + 1000
+      )
+      _ = assertEquals(
+        flushed.state.rounds.map(_.kind),
+        List(ChainLedger.RoundDissolve),
+        "age gate flushes the batch as one round"
+      )
       coldFiles <- IO.blocking(if os.exists(arch) then os.list(arch).toList else Nil)
       _ = assert(coldFiles.nonEmpty, "dissolve round must be on disk")
 
@@ -748,17 +770,31 @@ class ChainLedgerSpec extends CatsEffectSuite:
       roundsQuiet <- store.readRounds
       // One tick past the flush age: the pending batch sinks as exactly ONE
       // dissolve round carrying the full row.
-      flushed <- store.reconcile(List(proto("chain-r", List("r1", "r2"))), Set.empty, Map.empty, Set.empty, t0 + 20 + ChainLedger.OfflineFlushAgeMs + 1000)
+      flushed <- store.reconcile(
+        List(proto("chain-r", List("r1", "r2"))),
+        Set.empty,
+        Map.empty,
+        Set.empty,
+        t0 + 20 + ChainLedger.OfflineFlushAgeMs + 1000
+      )
       roundsEnd <- store.readRounds
       filesEnd <- IO.blocking(if os.exists(arch) then os.list(arch).toList else Nil)
     yield
       assertEquals(settled.retired, 0, "the retire arm never opens (offline arm owns graph-gone rows)")
-      assertEquals(settled.state.pendingDissolve.entries.map(_.chainId), List("chain-r"), "the row lands in the offline pending batch")
+      assertEquals(
+        settled.state.pendingDissolve.entries.map(_.chainId),
+        List("chain-r"),
+        "the row lands in the offline pending batch"
+      )
       assertEquals(stAfterSettle.entries.keySet, Set.empty[String], "the drained row has left the hot face")
       assertEquals(tick3.born, Nil, "an archive-only component must not re-birth (the loop's birth arm)")
       assertEquals(tick4.born, Nil, "and it stays unborn on every following tick")
       assertEquals(roundsQuiet, Nil, "quiet ticks write zero rounds (no per-event file for a small batch)")
-      assertEquals(flushed.state.rounds.map(_.kind), List(ChainLedger.RoundDissolve), "the age gate flushes exactly one dissolve round")
+      assertEquals(
+        flushed.state.rounds.map(_.kind),
+        List(ChainLedger.RoundDissolve),
+        "the age gate flushes exactly one dissolve round"
+      )
       assertEquals(flushed.state.rounds.map(_.movedEntries), List(1), "the round carries the full row")
       assertEquals(flushed.state.rounds.map(_.round), List(1), "exactly one round ever (the per-tick storm is gone)")
       assertEquals(filesEnd.count(_.last.startsWith("round-")), 1, "zero extra cold round files on repeated ticks")
@@ -787,12 +823,24 @@ class ChainLedgerSpec extends CatsEffectSuite:
       stEnd <- store.snapshot
     yield
       assertEquals(mixed.born, List("chain-m"), "a component with one active member births normally")
-      assertEquals(stBorn.entries("chain-m").status, ChainLedger.StatusActive, "a born entry with an active member is not flipped Archived")
-      assertEquals(drained.state.pendingDissolve.entries.map(_.chainId), List("chain-m"), "the fully-archived chain drains via the offline arm")
+      assertEquals(
+        stBorn.entries("chain-m").status,
+        ChainLedger.StatusActive,
+        "a born entry with an active member is not flipped Archived"
+      )
+      assertEquals(
+        drained.state.pendingDissolve.entries.map(_.chainId),
+        List("chain-m"),
+        "the fully-archived chain drains via the offline arm"
+      )
       assertEquals(stDrained.entries.keySet, Set.empty[String], "the hot face drains")
       assertEquals(next.born, Nil, "after the drain the archive-only component stays unborn")
       assertEquals(roundsEnd, Nil, "no round on the following tick (batch pending, thresholds not met)")
-      assertEquals(stEnd.pendingDissolve.entries.map(_.chainId), List("chain-m"), "the batch persists across ticks until a flush gate fires")
+      assertEquals(
+        stEnd.pendingDissolve.entries.map(_.chainId),
+        List("chain-m"),
+        "the batch persists across ticks until a flush gate fires"
+      )
     end for
   }
   // ── T18–T21 [R3 续批 2026-10-30]：活性别闸（账实修复）+ 离场批化 + manifest 外置 + 冷档透明读 ──
@@ -844,7 +892,13 @@ class ChainLedgerSpec extends CatsEffectSuite:
       reopened <- ChainLedgerStore.open("stand", path, arch)
       st2 <- reopened.snapshot
       // 龄期到 ⇒ 整批一轮（4 行一个文件）。
-      flushed <- reopened.reconcile(comps, Set.empty, Map.empty, Set.empty, t0 + 1000 + ChainLedger.OfflineFlushAgeMs + 1000)
+      flushed <- reopened.reconcile(
+        comps,
+        Set.empty,
+        Map.empty,
+        Set.empty,
+        t0 + 1000 + ChainLedger.OfflineFlushAgeMs + 1000
+      )
       _ = assertEquals(flushed.state.rounds.map(_.kind), List(ChainLedger.RoundDissolve), "龄期闸 ⇒ 整批落一轮")
       st3 <- reopened.snapshot
       deepZ <- reopened.resolveDeep("zcode-484-fix")
@@ -916,7 +970,13 @@ class ChainLedgerSpec extends CatsEffectSuite:
       _ <-
         (0 until total).foldLeft(IO.unit) { (acc, i) =>
           acc *> store
-            .reconcile(all.drop(i + 1), all.drop(i + 1).flatMap(_.memberIds).toSet, Map.empty, Set.empty, tickN(2 * i + 1))
+            .reconcile(
+              all.drop(i + 1),
+              all.drop(i + 1).flatMap(_.memberIds).toSet,
+              Map.empty,
+              Set.empty,
+              tickN(2 * i + 1)
+            )
             .flatMap(_ =>
               store.reconcile(
                 all.drop(i + 1),
@@ -935,7 +995,9 @@ class ChainLedgerSpec extends CatsEffectSuite:
         .flatMap(_.as[ChainLedger.State])
         .toOption
         .getOrElse(throw new IllegalStateException("checkpoint undecodable"))
-      sideLines <- IO.blocking(os.read(arch / ChainLedger.RoundsSideVolumeFile).linesIterator.toList.filter(_.trim.nonEmpty))
+      sideLines <- IO.blocking(
+        os.read(arch / ChainLedger.RoundsSideVolumeFile).linesIterator.toList.filter(_.trim.nonEmpty)
+      )
       reopened <- ChainLedgerStore.open("ledger-window", path, arch)
       st2 <- reopened.snapshot
       check <- reopened.verify
@@ -974,7 +1036,8 @@ class ChainLedgerSpec extends CatsEffectSuite:
         hotAfter = ChainLedger.Totals(),
         entries = ids.map(id => entry(id, id, t0, List(id)))
       )
-    val bundleRounds = List(rf(9001, List("chain-old-bundle-a", "chain-old-bundle-b")), rf(9002, List("chain-old-bundle-c")))
+    val bundleRounds =
+      List(rf(9001, List("chain-old-bundle-a", "chain-old-bundle-b")), rf(9002, List("chain-old-bundle-c")))
     val bundleText = bundleRounds.map(_.asJson.noSpaces).mkString("", "\n", "\n")
     val bundlePath = arch / "rounds-202609.jsonl.gz"
     IO.blocking {
@@ -988,7 +1051,13 @@ class ChainLedgerSpec extends CatsEffectSuite:
         _ <- store.reconcile(List(proto("chain-live", List("l1"))), Set("l1"), Map.empty, Set.empty, t0)
         obs <- store.reconcile(Nil, Set.empty, Map.empty, Set.empty, t0 + 1000)
         _ = assertEquals(obs.state.pendingDissolve.entries.map(_.chainId), List("chain-live"))
-        flushed <- store.reconcile(Nil, Set.empty, Map.empty, Set.empty, t0 + 1000 + ChainLedger.OfflineFlushAgeMs + 1000)
+        flushed <- store.reconcile(
+          Nil,
+          Set.empty,
+          Map.empty,
+          Set.empty,
+          t0 + 1000 + ChainLedger.OfflineFlushAgeMs + 1000
+        )
         rounds <- store.readRounds
         hitA <- store.resolveDeep("chain-old-bundle-a")
         hitC <- store.resolveDeep("chain-old-bundle-c")

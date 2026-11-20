@@ -116,6 +116,7 @@ class OfficialIdentitySpec extends FunSuite:
         }
       }
     finally out.close()
+    end try
     val loader = new java.net.URLClassLoader(Array(jar.toNIO.toUri.toURL), null)
     try body(jar, loader)
     finally
@@ -132,8 +133,10 @@ class OfficialIdentitySpec extends FunSuite:
     PluginRegistry.invalidateCache()
     dest
 
-  /** 从 seed 资源树手工安装一个真内置包（与 `SeedService` 同源字节；不启动种子链）。
-   *  （世界形态 ①：种子树零保留前缀包后无既有调用方——保留 helper 供后续恢复腿用。） */
+  /**
+   * 从 seed 资源树手工安装一个真内置包（与 `SeedService` 同源字节；不启动种子链）。
+   *  （世界形态 ①：种子树零保留前缀包后无既有调用方——保留 helper 供后续恢复腿用。）
+   */
   private def installBuiltin(name: String): os.Path =
     val dest = home / "plugins" / name
     os.makeDir.all(dest / os.up)
@@ -143,7 +146,9 @@ class OfficialIdentitySpec extends FunSuite:
 
   // ── ① 世界形态 + 允许列表 + 算法等价 ───────────────────────
 
-  test("current seed tree ships ZERO reserved-prefix packages ⇒ no reserved occupant in the allowlist (fail-closed guard intact); digestOf == computeDigest") {
+  test(
+    "current seed tree ships ZERO reserved-prefix packages ⇒ no reserved occupant in the allowlist (fail-closed guard intact); digestOf == computeDigest"
+  ) {
     // c9dff9829（2026-10-31 作者令「六包合并为 stand-dev」）后 seed 树不再有任何
     // 保留前缀包：旧唯一官样 nebflow-plugin-creator 随六包并入 stand-dev 退役，
     // 合并落点 stand-dev 本身不带保留前缀。空允许列表 = 迁移完成的正当形态。
@@ -278,7 +283,9 @@ class OfficialIdentitySpec extends FunSuite:
 
   // ── ⑥ 首启预置信任（端到端）─────────────────────────────────
 
-  test("first boot seeds the default set with ZERO reserved-prefix packages (empty allowlist, no impersonation refusals)") {
+  test(
+    "first boot seeds the default set with ZERO reserved-prefix packages (empty allowlist, no impersonation refusals)"
+  ) {
     freshHome()
     SeedService.ensureSeeded().unsafeRunSync()
     PluginRegistry.invalidateCache()
@@ -300,7 +307,10 @@ class OfficialIdentitySpec extends FunSuite:
     val (loaded, rejected) = scan()
     assert(rejected.isEmpty, s"unexpected refusals after seeding: $rejected")
     assert(loaded.nonEmpty, "the seeded default set must load")
-    assert(loaded.forall(p => !p.name.startsWith("nebflow-")), s"loaded set must be free of reserved prefixes: ${loaded.map(_.name)}")
+    assert(
+      loaded.forall(p => !p.name.startsWith("nebflow-")),
+      s"loaded set must be free of reserved prefixes: ${loaded.map(_.name)}"
+    )
   }
 
   // ── ⑦ jar 形态臂（分发形态：`jar:` 协议的资源树）──────────────

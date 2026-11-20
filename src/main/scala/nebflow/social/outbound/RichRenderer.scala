@@ -273,7 +273,8 @@ object RichRenderer:
               if proc != null then
                 if proc.isAlive then proc.destroyForcibly()
                 try proc.waitFor(5, TimeUnit.SECONDS)
-                catch case _: InterruptedException => ()
+                catch
+                  case _: InterruptedException => ()
               // Retire the batch first, then remove it wholesale: complete
               // teardown leaves nothing on disk, and if teardown partially fails
               // the leftover is inactive (manifest intact) and stays TTL-sweepable.

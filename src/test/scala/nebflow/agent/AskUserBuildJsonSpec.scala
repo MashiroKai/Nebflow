@@ -91,13 +91,25 @@ class AskUserBuildJsonSpec extends FunSuite:
       AskItem(
         "Pick a take",
         List(
-          AskOption("Take 1", preview = Some(AskPreview("video", src = Some("/tmp/a.mp4"), poster = Some("/tmp/a.jpg")))),
+          AskOption(
+            "Take 1",
+            preview = Some(AskPreview("video", src = Some("/tmp/a.mp4"), poster = Some("/tmp/a.jpg")))
+          ),
           AskOption("Take 2", preview = Some(AskPreview("video", src = Some("https://cdn.example.com/b.mp4"))))
         )
       )
     )
-    val opts = frame(items).hcursor.downField("items").as[List[Json]].toOption.get.head.hcursor
-      .downField("options").as[List[Json]].toOption.get
+    val opts = frame(items).hcursor
+      .downField("items")
+      .as[List[Json]]
+      .toOption
+      .get
+      .head
+      .hcursor
+      .downField("options")
+      .as[List[Json]]
+      .toOption
+      .get
     assertEquals(opts(0).hcursor.downField("preview").downField("type").as[String], Right("video"))
     assertEquals(opts(0).hcursor.downField("preview").downField("src").as[String], Right("/tmp/a.mp4"))
     assertEquals(opts(0).hcursor.downField("preview").downField("poster").as[String], Right("/tmp/a.jpg"))
@@ -134,9 +146,22 @@ class AskUserBuildJsonSpec extends FunSuite:
         )
       )
     )
-    val preview = frame(items).hcursor.downField("items").as[List[Json]].toOption.get.head.hcursor
-      .downField("options").as[List[Json]].toOption.get.head.hcursor
-      .downField("preview").focus.get
+    val preview = frame(items).hcursor
+      .downField("items")
+      .as[List[Json]]
+      .toOption
+      .get
+      .head
+      .hcursor
+      .downField("options")
+      .as[List[Json]]
+      .toOption
+      .get
+      .head
+      .hcursor
+      .downField("preview")
+      .focus
+      .get
     assertEquals(preview.hcursor.downField("type").as[String], Right("media"))
     val group = preview.hcursor.downField("items").as[List[Json]].toOption.get
     assertEquals(group.size, 2)
@@ -157,8 +182,17 @@ class AskUserBuildJsonSpec extends FunSuite:
         )
       )
     )
-    val opts = frame(items).hcursor.downField("items").as[List[Json]].toOption.get.head.hcursor
-      .downField("options").as[List[Json]].toOption.get
+    val opts = frame(items).hcursor
+      .downField("items")
+      .as[List[Json]]
+      .toOption
+      .get
+      .head
+      .hcursor
+      .downField("options")
+      .as[List[Json]]
+      .toOption
+      .get
     assertEquals(opts(0).hcursor.downField("preview").focus.get.noSpaces, """{"type":"swatch","colors":["#111"]}""")
     assertEquals(
       opts(1).hcursor.downField("preview").focus.get.noSpaces,
@@ -340,6 +374,7 @@ class AskUserBuildJsonSpec extends FunSuite:
   private val fakeRegistry: Map[String, String] = Map(
     "delegate-general-1a2b3c4d" -> "ask-card-naming"
   )
+
   private def fakeLookup(sid: Option[String]): Option[String] =
     sid.flatMap(fakeRegistry.get)
 

@@ -34,34 +34,42 @@ private[gateway] object ChatSearchRoutes:
 
   def routes(ctx: RestApiCtx): HttpRoutes[IO] =
     import ctx.*
-    HttpRoutes.of[IO] {
-      case req @ GET -> Root / "search" / "chat" =>
-        withAuth(req) {
-          val params = req.params
-          val q      = params.get("q").map(_.trim).getOrElse("")
-          // 作者令①：tool 片退役——剥除调用方传入的 "tool"（其余片原样透传）。
-          val kinds  = params.get("kinds").map(_.split(',').map(_.trim).filter(_.nonEmpty).toList)
-            .getOrElse(Nil).filter(_ != "tool")
-          val sid    = params.get("sid").filter(_.nonEmpty)
-          val since  = params.get("since").flatMap(v => scala.util.Try(v.toLong).toOption)
-          val until  = params.get("until").flatMap(v => scala.util.Try(v.toLong).toOption)
-          val limit  = params.get("limit").flatMap(v => scala.util.Try(v.toInt).toOption).getOrElse(50)
-          val offset = params.get("offset").flatMap(v => scala.util.Try(v.toInt).toOption).getOrElse(0)
-          val cursor = params.get("cursor").flatMap { raw =>
-            scala.util.Try(new String(java.util.Base64.getUrlDecoder.decode(raw), "UTF-8")).toOption
-              .flatMap(io.circe.parser.parse(_).toOption).flatMap { j =>
-                val c = j.hcursor
-                for
-                  ts <- c.get[Long]("ts").toOption
-                  id <- c.get[String]("stableId").toOption
-                  gen <- c.get[String]("indexGeneration").toOption
-                  if id.matches("[0-9a-f]{64}") && gen.nonEmpty
-                yield SearchIndexService.Cursor(ts, id, gen)
-              }
-          }
-          if params.get("offset").exists(v => v != "0") then BadRequest(Json.obj("error" -> "offset pagination is unsupported; upgrade to cursor pagination".asJson))
-          else if params.contains("cursor") && cursor.isEmpty then BadRequest(Json.obj("error" -> "invalid cursor".asJson))
-          else SearchIndexService
+    HttpRoutes.of[IO] { case req @ GET -> Root / "search" / "chat" =>
+      withAuth(req) {
+        val params = req.params
+        val q = params.get("q").map(_.trim).getOrElse("")
+        // 作者令①：tool 片退役——剥除调用方传入的 "tool"（其余片原样透传）。
+        val kinds = params
+          .get("kinds")
+          .map(_.split(',').map(_.trim).filter(_.nonEmpty).toList)
+          .getOrElse(Nil)
+          .filter(_ != "tool")
+        val sid = params.get("sid").filter(_.nonEmpty)
+        val since = params.get("since").flatMap(v => scala.util.Try(v.toLong).toOption)
+        val until = params.get("until").flatMap(v => scala.util.Try(v.toLong).toOption)
+        val limit = params.get("limit").flatMap(v => scala.util.Try(v.toInt).toOption).getOrElse(50)
+        val offset = params.get("offset").flatMap(v => scala.util.Try(v.toInt).toOption).getOrElse(0)
+        val cursor = params.get("cursor").flatMap { raw =>
+          scala.util
+            .Try(new String(java.util.Base64.getUrlDecoder.decode(raw), "UTF-8"))
+            .toOption
+            .flatMap(io.circe.parser.parse(_).toOption)
+            .flatMap { j =>
+              val c = j.hcursor
+              for
+                ts <- c.get[Long]("ts").toOption
+                id <- c.get[String]("stableId").toOption
+                gen <- c.get[String]("indexGeneration").toOption
+                if id.matches("[0-9a-f]{64}") && gen.nonEmpty
+              yield SearchIndexService.Cursor(ts, id, gen)
+            }
+        }
+        if params.get("offset").exists(v => v != "0") then
+          BadRequest(Json.obj("error" -> "offset pagination is unsupported; upgrade to cursor pagination".asJson))
+        else if params.contains("cursor") && cursor.isEmpty then
+          BadRequest(Json.obj("error" -> "invalid cursor".asJson))
+        else
+          SearchIndexService
             .query("chat", SearchIndexService.Query(q, kinds, sid, since, until, limit, offset, cursor))
             .flatMap {
               case Left(reason) =>
@@ -73,36 +81,44 @@ private[gateway] object ChatSearchRoutes:
                 // 出结果前剔除（total 按页内剔除数减扣；残留随重建收敛为零后
                 // 此过滤为恒等，成本可忽略）。
                 val staleTools = result.hits.count(_.kind == "tool")
-                val hits       = result.hits.filter(_.kind != "tool")
-                val total      = math.max(0, result.total - staleTools)
+                val hits = result.hits.filter(_.kind != "tool")
+                val total = math.max(0, result.total - staleTools)
                 val payload = Json.obj(
-                  "hits"     -> hits.map(hitJson).asJson,
-                  "total"    -> total.asJson,
+                  "hits" -> hits.map(hitJson).asJson,
+                  "total" -> total.asJson,
                   "degraded" -> result.degraded.asJson,
                   "indexGeneration" -> result.indexGeneration.asJson,
                   "generationChanged" -> result.generationChanged.asJson,
                   "nextCursor" -> result.nextCursor.map { c =>
-                    val json = Json.obj("ts" -> c.ts.asJson, "stableId" -> c.stableId.asJson,
-                      "indexGeneration" -> c.generation.asJson).noSpaces
+                    val json = Json
+                      .obj(
+                        "ts" -> c.ts.asJson,
+                        "stableId" -> c.stableId.asJson,
+                        "indexGeneration" -> c.generation.asJson
+                      )
+                      .noSpaces
                     java.util.Base64.getUrlEncoder.withoutPadding().encodeToString(json.getBytes("UTF-8"))
                   }.asJson
                 )
                 if result.generationChanged then Ok(payload)
                 else HttpCache.conditionalOk(req, payload, result.etag)
             }
-        }
+        end if
+      }
     }
+
+  end routes
 
   private def hitJson(h: SearchIndexService.Hit): Json =
     Json.obj(
-      "sid"     -> h.sid.asJson,
-      "ord"     -> h.ord.asJson,
-      "kind"    -> h.kind.asJson,
-      "ts"      -> h.ts.asJson,
+      "sid" -> h.sid.asJson,
+      "ord" -> h.ord.asJson,
+      "kind" -> h.kind.asJson,
+      "ts" -> h.ts.asJson,
       "snippet" -> h.snippet.asJson,
       "stableId" -> h.stableId.asJson,
       "occurrenceCount" -> h.occurrenceCount.asJson,
-      "extra"   -> parseExtra(h.extra)
+      "extra" -> parseExtra(h.extra)
     )
 
   /** extra 投影字段：合法 JSON 原样嵌入，非法/空 ⇒ 空对象（宽松读法）。 */

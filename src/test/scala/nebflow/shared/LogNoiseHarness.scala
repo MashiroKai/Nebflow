@@ -36,6 +36,7 @@ object LogNoiseHarness:
     "ready-to-merge" -> 8,
     "frozen" -> 2
   )
+
   private val statusSampler: Vector[String] =
     statusWeights.flatMap((st, n) => Vector.fill(math.max(1, n / 40))(st))
 
@@ -50,6 +51,7 @@ object LogNoiseHarness:
     "subtask-" -> 861,
     "external-codex-" -> 210
   )
+
   private val sessionPrefixSampler: Vector[String] =
     sessionPrefixes.flatMap((p, n) => Vector.fill(math.max(1, n / 30))(p))
 
@@ -106,6 +108,7 @@ object LogNoiseHarness:
       val next = startedAt + tick * tickMs
       val sleepMs = next - System.currentTimeMillis()
       if sleepMs > 0 then Thread.sleep(sleepMs)
+    end while
     // 收尾：最后一个不满窗也落盘（shutdown hook 同语义，这里显式冲一次）
     TransportLog.flushNow()
     Thread.sleep(300L) // 给 appender 落盘时间
@@ -115,3 +118,5 @@ object LogNoiseHarness:
         s"elapsedSec=${(System.currentTimeMillis() - startedAt) / 1000}"
     )
     System.exit(0)
+  end main
+end LogNoiseHarness

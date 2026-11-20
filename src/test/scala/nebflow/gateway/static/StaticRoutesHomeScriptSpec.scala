@@ -58,7 +58,11 @@ class StaticRoutesHomeScriptSpec extends FunSuite:
 
   test("homeScriptTag: real JVM home is injected, non-empty and separator-trimmed") {
     assert(StaticRoutes.homeDirValue.nonEmpty, "user.home 必可得（否则前端静默跳过）")
-    assert(!StaticRoutes.homeDirValue.endsWith("/") && !StaticRoutes.homeDirValue.endsWith("\\"), StaticRoutes.homeDirValue)
+    assert(
+      !StaticRoutes.homeDirValue.endsWith("/") && !StaticRoutes.homeDirValue.endsWith("\\"),
+      StaticRoutes.homeDirValue
+    )
     assertEquals(StaticRoutes.homeScriptTag, StaticRoutes.homeScriptTagOf(StaticRoutes.homeDirValue))
     assert(StaticRoutes.homeScriptTag.startsWith("<script>window.NF_HOME=\""), StaticRoutes.homeScriptTag)
   }
+end StaticRoutesHomeScriptSpec

@@ -17,10 +17,14 @@ final class OwnerStore private (file: Path):
     if !Files.exists(file) then Map.empty
     else
       val raw = Files.readString(file)
-      parser.parse(raw).toOption.flatMap(_.hcursor.get[Int]("version").toOption match
-        case Some(Version) => parser.parse(raw).toOption.flatMap(_.hcursor.get[Map[String, String]]("owners").toOption)
-        case _ => None
-      ).getOrElse(throw new IllegalStateException("invalid owner registry snapshot"))
+      parser
+        .parse(raw)
+        .toOption
+        .flatMap(_.hcursor.get[Int]("version").toOption match
+          case Some(Version) =>
+            parser.parse(raw).toOption.flatMap(_.hcursor.get[Map[String, String]]("owners").toOption)
+          case _ => None)
+        .getOrElse(throw new IllegalStateException("invalid owner registry snapshot"))
 
   private def persist(rows: Map[String, String]): Unit =
     val parent = Option(file.getParent).getOrElse(file.toAbsolutePath.getParent)
@@ -28,7 +32,8 @@ final class OwnerStore private (file: Path):
     val temp = Files.createTempFile(parent, ".owners-", ".tmp")
     try
       Files.writeString(temp, Json.obj("version" -> Version.asJson, "owners" -> rows.asJson).noSpaces)
-      try Files.setPosixFilePermissions(temp, Set(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE).asJava)
+      try
+        Files.setPosixFilePermissions(temp, Set(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE).asJava)
       catch case _: UnsupportedOperationException => ()
       Files.move(temp, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
     finally Files.deleteIfExists(temp)
@@ -103,6 +108,8 @@ final class OwnerStore private (file: Path):
       if rows.contains(key) then persist(rows - key)
     catch case NonFatal(_) => ()
   })
+
+end OwnerStore
 
 object OwnerStore:
   private val Version = 1

@@ -7,7 +7,14 @@ import fs2.Stream
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.llm.{AdapterResponse, CacheAttribution, CacheBreakpoints, ProviderAdapter, ResolvedThinking, SendMessageParams}
+import nebflow.llm.{
+  AdapterResponse,
+  CacheAttribution,
+  CacheBreakpoints,
+  ProviderAdapter,
+  ResolvedThinking,
+  SendMessageParams
+}
 import nebflow.core.compact.TokenEstimator
 import nebflow.shared.*
 import sttp.capabilities.fs2.Fs2Streams
@@ -223,6 +230,8 @@ class AnthropicAdapter(
     else
       val marked = toolJsons(markIdx).deepMerge(Json.obj("cache_control" -> Json.obj("type" -> "ephemeral".asJson)))
       Json.fromValues(toolJsons.updated(markIdx, marked))
+
+  end toAnthropicTools
 
   /** Build the system field as content blocks with cache_control on the stable prefix. */
   private def buildSystemBlocks(params: SendMessageParams): Json =
@@ -471,20 +480,29 @@ class AnthropicAdapter(
 
   private def effortFragment(params: SendMessageParams, kind: ThinkingKind): Option[Json] =
     val effort = params.thinkingResolved.flatMap(_.effort)
-    val allowed = effort.filter(e => effortAllowlist.flatMap(_.get(endpoint)).flatMap(_.get(params.model)).exists(_.contains(e)))
+    val allowed =
+      effort.filter(e => effortAllowlist.flatMap(_.get(endpoint)).flatMap(_.get(params.model)).exists(_.contains(e)))
     val fragment = allowed.flatMap { e =>
       kind match
-        case ThinkingKind.EffortAnthropic | ThinkingKind.Adaptive => Some(Json.obj("output_config" -> Json.obj("effort" -> e.wireName.asJson)))
-        case ThinkingKind.EffortTopLevel | ThinkingKind.Toggle => Some(Json.obj("reasoning_effort" -> e.wireName.asJson))
+        case ThinkingKind.EffortAnthropic | ThinkingKind.Adaptive =>
+          Some(Json.obj("output_config" -> Json.obj("effort" -> e.wireName.asJson)))
+        case ThinkingKind.EffortTopLevel | ThinkingKind.Toggle =>
+          Some(Json.obj("reasoning_effort" -> e.wireName.asJson))
         case ThinkingKind.Budget => None
     }
     for
       requested <- effort
       sent <- fragment.flatMap(_.hcursor.get[String]("reasoning_effort").toOption)
       if sent != requested.wireName
-    do nebflow.shared.NebflowLogger.forName("nebflow.llm.anthropic")
-      .warnSync(s"thinking effort mapped: model=${params.model} requested=${requested.wireName} sent=$sent endpoint=$endpoint")
+    do
+      nebflow.shared.NebflowLogger
+        .forName("nebflow.llm.anthropic")
+        .warnSync(
+          s"thinking effort mapped: model=${params.model} requested=${requested.wireName} sent=$sent endpoint=$endpoint"
+        )
     fragment
+
+  end effortFragment
 
   private def onWire(params: SendMessageParams, kind: ThinkingKind, semantic: Json): Json =
     kind match
@@ -561,7 +579,8 @@ class AnthropicAdapter(
     params.maxTokensOverride match
       case Some(fixed) => fixed
       case None =>
-        val budget = if kindOf(params) == ThinkingKind.Adaptive then 0
+        val budget =
+          if kindOf(params) == ThinkingKind.Adaptive then 0
           else params.thinking.flatMap(_.hcursor.get[Int]("budget_tokens").toOption).getOrElse(0)
         val base = math.max(Defaults.MaxTokens, budget + Defaults.MaxTokens)
         val clamped = familyOutputCap(params.model) match

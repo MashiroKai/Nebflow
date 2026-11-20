@@ -195,9 +195,11 @@ Your context does NOT show the current date/time — never invent an absolute da
   message); the digest rides the same ExternalEvent channel, so it also lands on the next
   idle turn. Todo persistence equals scheduled-task persistence (same engine storage)."""
 
-  /** 重复档白名单（单源）。schedule-created-card 批（2026-11-05）起对 gateway 的
+  /**
+   * 重复档白名单（单源）。schedule-created-card 批（2026-11-05）起对 gateway 的
    *  `updateScheduledTask` 帧公开 —— 卡片内联编辑的 repeat 校验必须命中**同一份**
-   *  白名单，复制一份字符串集合 = 两条校验路必然漂移。 */
+   *  白名单，复制一份字符串集合 = 两条校验路必然漂移。
+   */
   val validRepeat = Set("hourly", "daily", "weekly")
   private val validActions = Set("create", "list", "get", "cancel", "done", "edit")
 
@@ -207,7 +209,8 @@ Your context does NOT show the current date/time — never invent an absolute da
       "properties" -> Json.obj(
         "action" -> Json.obj(
           "type" -> "string".asJson,
-          "enum" -> Json.arr("create".asJson, "list".asJson, "get".asJson, "cancel".asJson, "done".asJson, "edit".asJson),
+          "enum" -> Json
+            .arr("create".asJson, "list".asJson, "get".asJson, "cancel".asJson, "done".asJson, "edit".asJson),
           "description" -> "create (default) = schedule a task or register a todo; list = show all pending entries; get = read full entry by id across sessions; cancel = remove an entry by id; done = write off a completed todo by id; edit = modify an existing entry by id (content/project)".asJson
         ),
         "kind" -> Json.obj(
@@ -330,10 +333,11 @@ Your context does NOT show the current date/time — never invent an absolute da
             case "get" =>
               input("id").flatMap(_.asString).map(_.trim).filter(_.nonEmpty) match
                 case None => IO.pure(Left(ToolError("get requires id")))
-                case Some(id) => taskStore.findTaskById(id).map {
-                  case None => Left(ToolError(s"Entry not found: $id"))
-                  case Some(t) => Right(s"Entry ${t.id} · ${t.name.getOrElse("")}\n${t.detail.getOrElse(t.content)}")
-                }
+                case Some(id) =>
+                  taskStore.findTaskById(id).map {
+                    case None => Left(ToolError(s"Entry not found: $id"))
+                    case Some(t) => Right(s"Entry ${t.id} · ${t.name.getOrElse("")}\n${t.detail.getOrElse(t.content)}")
+                  }
             case "cancel" => cancelAction(taskStore, taskService, input, ctx)
             case "done" => doneAction(taskStore, taskService, input, ctx)
             case "edit" => editAction(taskStore, taskService, input, ctx)
@@ -361,6 +365,7 @@ Your context does NOT show the current date/time — never invent an absolute da
                           if isTodo then createTodoAction(taskStore, taskService, input, ctx, sessionId, normalized)
                           else createAction(taskStore, taskService, input, ctx, sessionId, normalized)
             case other => IO.pure(Left(ToolError(s"Unhandled action $other"))) // unreachable (guarded above)
+          end match
     end if
   end call
 
@@ -465,18 +470,17 @@ Your context does NOT show the current date/time — never invent an absolute da
                     )
                   }
                 case None => IO.unit
-            yield
-              removed match
-                case t :: Nil =>
-                  val kindWord = if t.isTodo then "todo" else "task"
-                  val wasWhat = if t.isTodo then "todo" else formatTime(t.triggerAt)
-                  val willNote = if t.isTodo then "it will not surface again" else "it will not fire"
-                  Right(
-                    s"Cancelled $kindWord $id (was $wasWhat${t.repeat.map(r => s", $r").getOrElse("")}): " +
-                      s"${t.content.take(60)} — $willNote."
-                  )
-                case _ =>
-                  Right(s"Cancelled entry $id and all stored copies — it will not fire or surface again.")
+            yield removed match
+              case t :: Nil =>
+                val kindWord = if t.isTodo then "todo" else "task"
+                val wasWhat = if t.isTodo then "todo" else formatTime(t.triggerAt)
+                val willNote = if t.isTodo then "it will not surface again" else "it will not fire"
+                Right(
+                  s"Cancelled $kindWord $id (was $wasWhat${t.repeat.map(r => s", $r").getOrElse("")}): " +
+                    s"${t.content.take(60)} — $willNote."
+                )
+              case _ =>
+                Right(s"Cancelled entry $id and all stored copies — it will not fire or surface again.")
         }
     end match
   end cancelAction
@@ -613,7 +617,9 @@ Your context does NOT show the current date/time — never invent an absolute da
               )
               taskStore.updateTask(t.sessionId, id)(_ => updated).flatMap { changed =>
                 if !changed then
-                  IO.pure(Left(ToolError(s"Edit did not apply — entry $id vanished mid-flight; retry after action=list.")))
+                  IO.pure(
+                    Left(ToolError(s"Edit did not apply — entry $id vanished mid-flight; retry after action=list."))
+                  )
                 else
                   for
                     _ <- taskService match
@@ -652,8 +658,11 @@ Your context does NOT show the current date/time — never invent an absolute da
                       detailOpt.map(_ => "detail").toList,
                       projectOpt.map(p => s"project=${p.getOrElse("(none)")}" :: Nil).toList.flatten
                     ).flatten.mkString(", ")
-                    Right(s"Updated ${if updated.isTodo then "todo" else "task"} $id ($what): ${updated.content.take(60)}")
+                    Right(
+                      s"Updated ${if updated.isTodo then "todo" else "task"} $id ($what): ${updated.content.take(60)}"
+                    )
               }
+            end if
         }
     end match
   end editAction
@@ -800,9 +809,18 @@ Your context does NOT show the current date/time — never invent an absolute da
       // triggerAt 不属于待办面（无固定触发时间）——首次浮出固定为下一次 09:00。
       val surfaceAt = ScheduledTask.nextTodoSurfaceAt(now, ZoneId.systemDefault())
       val todo = ScheduledTask.create(
-        sessionId, content, surfaceAt, None, None, taskName,
-        Some(ScheduledTask.KindTodo), None, project,
-        0, todoDetail, decision
+        sessionId,
+        content,
+        surfaceAt,
+        None,
+        None,
+        taskName,
+        Some(ScheduledTask.KindTodo),
+        None,
+        project,
+        0,
+        todoDetail,
+        decision
       )
       val ownedTodo = todo.copy(source = Some(TodoTaxonomy.SourceTool))
       for

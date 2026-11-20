@@ -17,36 +17,42 @@ final class ExecutionRunner private (
 
   /** Registration is atomic with revocation; accepted work is owned before it is started. */
   def start(operationId: String)(work: IO[Unit]): IO[Either[Rejection, Receipt]] =
-    gate.permit.use { _ => IO.uncancelable { poll =>
-      for
-        fiberReady <- Deferred[IO, Fiber[IO, Throwable, Unit]]
-        done <- Deferred[IO, Outcome[IO, Throwable, Unit]]
-        entry = Entry(fiberReady, done)
-        accepted <- state.modify { current =>
-          if current.closed then (current, Left(Rejection.Closed))
-          else if operationId.isEmpty then (current, Left(Rejection.InvalidOperation))
-          else if current.active.contains(operationId) then (current, Left(Rejection.DuplicateOperation))
-          else (current.copy(active = current.active.updated(operationId, entry)), Right(()))
-        }
-        result <- accepted match
-          case Left(reason) => IO.pure(Left(reason))
-          case Right(_) =>
-            poll(work).start.flatMap { fiber =>
-              val observe = fiber.join.flatMap { outcome =>
-                state.update(s => s.copy(active = s.active - operationId)) *> done.complete(outcome).void
+    gate.permit.use { _ =>
+      IO.uncancelable { poll =>
+        for
+          fiberReady <- Deferred[IO, Fiber[IO, Throwable, Unit]]
+          done <- Deferred[IO, Outcome[IO, Throwable, Unit]]
+          entry = Entry(fiberReady, done)
+          accepted <- state.modify { current =>
+            if current.closed then (current, Left(Rejection.Closed))
+            else if operationId.isEmpty then (current, Left(Rejection.InvalidOperation))
+            else if current.active.contains(operationId) then (current, Left(Rejection.DuplicateOperation))
+            else (current.copy(active = current.active.updated(operationId, entry)), Right(()))
+          }
+          result <- accepted match
+            case Left(reason) => IO.pure(Left(reason))
+            case Right(_) =>
+              poll(work).start.flatMap { fiber =>
+                val observe = fiber.join.flatMap { outcome =>
+                  state.update(s => s.copy(active = s.active - operationId)) *> done.complete(outcome).void
+                }
+                observe.start *> fiberReady.complete(fiber).as(Right(Receipt(attempt, operationId, done)))
               }
-              observe.start *> fiberReady.complete(fiber).as(Right(Receipt(attempt, operationId, done)))
-            }
-      yield result
-    }}
+        yield result
+      }
+    }
 
   /** Revoke admission and request cancellation without waiting for work finalizers. */
-  def close: IO[Unit] = gate.permit.use { _ => IO.uncancelable { _ =>
-    state.modify { current =>
-      if current.closed then (current, List.empty[Entry])
-      else (current.copy(closed = true), current.active.values.toList)
-    }.flatMap(_.traverse_(entry => entry.fiber.get.flatMap(_.cancel).start.void))
-  }}
+  def close: IO[Unit] = gate.permit.use { _ =>
+    IO.uncancelable { _ =>
+      state
+        .modify { current =>
+          if current.closed then (current, List.empty[Entry])
+          else (current.copy(closed = true), current.active.values.toList)
+        }
+        .flatMap(_.traverse_(entry => entry.fiber.get.flatMap(_.cancel).start.void))
+    }
+  }
 
   def activeOperations: IO[Set[String]] = state.get.map(_.active.keySet)
 
@@ -59,6 +65,8 @@ final class ExecutionRunner private (
       if !current.closed then IO.pure(false)
       else current.active.values.toList.traverse_(_.done.get).as(true)
     }
+
+end ExecutionRunner
 
 object ExecutionRunner:
   final case class Attempt(sessionId: String, executionId: String, attemptId: String, incarnationId: String)
@@ -83,3 +91,4 @@ object ExecutionRunner:
     Resource.make(
       (Ref.of[IO, State](State(closed = false, Map.empty)), Semaphore[IO](1)).mapN(new ExecutionRunner(attempt, _, _))
     )(_.close)
+end ExecutionRunner

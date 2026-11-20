@@ -7,9 +7,11 @@ import nebflow.shared.*
 
 class PrefixFingerprintSpec extends FunSuite:
   private val adapter = new AnthropicAdapter("http://localhost:0", "k", null)
+
   private def params(turn: Int) = SendMessageParams(
     messages = List(Message(MessageRole.User, Left(s"user turn $turn"))),
-    model = "model", tools = Some(List(ToolDefinition("Read", "read", JsonObject.empty))),
+    model = "model",
+    tools = Some(List(ToolDefinition("Read", "read", JsonObject.empty))),
     systemStable = Some("system injection: fixed"),
     requestOnlyContext = List(Message(MessageRole.User, Left(s"dynamic reminder $turn")))
   )

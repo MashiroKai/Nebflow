@@ -52,12 +52,15 @@ object SessionChildCascade:
           case Right(candidates) =>
             candidates.traverse_ { candidate =>
               candidate.protection match
-                case nebflow.shared.ExecutionProtection.Protected(ids) => ids.traverse_ { id =>
-                  resources.executionCommitPort.observe(candidate.sessionId, id).flatMap {
-                    case nebflow.shared.ExecutionAdmissionObservation.Verified(record, _) if record.ownerBinding != sessionId => IO.unit
-                    case _ => IO.raiseError(new IllegalStateException("protected-or-unknown-child-requires-review"))
+                case nebflow.shared.ExecutionProtection.Protected(ids) =>
+                  ids.traverse_ { id =>
+                    resources.executionCommitPort.observe(candidate.sessionId, id).flatMap {
+                      case nebflow.shared.ExecutionAdmissionObservation.Verified(record, _)
+                          if record.ownerBinding != sessionId =>
+                        IO.unit
+                      case _ => IO.raiseError(new IllegalStateException("protected-or-unknown-child-requires-review"))
+                    }
                   }
-                }
                 case _ => IO.raiseError(new IllegalStateException("execution-discovery-unavailable"))
             } *> resources.subAgentTaskStore.findAllTasks().flatMap { tasks =>
               val ids = children.map(_.sessionId) ++ tasks.filter(_.parentSessionId == sessionId).map(_.taskId)
@@ -85,7 +88,9 @@ object SessionChildCascade:
               .flatMap {
                 case Nil => IO.unit
                 case ids =>
-                  logger.info(s"deleteSession: cascade-cancelled in-flight task(s) of $sessionId: ${ids.mkString(", ")}")
+                  logger.info(
+                    s"deleteSession: cascade-cancelled in-flight task(s) of $sessionId: ${ids.mkString(", ")}"
+                  )
               }
         }
       }

@@ -59,8 +59,10 @@ object NfOfficeRoutes:
   /** 单腿转换超时。实测 13MB 重 deck ~18s 出件；150s 覆盖慢机冷启动面。 */
   val ConvertTimeout: FiniteDuration = 150.seconds
 
-  /** 源件尺寸闸：转换在服务端内存里走，不占浏览器 tab 内存——闸给得比纯前端
-   *  渲染腿（viewers/pptx.js 50MB）宽，但仍要防 pathology。 */
+  /**
+   * 源件尺寸闸：转换在服务端内存里走，不占浏览器 tab 内存——闸给得比纯前端
+   *  渲染腿（viewers/pptx.js 50MB）宽，但仍要防 pathology。
+   */
   val MaxSourceBytes: Long = 200L * 1024 * 1024
 
   /** qlmanage 缩略图最长边。1600px 在 4K 半屏预览与生成耗时之间取中（实测 7.7s）。 */
@@ -100,8 +102,10 @@ object NfOfficeRoutes:
   // 转换腿模型
   // ──────────────────────────────────────────────────────────────────────
 
-  /** 一条转换腿：kind 是诊断读数（`X-Nf-Office-Converter`），run 把 `src` 转换进
-   *  `outDir`，返回产出的唯一文件（PDF 或 PNG），失败 = IO.raiseError。 */
+  /**
+   * 一条转换腿：kind 是诊断读数（`X-Nf-Office-Converter`），run 把 `src` 转换进
+   *  `outDir`，返回产出的唯一文件（PDF 或 PNG），失败 = IO.raiseError。
+   */
   final case class Leg(kind: String, run: (os.Path, os.Path) => IO[os.Path])
 
   /**
@@ -123,7 +127,7 @@ object NfOfficeRoutes:
           else
             IO.blocking(if isMac then macLegs else linuxLegs).attempt.flatMap {
               case Right(legs) => IO(probeRef.set((now, legs))).as(legs)
-              case Left(_)     => IO.pure(Nil)
+              case Left(_) => IO.pure(Nil)
             }
         }
     end system
@@ -137,15 +141,24 @@ object NfOfficeRoutes:
       }
       val qlLeg =
         Option.when(os.exists(os.Path("/usr/bin/qlmanage")))(
-          Leg("qlmanage", (src, outDir) =>
-            IO.blocking {
-              os.proc(
-                "qlmanage", "-t", "-s", QlmanageMaxPx.toString, "-o", outDir.toString, src.toString
-              ).call(check = false, mergeErrIntoOut = true, timeout = QlmanageTimeoutMs)
-            } *> IO.blocking {
-              os.list(outDir).find(_.ext == "png")
-                .getOrElse(throw new java.io.IOException("qlmanage produced no thumbnail"))
-            }
+          Leg(
+            "qlmanage",
+            (src, outDir) =>
+              IO.blocking {
+                os.proc(
+                  "qlmanage",
+                  "-t",
+                  "-s",
+                  QlmanageMaxPx.toString,
+                  "-o",
+                  outDir.toString,
+                  src.toString
+                ).call(check = false, mergeErrIntoOut = true, timeout = QlmanageTimeoutMs)
+              } *> IO.blocking {
+                os.list(outDir)
+                  .find(_.ext == "png")
+                  .getOrElse(throw new java.io.IOException("qlmanage produced no thumbnail"))
+              }
           )
         )
       sofficeLeg.toList ::: qlLeg.toList
@@ -164,11 +177,17 @@ object NfOfficeRoutes:
       }.flatMap { case (batch, runDir, profile) =>
         val convert = IO.blocking {
           os.proc(
-            "open", "-n", "-a", app, "--args",
+            "open",
+            "-n",
+            "-a",
+            app,
+            "--args",
             "--headless",
             s"-env:UserInstallation=file://${profile}",
-            "--convert-to", "pdf",
-            "--outdir", outDir.toString,
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            outDir.toString,
             src.toString
           ).call(check = false, mergeErrIntoOut = true, timeout = 30000L)
         }
@@ -183,30 +202,39 @@ object NfOfficeRoutes:
       val found =
         try os.exists(os.Path(bin)) || inPath(bin)
         catch case _: Throwable => false
-      Option.when(found)(Leg("soffice", (src, outDir) =>
-        IO.blocking {
-          val batch = EvidenceTemp.createBatch("office-preview", "soffice-linux")
-          val runDir = os.Path(batch) / "run"
-          val profile = runDir / "profile"
-          os.makeDir.all(profile)
-          try
-            os.proc(
-              bin,
-              "--headless",
-              s"-env:UserInstallation=file://${profile}",
-              "--convert-to", "pdf",
-              "--outdir", outDir.toString,
-              src.toString
-            ).call(check = false, mergeErrIntoOut = true, timeout = ConvertTimeout.toMillis)
-          finally
-            // Retire the batch before teardown: full teardown leaves nothing
-            // behind, and a failed teardown leaves an inactive, TTL-sweepable
-            // batch instead of an orphaned temp dir.
-            try EvidenceTemp.finishBatch(batch)
-            catch case NonFatal(_) => ()
-            os.remove.all(os.Path(batch))
-        } *> pollFor(outDir, "pdf", ConvertTimeout)
-      )).toList
+      Option
+        .when(found)(
+          Leg(
+            "soffice",
+            (src, outDir) =>
+              IO.blocking {
+                val batch = EvidenceTemp.createBatch("office-preview", "soffice-linux")
+                val runDir = os.Path(batch) / "run"
+                val profile = runDir / "profile"
+                os.makeDir.all(profile)
+                try
+                  os.proc(
+                    bin,
+                    "--headless",
+                    s"-env:UserInstallation=file://${profile}",
+                    "--convert-to",
+                    "pdf",
+                    "--outdir",
+                    outDir.toString,
+                    src.toString
+                  ).call(check = false, mergeErrIntoOut = true, timeout = ConvertTimeout.toMillis)
+                finally
+                  // Retire the batch before teardown: full teardown leaves nothing
+                  // behind, and a failed teardown leaves an inactive, TTL-sweepable
+                  // batch instead of an orphaned temp dir.
+                  try EvidenceTemp.finishBatch(batch)
+                  catch case NonFatal(_) => ()
+                  os.remove.all(os.Path(batch))
+                end try
+              } *> pollFor(outDir, "pdf", ConvertTimeout)
+          )
+        )
+        .toList
     end linuxLegs
 
     /** macOS 上 LibreOffice 的 .app 位（`open -a` 接受 .app 路径或应用名）。 */
@@ -237,15 +265,18 @@ object NfOfficeRoutes:
       step(deadline)
     end pollFor
 
-    /** `open` 拉起的 headless 实例不自退（实测持续烧 CPU）——按本次 profile 串
+    /**
+     * `open` 拉起的 headless 实例不自退（实测持续烧 CPU）——按本次 profile 串
      *  精确收尸（`-env:UserInstallation=file://<profile>` 是唯一定位串，pkill 只
-     *  杀本转换拉起的进程，绝不波及用户自己的 GUI LibreOffice）。 */
+     *  杀本转换拉起的进程，绝不波及用户自己的 GUI LibreOffice）。
+     */
     private def reap(batch: Path, profile: os.Path, runDir: os.Path): IO[Unit] =
       IO.blocking {
-        os.proc("pkill", "-f", s"UserInstallation=file://${profile}").call(
-          check = false,
-          mergeErrIntoOut = true
-        )
+        os.proc("pkill", "-f", s"UserInstallation=file://${profile}")
+          .call(
+            check = false,
+            mergeErrIntoOut = true
+          )
         ()
       }.attempt *>
         // Retire first (what survives teardown stays inactive and sweep-eligible),
@@ -258,8 +289,10 @@ object NfOfficeRoutes:
   // 缓存
   // ──────────────────────────────────────────────────────────────────────
 
-  /** Content-address the complete source; the suffix and converter legs affect
-   *  interpretation, while path and timestamps do not identify its contents. */
+  /**
+   * Content-address the complete source; the suffix and converter legs affect
+   *  interpretation, while path and timestamps do not identify its contents.
+   */
   def cacheKey(real: os.Path, legsKind: String): String =
     val digest = MessageDigest.getInstance("SHA-256")
     digest.update(("office-cache-v2\u0000" + legsKind + "\u0000" + real.ext.toLowerCase + "\u0000").getBytes("UTF-8"))
@@ -283,7 +316,7 @@ object NfOfficeRoutes:
           case p if p.last.startsWith(key + ".") =>
             val rest = p.last.drop(key.length + 1) // "<kind>.<ext>"
             val kind = rest.takeWhile(_ != '.')
-            val ext  = rest.drop(kind.length + 1)
+            val ext = rest.drop(kind.length + 1)
             (p, kind, ext)
         }
     catch case _: Throwable => None
@@ -317,7 +350,7 @@ object NfOfficeRoutes:
     /** 粗粒度并发闸（poll 版 Semaphore——MaxConcurrentConverts 小，竞争可忽略）。 */
     def acquire: IO[Unit] =
       permits.modify { c => if c < MaxConcurrentConverts then (c + 1, true) else (c, false) }.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false => IO.sleep(250.millis) *> acquire
       }
     def release: IO[Unit] = permits.update(_ - 1)
@@ -325,21 +358,23 @@ object NfOfficeRoutes:
     /** 同键单飞：首个请求跑转换，其余等同一 Deferred 拿同一结果。 */
     def singleFlight(key: String, fa: IO[Either[String, os.Path]]): IO[Either[String, os.Path]] =
       Deferred[IO, Either[String, os.Path]].flatMap { d =>
-        inflight.modify { cur =>
-          cur.get(key) match
-            case Some(existing) => (cur, Left(existing))
-            case None           => (cur.updated(key, d), Right(d))
-        }.flatMap {
-          case Left(existing) => existing.get
-          case Right(mine) =>
-            fa.attempt
-              .flatMap {
-                case Left(t)  => IO.pure(Left(String.valueOf(t.getMessage)))
-                case Right(r) => IO.pure(r)
-              }
-              .flatMap { r => mine.complete(r).attempt *> IO.pure(r) }
-              .guarantee(inflight.update(_ - key))
-        }
+        inflight
+          .modify { cur =>
+            cur.get(key) match
+              case Some(existing) => (cur, Left(existing))
+              case None => (cur.updated(key, d), Right(d))
+          }
+          .flatMap {
+            case Left(existing) => existing.get
+            case Right(mine) =>
+              fa.attempt
+                .flatMap {
+                  case Left(t) => IO.pure(Left(String.valueOf(t.getMessage)))
+                  case Right(r) => IO.pure(r)
+                }
+                .flatMap { r => mine.complete(r).attempt *> IO.pure(r) }
+                .guarantee(inflight.update(_ - key))
+          }
       }
     end singleFlight
 
@@ -354,7 +389,8 @@ object NfOfficeRoutes:
             os.makeDir.all(outDir)
             (batch, outDir)
           }.flatMap { case (batch, outDir) =>
-            leg.run(real, outDir)
+            leg
+              .run(real, outDir)
               .attempt
               .flatMap {
                 case Right(produced) =>
@@ -372,8 +408,8 @@ object NfOfficeRoutes:
                   IO.blocking(os.remove.all(os.Path(batch))).attempt.void
               )
               .flatMap {
-                case Right(p)     => IO.pure(Right(p))
-                case Left(_)      => convertVia(rest, real, key)
+                case Right(p) => IO.pure(Right(p))
+                case Left(_) => convertVia(rest, real, key)
               }
           }
       end match
@@ -399,7 +435,7 @@ object NfOfficeRoutes:
 
       case req @ GET -> Root / "api" / "nf-office" =>
         val rawPath = req.params.get("path").getOrElse("")
-        val ticket  = req.params.get("ticket").getOrElse("")
+        val ticket = req.params.get("ticket").getOrElse("")
         val corsWrap = (io: IO[Response[IO]]) => io.map(_.putHeaders(CorsHeaders*))
         corsWrap(
           if rawPath.isEmpty then IO.pure(plain(Status.BadRequest, "Missing 'path' parameter"))
@@ -420,7 +456,7 @@ object NfOfficeRoutes:
                         .putHeaders(reasonHead(reason))
                     )
                   case Right(_) =>
-                    val realP  = os.Path(real)
+                    val realP = os.Path(real)
                     val srcExt = realP.ext.toLowerCase
                     if !SupportedExt.contains(srcExt) then
                       IO.pure(
@@ -461,8 +497,10 @@ object NfOfficeRoutes:
                                             .putHeaders(reasonHead("conversion-failed"))
                                         )
                                     }
+                              end match
                           }
                       }
+                    end if
                 }
             }
         )

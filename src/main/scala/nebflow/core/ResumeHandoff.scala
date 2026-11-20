@@ -281,29 +281,44 @@ object ResumeHandoff:
   /** Resolve persisted AskHost calls without generating a new request. */
   def resolveAskHost(sessionId: String, p: Plan): IO[Plan] =
     nebflow.core.tools.AskHostLedger.recover.flatMap { rows =>
-      p.pending.filter(_.toolName == "AskHost").traverse { call =>
-        rows.filter(r => r.pending.workerSession == sessionId && r.pending.toolCallId == call.toolUseId) match
-          case row :: Nil =>
-            nebflow.core.tools.AskHostLedger.restoreWaiter(row.pending.correlationId).flatMap(_.get).map(call.toolUseId -> _)
-          case _ => IO.raiseError(new IllegalStateException(s"AskHost recovery requires one durable request for ${call.toolUseId}"))
-      }.map { resolved =>
-        val answers = resolved.toMap
-        val blocks = p.injectBlocks.map(_.map {
-          case r: ContentBlock.ToolResult if answers.contains(r.toolUseId) =>
-            ContentBlock.ToolResult(r.toolUseId, answers(r.toolUseId), Some(false))
-          case other => other
-        })
-        p.copy(injectBlocks = blocks)
-      }
+      p.pending
+        .filter(_.toolName == "AskHost")
+        .traverse { call =>
+          rows.filter(r => r.pending.workerSession == sessionId && r.pending.toolCallId == call.toolUseId) match
+            case row :: Nil =>
+              nebflow.core.tools.AskHostLedger
+                .restoreWaiter(row.pending.correlationId)
+                .flatMap(_.get)
+                .map(call.toolUseId -> _)
+            case _ =>
+              IO.raiseError(
+                new IllegalStateException(s"AskHost recovery requires one durable request for ${call.toolUseId}")
+              )
+        }
+        .map { resolved =>
+          val answers = resolved.toMap
+          val blocks = p.injectBlocks.map(_.map {
+            case r: ContentBlock.ToolResult if answers.contains(r.toolUseId) =>
+              ContentBlock.ToolResult(r.toolUseId, answers(r.toolUseId), Some(false))
+            case other => other
+          })
+          p.copy(injectBlocks = blocks)
+        }
     }
 
   def recoverableAskHostOnly(sessionId: String, transcript: List[Message]): IO[Boolean] =
     val p = plan(transcript, Cause.Crash)
     if !hasUnresolvedToolCalls(transcript) then IO.pure(true)
-    else if !p.atToolBoundary || p.repairedMidHistory > 0 || p.pending.isEmpty || p.pending.exists(_.toolName != "AskHost") then IO.pure(false)
-    else nebflow.core.tools.AskHostLedger.recover.map { rows =>
-      p.pending.forall(call => rows.count(r => r.pending.workerSession == sessionId && r.pending.toolCallId == call.toolUseId) == 1)
-    }
+    else if !p.atToolBoundary || p.repairedMidHistory > 0 || p.pending.isEmpty || p.pending.exists(
+        _.toolName != "AskHost"
+      )
+    then IO.pure(false)
+    else
+      nebflow.core.tools.AskHostLedger.recover.map { rows =>
+        p.pending.forall(call =>
+          rows.count(r => r.pending.workerSession == sessionId && r.pending.toolCallId == call.toolUseId) == 1
+        )
+      }
 
   def userInput(
     p: Plan,

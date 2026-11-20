@@ -209,7 +209,11 @@ class TimeoutSoftAvoidSpec extends CatsEffectSuite:
           )
           // fallback 废除批申报：唯一候选超时软回避 ⇒ 静默等待恢复面（全灭闸，预算
           // ProbeIntervalSec=120s）——8s 有界上界取终局；哨兵以 Left 捕获（不使 IO 失败）。
-          chunks <- handle.sendStream(req).compile.toList.attempt
+          chunks <- handle
+            .sendStream(req)
+            .compile
+            .toList
+            .attempt
             .timeoutTo(
               8.seconds,
               IO.pure(

@@ -49,21 +49,21 @@ enum CandidateSkipCause:
   case SilentExclusion
 
   def wire: String = this match
-    case HealthDown(_)     => "health-down"
-    case SoftAvoid(_, _)   => "soft-avoid"
+    case HealthDown(_) => "health-down"
+    case SoftAvoid(_, _) => "soft-avoid"
     case ProviderFull(_, _) => "provider-full"
     case ScheduleWindow(_) => "schedule-window"
-    case NotConfigured(_)  => "not-configured"
-    case SilentExclusion   => "silent-exclusion"
+    case NotConfigured(_) => "not-configured"
+    case SilentExclusion => "silent-exclusion"
 
   def describe: String = this match
-    case HealthDown(d)        => s"health-down ($d)"
+    case HealthDown(d) => s"health-down ($d)"
     case SoftAvoid(ms, label) => s"soft-avoid ($label, ${ms / 1000}s left)"
     case ProviderFull(inUse, cap) =>
       s"provider-full ($inUse of $cap actor slots in use at dispatch — chain pinned to start past it)"
     case ScheduleWindow(w) => s"schedule-window ($w)"
-    case NotConfigured(d)  => s"not-configured ($d)"
-    case SilentExclusion   => "silent-exclusion (no reason recorded — dropped before the chain)"
+    case NotConfigured(d) => s"not-configured ($d)"
+    case SilentExclusion => "silent-exclusion (no reason recorded — dropped before the chain)"
 end CandidateSkipCause
 
 /**
@@ -85,9 +85,9 @@ enum ExhaustionKind:
   case NoEligibleProviders
 
   def wire: String = this match
-    case AllProvidersFailed  => "all-providers-failed"
-    case PartiallyTried      => "partially-tried"
-    case AllSkipped          => "all-skipped"
+    case AllProvidersFailed => "all-providers-failed"
+    case PartiallyTried => "partially-tried"
+    case AllSkipped => "all-skipped"
     case NoEligibleProviders => "no-eligible-providers"
 end ExhaustionKind
 
@@ -123,8 +123,7 @@ final case class CandidateDisposition(
   def kind: ExhaustionKind =
     val chainSet = chain.toSet
     val triedSet = tried.toSet
-    if chainSet.isEmpty then
-      if skipped.nonEmpty then ExhaustionKind.AllSkipped else ExhaustionKind.NoEligibleProviders
+    if chainSet.isEmpty then if skipped.nonEmpty then ExhaustionKind.AllSkipped else ExhaustionKind.NoEligibleProviders
     else if triedSet.isEmpty then ExhaustionKind.AllSkipped
     else if chainSet.subsetOf(triedSet) then ExhaustionKind.AllProvidersFailed
     else ExhaustionKind.PartiallyTried
@@ -171,8 +170,7 @@ final case class CandidateDisposition(
     }
     val silent = silentExclusions
     if expected.nonEmpty then
-      if silent.isEmpty then
-        sb.append(s"expected from config: ${expected.size} ref(s) — none silently excluded")
+      if silent.isEmpty then sb.append(s"expected from config: ${expected.size} ref(s) — none silently excluded")
       else
         sb.append(
           s"expected from config: ${expected.size} ref(s) — ${silent.size} SILENTLY EXCLUDED " +

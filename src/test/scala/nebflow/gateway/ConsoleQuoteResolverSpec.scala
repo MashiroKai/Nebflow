@@ -8,14 +8,17 @@ import nebflow.core.msgtokens.MsgTokenRegistry
 import nebflow.core.scheduler.{ScheduledTask, ScheduledTaskStore}
 
 class ConsoleQuoteResolverSpec extends CatsEffectSuite:
+
   test("author references expand short bodies, fold long bodies with queryable handles, and mark missing IDs") {
     val root = os.temp.dir(prefix = "console-quote-")
     val store = new ScheduledTaskStore(root / "tasks")
     val registry = new MsgTokenRegistry(root / "sessions", () => true)
     val body = "完整正文\n第二行\t原样"
     val long = "长文" * 2500
-    val shortTodo = ScheduledTask.create("other", body, 1L, None, None, Some("标题")).copy(kind = Some("todo"), detail = Some(body))
-    val longTodo = ScheduledTask.create("other", long, 1L, None, None, Some("长标题")).copy(kind = Some("todo"), detail = Some(long))
+    val shortTodo =
+      ScheduledTask.create("other", body, 1L, None, None, Some("标题")).copy(kind = Some("todo"), detail = Some(body))
+    val longTodo =
+      ScheduledTask.create("other", long, 1L, None, None, Some("长标题")).copy(kind = Some("todo"), detail = Some(long))
     (for
       _ <- store.addTask(shortTodo)
       _ <- store.addTask(longTodo)
@@ -35,19 +38,33 @@ class ConsoleQuoteResolverSpec extends CatsEffectSuite:
       assertEquals(recovered.flatMap(_.detail), Some(long))
       assert(missing.contains("引用未能解析"), missing)
       assert(expanded.contains(body), expanded)
-      assert(foldedCard.contains("已折叠") && foldedCard.contains("/api/sessions/msg-token/") && !foldedCard.contains(long), foldedCard)
+      assert(
+        foldedCard.contains("已折叠") && foldedCard.contains("/api/sessions/msg-token/") && !foldedCard.contains(long),
+        foldedCard
+      )
       assertEquals(lookedUp.map(_.text), Some(long))
       assert(badCard.contains("引用未能解析"), badCard)
     ).guarantee(IO.blocking(os.remove.all(root)))
   }
+
   test("structured snapshots retain short text, long query handles, missing markers and media metadata") {
     val root = os.temp.dir(prefix = "structured-quote-")
     val registry = new MsgTokenRegistry(root / "sessions", () => true)
     def ref(text: String, complete: Boolean) = Json.obj(
       "source" -> Json.obj("messageId" -> "row-1".asJson, "senderName" -> "author".asJson),
-      "content" -> Json.obj("fullText" -> text.asJson, "fullTextComplete" -> complete.asJson,
-        "attachments" -> Json.arr(Json.obj("type" -> "image".asJson, "name" -> "a.png".asJson, "path" -> (root / "missing" / "a.png").toString.asJson)),
-        "itemIndex" -> 1.asJson, "itemTotal" -> 3.asJson)
+      "content" -> Json.obj(
+        "fullText" -> text.asJson,
+        "fullTextComplete" -> complete.asJson,
+        "attachments" -> Json.arr(
+          Json.obj(
+            "type" -> "image".asJson,
+            "name" -> "a.png".asJson,
+            "path" -> (root / "missing" / "a.png").toString.asJson
+          )
+        ),
+        "itemIndex" -> 1.asJson,
+        "itemTotal" -> 3.asJson
+      )
     )
     val short = ("abc" * 800) + "\tEND"
     val long = ("long text " * 600) + "THE END"
@@ -67,17 +84,28 @@ class ConsoleQuoteResolverSpec extends CatsEffectSuite:
       assert(legacy.contains("引用未能解析"), legacy)
     ).guarantee(IO.blocking(os.remove.all(root)))
   }
+
   test("quoted local image path resolves to an absolute readable file") {
     val root = os.temp.dir(prefix = "quote-image-")
     val image = root / "sample.png"
     os.write(image, "image-bytes")
     val registry = new MsgTokenRegistry(root / "sessions", () => true)
-    val ref = Json.obj("source" -> Json.obj("messageId" -> "image".asJson),
-      "content" -> Json.obj("fullText" -> "image".asJson, "fullTextComplete" -> true.asJson,
-        "attachments" -> Json.arr(Json.obj("type" -> "image".asJson, "name" -> "sample.png".asJson, "path" -> image.toString.asJson))))
-    ConsoleQuoteResolver.structured(ref, "session", registry).map { out =>
-      assert(out.contains("本机可读"), out)
-      assert(out.contains(image.toString), out)
-    }.guarantee(IO.blocking(os.remove.all(root)))
+    val ref = Json.obj(
+      "source" -> Json.obj("messageId" -> "image".asJson),
+      "content" -> Json.obj(
+        "fullText" -> "image".asJson,
+        "fullTextComplete" -> true.asJson,
+        "attachments" -> Json.arr(
+          Json.obj("type" -> "image".asJson, "name" -> "sample.png".asJson, "path" -> image.toString.asJson)
+        )
+      )
+    )
+    ConsoleQuoteResolver
+      .structured(ref, "session", registry)
+      .map { out =>
+        assert(out.contains("本机可读"), out)
+        assert(out.contains(image.toString), out)
+      }
+      .guarantee(IO.blocking(os.remove.all(root)))
   }
 end ConsoleQuoteResolverSpec
