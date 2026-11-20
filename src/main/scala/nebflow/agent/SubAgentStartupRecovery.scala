@@ -179,6 +179,9 @@ object SubAgentStartupRecovery:
    * 逐个或一键全部复活。冻结行维持既有「原样保留」处置；完成未报告收尾腿
    * （finalizeCompletedUnreported）保留——完成交付不是错误通知。
    */
+  private def isReconciliationRow(t: SubAgentTask): Boolean =
+    Set("subagent", "subtask").contains(t.source) && Set("running", "pending-recovery").contains(t.status)
+
   def sweep(
     store: SubAgentTaskStore,
     sessionStore: SessionStore,
@@ -225,7 +228,7 @@ object SubAgentStartupRecovery:
     resources: Option[SharedResources] = None
   ): IO[Report] =
     inFlightTasks(store).flatMap { rows =>
-      rows.filterNot(_.status == FrozenStatus).traverseFilter { task =>
+      rows.filterNot(t => t.status == FrozenStatus || isReconciliationRow(t)).traverseFilter { task =>
         resources.fold(authority.protection(task.taskId))(_.executionProtection(task.taskId)).flatMap {
           case nebflow.shared.ExecutionProtection.Unprotected =>
             authority.withUnprotectedSession(task.taskId) {
@@ -252,9 +255,9 @@ object SubAgentStartupRecovery:
         finalizeCompletedUnreported(store, sessionStore, revival.map(_.resources)).void *>
         markInterruptedRecords(store).void *>
         nebflow.core.delegate.DelegateLedgerReconcile.reconcileInterruptedRecords(store).void
-    val tasks = interruptExternalRuns(store) *>
+    val tasks = recoverPendingInternal(store, sessionStore, revival.map(_.resources)) *> interruptExternalRuns(store) *>
       inFlightTasks(store, includeRestartLost = revival.isDefined && Defaults.DelegateRevivalEnabled)
-    tasks.map(_.filterNot(t => revival.exists(_.resources.isProtectedExecution(t.taskId)))).flatMap {
+    tasks.map(_.filterNot(t => isReconciliationRow(t) || revival.exists(_.resources.isProtectedExecution(t.taskId)))).flatMap {
       case Nil => settle().as(Report())
       case allOrphans =>
         // ── 会话死亡台账结算（2026-10-28 · R1 同族监督持久性面）────────────────
@@ -490,7 +493,17 @@ object SubAgentStartupRecovery:
         case _ => IO.unit
       }.handleErrorWith(e => logger.warn(s"[startup-recovery] terminal envelope recovery failed for ${task.taskId}: ${e.getMessage}"))
     })
-    repairCommittedProjections(store, rs.executionCommitPort) *> recoverDeliveredLegacy *> recoverActiveEnvelopes *> store
+    val markUnresolved = store.findAllTasks().flatMap(_.filter(isReconciliationRow).traverse_ { row =>
+      rs.executionProtection(row.taskId).flatMap {
+        case nebflow.shared.ExecutionProtection.Unprotected =>
+          store.markSuspectedLostTerminal(row).flatMap { marked =>
+            if marked then logger.warn(s"[suspected-lost-terminal] ${row.parentSessionId}/${row.taskId}: no authoritative completion evidence; manual review required")
+            else IO.unit
+          }
+        case _ => IO.unit
+      }
+    })
+    repairCommittedProjections(store, rs.executionCommitPort) *> recoverDeliveredLegacy *> recoverActiveEnvelopes *> markUnresolved *> store
       .findAllTasks()
       .flatMap(
         _.filter(t =>
@@ -578,7 +591,7 @@ object SubAgentStartupRecovery:
       .findAllTasks()
       .flatMap(
         _.filter(t =>
-          t.runId.nonEmpty && t.executor.exists(_ != "nebflow") &&
+          !isReconciliationRow(t) && t.runId.nonEmpty && t.executor.exists(_ != "nebflow") &&
             t.executionStatus.exists(Set("starting", "running", "waiting-input").contains)
         ).traverseFilter { task =>
           store

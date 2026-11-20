@@ -89,6 +89,7 @@ object ChainsReadFace:
         "activityLabel",
         "resultRef",
         "terminalReason",
+        "suspectedLostTerminal",
         "incomplete"
       ).contains(key)
     })

@@ -80,7 +80,8 @@ case class SubAgentTask(
   incomplete: Option[Boolean] = None,
   notificationId: Option[String] = None,
   notificationPending: Option[Boolean] = None,
-  toolCallId: Option[String] = None
+  toolCallId: Option[String] = None,
+  suspectedLostTerminal: Option[Boolean] = None
 )
 
 object SubAgentTask:
@@ -124,6 +125,7 @@ object SubAgentTask:
       notificationId <- c.get[Option[String]]("notificationId")
       notificationPending <- c.get[Option[Boolean]]("notificationPending")
       toolCallId <- c.get[Option[String]]("toolCallId")
+      suspectedLostTerminal <- c.get[Option[Boolean]]("suspectedLostTerminal")
     yield SubAgentTask(
       taskId,
       parentSessionId,
@@ -154,7 +156,8 @@ object SubAgentTask:
       incomplete,
       notificationId,
       notificationPending,
-      toolCallId
+      toolCallId,
+      suspectedLostTerminal
     )
   }
 end SubAgentTask
