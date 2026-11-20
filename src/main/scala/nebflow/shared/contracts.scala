@@ -40,5 +40,6 @@ case class ToolExecResult(
   content: String,
   isError: Boolean = false,
   frontendContent: Option[String] = None,
-  imageBlocks: Option[List[ContentBlock.Image]] = None
+  imageBlocks: Option[List[ContentBlock.Image]] = None,
+  subagentBoundaryReturn: Boolean = false
 )

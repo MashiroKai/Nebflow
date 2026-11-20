@@ -2663,7 +2663,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                           ToolExecResult(
                             llmContent + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
                             frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else "")),
-                            imageBlocks = imageBlocks
+                            imageBlocks = imageBlocks,
+                            subagentBoundaryReturn = call.name == "Subagent" && (tool eq nebflow.core.tools.SubagentTool)
                           )
                         }
                     } })) // resolved device, enforcement, ask face

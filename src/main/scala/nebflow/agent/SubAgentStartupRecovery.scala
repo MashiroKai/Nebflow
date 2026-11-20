@@ -459,9 +459,10 @@ object SubAgentStartupRecovery:
     ).traverse_ { task =>
       sessionStore.loadMessagesForSession(task.parentSessionId).flatMap { messages =>
         val delivered = messages.exists {
-          case Message(MessageRole.User, Right(blocks), _, source, _, _) if source.contains("tool-boundary") =>
+          case Message(MessageRole.User, Right(blocks), _, Some(source), _, _) if source.startsWith("subagent-tool-returns:") =>
+            val trustedIds = source.stripPrefix("subagent-tool-returns:").split(",").toSet
             blocks.exists {
-              case ContentBlock.ToolResult(id, _, _) => task.toolCallId.contains(id)
+              case ContentBlock.ToolResult(id, _, _) => task.toolCallId.contains(id) && trustedIds.contains(id)
               case _ => false
             }
           case _ => false
