@@ -388,9 +388,12 @@ class ProviderConcurrencyFallbackSpec extends CatsEffectSuite:
       chain <- orderedChainOf(reg)
       counts <- countsRef
       sys <- wiredSystem(counts, "pconc-t3a")
-      ref <- sys.spawn(Behaviors.ignore[String], "t3-stop-actor")
+      ready <- cats.effect.Deferred[IO, Unit]
+      ref <- sys.spawn(Behaviors.receiveMessage[String](_ => ready.complete(()).void.as(Behaviors.ignore[String])), "t3-stop-actor")
       pin <- ProviderConcurrency.assign(counts, capCfg, "t3-stop-actor", chain)
       before <- counts.get
+      _ <- ref ! "ready"
+      _ <- ready.get.timeout(10.seconds)
       _ <- sys.stop(ref)
       _ <- waitUntil("T3a stop 后占坑未释放")(counts.get.map(_.byProvider.isEmpty))
       after <- counts.get
@@ -456,9 +459,14 @@ class ProviderConcurrencyFallbackSpec extends CatsEffectSuite:
       counts <- countsRef
       sys <- wiredSystem(counts, "pconc-t3e")
       names = List("t3-all-x", "t3-all-y")
-      refs <- names.traverse(n => sys.spawn(Behaviors.ignore[String], n))
+      ready <- names.traverse(_ => cats.effect.Deferred[IO, Unit])
+      refs <- names.zip(ready).traverse { case (n, signal) =>
+        sys.spawn(Behaviors.receiveMessage[String](_ => signal.complete(()).void.as(Behaviors.ignore[String])), n)
+      }
       _ <- names.traverse(n => ProviderConcurrency.assign(counts, capCfg, n, chain))
       before <- counts.get
+      _ <- refs.traverse_(_ ! "ready")
+      _ <- ready.traverse_(_.get.timeout(10.seconds))
       _ <- sys.stopAll
       _ <- waitUntil("T3e stopAll 后占坑未释放")(counts.get.map(_.byProvider.isEmpty))
       after <- counts.get

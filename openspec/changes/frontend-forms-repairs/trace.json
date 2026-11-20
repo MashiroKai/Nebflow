@@ -196,7 +196,7 @@
       "tests": [
         {
           "path": "src/test/scala/nebflow/gateway/rest/ModelChainRoutesSpec.scala",
-          "name": "PUT kernel chain clears only differing kernel pins; main, other-category and unknown-category pins are kept"
+          "name": "PUT kernel chain preserves all explicit session pins"
         }
       ]
     },
@@ -224,7 +224,7 @@
       "tests": [
         {
           "path": "src/test/scala/nebflow/gateway/rest/ModelChainRoutesSpec.scala",
-          "name": "a session choice made after a category update survives until that category is edited again"
+          "name": "a session choice survives subsequent category updates"
         }
       ]
     },
