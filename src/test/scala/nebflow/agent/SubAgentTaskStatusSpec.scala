@@ -161,6 +161,43 @@ class SubAgentTaskStatusSpec extends CatsEffectSuite:
     end for
   }
 
+  test("managed subtask retries a transient terminal commit failure") {
+    val system = ActorSystem("subtask-terminal-commit-retry")
+    val tmp = os.temp.dir()
+    val childSid = "subtask-terminal-retry"
+    (for
+      base <- mkResources(system, tmp)
+      failures <- Ref.of[IO, Int](1)
+      store = new SubAgentTaskStore(tmp / "fault-tasks"):
+        override def completeRun(parentSessionId: String, taskId: String, runId: String,
+          executionStatus: String, reason: Option[String], resultRef: Option[String], incomplete: Boolean,
+          diagnostic: Option[String], notificationId: Option[String], notifyParent: Boolean): IO[Either[String, SubAgentTask]] =
+          failures.modify(n => (math.max(0, n - 1), n > 0)).flatMap {
+            case true => IO.raiseError(new java.io.IOException("injected terminal commit failure"))
+            case false => super.completeRun(parentSessionId, taskId, runId, executionStatus, reason,
+              resultRef, incomplete, diagnostic, notificationId, notifyParent)
+          }
+      resources = base.copy(subAgentTaskStore = store)
+      parent <- resources.sessionStore.createSession("terminal-retry-parent", agentName = Some("Worker"))
+      row = mkTask(parent.id, childSid).copy(source = "subtask")
+      admission <- store.beginRun(row, "run-1", parent.id, "nebflow")
+      _ = assert(admission.isRight)
+      child <- system.spawn(ignoreChild, "terminal-retry-child")
+      supervisor <- system.spawn(BackoffSupervisor(childRef = child, childSpawnFn = (_, _) => IO.pure(child),
+        childName = childSid, parentRef = None, description = "test task", agentName = "Worker",
+        subagentId = childSid, parentSessionId = parent.id, resources = resources,
+        initialPrompt = "do the thing", source = "subtask"), "terminal-retry-supervisor")
+      _ <- supervisor ! AgentEvent.Completed(childSid,
+        List(nebflow.shared.Message(nebflow.shared.MessageRole.Assistant, Left("durable final result"))))
+      _ <- waitUntil(3.seconds)(store.loadTasks(parent.id).map(_.exists(t => t.taskId == childSid && t.status == "completed")))
+      _ <- waitUntil(3.seconds)((nebflow.core.mail.SessionMailbox.scanPending(parent.id),
+        nebflow.core.mail.SessionMailbox.scanTaken(parent.id)).mapN((pending, taken) =>
+          (pending ++ taken).exists(_.identity == s"$childSid#run-1")))
+      pending <- nebflow.core.mail.SessionMailbox.scanPending(parent.id)
+      taken <- nebflow.core.mail.SessionMailbox.scanTaken(parent.id)
+    yield assertEquals((pending ++ taken).count(_.identity == s"$childSid#run-1"), 1)).guarantee(system.stopAll)
+  }
+
   test("Failed event marks the task failed under the parent session") {
     val system = ActorSystem("subagent-status-test")
     val tmp = os.temp.dir()
