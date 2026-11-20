@@ -323,18 +323,16 @@ class NeblinkRelayFrameSenderSendCycleSpec extends CatsEffectSuite:
     def port: Int = serverSocket.getLocalPort
 
     private val acceptor: Thread =
-      val t = new Thread(
-        () =>
-          while !stopped do
-            try
-              val s = serverSocket.accept()
-              clients.add(s)
-              val h = new Thread(() => serve(s), "portal-cycle-delayed-read")
-              h.setDaemon(true)
-              h.start()
-            catch case _: Throwable => stopped = true,
-        "portal-cycle-accept"
-      )
+      val loop: Runnable = () =>
+        while !stopped do
+          try
+            val s = serverSocket.accept()
+            clients.add(s)
+            val h = new Thread(() => serve(s), "portal-cycle-delayed-read")
+            h.setDaemon(true)
+            h.start()
+          catch case _: Throwable => stopped = true
+      val t = new Thread(loop, "portal-cycle-accept")
       t.setDaemon(true)
       t.start()
       t

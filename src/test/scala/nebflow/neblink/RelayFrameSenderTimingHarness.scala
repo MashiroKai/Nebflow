@@ -140,18 +140,16 @@ class RelayFrameSenderTimingHarness extends CatsEffectSuite:
     def port: Int = serverSocket.getLocalPort
 
     private val acceptor: Thread =
-      val t = new Thread(
-        () =>
-          while !stopped do
-            try
-              val s = serverSocket.accept()
-              clients.add(s)
-              val h = new Thread(() => serve(s), "sender-timing-throttled")
-              h.setDaemon(true)
-              h.start()
-            catch case _: Throwable => stopped = true,
-        "sender-timing-accept"
-      )
+      val loop: Runnable = () =>
+        while !stopped do
+          try
+            val s = serverSocket.accept()
+            clients.add(s)
+            val h = new Thread(() => serve(s), "sender-timing-throttled")
+            h.setDaemon(true)
+            h.start()
+          catch case _: Throwable => stopped = true
+      val t = new Thread(loop, "sender-timing-accept")
       t.setDaemon(true)
       t.start()
       t

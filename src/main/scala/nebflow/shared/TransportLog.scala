@@ -334,24 +334,19 @@ object TransportLog:
         t
     val ex = Executors.newSingleThreadScheduledExecutor(factory)
     val periodMs = math.max(1L, windowSec) * 1000L
-    ex.scheduleWithFixedDelay(
-      () =>
-        try flushNow()
-        catch case _: Throwable => (), periodMs,
-      periodMs,
-      TimeUnit.MILLISECONDS
-    )
+    // 冲账动作先落成具名 Runnable（格式批 2026-11-21）：`catch case … => ()` 直接写成
+    // scheduleWithFixedDelay 的实参时，scalafmt 会把后继实参折进 catch 行
+    // （`catch case _: Throwable => (), periodMs,`），该形态连它自己都无法再解析
+    // （scalafmtCheck 直接 parse error）⇒ 提为局部值，实参与处理器都不再相邻。
+    val flushOnce: Runnable = () =>
+      try flushNow()
+      catch case _: Throwable => ()
+    ex.scheduleWithFixedDelay(flushOnce, periodMs, periodMs, TimeUnit.MILLISECONDS)
     // 停/重启不吞帐：最后一个不满窗的计数在 JVM 退出时也冲出来。
     // （JVM 已在退出过程中时 addShutdownHook 会抛 IllegalStateException —— 那不是
     //  发送面的错误，吞掉即可，绝不让日志面把异常带回 `sendData` 的调用者。）
-    try
-      Runtime.getRuntime.addShutdownHook(
-        new Thread(
-          () =>
-            try flushNow()
-            catch case _: Throwable => (), "nebflow-log-noise-flush-on-stop"
-        )
-      )
+    val flushAtStop = new Thread(flushOnce, "nebflow-log-noise-flush-on-stop")
+    try Runtime.getRuntime.addShutdownHook(flushAtStop)
     catch case _: Throwable => ()
     ex
 
