@@ -134,6 +134,83 @@ body {
   overflow: hidden;
 }
 
+/* ── 双档显式镜像（2026-11-21 暗色令牌裁定）────────────────────────────────
+   html[data-theme="dark"] / html[data-theme="light"] 各自携带一整套色令牌，
+   与下方 @media (prefers-color-scheme: dark) 块**互为镜像**：
+   · 属性选择器特异性 (0,1,1) > 媒体块内 :root (0,1,0)，所以手动选 light
+     而系统为 dark 时，light 块赢——反向污染不成立；
+   · 无 data-theme 属性时，本段全部不命中，行为与改前逐值一致（零回归面）。
+   ⚠ 改任一令牌必须**同步三处**：亮档 :root 块（~L73–110）、
+   html[data-theme="light"]、html[data-theme="dark"] 与媒体块（~L150+）。 */
+html[data-theme="dark"] {
+  --color-bg: #13161c;
+  --color-surface: #1c1f27;
+  --color-bubble-ai: #1c1f27;
+  --color-bubble-user: #95ec69;
+  --nf-bub-ours-ink: #12240d;
+  --color-text: #e8eaed;
+  --color-text-muted: #7b7e88;
+  --color-text-dim: #9ba0aa;
+  --color-border: #2a2d35;
+  --color-nav-bg: #101218;
+  --color-sidebar-bg: #15181f;
+  --color-header-bg: #1c1f27;
+  --color-modal-bg: #1c1f27;
+  --color-frame-text: #c8cad0;
+  --color-frame-text-bright: #e8eaed;
+  --color-frame-text-muted: #81838a;
+  --color-frame-text-dim: #7b7e88;
+  --color-frame-border: #282b33;
+  --color-frame-border-light: #1c1f27;
+  --color-frame-hover: #242730;
+  --color-frame-active: #2a2d36;
+  --color-frame-input-bg: #0e1117;
+  --color-frame-input-border: #2a2d35;
+  --color-frame-input-text: #c8cad0;
+  --search-kind-user: #6fce8e;
+  --search-kind-user-bg: rgba(111, 206, 142, 0.12);
+  --search-kind-ai: #7d9fd4;
+  --search-kind-ai-bg: rgba(125, 159, 212, 0.12);
+  --color-danger: #f26b6b;
+  --status-error-icon: #f26b6b;
+  --status-warn-icon: #ffa83c;
+  --status-success-icon: #66bb6a;
+}
+html[data-theme="light"] {
+  --color-bg: #f5f6f8;
+  --color-surface: #ffffff;
+  --color-bubble-ai: #fff;
+  --color-bubble-user: #95ec69;
+  --nf-bub-ours-ink: var(--color-text);
+  --color-text: #1b1e26;
+  --color-text-muted: #8b8e96;
+  --color-text-dim: #6b6e76;
+  --color-border: #ddd;
+  --color-nav-bg: #f0f1f3;
+  --color-sidebar-bg: #fafafa;
+  --color-header-bg: #fff;
+  --color-modal-bg: #fff;
+  --color-frame-text: #3a3d45;
+  --color-frame-text-bright: #1b1e26;
+  --color-frame-text-muted: #717379;
+  --color-frame-text-dim: #aaacb3;
+  --color-frame-border: #e0e1e4;
+  --color-frame-border-light: #eeeff1;
+  --color-frame-hover: #e5e6e9;
+  --color-frame-active: #d8d9dd;
+  --color-frame-input-bg: #f5f6f8;
+  --color-frame-input-border: #ddd;
+  --color-frame-input-text: #3a3d45;
+  --search-kind-user: #067a40;
+  --search-kind-user-bg: rgba(6, 122, 64, 0.08);
+  --search-kind-ai: #4a6da7;
+  --search-kind-ai-bg: rgba(91, 127, 191, 0.08);
+  --color-danger: #c0392b;
+  --status-error-icon: #d64545;
+  --status-warn-icon: #b45309;
+  --status-success-icon: #2e7d32;
+}
+
 /* ── Dark Theme (auto, follows system) ─────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
   :root {
