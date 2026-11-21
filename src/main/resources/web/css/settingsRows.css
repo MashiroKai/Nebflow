@@ -406,16 +406,27 @@
 }
 /* unified 档的跟随类别（置灰只读）：标题降为 muted、只读读数行走等宽档。
    不给控件（不可写就不发 select），读数行只是「这一类的模型现在是什么」的可见事实。 */
-#model-chain-section-body .mp-settings-role-panel.mp-role-follow {
-  background: transparent;
+/* 披露体（渐进披露批 2026-11-21 作者令「只有 toggle 打开才显示其他的配置项和对应说明」）：
+   高度过渡沿用 taskList.css 的 grid-template-rows 折叠 precedent（0fr ⇄ 1fr，内层
+   overflow:hidden + min-height:0）。过渡只列两条属性（不用 transition: all）；时长与
+   曲线取 design-system.css 的 --lm-dur / --lm-dur-fast / --lm-ease 单源，全局
+   prefers-reduced-motion 时这三个令牌已压到 1ms，本块无需自带媒体查询。
+   关档态 = 0fr + opacity 0 且内层已被 JS 清空（不渲染，非置灰）。 */
+#model-chain-section-body .mp-config-fold {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition-property: grid-template-rows, opacity;
+  transition-duration: var(--lm-dur), var(--lm-dur-fast);
+  transition-timing-function: var(--lm-ease);
 }
-#model-chain-section-body .mp-role-follow .mp-role-name { color: var(--ds-text-muted); }
-#model-chain-section-body .mp-follow-readout {
-  font: 400 var(--ds-fs-meta) var(--ds-font-mono);
-  color: var(--ds-text-muted);
-  white-space: nowrap;
+#model-chain-section-body .mp-config-fold.open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+#model-chain-section-body .mp-config-inner {
   overflow: hidden;
-  text-overflow: ellipsis;
+  min-height: 0;
 }
 
 /* ── 关于卡 ──────────────────────────────────────────────────────────────── */
@@ -482,8 +493,7 @@
   }
   body.mobile-layer .mp-mode-state,
   body.mobile-layer #model-chain-section-body .mp-note-lead,
-  body.mobile-layer #model-chain-section-body .mp-note-role,
-  body.mobile-layer #model-chain-section-body .mp-follow-readout {
+  body.mobile-layer #model-chain-section-body .mp-note-role {
     font-size: var(--mfs-min);
   }
   body.mobile-layer .set-btn { height: var(--mtap); }

@@ -124,9 +124,9 @@ if (await disclosure.getAttribute('aria-expanded') !== 'true') await disclosure.
 await page.waitForSelector('#model-chain-section-body [data-role="Nebula"] .mp-settings-role-model', { state: 'visible', timeout: 15000 });
 await sleep(350);
 
-/* ── 档位：分叉注记在**两档**都在场（它是真相披露，不是分开配置档的附属）。 ──
- * switch 批（2026-11-21）：默认档 unified 下四类 follower 置灰只读、不发 select，
- * 故 ③④ 的「槽行自身回显 / 清除独立配置」必须在分开配置档验（开关真点击）。 */
+/* ── 档位（渐进披露批 2026-11-21 作者令）：分叉注记只在**开档**渲染；关档披露体收起
+ * 且清空（不是置灰——注记与 follower 卡一并不渲染）。③④ 的「槽行回显 / 清除独立配置」
+ * 必须在开档验（开关真点击）。 */
 async function enterSeparate() {
   const sw = page.locator('#model-mode-switch');
   if (await sw.getAttribute('aria-checked') !== 'true') {
@@ -139,8 +139,11 @@ async function enterSeparate() {
   await sleep(250);
 }
 
-/* ① 注记在场 + 文案（unified 档先验一遍：两档都得说真话） */
 const note = page.locator('#model-chain-diverged-note');
+/* ① 关档：注记零残留（渐进披露：收起 = 不渲染） */
+ok('① 关档不渲染分叉注记（披露体零子件）', await note.count() === 0);
+await enterSeparate();
+/* ① 开档：注记在场 + 文案 */
 ok('① 分叉注记在场（subagent 显式 ⇒ 设置页节点破分叉）', await note.count() === 1);
 const noteText = (await note.textContent() || '').trim();
 ok('① 注记文案含类别标签与「不受主链影响」',
@@ -170,9 +173,6 @@ ok('①-b 注记 = 引导语 + 类别胶囊（类别名不再串在句子里）'
 ok('② 注记零 <button>（设置页节控件面不扩）', await note.locator('button').count() === 0);
 ok('② 注记无 data-role（不扰五类行序断言）', await note.evaluate((el) => el.getAttribute('data-role')) === null);
 
-await enterSeparate();
-ok('②-b 分开配置档注记仍在场（两档都说真话）', await note.count() === 1);
-
 /* ③ 分叉槽行自身显示显式生效 ref（「实际生效的那一个」） */
 const subSelect = page.locator('#model-role-select-subagent');
 ok('③ subagent 行选择器回显其显式生效 ref', (await subSelect.inputValue()) === 'IricalGpt/gpt-6.1-terra', await subSelect.inputValue());
@@ -182,6 +182,11 @@ await subSelect.selectOption('');
 await page.waitForFunction(() => !document.querySelector('#model-chain-diverged-note'), null, { timeout: 10000 });
 ok('④ 清除 subagent 独立配置后注记离场', await note.count() === 0);
 ok('④ 清除走既有 PUT 通道（model:null）', sim.puts.some((p) => p.role === 'subagent' && p.model === null));
+
+/* ⑤ 切回关档 ⇒ 披露体清空，注记零残留 */
+await page.locator('#model-mode-switch').click();
+await page.waitForFunction(() => document.querySelector('#model-chain-config .mp-config-inner')?.children.length === 0, null, { timeout: 5000 });
+ok('⑤ 关档回切后披露体清空（注记不渲染）', await note.count() === 0);
 
 const NOISE = /favicon|net::ERR|WebSocket|404|ResizeObserver loop/i;
 ok('零 console error / 零 pageerror', errors.filter((e) => !NOISE.test(e)).length === 0, errors.slice(0, 3).join(' | '));

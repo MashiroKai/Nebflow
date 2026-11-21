@@ -624,7 +624,7 @@ function settingsModelCard(title, id, status) {
   card.className = 'mp-roleblock mp-settings-role-panel';
   const label = document.createElement('label');
   label.className = 'mp-role-head mp-role-name';
-  // 只读卡（unified 档的跟随类别）没有控件可指，不发射悬空 for。
+  // 无控件的卡（id 为空）不发射悬空 for。
   if (id) label.htmlFor = id;
   label.textContent = title;
   card.appendChild(label);
@@ -637,21 +637,22 @@ function settingsModelCard(title, id, status) {
   return card;
 }
 
-function renderSettingsRoleSelector(container, refreshTarget = container) {
+/**
+ * 渐进披露批（2026-11-21 作者令「只有 toggle 打开才显示其他的配置项和相对应的说明」）：
+ * 关档只渲染主会话卡（Nebula，唯一可写主链）；开档才追加四类 follower 卡。
+ * follower 在关档**不渲染**（不是置灰）——修前的只读置灰卡分支已退役。
+ * @param {string[]} [roles] 要产出的角色（顺序即行序）
+ */
+function renderSettingsRoleSelector(container, refreshTarget = container, roles = ROLES) {
   // 两模式（2026-11-18）+ switch 批（2026-11-21 作者令「切到跟随就收起或置灰，
   // 并明示跟随主会话状态」）：
   //   separate = 五类逐个可写（修前行为，控件面逐字不变）；
-  //   unified  = 只有主会话可写，其余四类**置灰只读**（.mp-role-follow）：不给控件
-  //              （不可写的类别不发 select），改为一枚只读读数行显示该类别**实际
-  //              生效**的模型 + 状态行「跟随 {agent}」——明示「正在跟随」而不是
-  //              整行撤除（修前撤除后用户看不到任何跟随状态，只剩一行小字）。
+  //   （渐进披露批：unified 档不再调用本函数产出 follower 卡，故这里不再分支。）
   // 五类行恒在册 ⇒ 行序/数量断言与 /model 面板的五类口径一致。
-  for (const role of ROLES) {
+  for (const role of roles) {
     const st = roleState.get(role);
-    const followOnly = panelMode === 'unified' && role !== 'Nebula';
-    const row = settingsModelCard(roleLabel(role), followOnly ? '' : `model-role-select-${role}`);
+    const row = settingsModelCard(roleLabel(role), `model-role-select-${role}`);
     row.dataset.role = role;
-    if (followOnly) row.classList.add('mp-role-follow');
 
     if (!st?.data) {
       const status = document.createElement('div');
@@ -682,13 +683,7 @@ function renderSettingsRoleSelector(container, refreshTarget = container) {
         ? t('model.mainChain', rootNameParams())
         : st.data.mode === 'explicit' ? t('model.independent') : t('model.followsNebula', rootNameParams());
       row.appendChild(status);
-      if (followOnly) {
-        const readout = document.createElement('div');
-        readout.className = 'mp-follow-readout';
-        readout.textContent = effective || t('model.seedNote');
-        readout.title = readout.textContent;
-        row.appendChild(readout);
-      } else {
+      {
         const select = document.createElement('select');
         select.id = `model-role-select-${role}`;
         select.className = 'mp-add-select mp-settings-role-model';
@@ -843,8 +838,9 @@ function renderSessionModeControl(container) {
  */
 function renderFollowSummary(container) {
   let note = /** @type {HTMLElement|null} */ (container.querySelector('#model-chain-follow-note'));
+  // 渐进披露批：仅开档调用（披露体内）；关档整体不渲染，故这里不再判 panelMode。
   const loaded = FOLLOWER_ROLES.every((r) => roleState.get(r)?.data);
-  if (panelMode !== 'unified' || !loaded) { note?.remove(); return; }
+  if (!loaded) { note?.remove(); return; }
   const forked = new Set(forkedRoles());
   const names = FOLLOWER_ROLES.filter((r) => !forked.has(r)).map(roleLabel);
   if (!names.length) { note?.remove(); return; }
@@ -860,7 +856,7 @@ function renderFollowSummary(container) {
 }
 
 /**
- * 节首四件的固定次序（开关行 → 当前态 → 分歧注记 → 跟随说明）。
+ * 节首固定次序（开关行 → 当前态 → 主会话卡 → 披露体）。披露体内再分注记 / 跟随说明 / follower 卡 / 小模型。
  * 只在**实际次序**与目标序不一致时才移动节点：`insertBefore` 即使目标本来就是
  * 第一个子件也会先摘再插，而一次 DOM 摘挂会把正在跑的 CSS 过渡整条取消
  * （开关的 180ms 圆钮位移因此在改前路径上永远看不见）。
@@ -868,7 +864,7 @@ function renderFollowSummary(container) {
  */
 function orderSectionHead(container) {
   const order = ['#model-chain-modes', '#model-chain-mode-state',
-    '#model-chain-diverged-note', '#model-chain-follow-note'];
+    '[data-role="Nebula"]', '#model-chain-config'];
   let anchor = container.firstElementChild;
   for (const sel of order) {
     const el = /** @type {HTMLElement|null} */ (container.querySelector(sel));
@@ -878,12 +874,8 @@ function orderSectionHead(container) {
   }
 }
 
-function renderChainSectionBody(container) {
-  renderSessionModeControl(container);
-  renderChainSectionDivergedNote(container);
-  renderFollowSummary(container);
-  const draft = document.createElement('div');
-  renderSettingsRoleSelector(draft, container);
+/** 小模型槽行（披露体内，开档才造）。 */
+function buildSmallLlmRow(container) {
   const small = roleState.get(SMALL_LLM);
   const row = settingsModelCard(t('model.smallLlm'), 'small-llm-select', small?.data
     ? (small.data.mode === 'explicit' ? t('model.independent') : t('model.smallLlmFallback')) : '');
@@ -913,28 +905,81 @@ function renderChainSectionBody(container) {
       row.appendChild(retry);
     }
   }
-  // 小模型槽只在 separate 档铺出：它不是「会话类别」（不进 ROLES / SETTABLE_ROLES），
-  // 但在 unified 档显示一个可写控件就等于「全部跟随主会话」这句话不成立。
-  // 注意必须**不进 draft**：下方的增量同步循环会把 draft 里缺席的既有行当成
-  // 「新行」补进容器（改前那段是「container 找不到就 append」语义）。
-  if (panelMode !== 'unified') draft.appendChild(row);
-  // Image generation remains a separate provider selector, not a conversation role.
-  let list = container.querySelector('.mp-group-list');
+  return row;
+}
+
+/** 生图分组挂点（设置页节尾部；renderSwitchGroups 会 replaceChildren 整个它，故披露体不得放进来）。 */
+function ensureGroupList(container) {
+  let list = /** @type {HTMLElement|null} */ (container.querySelector('.mp-group-list'));
   if (!list) {
     list = document.createElement('div');
     list.className = 'mp-group-list';
     container.appendChild(list);
   }
-  // Keep unchanged rows and controls mounted so saves do not steal focus or scroll.
-  // 新行插在生图分组之前（改前 `container.appendChild` 在重渲后会把新行丢到生图
-  // 分组**之后**；两模式来回切会反复增生行，那条老毛病就成了可见错位）。
-  const wanted = new Set();
+  return list;
+}
+
+/**
+ * 披露体（渐进披露批 2026-11-21 作者令）：分叉注记 / 跟随说明 / follower 卡 / 小模型槽
+ * 统一收在 #model-chain-config 里；它是节内 .mp-group-list 的兄弟、插在其之前。
+ */
+function ensureConfigFold(container, list) {
+  let fold = /** @type {HTMLElement|null} */ (container.querySelector('#model-chain-config'));
+  if (!fold) {
+    fold = document.createElement('div');
+    fold.id = 'model-chain-config';
+    fold.className = 'mp-config-fold';
+    const inner = document.createElement('div');
+    inner.className = 'mp-config-inner';
+    fold.appendChild(inner);
+    container.insertBefore(fold, list);
+  }
+  return fold;
+}
+
+/** 与 css/settingsRows.css 的 .mp-config-fold 过渡时长（--lm-dur 280ms）同档留余量。 */
+const FOLD_CLOSE_MS = 320;
+
+/**
+ * 披露体开合（渐进披露批）。
+ * 开：先铺内容（调用方已做），再刷一次样式让 0fr 成为过渡起点，然后加 .open ⇒ 高度过渡展开。
+ * 合：去掉 .open ⇒ 高度过渡收起；过渡结束后清空内容 ⇒ 关档 DOM 里不留 follower 卡。
+ * @param {HTMLElement} fold #model-chain-config
+ * @param {boolean} open
+ */
+function setFoldOpen(fold, open) {
+  const inner = fold.querySelector('.mp-config-inner');
+  if (open) {
+    if (fold.classList.contains('open')) return;
+    void fold.offsetHeight; // 刷样式：把收起态记为过渡起点（否则同帧内的 DOM 改动会吞掉过渡）
+    fold.classList.add('open');
+    return;
+  }
+  if (fold.classList.contains('open')) {
+    fold.classList.remove('open');
+    fold.dataset.closing = '1';
+    setTimeout(() => {
+      delete fold.dataset.closing;
+      if (!fold.classList.contains('open')) inner?.replaceChildren();
+    }, FOLD_CLOSE_MS);
+    return;
+  }
+  if (!fold.dataset.closing) inner?.replaceChildren(); // 已收起且不在收起过渡中 ⇒ 确保零残留
+}
+
+/**
+ * 把 draft 里的行增量同步进 parent：已在位的原地保留（只替换内容，保焦点），
+ * 缺席的新行插在 anchor 之前（anchor = null ⇒ append）。
+ * @param {HTMLElement} draft
+ * @param {HTMLElement} parent
+ * @param {HTMLElement|null} anchor
+ */
+function syncRows(draft, parent, anchor) {
   for (const fresh of [...draft.children]) {
     const role = fresh.getAttribute('data-role');
     const sel = role ? `[data-role="${role}"]` : '#small-llm-settings-row';
-    wanted.add(sel);
-    const current = container.querySelector(sel);
-    if (!current) container.insertBefore(fresh, list);
+    const current = parent.querySelector(sel);
+    if (!current) parent.insertBefore(fresh, anchor);
     else if (current.outerHTML !== fresh.outerHTML) {
       const active = current.contains(document.activeElement) ? document.activeElement : null;
       const activeId = active?.id;
@@ -945,19 +990,36 @@ function renderChainSectionBody(container) {
       else if (activeSelect) current.querySelector('select')?.focus({ preventScroll: true });
     }
   }
-  // 本档不该铺的行收掉（separate → unified 时小模型行离场；五类角色行恒在册，
-  // unified 档只是置灰只读，故不在此收）。
-  for (const stale of [...container.querySelectorAll('.mp-settings-role-panel, #small-llm-settings-row')]) {
-    const role = /** @type {HTMLElement} */ (stale).getAttribute('data-role');
-    const sel = role ? `[data-role="${role}"]` : '#small-llm-settings-row';
-    if (!wanted.has(sel)) /** @type {HTMLElement} */ (stale).remove();
+}
+
+/**
+ * 节体渲染（渐进披露批 2026-11-21 作者令「关档不要置灰展示那堆卡，只留开关；开档才展开
+ * 四类配置卡与对应说明」）：
+ *   · 开关行 + 当前态：两档恒在；
+ *   · 主会话卡（Nebula）：两档恒在（关档下唯一可写的主链）；
+ *   · 披露体（分叉注记 / 跟随说明 / 四类 follower 卡 / 小模型槽）：仅开档**铺出**，
+ *     关档收起并清空（不渲染，非置灰）。
+ */
+function renderChainSectionBody(container) {
+  renderSessionModeControl(container);
+  const list = ensureGroupList(container);
+  const fold = ensureConfigFold(container, list);
+  const inner = /** @type {HTMLElement} */ (fold.querySelector('.mp-config-inner'));
+  const open = panelMode !== 'unified';
+  const main = document.createElement('div');
+  renderSettingsRoleSelector(main, container, ['Nebula']);
+  syncRows(main, container, fold);
+  if (open) {
+    renderChainSectionDivergedNote(inner);
+    renderFollowSummary(inner);
+    const draft = document.createElement('div');
+    renderSettingsRoleSelector(draft, container, FOLLOWER_ROLES);
+    draft.appendChild(buildSmallLlmRow(container));
+    syncRows(draft, inner, null);
   }
-  // 节内头四件的固定次序：模式开关行 → 当前态文字 → 分歧注记 → 跟随说明。
-  // 🔴 只在**次序真的不对**时才搬（switch 批 2026-11-21）：`insertBefore` 会先把节点
-  // 摘下再插入，即使它本来就在位 —— 那一次摘挂会把正在跑的 180ms 开关过渡整条
-  // 取消（实测：点开关后首帧就已是终点位、零 transitionrun）。修前每帧无条件搬一次，
-  // 于是「改前就有过渡」的开关在这条路径上永远看不见动。
+  setFoldOpen(fold, open);
   orderSectionHead(container);
+  // Image generation remains a separate provider selector, not a conversation role.
   renderSwitchGroups(list, { settings: true });
 }
 

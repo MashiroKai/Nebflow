@@ -189,6 +189,9 @@ const MEASURE = () => {
       };
     })(),
     modelRoleRows: chainBody ? chainBody.querySelectorAll('.mp-settings-role-panel').length : 0,
+    // 渐进披露（2026-11-21）：披露体开合态 + 披露体内子件数（关档应为 0 = 不渲染）。
+    foldOpen: q('#model-chain-config')?.classList.contains('open') ?? null,
+    foldChildren: q('#model-chain-config .mp-config-inner')?.children.length ?? null,
     modelRoleSelects: chainBody ? chainBody.querySelectorAll('select').length : 0,
     followNote: q('#model-chain-follow-note')?.textContent?.trim() ?? null,
     settingsHint: q('#model-chain-hint')?.textContent?.trim() ?? null,

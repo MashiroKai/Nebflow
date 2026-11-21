@@ -221,21 +221,25 @@ async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = fals
     (await page.locator('#model-chain-mode-state').textContent() || '')
       .includes(locale === 'zh-CN' ? '全部跟随主会话' : 'following the main session'),
     await page.locator('#model-chain-mode-state').textContent());
-  // unified 档：五类行恒在册（行序与 /model 面板一致），仅主会话可写；其余四类
-  // 置灰只读 + 一枚实际生效模型读数 —— 「跟随主会话」这件事必须看得见。
+  // unified 档（渐进披露批 2026-11-21 作者令「关档不要置灰展示那堆卡，只留开关；开档才
+  // 展开四类配置卡与对应说明」）：只渲染主会话卡（唯一可写主链）；披露体收起且**零子件**
+  // （follower 卡 / 注记 / 小模型槽不渲染，不是置灰）。
   const uni = await page.evaluate(() => {
-    const rows = [...document.querySelectorAll('#model-chain-section-body [data-role]')];
+    const body = document.getElementById('model-chain-section-body');
+    const inner = document.querySelector('#model-chain-config .mp-config-inner');
     return {
-      roles: rows.map((r) => r.dataset.role),
-      selects: rows.filter((r) => r.querySelector('select')).length,
-      follow: rows.filter((r) => r.classList.contains('mp-role-follow')).length,
-      readouts: rows.map((r) => r.querySelector('.mp-follow-readout')?.textContent || '').filter(Boolean),
+      roles: [...body.querySelectorAll('[data-role]')].map((r) => r.dataset.role),
+      selects: body.querySelectorAll('[data-role] select').length, // 生图分组不计（非会话类别）
+      foldOpen: document.querySelector('#model-chain-config')?.classList.contains('open') === true,
+      foldChildren: inner ? inner.children.length : -1,
+      notes: document.querySelectorAll('#model-chain-diverged-note, #model-chain-follow-note').length,
+      greyed: document.querySelectorAll('.mp-role-follow, .mp-follow-readout').length,
     };
   });
-  ok(tag, 'unified：五类行恒在册、仅主会话发选择器、4 类置灰只读并显示生效模型',
-    uni.roles.join(',') === 'Nebula,kernel,project-dispatcher,node,subagent' &&
-    uni.selects === 1 && uni.follow === 4 && uni.readouts.length === 4, JSON.stringify(uni));
-  ok(tag, 'unified：小模型槽不铺（「全部跟随」不得有可写例外槽）',
+  ok(tag, 'unified：只渲染主会话卡（唯一可写）、披露体收起且零子件、零注记、零置灰残留',
+    uni.roles.join(',') === 'Nebula' && uni.selects === 1 && !uni.foldOpen &&
+    uni.foldChildren === 0 && uni.notes === 0 && uni.greyed === 0, JSON.stringify(uni));
+  ok(tag, 'unified：小模型槽不渲染（「全部跟随」不得有可写例外槽）',
     await page.locator('#small-llm-settings-row').count() === 0);
   // ② 真点击开关 → 分开配置（乐观翻转须先于重绘：见 renderSessionModeControl 注释）
   await ensureSeparate(page);
@@ -251,6 +255,19 @@ async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = fals
     (await page.locator('#model-chain-mode-state').textContent() || '')
       .includes(locale === 'zh-CN' ? '分开配置' : 'per-class'),
     await page.locator('#model-chain-mode-state').textContent());
+  ok(tag, '开档：披露体展开（.open）且 follower 卡在披露体内', await page.evaluate(() =>
+    document.getElementById('model-chain-config')?.classList.contains('open') === true &&
+    !!document.querySelector('#model-chain-config .mp-config-inner [data-role="subagent"]')));
+  // 切回关档 ⇒ 披露体收起后清空（follower 卡离场、不残留壳），主会话卡仍在
+  await page.locator('#model-mode-switch').click();
+  await page.waitForFunction(() => document.querySelector('#model-chain-config .mp-config-inner')?.children.length === 0,
+    null, { timeout: 5000 });
+  const back = await page.evaluate(() => ({
+    roles: [...document.querySelectorAll('#model-chain-section-body [data-role]')].map((r) => r.dataset.role),
+    open: document.getElementById('model-chain-config')?.classList.contains('open') === true,
+  }));
+  ok(tag, '关档回切：披露体清空，仅剩主会话卡', back.roles.join(',') === 'Nebula' && !back.open, JSON.stringify(back));
+  await ensureSeparate(page);
 
   const small = page.locator('#small-llm-settings-row');
   // 修前这里钉的是 `#small-llm-settings-row .set-row` ——两模式批（2026-11-18）之后
