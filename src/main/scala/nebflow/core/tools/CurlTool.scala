@@ -159,7 +159,24 @@ Usage:
       case e: java.net.http.HttpTimeoutException =>
         Left(ToolError(s"Request timed out after ${timeoutSec}s"))
       case e: Exception =>
-        Left(ToolError(s"Request failed: ${e.getMessage}"))
+        // 2026-11-22 evaluation: the failure of the same URL that had just
+        // succeeded read only "Exception when sending request: GET <url>" —
+        // no cause, no next step. The sttp wrapper hides the real exception
+        // (timeout, proxy refusal, SSL), so walk the cause chain like
+        // WebFetchTool.describeError does.
+        Left(ToolError(s"Request failed: ${describeCurlError(e)}"))
     end try
   }
+
+  private def describeCurlError(e: Throwable): String =
+    val b = new StringBuilder
+    var t: Throwable = e
+    var depth = 0
+    while t != null && depth < 5 do
+      if depth > 0 then b.append(" → ")
+      b.append(t.getClass.getSimpleName)
+      Option(t.getMessage).foreach(m => if m.nonEmpty then b.append(": ").append(m.take(200)))
+      t = t.getCause
+      depth += 1
+    b.toString
 end CurlTool
