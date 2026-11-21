@@ -205,6 +205,23 @@ profile). It judges every linked worktree of `git worktree list --porcelain` aga
 primary checkout with no linked worktree passes while explicitly reporting that there was nothing to
 judge.
 
+#### Worktree branch cap (工作树分支上限 — author ruling, 18:28)
+
+Author ruling, verbatim: 「除了我们这些固定的分支之外，就是在用的这个 work tree 分支不可以超过 10 个，不然就得合并」.
+
+1. **Fixed branches are not counted.** The long-lived branches — `main`, `feat/base`, `develop`,
+   `release/*` — sit outside the cap. Every other local branch that has a linked worktree is an
+   「在用」 worktree branch.
+2. **Cap: at most 10 in-use worktree branches.** When the count exceeds 10, each excess branch must
+   either be **merged** into `feat/base` (landing, then reclaim the tree under rule 2 above) or
+   **cleaned up** (tree removed and branch retired). Neither may wait indefinitely.
+3. **Retirement of merged branches.** This cap ruling refines rule 2 above for branches whose tip is
+   an ancestor of `feat/base`: after `git worktree remove` (never `--force`), `git branch -d` (never
+   `-D`) may retire the branch. Branches not merged into `feat/base` are not retired by this rule
+   and are listed for an author decision instead.
+4. **Protected in-flight branches** are never removed by a cleanup pass until the author releases
+   them.
+
 #### Current-state anchors (现状锚点 — 2026-11-19)
 
 | Item | Ref | Note |
