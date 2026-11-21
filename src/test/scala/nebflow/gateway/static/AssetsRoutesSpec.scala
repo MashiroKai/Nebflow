@@ -9,9 +9,6 @@ import org.http4s.*
 import org.http4s.dsl.io.*
 import org.http4s.headers.*
 
-import java.nio.file.{Files, Paths}
-import java.nio.file.attribute.FileTime
-
 /**
  * Route-level tests for StaticRoutes.assetsRoutes (P1 /assets wildcard, W1
  * source dispatch) and the W1 static-source resolution matrix.
@@ -137,15 +134,16 @@ class AssetsRoutesSpec extends CatsEffectSuite:
 
   // ── W1 resolution matrix (injected probes — ambient-state free) ───────
 
+  // The freshness judge is injected (ensure = the build-web --ensure leg): the
+  // matrix never spawns node. Default = "not fresh" so an unexpected call to the
+  // rebuild leg can only land on the dev tree, never a false DiskDist.
   private def resolve(
     prop: Option[String] = None,
     classpath: Boolean = false,
-    root: Option[os.Path] = None
+    root: Option[os.Path] = None,
+    ensure: os.Path => Boolean = _ => false
   ): StaticRoutes.StaticSource =
-    StaticRoutes.resolveStaticSource("stand", prop, classpath, root)
-
-  private def setMtime(path: os.Path, millis: Long): Unit =
-    Files.setLastModifiedTime(Paths.get(path.toString), FileTime.fromMillis(millis))
+    StaticRoutes.resolveStaticSource("stand", prop, classpath, root, ensure)
 
   test("resolution: explicit dev flag wins over classpath and disk dist") {
     for flag <- Seq("dev", "0", "false", "DEV", " False ") do
@@ -174,31 +172,67 @@ class AssetsRoutesSpec extends CatsEffectSuite:
     )
   }
 
-  test("resolution: fresh disk dist wins when all sources are older") {
+  test("resolution: a dist judged fresh by the ensure leg is served (no mtime involved)") {
     val root = os.temp.dir(deleteOnExit = true)
     os.write(root / "build" / "web-dist" / "index.html", "<html></html>", createFolders = true)
     os.write(root / "src" / "main" / "resources" / "web" / "js" / "old.js", "//", createFolders = true)
-    setMtime(root / "build" / "web-dist" / "index.html", 2_000_000L)
-    setMtime(root / "src" / "main" / "resources" / "web" / "js" / "old.js", 1_000_000L)
     assertEquals(
-      resolve(root = Some(root)),
+      resolve(root = Some(root), ensure = _ => true),
       StaticRoutes.StaticSource.DiskDist(root / "build" / "web-dist")
     )
   }
 
-  test("resolution: a source newer than the dist index makes the dist stale (hot-edit fence)") {
+  test("resolution: a dist the ensure leg cannot refresh falls to the dev tree (no silent stale dist)") {
     val root = os.temp.dir(deleteOnExit = true)
     os.write(root / "build" / "web-dist" / "index.html", "<html></html>", createFolders = true)
     os.write(root / "src" / "main" / "resources" / "web" / "js" / "edited.js", "//", createFolders = true)
-    setMtime(root / "build" / "web-dist" / "index.html", 1_000_000L)
-    setMtime(root / "src" / "main" / "resources" / "web" / "js" / "edited.js", 2_000_000L)
-    assertEquals(resolve(root = Some(root)), StaticRoutes.StaticSource.DevTree)
+    assertEquals(resolve(root = Some(root), ensure = _ => false), StaticRoutes.StaticSource.DevTree)
+  }
+
+  test("resolution: ensure succeeds but no index emitted ⇒ dev tree (never a dangling DiskDist)") {
+    val root = os.temp.dir(deleteOnExit = true)
+    os.makeDir.all(root / "src" / "main" / "resources" / "web")
+    assertEquals(resolve(root = Some(root), ensure = _ => true), StaticRoutes.StaticSource.DevTree)
+  }
+
+  test("resolution: explicit dev flag never invokes the rebuild leg") {
+    val root = os.temp.dir(deleteOnExit = true)
+    os.write(root / "build" / "web-dist" / "index.html", "<html></html>", createFolders = true)
+    os.makeDir.all(root / "src" / "main" / "resources" / "web")
+    var called = false
+    val got = resolve(prop = Some("dev"), root = Some(root), ensure = _ => { called = true; true })
+    assertEquals(got, StaticRoutes.StaticSource.DevTree)
+    assert(!called, "webdist=dev must not trigger a rebuild")
   }
 
   test("resolution: no dist anywhere stays on the dev tree") {
     assertEquals(resolve(), StaticRoutes.StaticSource.DevTree)
     val root = os.temp.dir(deleteOnExit = true) // root without build/web-dist
     assertEquals(resolve(root = Some(root)), StaticRoutes.StaticSource.DevTree)
+  }
+
+  // ── ensureDist: the rebuild leg itself (fake build-web.mjs, real node) ──
+
+  private def fakeScript(root: os.Path, body: String): Unit =
+    os.write(root / "scripts" / "build-web.mjs", body, createFolders = true)
+
+  test("ensureDist: absent build script ⇒ not fresh (never throws)") {
+    assertEquals(StaticRoutes.ensureDist(os.temp.dir(deleteOnExit = true)), false)
+  }
+
+  test("ensureDist: runs the script with --ensure in the root and trusts exit 0") {
+    val root = os.temp.dir(deleteOnExit = true)
+    // ESM body: the fake is named build-web.mjs, so `require` is unavailable.
+    fakeScript(root, "import { writeFileSync } from 'node:fs';\nwriteFileSync('ensure-args.txt', process.argv.slice(2).join(' '));\n")
+    assertEquals(StaticRoutes.ensureDist(root), true)
+    assertEquals(os.read(root / "ensure-args.txt").trim, "--ensure")
+  }
+
+  test("ensureDist: non-zero exit ⇒ not fresh (failure reason kept in build/web-ensure.log)") {
+    val root = os.temp.dir(deleteOnExit = true)
+    fakeScript(root, "console.log('boom-marker'); process.exit(3);\n")
+    assertEquals(StaticRoutes.ensureDist(root), false)
+    assert(os.read(root / "build" / "web-ensure.log").contains("boom-marker"))
   }
 
   // ── W1 index serving legs ──────────────────────────────────────────────
