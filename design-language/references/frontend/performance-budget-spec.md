@@ -164,8 +164,7 @@ status: active
 |---|---|
 | 骨架落文 | 2026-11-21（design-spec-in-repo，`2f71d33b8`） |
 | 阈值回填来源 | `5db03e7ec`（分支 `feat/panel-mobile-perf-fixes`；数值表见报告 `panel-mobile-perf-fixes__20261121_130158.md` §6.1） |
-| 阈值回填提交（本分支） | 本回填提交（sha 见下一行追记） |
-| 本分支回填提交 sha | 待追记 |
+| 阈值回填提交（本分支） | `8767ae98a`（feat/design-spec-in-repo） |
 | 闸出生提交 | **未出生于本分支**。闸名与 §7.4 预定的 `check-perf-budget.mjs` 不同：实际闸为 `scripts/check-perf-redlines.mjs` + `tests/perf-redlines-runtime.mjs`，位于 `5db03e7ec`，待作者裁定并入或改名，不另起重复闸 |
 | 待定项（无实测依据，未编数） | PERF-NET-005 / 006、PERF-LOAD-003 / 004 / 005、PERF-MEM-001 / 002 / 004、PERF-PLUGIN-001 / 004；表 1 P95 列；表 2 静态 import 面；表 3 条目与节点上限；表 4 payload 与原因列 |
 
