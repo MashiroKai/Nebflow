@@ -809,7 +809,7 @@ case class SharedResources(
           depth = p.depth,
           parentRef = p.parentRef,
           sessionId = Some(p.sessionId),
-          sessionName = if p.sessionNameAbsent then None else Some(p.sessionName),
+          sessionName = p.sessionNameOpt,
           initialMessages = p.initialMessages,
           readTracker = if p.withTracking then Some(readTracker) else None,
           fileHistory = if p.withTracking then Some(fileHistory) else None,

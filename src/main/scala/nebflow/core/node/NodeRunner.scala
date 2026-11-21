@@ -162,7 +162,9 @@ object NodeRunner:
     kernelGate: Boolean = true,
     /** true ⇒ AgentActor.sessionName 传 None（root 无会话 meta 时旧行为；忽略 sessionName 字段）。 */
     sessionNameAbsent: Boolean = false
-  )
+  ):
+    /** AgentActor.sessionName 实参（spawnActor 唯一取值口径；None 与 Some("") 在 AgentStart 线上不同）。 */
+    def sessionNameOpt: Option[String] = if sessionNameAbsent then None else Some(sessionName)
 
   /**
    * 共享 spawn:readTracker/fileHistory 创建 + AgentActor spawn。
