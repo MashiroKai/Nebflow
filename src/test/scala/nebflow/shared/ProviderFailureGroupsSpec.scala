@@ -40,4 +40,16 @@ class ProviderFailureGroupsSpec extends munit.FunSuite:
     assertEquals(odd.family, "unknown")
     assertEquals(odd.presentation, "availability")
   }
+
+  // error-freeze 的 compact 详情只有摘要行（无 `[family] provider/model:` 明细）：
+  // 族仍须从 `families: X` 摘要读出，否则面板一律 unknown、族区分文案失效。
+  test("summary-only detail still yields the family from 'families:'") {
+    val g = snapshot(List(Task("e", "All providers failed (2 attempt(s); families: format)"))).head
+    assertEquals(g.family, "format")
+    assertEquals(g.presentation, "shape")
+    val infra = snapshot(List(Task("f", "all providers down: none recovered within 120000ms"))).head
+    assertEquals(infra.family, "unknown")
+    assertEquals(infra.presentation, "availability")
+  }
+
 end ProviderFailureGroupsSpec

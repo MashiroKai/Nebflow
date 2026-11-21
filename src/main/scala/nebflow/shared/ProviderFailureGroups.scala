@@ -21,6 +21,7 @@ object ProviderFailureGroups:
       "network", "server", "empty", "provider", "image-capability")
 
   private val attempt = "(?m)^\\s*\\[([^]\\r\\n]+)\\]\\s+([^/\\s]+)/[^: \\r\\n]+:\\s*([^\\r\\n]+)".r
+  private val SummaryFamilies = "(?i)families:\\s*([a-z0-9,\\- ]+)".r
   private val requestId = "(?i)(request[_ -]?id\\s*[:=]\\s*)[A-Za-z0-9_-]+".r
 
   def snapshot(tasks: List[Task]): List[Group] =
@@ -34,7 +35,16 @@ object ProviderFailureGroups:
         }
         .toList
       if parsed.nonEmpty then parsed
-      else List(("unknown", "unknown", ProviderFailureDetail.sanitize(task.detail), task.id))
+      else
+        // 无逐行 `[family] provider/model:` 明细时（error-freeze 的 compact 详情只带
+        // 「All providers failed (N attempt(s); families: X)」摘要），族仍可从摘要读出——
+        // 否则面板一律显示 unknown，族区分文案失效（2026-11-21 复核发现）。
+        val detail = ProviderFailureDetail.sanitize(task.detail)
+        val family = SummaryFamilies
+          .findFirstMatchIn(detail)
+          .flatMap(m => m.group(1).split("[,\\s]+").find(KnownFamilies.contains))
+          .getOrElse("unknown")
+        List(("unknown", family, detail, task.id))
     }
     rows
       .groupBy { case (provider, family, reason, _) => (provider, family, reason) }
