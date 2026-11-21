@@ -94,6 +94,10 @@
    同族 —— 外壳 `.ta-reply-input` = nf-glass 输入条（复刻 ask 输入条），内芯按
    裸件收编（同一个 js/input/secondaryComposer.js 模板产出）。 */
 .ta-reply-input textarea,
+/* 快速决策卡页悬浮控件带内芯（作者令 2026-11-21 ①⑥）：与 `.ta-reply-input`
+   同族 —— 外壳 `.ta-qd-answer-input` = nf-glass 输入条，内芯按裸件收编（同一个
+   js/input/secondaryComposer.js 模板产出）。 */
+.ta-qd-answer-input textarea,
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-newlist-input,
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-title-input,
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes,
@@ -199,6 +203,11 @@ html[data-nf-modality="pointer"] .nf-field:focus-visible {
    装配点 —— js/input/secondaryComposer.js 的「次级 LLM 输入框」模板（材质同样由
    JS 挂 `.nf-glass` 供），故取同一条外壳圆角。 */
 .ta-reply-input {
+  border-radius: var(--nf-field-shell-radius, var(--ds-radius-xl));
+}
+/* 快速决策卡页悬浮控件带（作者令 2026-11-21 ①⑥）：同一装配点
+   （js/input/secondaryComposer.js）的第二份实例 ⇒ 同一条外壳圆角。 */
+.ta-qd-answer-input {
   border-radius: var(--nf-field-shell-radius, var(--ds-radius-xl));
 }
 

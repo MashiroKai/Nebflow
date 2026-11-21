@@ -3426,7 +3426,7 @@ export default {
   'todoapple.newTodo': 'New to-do',
   'todoapple.createUnconfirmed': 'Save not confirmed. Check your connection and retry in the original session to avoid duplicates.',
   'todoapple.discardPending': 'Discard retry',
-  'todoapple.replyFailed': 'Reply not sent. Check the primary session and connection, then retry.',
+  'todoapple.replyFailed': 'Reply not sent. Please try again.',
   'todoapple.notes': 'Notes (optional)',
   'todoapple.save': 'Save',
   'todoapple.markComplete': 'Mark complete',
@@ -3444,6 +3444,12 @@ export default {
   // page's decision rows).
   'todoapple.quickDecision': 'Quick decision',
   'todoapple.quickCount': '{n} of {m}',
+  // Todo inbox UI batch (author order 2026-11-21 ⑤): the top-right filter key, the
+  // two panel row labels, and the two distinct empty-state facts.
+  'todoapple.filter': 'Filter',
+  'todoapple.filterPriority': 'Priority',
+  'todoapple.emptyDeck': 'No todos',
+  'todoapple.emptyFiltered': 'Nothing matches this filter',
   'todoface.tagSave': 'Save',
   'todoface.tagErrEmpty': 'Name cannot be empty',
   'todoface.tagErrDup': 'A tag with this name already exists',

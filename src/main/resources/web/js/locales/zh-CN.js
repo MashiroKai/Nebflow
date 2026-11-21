@@ -3330,7 +3330,7 @@ export default {
   'todoapple.newTodo': '新待办',
   'todoapple.createUnconfirmed': '尚未确认保存，请检查连接并重试。为避免重复，请回到原会话重试。',
   'todoapple.discardPending': '放弃重试',
-  'todoapple.replyFailed': '回复未发送，请检查主会话状态和连接后重试。',
+  'todoapple.replyFailed': '回复未发送，请重试一次。',
   'todoapple.notes': '备注（可选）',
   'todoapple.save': '保存',
   'todoapple.markComplete': '标记完成',
@@ -3348,6 +3348,12 @@ export default {
   // 一处键；禁教学句，只写事实）。
   'todoapple.quickDecision': '快速决策',
   'todoapple.quickCount': '第 {n} / {m} 条',
+  // 待办收件箱 UI 批（作者令 2026-11-21 ⑤）：右上角过滤钮 + 面板两行标题 + 两张
+  // 空态事实行（牌堆为空 / 过滤后为空 —— 只在事实不同的时候分开说）。
+  'todoapple.filter': '过滤',
+  'todoapple.filterPriority': '重要度',
+  'todoapple.emptyDeck': '暂无待办',
+  'todoapple.emptyFiltered': '没有符合条件的待办',
   'todoface.tagSave': '保存',
   'todoface.tagErrEmpty': '名称不能为空',
   'todoface.tagErrDup': '已有同名标签',

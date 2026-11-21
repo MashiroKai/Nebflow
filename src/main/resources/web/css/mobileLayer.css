@@ -3165,9 +3165,13 @@ body.mobile-layer .ds-turn-btn {
       钉死），动它 = 全站手机腿一起变；输入条这一族是独立的「40:64 视觉盒」档。 */
 /* The main composer shares a 40:64 visual-box scale with the voice orb.
    Keep send and stop equal; the component retains its 44px expanded hit area.
-   The Canvas Ask dock's input row consumes the same declaration. */
+   The Canvas Ask dock's input row consumes the same declaration.
+   待办收件箱 UI 批（作者令 2026-11-21 ①「与 ask 的输入框样式功能一致」）：
+   快速决策卡页悬浮控件带的发送键 = 同一个 ds-turn-btn 组件实例 ⇒ 收成**同一份
+   声明的第三个成员**（不再由页面 CSS 另喂一组 token）。 */
 body.mobile-layer #input-bar > .ds-turn-btn,
-body.mobile-layer .ask-dock .ds-turn-btn {
+body.mobile-layer .ask-dock .ds-turn-btn,
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-answer-input > .ds-turn-btn {
   --ds-turn-btn-size: 40px;
   --ds-turn-btn-icon: 18px;
 }
