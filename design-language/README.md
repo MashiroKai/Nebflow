@@ -23,7 +23,7 @@ design-language/
     disclosure-dedup-spec.md    渐进式披露 · 单一来源无重复
     explanatory-copy-spec.md    解释性文字写作与长度预算
     design-tokens-ledger.md     几何刻度账本（四表 + 迁移清单 + 取值流）
-    performance-budget-spec.md  性能设计红线（网络/加载/内存渲染三块，**阈值待 perf-fixes 批回填**）
+    performance-budget-spec.md  性能设计红线（网络/加载/内存渲染三块，阈值已回填 status=active；闸在 perf-fixes 分支未并入）
   assets/design-system/
     tokens.css                  账本镜像（`--dl-*`，与运行时 `--ds-*` 逐值对位）
     components.css              固定尺寸组件原型（§5.4 建族先查的那份）
@@ -55,11 +55,11 @@ design-language/
 是否可由另一处推导」（D1/D3/D5）需要语义标注，静态源码判不出。当前效力来自设计期自检问句
 与该文 §4 人工评审项；机检只覆盖同文 §3.2 表 2 的「信息组渲染点」计数（U2）。
 
-**第二处缺口（同批）**：`performance-budget-spec.md`（性能设计红线，作者令 2026-11-21 11:37）
-目前是 **draft 骨架 —— 阈值未定稿、闸尚未出生**。stable id（`PERF-NET/LOAD/MEM/RENDER/PLUGIN-*`）
-与四张登记表已落文，具体数值由性能修复批 `feat/panel-mobile-perf-fixes` 以本机诊断基线
-（参照：打包后首屏 76 文件 / 1.07 MB gzip）回填后，再由该批新增 `scripts/check-perf-budget.mjs`
-并注册闸。**在此之前性能红线只有设计期效力（评审用），不是机检判据** —— 不装作已有闸。
+**第二处缺口（同批，已部分收口）**：`performance-budget-spec.md`（性能设计红线，作者令 2026-11-21 11:37）
+阈值已按 perf-fixes 批 `5db03e7ec` 回填，`status: active`；无实测依据的格保持「待定」。
+**闸仍未在本分支**：实际闸 `scripts/check-perf-redlines.mjs` + `tests/perf-redlines-runtime.mjs`
+位于 `feat/panel-mobile-perf-fixes`，未并入本分支，与规范 §7.4 预定的 `check-perf-budget.mjs` 名称不同，
+待作者裁定并入或改名。**在并入前性能红线只有设计期效力，本分支不是机检判据** —— 不装作已有闸。
 
 ## 为什么不在 `src/main/resources/seed/plugins/`（原路径）
 
