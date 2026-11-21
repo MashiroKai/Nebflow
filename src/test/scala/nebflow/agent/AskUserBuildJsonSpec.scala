@@ -16,6 +16,12 @@ class AskUserBuildJsonSpec extends FunSuite:
   private def frame(items: List[AskItem]): Json =
     AgentActor.buildAskUserJson(Some("root-1"), "Backend", items, Some("Backend"), Some("team-abc"))
 
+  test("merge configuration is forwarded in the ask event") {
+    val config = Json.obj("target" -> "main".asJson, "branches" -> Json.arr(Json.obj("name" -> "feat/a".asJson)))
+    val item = AskItem("Merge?", Nil, merge = Some(config))
+    assertEquals(frame(List(item)).hcursor.downField("items").downN(0).downField("merge").focus, Some(config))
+  }
+
   test("V11a: canvas + preview are emitted when present") {
     val items = List(
       AskItem(

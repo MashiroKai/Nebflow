@@ -98,7 +98,8 @@ object ProjectCreateService:
   def AgentMdTemplateFull: String =
     AgentMdTemplate +
       nebflow.core.device.FleetConfig.agentsMdSection +
-      ProjectStore.docsLandingSection
+      ProjectStore.docsLandingSection +
+      "\n## Worktrees and temporary artifacts\nUse the platform workspace-artifacts reference at <data_root>/plugins/stand-dev/skills/stand-dev/references/engine/workspace-artifacts.md.\n"
 
   /**
    * Create + idempotently mount. `name` defaults to the workspace basename.

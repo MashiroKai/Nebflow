@@ -418,7 +418,7 @@ object ProjectUnmount:
               s"unmounted by $actor at $at " +
                 s"(in-flight stopped: chains/expected-counts see unmount report; workspace files kept byte-for-byte)"
             )
-            .handleErrorWith(e => IO(logger.warn(s"[$canonical] unmount audit append failed: ${e.getMessage}")))
+            .handleErrorWith(e => logger.warn(s"[$canonical] unmount audit append failed: ${e.getMessage}"))
         yield Right(at)
     }
 

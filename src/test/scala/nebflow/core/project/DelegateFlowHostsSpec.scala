@@ -511,6 +511,11 @@ class DelegateFlowHostsSpec extends CatsEffectSuite:
       h0 <- DelegateFlowHosts.get(delegateId)
       h = h0.getOrElse(fail("host mounted"))
       _ <- waitUntil(30.seconds)(hostNode(h, "n-h5").map(n => NodeLifecycle.Terminal.contains(n.status)))
+      _ <- waitUntil(30.seconds)(recorded.get.map(_.exists {
+        case m: AgentCommand.ImmediateInput => m.text.contains("[Node 'node-n-h5' completed]")
+        case _ => false
+      }))
+      _ <- waitUntil(30.seconds)(hostNode(h, "n-h5").map(_.nebulaDeliveredAt.isDefined))
       a <- hostNode(h, "n-h5")
       imms <- recorded.get.map(_.collect { case m: AgentCommand.ImmediateInput => m })
       _ <- DelegateFlowHosts.unmount(delegateId)

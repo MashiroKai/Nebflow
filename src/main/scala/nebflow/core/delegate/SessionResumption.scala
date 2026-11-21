@@ -404,12 +404,10 @@ object SessionResumption:
                 // ⑦b'' 可见性回流（阶段②）：原来靠「复活即摘归档旗」把活会话拉回在册窗；
                 // 归档写点退役后**零写盘即可复现**——可见性由状态派生现读（[[DelegateVisibility]]：
                 // 轮次结算证据决定收口与否），活会话天然回活动窗。
-                _ <- IO(
-                  logger.info(
-                    s"[session-resume] visibility is state-derived for $id (round evidence owns the window; " +
-                      "no archive flag written)"
-                  )
-                ).void
+                _ <- logger.info(
+                  s"[session-resume] visibility is state-derived for $id (round evidence owns the window; " +
+                    "no archive flag written)"
+                )
                 // ⑦c 输入注入：**转录在下、补充在上**——同一会话的下一轮。
                 // 无感恢复批 2026-11-07：载荷由 [[ResumeHandoff]] 出（上方 ②'），本处只投递。
                 _ <- IO(ResumeHandoff.logPlan(id, handoff, ResumeHandoff.Cause.Continuation))

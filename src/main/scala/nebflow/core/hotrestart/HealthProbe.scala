@@ -94,7 +94,7 @@ final class ProbeEndpoint private (server: com.sun.net.httpserver.HttpServer, va
   def stop: IO[Unit] =
     IO.blocking(server.stop(0))
       .void
-      .handleErrorWith(e => IO(ProbeEndpoint.logger.warn(s"[hot-restart] probe endpoint stop failed: ${msg(e)}")))
+      .handleErrorWith(e => ProbeEndpoint.logger.warn(s"[hot-restart] probe endpoint stop failed: ${msg(e)}"))
 
   private def msg(e: Throwable): String = Option(e.getMessage).getOrElse(e.toString)
 

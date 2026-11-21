@@ -697,7 +697,7 @@ private[gateway] object ProjectsRoutes:
                   auditSummary(ctl),
                   Some(ctl.chainId)
                 )
-                .handleErrorWith(e => IO(logger.warn(s"$auditType audit append failed: ${e.getMessage}")))
+                .handleErrorWith(e => logger.warn(s"$auditType audit append failed: ${e.getMessage}"))
                 .flatTap(_ => wsHub.broadcast(ProjectActor.chainStateFrame(rt.project.name, ctl)))
                 .flatMap(_ => NodeTools.chainControlPayload(rt, ctl))
                 .flatMap(Ok(_))

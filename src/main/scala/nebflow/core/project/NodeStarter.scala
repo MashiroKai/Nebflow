@@ -317,7 +317,11 @@ private[project] trait NodeStarter:
           }
         }
         .map { upstream =>
-          (chainBlock ++ deviceBlock ++ List(boardBlock, ownTask).filter(_.nonEmpty) ++ upstream)
+          (chainBlock ++ deviceBlock ++ List(
+            nebflow.prompts.PromptCatalog.Shared.WorktreeDiscipline.trim,
+            boardBlock,
+            ownTask
+          ).filter(_.nonEmpty) ++ upstream)
             .mkString("\n\n") + "\n\n" + NodeEngine.protocolFootnoteFor(Some(node.role))
         }
         // 消息身份牌消解（msgtokens 批 2026-10-31）：节点 spawn 输入出口单点消解——

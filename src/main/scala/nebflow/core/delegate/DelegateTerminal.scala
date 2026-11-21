@@ -190,7 +190,7 @@ object DelegateTerminal:
               detail = s"engine terminal: $taskStatus"
             )
           )
-        ).handleErrorWith(e => IO(logger.warn(s"terminal-verdict chain line (engine) failed: ${e.getMessage}")))
+        ).handleErrorWith(e => logger.warn(s"terminal-verdict chain line (engine) failed: ${e.getMessage}"))
     // N1 刀1（v3 §6/A3 宿主生命周期）：delegate 终态 ⇒ 作用域宿主实例灭（盘面状态存，
     // write-through 已持久——「会话终→引擎实例灭＋落盘状态存」）。幂等：外部执行器腿
     // / 未挂载 id = 零动作。
@@ -205,20 +205,20 @@ object DelegateTerminal:
     val hostUnmount =
       (summaryFlush *> nebflow.core.project.DelegateFlowHosts
         .unmount(delegateId))
-        .handleErrorWith(e => IO(logger.warn(s"delegate flow-host unmount failed: ${e.getMessage}")))
+        .handleErrorWith(e => logger.warn(s"delegate flow-host unmount failed: ${e.getMessage}"))
     // jev-plugins 批 #1226：分配插件的 MCP 引用回收（pluginMcp.acquire/release 随
     // delegate 生命周期——release 是全终态汇合点；幂等 no-op：未分配/外部执行器腿
     // 恒零持有）。
     val pluginRelease =
       resources.pluginMcp
         .release(delegateId)
-        .handleErrorWith(e => IO(logger.warn(s"delegate plugin MCP release failed: ${e.getMessage}")))
+        .handleErrorWith(e => logger.warn(s"delegate plugin MCP release failed: ${e.getMessage}"))
     // 台账↔面板对账批：终态交付自动台账记账——record.taskId 定义时 append 结算 note
     // （复活注记读任务行 revivalCount随行）。fail-soft。
     val ledgerNote =
       DelegateLedgerReconcile
         .ledgerSettlementNote(resources.subAgentTaskStore, record, delegateId, taskStatus)
-        .handleErrorWith(e => IO(logger.warn(s"delegate settlement note failed: ${e.getMessage}")))
+        .handleErrorWith(e => logger.warn(s"delegate settlement note failed: ${e.getMessage}"))
     val graceRemoval: IO[Unit] =
       if dispatcherLifecycle then
         DelegateFlowMapLifecycle
@@ -226,7 +226,7 @@ object DelegateTerminal:
           .start
           .as(())
           .handleErrorWith(e =>
-            IO(logger.warn(s"[flowmap-lifecycle] grace removal fiber failed to start: ${e.getMessage}"))
+            logger.warn(s"[flowmap-lifecycle] grace removal fiber failed to start: ${e.getMessage}")
           )
       else IO.unit
     // 案A 批 2026-10-31（状态矩阵批收编）：终态 ⇒ 待命槽清算（standbySince +
@@ -236,7 +236,7 @@ object DelegateTerminal:
       IO.blocking(DelegateRegistry.clearStandby(delegateId))
         .attempt
         .flatMap {
-          case Left(e) => IO(logger.warn(s"standby clear failed for $delegateId: ${e.getMessage}"))
+          case Left(e) => logger.warn(s"standby clear failed for $delegateId: ${e.getMessage}")
           case Right(_) => IO.unit
         }
     verdictLine *> ledgerNote *> hostUnmount *> pluginRelease *> standbyClear *> graceRemoval

@@ -2559,6 +2559,121 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     // sidebar/providersUi.js，与密钥面板/设置页同一枚眼），toggle 逻辑不动
     // （type password↔text），aria-label/title 仍走 t() 双语键，aria-pressed
     // 随揭示态。信息架构与交互语义零变化（视觉语言统一批）。
+    if (item.merge && typeof item.merge === 'object' && item.secret !== true) {
+      const config = item.merge;
+      const ops = config.operations || {};
+      const enabled = key => ops[key] !== false;
+      const branches = (Array.isArray(config.branches) ? config.branches : [])
+        .filter(b => b && typeof b.name === 'string' && b.name.trim())
+        .map(b => ({ name: b.name, note: b.note || '', selected: b.selected !== false, relations: b.relations || {} }));
+      const targets = [...new Set([config.target, ...(Array.isArray(config.targets) ? config.targets : [])].filter(x => typeof x === 'string' && x))];
+      let target = targets[0] || '', decision = '', text = '';
+      const area = document.createElement('div');
+      const requestSync = () => queueMicrotask(() => { if (area.isConnected) sync(); });
+      area.className = 'ask-merge';
+      const history = [];
+      const make = (tag, cls, label) => { const el = document.createElement(tag); if (cls) el.className = cls; if (label != null) el.textContent = label; return el; };
+      const button = (label, action, disabled = false) => { const b = make('button', 'option-btn', label); b.type = 'button'; b.disabled = disabled; b.onclick = action; return b; };
+      function answer() {
+        return { decision, branches: branches.filter(b => b.selected).map(b => ({name: b.name, note: b.note})), target, text: text.trim() };
+      }
+      function sync() {
+        const value = answer();
+        answers[qi] = decision && (decision !== 'approve' || value.branches.length) && (decision !== 'reject' || value.text) ? JSON.stringify(value) : null;
+        updateVisibility();
+        checkAllAnswered();
+      }
+      function record(message) { history.unshift(message); }
+      function draw() {
+        area.replaceChildren();
+        const top = make('div', 'ask-merge-row');
+        top.append(make('strong', '', '合并到 ← 目标分支'));
+        const select = make('select', 'option-custom-input'); select.setAttribute('aria-label', '目标分支');
+        targets.forEach(tgt => { const opt = make('option', '', tgt); opt.value = tgt; select.append(opt); });
+        select.value = target; select.onchange = () => { target = select.value; record('目标切换：' + target); draw(); sync(); }; top.append(select); area.append(top);
+        const bulk = make('div', 'ask-merge-row');
+        if (enabled('select')) {
+          bulk.append(button('全选', () => { branches.forEach(b => b.selected = true); record('全选'); draw(); sync(); }), button('全不选', () => { branches.forEach(b => b.selected = false); record('全不选'); draw(); sync(); }));
+        }
+        area.append(bulk);
+        const list = make('div', 'ask-merge-list');
+        let dragging = null;
+        branches.forEach((branch, index) => {
+          const row = make('div', 'ask-merge-item');
+          row.draggable = enabled('reorder');
+          row.ondragstart = e => { dragging = index; row.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; };
+          row.ondragend = () => { dragging = null; row.classList.remove('dragging'); };
+          row.ondragover = e => { if (dragging !== null) e.preventDefault(); };
+          row.ondrop = e => { e.preventDefault(); if (dragging === null || dragging === index) return; const moved = branches.splice(dragging, 1)[0]; branches.splice(index, 0, moved); dragging = null; record('调整顺序：' + moved.name); draw(); sync(); };
+          const head = make('div', 'ask-merge-row');
+          if (enabled('reorder')) {
+            const handle = make('span', 'ask-merge-handle', '⋮⋮');
+            handle.addEventListener('pointerdown', e => {
+              if (e.pointerType !== 'touch') return;
+              e.preventDefault(); handle.setPointerCapture(e.pointerId); row.classList.add('dragging');
+            });
+            handle.addEventListener('pointerup', e => {
+              if (e.pointerType !== 'touch') return;
+              row.classList.remove('dragging');
+              const targetRow = document.elementFromPoint(e.clientX, e.clientY)?.closest('.ask-merge-item');
+              const dest = Array.from(list.children).indexOf(targetRow);
+              if (dest < 0 || dest === index) return;
+              const moved = branches.splice(index, 1)[0]; branches.splice(dest, 0, moved);
+              record('调整顺序：' + moved.name); draw(); sync();
+            });
+            handle.addEventListener('pointercancel', () => row.classList.remove('dragging'));
+            head.append(handle);
+          }
+          head.append(make('span', '', String(index + 1)));
+          // 勾选面 = 本仓既有的 role="checkbox" 按钮（messages.js `attachCheck` /
+          // 多选卡 `.option-check` 同一形态），不新画一套 input[type=checkbox]：
+          // toggle-unify 门禁 T4b 判「checkbox 冒充开关」，同一文件里另有
+          // `-thumb` 类名（附件缩略图）时会误判成第二套开关。
+          const check = make('button', 'option-check ask-merge-check');
+          check.type = 'button';
+          check.setAttribute('role', 'checkbox');
+          check.setAttribute('aria-checked', branch.selected ? 'true' : 'false');
+          check.disabled = !enabled('select');
+          check.setAttribute('aria-label', '选择 ' + branch.name);
+          check.onclick = () => {
+            branch.selected = !branch.selected;
+            record((branch.selected ? '放行：' : '排除：') + branch.name);
+            draw(); sync();
+          };
+          head.append(check, make('strong', 'ask-merge-name', branch.name));
+          const relation = branch.relations[target] || {};
+          head.append(make('span', 'ask-merge-status', typeof relation.status === 'string' ? relation.status : '未知'));
+          if (enabled('delete')) head.append(button('删除', () => { branches.splice(index, 1); record('删除：' + branch.name); draw(); sync(); }));
+          row.append(head);
+          if (relation.conflict) row.append(make('div', 'ask-merge-conflict', '冲突：' + relation.conflict));
+          const controls = make('div', 'ask-merge-row');
+          const note = make('input', 'option-custom-input'); note.value = branch.note; note.placeholder = '备注或前提条件'; note.setAttribute('aria-label', branch.name + ' 备注'); note.disabled = !enabled('note'); note.oninput = () => { branch.note = note.value; sync(); }; controls.append(note);
+          if (enabled('reorder')) {
+            const move = dest => { const moved = branches.splice(index, 1)[0]; branches.splice(dest, 0, moved); record('调整顺序：' + moved.name); draw(); sync(); };
+            controls.append(button('↑', () => move(index - 1), index === 0), button('↓', () => move(index + 1), index === branches.length - 1));
+          }
+          row.append(controls); list.append(row);
+        });
+        area.append(list);
+        if (enabled('add')) {
+          const addRow = make('div', 'ask-merge-row'); const input = make('input', 'option-custom-input'); input.placeholder = '输入或选择分支'; input.setAttribute('aria-label', '添加分支');
+          const datalist = make('datalist'); datalist.id = 'ask-merge-candidates-' + qi + '-' + Math.random().toString(36).slice(2); input.setAttribute('list', datalist.id);
+          (Array.isArray(config.candidates) ? config.candidates : []).filter(c => typeof c === 'string' && !branches.some(b => b.name === c)).forEach(c => { const opt = make('option'); opt.value = c; datalist.append(opt); });
+          addRow.append(input, datalist, button('添加条目', () => { const name = input.value.trim(); if (!name || branches.some(b => b.name === name)) return; branches.push({ name, note:'', selected:true, relations:{} }); record('添加：' + name); draw(); sync(); })); area.append(addRow);
+        }
+        const comment = make('textarea', 'option-custom-input'); comment.value = text; comment.placeholder = '拒绝理由或补充意见'; comment.setAttribute('aria-label', '理由或补充意见'); comment.oninput = () => { text = comment.value; const hint = area.querySelector('.ask-merge-hint'); if (hint) hint.textContent = decision === 'reject' && !text.trim() ? '拒绝必须填写理由' : '选择回复后，点击下方确认发送。'; sync(); }; area.append(comment);
+        const actions = make('div', 'ask-merge-row');
+        [['approve','同意'],['reject','拒绝'],['supplement','补充'],['defer','暂缓']].forEach(([value,label]) => {
+          const b = button(label, () => { decision = value; record('选择：' + label); draw(); sync(); }, value === 'approve' && !branches.some(x => x.selected));
+          if (decision === value) b.classList.add('picked'); actions.append(b);
+        }); area.append(actions);
+        const hint = make('div', 'ask-merge-hint', decision === 'reject' && !text.trim() ? '拒绝必须填写理由' : '选择回复后，点击下方确认发送。'); area.append(hint);
+        const receipt = answer(); area.append(make('div', 'ask-merge-receipt', '回执预览：' + (decision || '未选择') + ' · ' + (receipt.branches.map(b => b.name).join('、') || '无分支') + ' → ' + target));
+        if (history.length) area.append(make('div', 'ask-merge-hint', '操作历史：' + history.join('；')));
+      }
+      draw(); wrapper.append(area); box.appendChild(wrapper); requestSync(); return;
+    }
+
     if (item.secret === true) {
       const row = document.createElement('div');
       row.className = 'option-secret-row';
@@ -3020,7 +3135,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     //   ③ 上传中 ⇒ 置灰 + 文案「上传中…」（任何在传 chip 都阻塞发送）。
     const baseOk = questions.every((_, qi) => !shouldShow(qi) || isAnswered(qi));
     const zeroOptions = !questions.some(q => q && q.options && q.options.length > 0);
-    const attachOk = !!(answerAttach && zeroOptions && answerAttach.satisfyGate());
+    const attachOk = !!(answerAttach && zeroOptions && !questions.some(q => q && q.merge) && answerAttach.satisfyGate());
     const uploading = !!(answerAttach && answerAttach.uploading());
     confirmBtn.disabled = uploading || !(baseOk || attachOk);
     const labelSpan = confirmBtn.querySelector('span');

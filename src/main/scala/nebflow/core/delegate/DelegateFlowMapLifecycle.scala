@@ -120,17 +120,15 @@ object DelegateFlowMapLifecycle:
                         Some(c.chainId)
                       )
                       .handleErrorWith(e =>
-                        IO(
-                          logger.warn(
-                            s"[flowmap-lifecycle] chain-archived audit append failed (${c.chainId}): ${e.getMessage}"
-                          )
+                        logger.warn(
+                          s"[flowmap-lifecycle] chain-archived audit append failed (${c.chainId}): ${e.getMessage}"
                         )
                       )
                   }
             sweepAudit *> finalizeAbandonedChains(delegateId, cancelAuthorized) *> ledgerConverge(delegateId)
           }
           .handleErrorWith(e =>
-            IO(logger.warn(s"[flowmap-lifecycle] pre-unmount sweep failed for '$delegateId': ${e.getMessage}"))
+            logger.warn(s"[flowmap-lifecycle] pre-unmount sweep failed for '$delegateId': ${e.getMessage}")
           )
     }
 
@@ -172,7 +170,7 @@ object DelegateFlowMapLifecycle:
                 .attempt
                 .void
                 .handleErrorWith(e =>
-                  IO(logger.warn(s"[flowmap-lifecycle] retire cancel-mark failed (${c.id}): ${e.getMessage}"))
+                  logger.warn(s"[flowmap-lifecycle] retire cancel-mark failed (${c.id}): ${e.getMessage}")
                 ) *>
                 FlowMapEventLog
                   .append(
@@ -192,19 +190,15 @@ object DelegateFlowMapLifecycle:
                     Some(c.id)
                   )
                   .handleErrorWith(e =>
-                    IO(
-                      logger.warn(s"[flowmap-lifecycle] chain-cancelled audit append failed (${c.id}): ${e.getMessage}")
-                    )
+                    logger.warn(s"[flowmap-lifecycle] chain-cancelled audit append failed (${c.id}): ${e.getMessage}")
                   )
             }
             _ <-
               if abandoned.isEmpty then IO.unit
               else
-                IO(
-                  logger.info(
-                    s"[flowmap-lifecycle] retire cancel-closure for '$delegateId': ${abandoned.size} in-flight chain(s) marked cancelled " +
-                      s"(${abandoned.map(_.id).mkString(", ")})"
-                  )
+                logger.info(
+                  s"[flowmap-lifecycle] retire cancel-closure for '$delegateId': ${abandoned.size} in-flight chain(s) marked cancelled " +
+                    s"(${abandoned.map(_.id).mkString(", ")})"
                 )
           yield ()
       }
@@ -217,7 +211,7 @@ object DelegateFlowMapLifecycle:
         rt.store
           .reconcileChainLedger(System.currentTimeMillis())
           .handleErrorWith(e =>
-            IO(logger.warn(s"[flowmap-lifecycle] retire ledger reconcile failed for '$delegateId': ${e.getMessage}"))
+            logger.warn(s"[flowmap-lifecycle] retire ledger reconcile failed for '$delegateId': ${e.getMessage}")
           )
           .void
     }
@@ -241,11 +235,9 @@ object DelegateFlowMapLifecycle:
     IO.sleep(graceMs.millis) *>
       DelegateFlowHosts.isMounted(delegateId).flatMap {
         case true =>
-          IO(
-            logger.info(
-              s"[flowmap-lifecycle] scope '$delegateId' is mounted again within the grace window — scope retirement skipped"
-            )
-          ).void
+          logger.info(
+            s"[flowmap-lifecycle] scope '$delegateId' is mounted again within the grace window — scope retirement skipped"
+          )
         case false =>
           val rec = DelegateRegistry.find(delegateId)
           val baseOpt = baseWorkspaceOf(rec)
@@ -266,13 +258,11 @@ object DelegateFlowMapLifecycle:
             case true if baseOpt.isDefined =>
               migrateScopeDir(baseOpt.get, delegateId, rec.flatMap(_.project))
             case _ =>
-              IO(
-                logger.info(
-                  s"[flowmap-lifecycle] scope '$delegateId' not safely retirable (orphanLeg=$orphanLeg, " +
-                    s"identityClosed=$identityClosed, baseWorkspace known=${baseOpt.isDefined}) — " +
-                    "retirement skipped, scope dir kept"
-                )
-              ).void
+              logger.info(
+                s"[flowmap-lifecycle] scope '$delegateId' not safely retirable (orphanLeg=$orphanLeg, " +
+                  s"identityClosed=$identityClosed, baseWorkspace known=${baseOpt.isDefined}) — " +
+                  "retirement skipped, scope dir kept"
+              )
           }
       }
 
@@ -336,12 +326,10 @@ object DelegateFlowMapLifecycle:
               _.snapshot.map(s => !s.nodes.values.exists(n => NodeLifecycle.ChainCancelScope.contains(n.status)))
             )
             .handleErrorWith(e =>
-              IO(
-                logger
-                  .warn(
-                    s"[flowmap-lifecycle] orphan recheck failed for '$delegateId' — keeping the dir: ${e.getMessage}"
-                  )
-              )
+              logger
+                .warn(
+                  s"[flowmap-lifecycle] orphan recheck failed for '$delegateId' — keeping the dir: ${e.getMessage}"
+                )
                 .as(false)
             )
       }

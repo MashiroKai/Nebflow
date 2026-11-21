@@ -570,6 +570,8 @@ project's OWN registration dir, not in this workspace:
     val nebflowDir = ws / ".nebflow"
     val dirExisted = os.exists(nebflowDir)
     os.makeDir.all(nebflowDir)
+    val standDirs = List(ws / ".stand" / "worktrees", ws / ".stand" / "tmp")
+    standDirs.foreach(os.makeDir.all(_))
     val agentsMd = ws / "AGENTS.md"
     val agentsExisted = os.exists(agentsMd)
     // agent 指令模板写工作区根 AGENTS.md（仅缺省时写，不覆盖已有；旧位置 .nebflow/Agent.md 由读路径回落兼容）
@@ -603,17 +605,18 @@ project's OWN registration dir, not in this workspace:
     val gi = ws / ".gitignore"
     if os.exists(gi) then
       val content = os.read(gi)
-      val hasEntry = content.linesIterator.exists { line =>
-        val t = line.trim
-        t == ".nebflow/" || t == ".nebflow"
+      val lines = content.linesIterator.map(_.trim).toSet
+      val missing = List(".nebflow/", ".stand/worktrees/", ".stand/tmp/").filterNot { entry =>
+        lines.contains(entry) || lines.contains(entry.stripSuffix("/")) ||
+        (entry.startsWith(".stand/") && (lines.contains(".stand/") || lines.contains(".stand")))
       }
-      if !hasEntry then
+      if missing.nonEmpty then
         val sep = if content.endsWith("\n") then "" else "\n"
-        os.write.append(gi, s"$sep.nebflow/\n")
+        os.write.append(gi, sep + missing.mkString("", "\n", "\n"))
         ScaffoldItem(".gitignore", created = true, detail = "appended to the existing file")
-      else ScaffoldItem(".gitignore", created = false, detail = "already lists .nebflow/")
+      else ScaffoldItem(".gitignore", created = false, detail = "already lists workspace directories")
     else
-      os.write.over(gi, ".nebflow/\n")
+      os.write.over(gi, ".nebflow/\n.stand/worktrees/\n.stand/tmp/\n")
       ScaffoldItem(".gitignore", created = true, detail = "")
 
   end writeNebflowGitignore
