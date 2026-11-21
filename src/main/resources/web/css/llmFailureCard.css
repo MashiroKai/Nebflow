@@ -1,38 +1,30 @@
-/* LLM 失败卡片（卡片批 2026-11-21）：非阻塞卡，风格对齐权限卡/askuser 卡的结构
-   （头 / 正文 / 操作行）。颜色只走 currentColor 与边框，不引入裸色值。 */
-.llm-failure-card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 8px 0;
-  padding: 12px 14px;
-  border: var(--ds-border-width) solid currentColor;
-  border-radius: var(--ds-radius-xl);
-  font-size: 13px;
-  line-height: 1.5;
-}
-.llm-failure-head {
-  font-weight: 600;
-}
-.llm-failure-body {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.llm-failure-detail {
-  opacity: 0.8;
-  word-break: break-word;
+/* LLM 失败卡片（样式重做 2026-11-21，作者令「结合权限卡 askuser 卡的风格」）。
+   卡面 = .option-box（askuser 卡同款：渐变/圆角 16/描边/阴影高光）；问句 = .option-q；
+   理由行 = .perm-reason + .perm-risk-badge；按钮 = .option-btn。本文件只补卡专属的三处：
+   摘要字色、状态行、换模型下拉的宽度。颜色/间距/圆角一律走既有 token，不引入裸值。 */
+.llm-failure-summary {
+  font-size: var(--ds-fs-hint);
+  color: var(--ds-text-muted);
+  overflow-wrap: anywhere;
+  margin-bottom: var(--ds-space-2);
 }
 .llm-failure-actions {
-  display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
+  margin-bottom: var(--ds-space-1);
+}
+.llm-failure-actions .option-btn {
+  width: auto;
 }
 .llm-failure-pick {
-  max-width: 280px;
+  max-width: 260px;
+  min-width: 0;
+  font-size: var(--ds-fs-body);
+  color: var(--color-text);
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  border-radius: var(--ds-radius-card-md);
 }
 .llm-failure-status {
-  opacity: 0.7;
-  font-size: 12px;
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-text-muted);
 }

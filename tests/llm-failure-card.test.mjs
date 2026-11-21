@@ -6,7 +6,7 @@ import { buildLlmFailureModel, SUMMARY_MAX } from '../src/main/resources/web/js/
 
 test('视图模型：标题带代理名，分类映射为中文标签', () => {
   const m = buildLlmFailureModel({ agentName: 'main', summary: 'boom', failureClass: 'llm-overloaded' });
-  assert.equal(m.title, '模型调用失败 · main');
+  assert.equal(m.question, '模型调用失败：main');
   assert.equal(m.failureLabel, '模型过载');
   assert.equal(m.waitLabel, '等待恢复');
   assert.equal(m.switchLabel, '换模型');
