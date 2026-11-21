@@ -51,6 +51,12 @@ export const CHECKS = [
   // 通知族只允许声明的三型（toast 瞬时浮动 / banner 常驻横幅 / inline 就地提示）；
   // 未声明的通知类名或非单源的 toast/banner 样式定义即红（第四种风格 / 内联手写通知）。
   nodeCheck('notice-unify', 'check-notice-unify'),
+  // 待办收件箱 UI 批（作者令 2026-11-21 ①「次级面板的输入框抽成标准组件复用，并加
+  // 检查」）：次级 LLM 输入框只有一个装配点（js/input/secondaryComposer.js）——每个
+  // 消费面（ask / 待办详情页回复条 / 快速决策卡页悬浮控件带）都必须走它，自拼
+  // textarea + 发送键即红；造型只许令牌、发送键只许 ds-turn-btn--send。仓内规范正文
+  // 落仓前 S6 打印「接口预留」事实行，落仓后自动接管判据。
+  nodeCheck('secondary-composer', 'check-secondary-composer'),
   nodeCheck('chat-ui', 'check-chat-ui'),
   { name: 'chat-ui-computed', profiles: ['frontend'], timeoutMs: 120_000,
     argv: [process.execPath, 'tests/chat-ui-computed.mjs'] },
