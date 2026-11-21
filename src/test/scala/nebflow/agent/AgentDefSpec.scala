@@ -135,4 +135,21 @@ class AgentDefSpec extends CatsEffectSuite:
     for name <- nebflow.core.entity.BuiltinAgents.Names do
       assert(result.contains(name), s"builtin '$name' must coexist with custom agents")
 
+  // 停教批（2026-11-21 作者令，作者 10:08「按你推荐」）：显示/TTS 面封存期间
+  // 程序化构造的 AgentDef 默认不产出 `<voice>` 块 —— 默认值 true 翻转为 false，
+  // 防内置 agent 走 agent.json 以外的路径（Ask 分身等）重新打开语音面。
+  // 恢复语音功能时连同 PromptSections.voiceTeachingParked 一并翻回 true。
+  test("programmatic AgentDef defaults to voiceEnabled = false (voice teaching parked)"):
+    val defn = nebflow.actor.AgentDef(name = "probe", description = "d")
+    assertEquals(defn.voiceEnabled, false, "默认值必须是封存态（false）")
+
+  test("custom agent.json without a `voice` key resolves to voiceEnabled = false"):
+    val tmpDir = os.temp.dir()
+    val dir = tmpDir / "NoVoiceKey"
+    os.makeDir.all(dir)
+    os.write.over(dir / "agent.json", Json.obj("name" -> "NoVoiceKey".asJson).noSpaces)
+    val lib = new AgentLibrary(tmpDir, None)
+    val result = lib.loadAll().unsafeRunSync()
+    assertEquals(result("NoVoiceKey").voiceEnabled, false)
+
 end AgentDefSpec

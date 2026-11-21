@@ -48,7 +48,10 @@ case class AgentDef(
   systemPrompt: String = "",
   avatar: Option[String] = None,
   displayName: Option[String] = None,
-  voiceEnabled: Boolean = true,
+  // 2026-11-21 作者令停教：显示/TTS 面封存期间默认为 false（原 true）——
+  // 防内置/程序化 agent 走非 agent.json 路径再产出 `<voice>` 块。恢复语音功能时
+  // 连同 PromptSections.voiceTeachingParked 一并翻回。
+  voiceEnabled: Boolean = false,
   model: Option[AgentModelConfig] = None,
   preset: Option[String] = None, // legacy stored reference; audit-only, not read by the engine
   category: String = "standalone",
