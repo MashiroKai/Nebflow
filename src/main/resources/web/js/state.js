@@ -106,6 +106,11 @@ export default {
   heartbeat: null,
   connected: false,
   pendingPong: false,
+  // 控制台单实例批（2026-10-27；四修批 2026-10-29）：接管独占客户端旗标
+  // （唯一写点 = takeoverModal.js）。
+  //   consoleSuperseded — 本页已让出控制权（takeover 帧在场，模态阻塞操作 +
+  //                       ws.js onmessage 入口闸：被顶出态一律不渲染新内容帧）。
+  consoleSuperseded: false,
 
   // Session
   activeSessionId: null,

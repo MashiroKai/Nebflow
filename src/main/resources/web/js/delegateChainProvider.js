@@ -87,7 +87,7 @@ function notifyTasks(rows) {
 /** A current authenticated request is the only authority for this root's rows. */
 export async function refreshScopedTasks(rootSessionId = state.activeSessionId) {
   const root = String(rootSessionId || '');
-  if (!root) return;
+  if (!root || state.consoleSuperseded) return;
   if (taskRequests.has(root)) return taskRequests.get(root);
   const epoch = taskAuthEpoch;
   const request = (async () => {
@@ -110,9 +110,9 @@ export async function refreshScopedTasks(rootSessionId = state.activeSessionId) 
         notifyTasks([]);
         return;
       }
-      if (!response.ok || epoch !== taskAuthEpoch) return;
+      if (!response.ok || epoch !== taskAuthEpoch || state.consoleSuperseded) return;
       const body = await response.json();
-      if (epoch !== taskAuthEpoch || body.rootSessionId !== root || !Array.isArray(body.tasks)) return;
+      if (epoch !== taskAuthEpoch || state.consoleSuperseded || body.rootSessionId !== root || !Array.isArray(body.tasks)) return;
       const previous = scopedTasks.get(root) || new Map();
       const next = new Map();
       const changed = [];
