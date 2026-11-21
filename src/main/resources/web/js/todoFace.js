@@ -1740,8 +1740,10 @@ class TodoFace {
     const body = `#${item.name}·${item.id} ${text}`;
     let sent = false;
     try {
-      const { sendPrimaryTodoReply } = await import('./input.js');
-      sent = sendPrimaryTodoReply(body);
+      const { sendTodoReply } = await import('./input.js');
+      // 作者报障批 IMG_1993：出口收编到 sendTodoReply（忙态 = 最近安全边界注入、
+      // 断线 = 离线队列，二者都不再被读成「回复未发送」）。行级寻址面优先。
+      sent = sendTodoReply(body, { sessionId: item.sessionId || null }).ok;
     } catch (err) {
       console.error('[todoFace] reply 出口不可得:', err);
     }
