@@ -1,4 +1,5 @@
 import { mountProjectWorkspaces } from './projectWorkspaces.js';
+import { panelWorkspaceSectionsHidden } from './featureFlags.js';
 import { openDropdownMenu } from './dropdownMenu.js';
 // projectTab.js — Project 标签页（#27 方向调整：项目入口以标签页呈现，参考 team 面板设计）。
 // 点击侧边栏 Project 按钮 → 打开 `projects` Canvas 标签页；一行/卡片一个 project，
@@ -1297,7 +1298,10 @@ async function showProjectOpenMenu(button, name) {
  *  title 的点击**总是**绑定，命中与否由 `data-open-flowmap` 在场判定——定点刷新下
  *  卡的「无节点」态会随后到达的摘要改变，按属性选择器择时绑定会漏/重。 */
 function bindProjectCard(card) {
-  mountProjectWorkspaces(card, card.dataset.project);
+  // hide-workspace-sections 批（作者令 2026-11-21「先隐藏」）：卡内「▶ 工作区」折叠
+  // 区块整块不挂载 ⇒ UI 零入口。条件渲染开关见 featureFlags.js
+  // PANEL_HIDE_WORKSPACE_SECTIONS（改 false 即回，组件与端点一行未删）。
+  if (!panelWorkspaceSectionsHidden()) mountProjectWorkspaces(card, card.dataset.project);
   card.querySelector('[data-open-agent]')?.addEventListener('click', (e) => {
     e.stopPropagation();
     openAgentFile(e.currentTarget?.getAttribute('data-open-agent') || '');

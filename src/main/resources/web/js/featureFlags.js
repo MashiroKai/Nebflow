@@ -215,6 +215,43 @@ export function wikiGraphEnabled() {
   return state.parsedConfig?.features?.wikiGraph === true; // 缺席 = 封存（默认 OFF）
 }
 
+/**
+ * PANEL_HIDE_WORKSPACE_SECTIONS — 面板「工作区」区块**暂时隐藏**总开关
+ * （hide-workspace-sections 批，作者令 2026-11-21 逐字：「git 可视化面板和项目面板
+ * 的工作区都**先隐藏**（「先」=暂时隐藏，功能保留可恢复，不是删除）」）。
+ *
+ * 语义 = **UI 不出现**（条件渲染），不是数据不取、更不是代码删除：
+ *   · 项目面板：项目卡内「▶ 工作区」折叠区块（`projectWorkspaces.js` 的
+ *     `.project-workspaces` `<details>`）整块不挂载 ⇒ 卡上零入口；
+ *   · Git 可视化面板：工作区（worktree）区块同受本开关管制。
+ *
+ * 形态 = **模块常量**（不走配置通道，也不接 `__NEBFLOW_RELEASE__` 剥除）：
+ * 作者令明说「暂时隐藏」⇒ 恢复点 = 改这一行为 `false` 即全量回。
+ * 本仓封存惯例的取舍申报：`voiceEnabled()`/`wikiGraphEnabled()` 用 nebflow.json
+ * 键是因为那是**长期**产品开关；本批是**临时**隐藏，配置项会把一次性动作钉进产品
+ * 配置面（多一个要长期维护的键）。故取 `TRUST_SEALED`（本文件:92）的模块常量形态，
+ * 读取为静态 import、无 latch 时序。
+ *
+ * 恢复步骤（一改即回）：
+ *   1) 本常量 `true` → `false`（一行）；
+ *   2) 前端产物重建（`node scripts/build-web.mjs`；dev 树（sbt run 直供 source）
+ *      刷新页面即生效）；
+ *   3) 打包态需重启宿主（前端资源内嵌 jar；重启窗口由 Nebula 统一安排）。
+ *
+ * 隐藏 ≠ 删数据/删代码：`projectWorkspaces.js` 整个模块、i18n 键、CSS
+ * （projectPanel.css:1094-1106 的 `.project-workspaces*`）、后端只读端点
+ * `GET /api/projects/<name>/workspaces` 全部原样保留。
+ */
+export const PANEL_HIDE_WORKSPACE_SECTIONS = true;
+
+/**
+ * panelWorkspaceSectionsHidden — 上常量的读取面（面板侧一律经本函数判定，
+ * 不直接 import 常量：将来若改回配置驱动，只改本函数体，调用点零改动）。
+ */
+export function panelWorkspaceSectionsHidden() {
+  return PANEL_HIDE_WORKSPACE_SECTIONS === true;
+}
+
 // `outputBlockEnabled()`（output-block-gate 批 2026-11-01 的 `<output>` 用户可见块
 // 特性总闸）已在 report 块可见性批（作者令 2026-11-20）**整件退役**：可见性改由
 // 逐条消息的**发射会话身份**决定（帧上的 `isRoot` 正面打标），不再有「关 = 全文
