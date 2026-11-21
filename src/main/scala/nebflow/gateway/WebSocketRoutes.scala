@@ -196,8 +196,6 @@ class WebSocketRoutes(
         sessionId,
         nebflow.core.ask.AskGatewayServices.instance.map(_.registry)
       )
-      readTracker <- nebflow.shared.ReadTracker.create
-      fileHistory <- nebflow.shared.FileHistory.create()
       modelOverrides <- sharedResources.sessionModelOverrides.get
       contextWindow = modelOverrides.get(sessionId).map(_.contextWindow).getOrElse(sharedResources.contextWindow)
       // ── ctxthresh 批（2026-09-15 方案 A，作者卡答「按方案A实施」）─────────────
@@ -237,19 +235,22 @@ class WebSocketRoutes(
           id => sharedResources.sessionStore.getFolderParentId(id)
         )
       }.flatten
-      ref <- rootSystem.spawn(
-        AgentActor(
-          agentDef,
-          sharedResources,
-          recordingWsSend,
+      // 阶段 A（G1 收口）：root 创建改经唯一入口 spawnAgentActor；旧直连的全部差异以
+      // 等价旋钮声明（rulesMd/folderId/gitBranch/compactThresholdRatio/contextWindow 覆盖、
+      // sessionName 缺 meta ⇒ None、actorName=agent-<sid>；不占 provider 坑、不过准入闸、不过 kernel 闸）。
+      ref <- sharedResources.spawnAgentActor(
+        rootSystem,
+        nebflow.core.node.NodeRunner.SpawnParams(
+          agentDef = agentDef,
+          resources = sharedResources,
+          sessionId = sessionId,
+          sessionName = metaOpt.map(_.name).getOrElse(""),
+          sessionNameAbsent = metaOpt.isEmpty,
           depth = 0,
           parentRef = None,
-          sessionId = Some(sessionId),
-          sessionName = metaOpt.map(_.name),
+          wsSend = recordingWsSend,
           initialMessages = history,
-          readTracker = Some(readTracker),
-          fileHistory = Some(fileHistory),
-          contextWindow = contextWindow,
+          contextWindowOverride = Some(contextWindow),
           projectRoot = effectiveProjectRoot,
           sessionCwd = sessionCwd,
           rulesMd = resolvedRules,
@@ -266,9 +267,12 @@ class WebSocketRoutes(
           // sandboxEnabled=false 现状零变化；沙箱 root 推导仍归 AgentCore。
           sandboxEnabled = agentDef.name == RootAgentIdentity.Name,
           // ctxthresh 批：会话级压缩阈值比例覆盖（仅本 root spawn 注入，见上方注释）。
-          compactThresholdRatio = compactThresholdRatio
-        ),
-        s"agent-$sessionId"
+          compactThresholdRatio = compactThresholdRatio,
+          actorName = s"agent-$sessionId",
+          pinProvider = false,
+          admissionGuard = false,
+          kernelGate = false
+        )
       )
       pr = effectiveProjectRoot.getOrElse("")
       safetyMode = nebflow.core.SafetyMode.toString(effectiveMode)

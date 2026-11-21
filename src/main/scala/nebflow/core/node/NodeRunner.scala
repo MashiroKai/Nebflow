@@ -159,7 +159,9 @@ object NodeRunner:
     /** false ⇒ 不走 executionCommitPort.withUnprotectedSession 准入闸（root/团队成员原本不走）。 */
     admissionGuard: Boolean = true,
     /** false ⇒ 跳过 KernelChildSpawnGate（团队成员原本不过闸；Q10 冲突待作者裁，见终报）。 */
-    kernelGate: Boolean = true
+    kernelGate: Boolean = true,
+    /** true ⇒ AgentActor.sessionName 传 None（root 无会话 meta 时旧行为；忽略 sessionName 字段）。 */
+    sessionNameAbsent: Boolean = false
   )
 
   /**
