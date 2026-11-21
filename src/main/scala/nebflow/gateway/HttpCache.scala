@@ -27,8 +27,15 @@ import java.security.MessageDigest
  *     一句话）。
  *
  * 不入本面：WS 帧（`historyPage` 页指纹）不走 HTTP 头，指纹直接进帧（见
- * `HistoryPageFingerprint`）；GzipMiddleware 只包 `/` 静态树（`GatewayMain.scala`
- * 装配注释「gzip must never wrap the /api tree」）⇒ 本处 ETag 不会被 gzip 剥除。
+ * `HistoryPageFingerprint`）。
+ *
+ * 手机面板卡顿修复批（2026-11-21 · 根因二a 前置）：本面此前发的 200 应答**没有**
+ * `Content-Type`——`withEntity(Json)` 在此语境下不落该头（实测 `/api/delegates`、
+ * `/api/subagent-tasks/:id`），而它们正是本面最大的两个载荷。显式声明
+ * `application/json`：值与本仓 `Ok(json)` DSL 面一致，语义零变，只是让按内容类型
+ * 工作的中间层（[[ApiGzipMiddleware]] 白名单、压缩代理、缓存键）能判型。
+ * 随之而来的编码协商条也一并复核过：本面 ETag 仍是强标签，gzip 表示上剥除
+ * （见 [[ApiGzipMiddleware]] 类头注的取舍），`no-cache` 语义不变。
  */
 private[gateway] object HttpCache:
 
@@ -63,10 +70,19 @@ private[gateway] object HttpCache:
       .map(nel => nel.head.value)
       .getOrElse("")
     val notModified = inm.nonEmpty && inm.split(',').map(_.trim).exists(t => t == etag || t == "*")
+    // 🔴 `putHeaders`（**合并**），不是 `withHeaders`（**整组替换**）。
+    //
+    // 手机面板卡顿修复批 2026-11-21（根因二a 的前置缺陷，本批实测挖出）：此前两条
+    // 腿都用 `withHeaders`，它把整个头集换成实参那两条 ⇒ 先前 `withEntity(Json)`
+    // 落下的 `Content-Type: application/json` 被**静默丢掉**。后果：本面全族的
+    // 200 应答出向无 `Content-Type`（`/api/delegates`、`/api/subagent-tasks/:id`
+    // 这些最大载荷全都如此），前端自己 `r.json()` 所以没感觉，但任何按内容类型
+    // 工作的中间层都判不了型——[[ApiGzipMiddleware]] 的白名单正因此对它们失效。
+    // 换成合并语义：`Content-Type` 保留，ETag/Cache-Control 照旧写入，零行为变更。
     if notModified then
       IO.pure(
         Response[IO](Status.NotModified)
-          .withHeaders(
+          .putHeaders(
             org.http4s.Header.Raw(org.typelevel.ci.CIString("ETag"), etag),
             org.http4s.Header.Raw(org.typelevel.ci.CIString("Cache-Control"), cacheControl)
           )
@@ -75,7 +91,7 @@ private[gateway] object HttpCache:
       IO.pure(
         Response[IO](Status.Ok)
           .withEntity(body)
-          .withHeaders(
+          .putHeaders(
             org.http4s.Header.Raw(org.typelevel.ci.CIString("ETag"), etag),
             org.http4s.Header.Raw(org.typelevel.ci.CIString("Cache-Control"), cacheControl)
           )

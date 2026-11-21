@@ -115,6 +115,26 @@ export const CHECKS = [
   nodeCheck('circular', 'check-circular'),
   nodeCheck('fixture-secrets', 'check-fixture-secrets'),
   nodeCheck('api-routes', 'check-api-routes'),
+  // 性能设计红线批（2026-11-21 11:37 作者令「把这次卡顿的教训落成性能测试 spec 红线
+  // 自动化——包括网络、内存、加载速度等设计红线」）。
+  //
+  // 动机：诊断批（panel-mobile-perf-diagnostics）实测手机面板主线程被压到 2.1fps，
+  // 三条主因全部**零编译错、零类型错、零既有测试红**——它们是形态缺陷：
+  //   ① 历史接口写死 `getUiMessages(sid, 0, 0)`（`?limit=50` 与不传参字节完全相同，
+  //      10 991 449B 裸传）；② `/api` 全族 JSON 无压缩；③ 面板每渲一轮逐父发子代理
+  //      请求（一拍 116+ 条）。
+  // 两道腿各管一面，不可互相替代：
+  //   perf-redlines         = **静态**源码形态（整表读 / 压缩管线 / 超频轮询），零浏览器；
+  //   perf-redlines-runtime = **运行时**字节与压缩覆盖（真起浏览器量出向字节）。
+  //     运行时腿默认打 6138 活面板；无实例时退出码 2 ⇒ 记为 SKIP（不假绿成 PASS）。
+  nodeCheck('perf-redlines', 'check-perf-redlines'),
+  {
+    name: 'perf-redlines-runtime',
+    profiles: ['frontend'],
+    timeoutMs: 240_000,
+    argv: [process.execPath, 'tests/perf-redlines-runtime.mjs'],
+    envSkip: true,
+  },
   nodeCheck('provider-panel', 'check-provider-panel'),
   // 统一模型不可用卡批（2026-11-18）：一套 kind（InteractionKind.ModelUnavailable）+ 一套
   // 拼帧点，全槽共用（small-llm/kernel/node/dispatcher/subagent）；切换就地写回槽
