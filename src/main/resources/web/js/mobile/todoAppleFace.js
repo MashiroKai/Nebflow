@@ -29,6 +29,7 @@ import { t } from '../i18n.js';
 // 渲染管线（utils.renderMarkdownWithMath，marked+KaTeX+hljs + 同一 sanitize 档）。
 // 本模块不自建第二套 md 解析、不拼 HTML —— 只调渲染器 + 单一链接处置点。
 import { createIconsIn, looksLikeMarkdown, renderMarkdownWithMath } from '../utils.js';
+import { setHtmlTree } from '../dom.js';
 import { bindMdExtGate } from '../mdLinkGate.js';
 import { todoStore, TAG_COLOR_PRESETS, PRIORITY_COLORS } from '../todoStore.js';
 import { isAskRow, buildAskCardForRow } from '../askTodoQuestion.js';
@@ -180,7 +181,7 @@ function mdOrText(parent, cls, text) {
   const raw = String(text == null ? '' : text);
   if (!looksLikeMarkdown(raw)) return elIn(parent, 'div', cls, raw);
   const box = el('div', `${cls} is-md`);
-  box.innerHTML = renderMarkdownWithMath(raw, false, { safe: true });
+  setHtmlTree(box, renderMarkdownWithMath(raw, false, { safe: true }));
   bindMdExtGate(box);
   parent.appendChild(box);
   return box;

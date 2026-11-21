@@ -2,7 +2,6 @@ package nebflow.gateway
 
 import cats.effect.IO
 import com.comcast.ip4s.{Host, Port}
-import io.circe.parser.parse
 import nebflow.shared.Defaults
 import os.Path
 
@@ -38,16 +37,7 @@ object GatewayConfig:
    * 提前炸）。越界/零值由 [[resolvePort]] 的 `Port.fromInt` + 正值闸丢弃。
    */
   private[nebflow] def configFilePort(): Option[Int] =
-    try
-      val path = nebflow.shared.Config.DefaultConfigPath
-      if !os.exists(path) then None
-      else
-        val raw = os.read(path).trim
-        if raw.isEmpty || raw == "{}" then None
-        else
-          parse(raw).toOption
-            .flatMap(_.hcursor.downField("port").focus.flatMap(_.asNumber).flatMap(_.toInt))
-    catch case _: Exception => None
+    nebflow.shared.Config.configFilePort()
 
   /**
    * 端口解析链**纯核心**（spec 直接驱全矩阵，双生分家批 2026-10-31 收口）：
