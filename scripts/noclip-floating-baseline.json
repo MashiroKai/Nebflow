@@ -1743,6 +1743,16 @@
       "owner": "noclip-unified-fix (作者排期)"
     },
     {
+      "key": "src/main/resources/web/css/llmFailureCard.css::text-truncation::.llm-failure-agents, .llm-failure-summary",
+      "file": "src/main/resources/web/css/llmFailureCard.css",
+      "line": 38,
+      "rule": "text-truncation",
+      "selector": ".llm-failure-agents, .llm-failure-summary",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "llm-failure-card 四轮批 (2026-11-21 落地)"
+    },
+    {
       "key": "src/main/resources/web/css/mermaid.css::cap-without-scroll::.nf-figure-open",
       "file": "src/main/resources/web/css/mermaid.css",
       "line": 91,
