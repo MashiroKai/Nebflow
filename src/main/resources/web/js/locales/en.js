@@ -1002,6 +1002,10 @@ export default {
   'subagents.frozenAutoResumes': 'auto-resumed {n} time(s)',
   'subagents.frozenAutoResumesSpent': 'auto-resume budget spent — needs you: top up / switch model / cancel',
   'subagents.providerFailureGroup': '{count} background tasks: provider unavailable · {provider}',
+  // Family-aware copy (2026-11-21 author ruling): "provider unavailable" is reserved for
+  // the availability family; shape and config families say what actually went wrong.
+  'subagents.providerFailureGroupShape': '{count} background tasks blocked by an invalid request/response format · {provider}',
+  'subagents.providerFailureGroupConfig': '{count} background tasks need attention (auth/quota/model) · {provider}',
   'subagents.status.roundComplete': 'Round complete; available',
   'subagents.freezeDigestRecoverable': '{count} frozen (wakeable)',
   'subagents.freezeDigestNeedsHuman': '{count} frozen (needs you)',

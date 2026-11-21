@@ -957,6 +957,10 @@ export default {
   'subagents.frozenAutoResumes': '已自动续跑 {n} 次',
   'subagents.frozenAutoResumesSpent': '自动续跑次数已用尽——需要你：充值 / 换模型 / 取消',
   'subagents.providerFailureGroup': '后台 {count} 个任务服务商不可用 · {provider}',
+  // 族区分呈现（2026-11-21 作者裁定）：服务商不可用只用于可用性族；形状族与配置族
+  // 各说各的，避免把「我们的请求不合契约」读成「服务商挂了」。
+  'subagents.providerFailureGroupShape': '后台 {count} 个任务因请求/响应格式不合规未完成 · {provider}',
+  'subagents.providerFailureGroupConfig': '后台 {count} 个任务待处理（鉴权/配额/模型） · {provider}',
   'subagents.status.roundComplete': '本轮完成，可续用',
   'subagents.freezeDigestRecoverable': '{count} 条已冻结（可唤醒）',
   'subagents.freezeDigestNeedsHuman': '{count} 条冻结待你处理',
