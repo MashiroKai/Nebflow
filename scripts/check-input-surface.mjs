@@ -25,9 +25,9 @@
 //     键盘可见焦点规则（那是无障碍，不是第二套）。
 //  I5 JS 注入面：`js/**/*.js` 里对输入件 `style.border*/background*/borderRadius/
 //     boxShadow` 的赋值同样算「第二套」（CSS 属性串直接写进内联样式）。
-//  I6 豁免清单：真需要不同造型的场合逐条具名登记在**规范文件**（单源在 stand-dev
-//     插件包内 `<包根>/references/frontend/input-surface-spec.md`，包根定位见
-//     scripts/lib/design-spec-source.mjs；本仓不再保留第二份拷贝）
+//  I6 豁免清单：真需要不同造型的场合逐条具名登记在**规范文件**（单源在仓内
+//     `design-language/references/frontend/input-surface-spec.md`，定位见
+//     scripts/lib/design-spec-source.mjs）
 //     的「例外清单」表里（选择器 + 判据号 + 理由）。脚本内零硬编码豁免；
 //     表里空理由 = 红，缺表 = 红（没有规范就没有约束）。
 //
@@ -63,7 +63,7 @@ const JS_DIR = join(WEB, 'js');
 const TOKENS = join(CSS_DIR, 'stand-tokens.css');
 /** 唯一造型点：输入面的背景/边框/圆角/阴影/焦点态只许在这里写 */
 const STANDARD_FILE = join(CSS_DIR, 'inputSurface.css');
-/** 规范正文（单源，在 stand-dev 插件包内；本仓无第二份拷贝）。 */
+/** 规范正文（单源在仓内 design-language/references/frontend/）。 */
 const SPEC_FILE = resolveDesignSpec('references/frontend/input-surface-spec.md');
 if (!SPEC_FILE) {
   console.error(`input-surface: ${specMissingMessage('references/frontend/input-surface-spec.md')}`);

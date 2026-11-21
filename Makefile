@@ -1,6 +1,7 @@
 .PHONY: compile run assembly clean install \
   lint fmt fix fmt-check check quality-gate check-visual visual-baseline frontend-gates component-contract \
   flat-buttons glass toggle toggle-geometry scroll-pill input-surface mobile-canvas-strip badge-words \
+  mobile-dock-float \
   ui-structure copy-budget button-source \
   plugin-seed-parity check-static check-sdd test-scripts lint-tools
 
@@ -116,11 +117,10 @@ flat-buttons:
 	node scripts/check-flat-buttons.mjs
 
 # ── 前端设计要求四条规范：单闸入口（ui-design-requirements 批 2026-11-18）────────
-# 规范正文（改判据改规范，脚本只是执行器）唯一一份在 stand-dev 插件包内
-# （<包根>/references/frontend/：disclosure-dedup-spec.md 渐进式披露 + 无重复 ·
-#  explanatory-copy-spec.md 解释性文字 · flat-button-spec.md §5/§6 统一按钮来源）；
-# 本仓无第二份拷贝 —— 包根定位见 scripts/lib/design-spec-source.mjs，
-# 缺席时闸以退出码 2 结束（`npm run check:static` 记为 SKIP）。
+# 规范正文（改判据改规范，脚本只是执行器）单源在仓内 design-language/references/frontend/
+# （disclosure-dedup-spec.md 渐进式披露 + 无重复 · explanatory-copy-spec.md 解释性文字 ·
+#  flat-button-spec.md §5/§6 统一按钮来源）；定位见 scripts/lib/design-spec-source.mjs。
+# 正文随提交分发 ⇒ 三闸恒实跑，没有「缺席即 SKIP」这一档（退出码 2 = 红）。
 ui-structure:
 	node scripts/check-ui-structure.mjs
 
@@ -182,6 +182,14 @@ input-surface:
 # 真几何腿（零端口、真 Chromium，改前/改后对照 + 指针态/键盘态双通道读数）
 input-surface-geometry:
 	node tests/input-surface.spec.mjs
+
+# ── dock 悬浮（第 9 道设计闸；作者裁定 2026-11-21 10:41「手机端 dock 在其他页面都是
+#    悬浮效果，但主会话却是截断的——落成标准和规范，进行自动化检查，都得是悬浮的」）──
+# 判据面与前 8 道不重叠：前 8 道只读「件自己的声明」，本条判「件与宿主之间有没有垫层」。
+# 单源正文 = design-language/references/frontend/mobile-chrome-spec.md（§1.3 浮条座位表 /
+# §1.4 垫层豁免表是它的数据面，脚本逐行读）。盘点：--inventory；机器读：--json。
+mobile-dock-float:
+	node scripts/check-mobile-dock-float.mjs
 
 # ── 路由存在性：运行期腿（empty-state-must-not-lie 批 · 件三②，2026-11-05）──────
 # 静态腿判「源码里注册了没」，运行期腿判「启动后真的答不答」——后者才是事故的

@@ -226,7 +226,7 @@ release-line concern, never an integration-line admission requirement.
 
 ### Release flow
 
-The authoritative text of the release procedure lives on the **externalized spec surface** — the Stand Dev package's spec set, the same surface the eight `SKIP` checks of `check:static` resolve through `scripts/lib/design-spec-source.mjs`. A dedicated release spec is being added there and wired to a gate. **Where wording conflicts, that spec surface wins**: this section is only an operation summary and holds no definition authority.
+The authoritative text of the release procedure lives on the **spec surface of the Stand Dev package**. A dedicated release spec is being added there and wired to a gate. The frontend design gates of `check:static` resolve their own text from the in-repo `design-language/` set through `scripts/lib/design-spec-source.mjs` (in-repo since 2026-11-21; they are never `SKIP`ped). **Where wording conflicts, that spec surface wins**: this section is only an operation summary and holds no definition authority.
 
 Operation summary (author, 2026-11-19) — after the integration line is approved and promoted to `main` (rule 2 above), the author alone controls the release:
 

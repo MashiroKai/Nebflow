@@ -3625,13 +3625,15 @@ export default {
   'profile.editOnWebsite': 'Identity fields are read-only readings; to edit them go to the website account page {where}.',
   'profile.githubUnavailable': 'The account service returned no GitHub username (that reading comes from the GitHub account sent at sign-in).',
   'profile.googleUnavailable': 'The Google binding is maintained on the website account page only; neither the local account service nor the sign-in credential carries it.',
-  'profile.signedIn': 'Signed in',
+  // `profile.signedIn` removed with the me-page name block: in-card name/email is gone, so
+  // identity readings live in one place only (disclosure-dedup-spec.md §3.2 table 2 · U2)
+  // ⇒ zero emitters; the key is dropped rather than left dead.
 
   // external-open batch (2026-11-19, author order "support pulling external files
   // into canvas"): dialog copy + a user-readable sentence per server refusal reason
   // (the reason vocabulary mirrors ExternalOpenRoutes / ExternalOpenPolicy).
   'externalOpen.title': 'Open external file',
-  'externalOpen.hint': 'Paste an absolute path to any readable local file, or an http(s) link; remote content is type-sniffed, stored, then opened.',
+  'externalOpen.hint': 'Paste an absolute path to a readable file, or an http(s) link; remote content is stored before it opens.',
   'externalOpen.placeholder': '/Users/.../report.pdf or https://example.com/pic.png',
   'externalOpen.open': 'Open',
   'externalOpen.cancel': 'Cancel',

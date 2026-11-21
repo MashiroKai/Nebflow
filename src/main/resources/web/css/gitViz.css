@@ -651,6 +651,10 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
   gap: var(--ds-space-1);
   padding: var(--ds-space-1)
 }
+/* 输入面造型（底 / 边 / 圆角 / 影 / 焦点环）**不在这里写**：唯一标准 =
+   `css/inputSurface.css`（元素级兜底已按 `textarea` 种类收编本件），本文件只留几何
+   与字族。改前此处自写了 border/border-radius/background 与一条蓝族 focus-visible
+   —— 即「第二套输入面」，2026-11-21 规范归位批按 input-surface-spec.md §4 I2/I4 摘除。 */
 .gitviz-ask-input textarea {
   flex: 1 1 auto;
   min-width: 0;
@@ -658,15 +662,10 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
   max-height: 96px;
   overflow-y: auto;
   resize: none;
-  padding: var(--ds-space-1) var(--ds-space-1h);
-  border: 1px solid var(--color-border);
-  border-radius: var(--ds-radius-input);
-  background: transparent;
   color: var(--color-text);
   font: inherit;
   font-size: var(--ds-fs-body);
 }
-.gitviz-ask-input textarea:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: -1px; }
 .gitviz-ask-send { flex: 0 0 auto; }
 /* 转交回执（机器可读 + UI 可见，口径同 AskHandoffWire.summary） */
 .gitviz-ask-handoff {

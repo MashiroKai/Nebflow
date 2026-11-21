@@ -9,7 +9,11 @@
 //   ② 本体高 = --dock-h 54（safe 垫外置）
 //   ③ 毛玻璃材质 = 面级浮件档（--glass-bg + backdrop blur，#input-bar 同配方）
 //   ④ 呼吸缝：输入卡底缘与胶囊上缘缝 == --dock-gap 10px（收形批零缝退役）
-//   ⑤ 承载面背板：#mobile-pages::before 底色 == --color-bg（根页带区不透聊天根）
+//   ⑤ 承载面带区**零垫层**（dock 悬浮批 2026-11-21，作者裁定 10:41「手机端 dock 在
+//      其他页面都是悬浮效果，但主会话却是截断的——都得是悬浮的」）：`#mobile-pages`
+//      容器与它的 ::before 一律透明（垫层整族退役），带区里画的是宿主真实内容；
+//      改前本项判的是「背板底色 == 页面底色」，那正是被裁定退役的形态。
+//      根页的不透明承底由页面壳自己给（.mobile-page top:0/bottom:0 + --color-bg）。
 //   ⑥ 中键收形语义零回归：44×44 收进胶囊边界内、box-shadow none
 //   R0 零 JS/console 错误（每帧）
 // 走 mobile-dock-shape-shots 同款静态 harness（无后端）。
@@ -100,6 +104,10 @@ for (const scheme of ['dark', 'light']) {
     };
     const pages = document.getElementById('mobile-pages');
     const bandCs = getComputedStyle(pages, '::before');
+    const containerCs = getComputedStyle(pages);
+    // 根页自己的不透明承底（页面壳；垫层退役后「带区底色」全部由它提供）
+    const livePage = pages.querySelector('.mobile-page.live');
+    const pageOwnBg = livePage ? getComputedStyle(livePage).backgroundColor : 'n/a';
     const bgProbe = document.createElement('span');
     bgProbe.style.background = 'var(--color-bg)';
     document.body.appendChild(bgProbe);
@@ -115,6 +123,7 @@ for (const scheme of ['dark', 'light']) {
       barBottom: br.bottom,
       insetX: probeVar('--dock-inset-x'), insetB: probeVar('--dock-inset-b'), gap: probeVar('--dock-gap'),
       bandBg: bandCs.backgroundColor, bandH: bandCs.height, pageBg,
+      containerBg: containerCs.backgroundColor, pageBgOwn: pageOwnBg,
       centerShadow: getComputedStyle(center).boxShadow,
       centerW: cr.width, centerH: cr.height, centerInside: cr.top >= dr.top - 0.5 && cr.bottom <= dr.bottom + 0.5,
     };
@@ -143,9 +152,11 @@ for (const scheme of ['dark', 'light']) {
   await page.waitForFunction(() => document.querySelector('.mobile-page[data-page="workbench"]')?.classList.contains('live'), null, { timeout: 5000 });
   await page.waitForTimeout(400);
   const wb = await probe();
-  ok(`${scheme} ⑤ 承载面背板 == 页面底色（根页带区不透聊天根）`, wb.bandBg === wb.pageBg, `band=${wb.bandBg} page=${wb.pageBg}`);
-  ok(`${scheme} ⑤ 背板带高 == 胶囊全带（dock-h+inset-b）`,
-    Math.abs(parseFloat(wb.bandH) - (wb.dockH + wb.insetB)) <= 0.5, `band=${wb.bandH}`);
+  ok(`${scheme} ⑤ 承载面带区零垫层（#mobile-pages 容器与 ::before 一律透明 —— 带区画宿主真实内容）`,
+    wb.bandBg === 'rgba(0, 0, 0, 0)' && wb.containerBg === 'rgba(0, 0, 0, 0)',
+    `band=${wb.bandBg} container=${wb.containerBg}`);
+  ok(`${scheme} ⑤ 根页不透明承底由页面壳自己给（.mobile-page 底色 == --color-bg）`,
+    wb.pageBgOwn === wb.pageBg, `page-own=${wb.pageBgOwn} token=${wb.pageBg}`);
   ok(`${scheme} ① 根页胶囊边距同档（悬浮形态跨页恒定）`,
     Math.abs(wb.dockLeft - wb.insetX) <= 0.5 && Math.abs(wb.dockFromBottom - wb.insetB) <= 0.5 && wb.radius === '999px',
     `left=${wb.dockLeft.toFixed(1)} bottom=${wb.dockFromBottom.toFixed(1)} r=${wb.radius}`);

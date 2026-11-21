@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // check-design-tokens.mjs — 设计令牌「字面量 → 令牌」静态哨兵
-// （design-system-token-batch 2026-11-02；判据来源 = 设计规范（单源在 stand-dev
-//  插件包 `references/frontend/`；本仓不再保留第二份拷贝）
+// （design-system-token-batch 2026-11-02；判据来源 = 设计规范（单源在仓内
+//  design-language/references/frontend/）
 //  SKILL.md §9 整改判例「以下为从现状里清出的跑偏值……再次出现 = 回归」
 //  + §10 使用流「客户端同名字 token 直接 var() 引用，禁复制字面量」）。
 //

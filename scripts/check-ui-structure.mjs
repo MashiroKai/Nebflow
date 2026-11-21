@@ -35,7 +35,7 @@ import { fileURLToPath } from 'node:url';
 import { resolveDesignSpec, specMissingMessage } from './lib/design-spec-source.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-/** 规范面（单源在 stand-dev 插件包内；本仓不再保留第二份拷贝）。 */
+/** 规范面（单源在仓内 design-language/references/frontend/）。 */
 const SPEC_PATH = resolveDesignSpec('references/frontend/disclosure-dedup-spec.md');
 /** 存量基线（本仓自己的判定面数据，随闸留在本仓）。 */
 const BASELINE_PATH = join(ROOT, 'scripts', 'ui-structure-baseline.json');

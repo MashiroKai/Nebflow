@@ -16,7 +16,7 @@
 //      声明点同值（亮/暗自适应档同值只算一次；var() 别名解析后比对）。
 //   ② 源 → spec（硬）：令牌源里 `--ds-fs-*` / `--ds-radius-*` / `--ds-space-*`
 //      族每个变量都必须在 spec 表里有行（含具名槽，如 --ds-fs-bubble）。
-//   ③ 账本 → 源（硬）：插件账本 assets/tokens.css 的 `--dl-{fs,r,sp}-*` 与运行时
+//   ③ 账本 → 源（硬）：本目录账本 assets/design-system/tokens.css 的 `--dl-{fs,r,sp}-*` 与运行时
 //      `--ds-{fs,radius,space}-*` 同值（两处同档不同值 = 漂移）。账本覆盖面缺口
 //      以 INFO 行报出（本批已补登档外具名槽，缺口应为 0）。
 //
@@ -32,7 +32,7 @@ import { resolveDesignSpec, specMissingMessage } from './lib/design-spec-source.
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const CSS_DIR = join(ROOT, 'src', 'main', 'resources', 'web', 'css');
-/** 规范面（单源在 stand-dev 插件包内；本仓不再保留第二份拷贝）。 */
+/** 规范面（单源在仓内 design-language/references/frontend/）。 */
 const SPEC_PATH = resolveDesignSpec('references/frontend/design-tokens-ledger.md');
 /** 令牌账本资产（同上，随包走）。 */
 const LEDGER_PATH = resolveDesignSpec('assets/design-system/tokens.css');

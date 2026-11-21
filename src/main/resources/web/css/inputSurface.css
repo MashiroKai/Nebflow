@@ -210,6 +210,12 @@ html[data-nf-modality="pointer"] .nf-field:focus-visible {
 .ta-qd-answer-input {
   border-radius: var(--nf-field-shell-radius, var(--ds-radius-xl));
 }
+/* raised 态（卡片内容滚出可视区后，JS 写 data-qd-raised="1"）：外壳抬一档影。
+   造型值归本文件（I2 单一源）；选择器比 `.ta-qd-answer-input { box-shadow:none }` 高一档。 */
+.ta-qd-float[data-qd-raised="1"] .ta-qd-answer-input {
+  box-shadow: var(--nf-field-shadow);
+  transition: box-shadow var(--ds-dur-hover) var(--ds-ease-std);
+}
 
 /* ── 状态档（同一种形态的状态，不是第二套形态）────────────────────────────
    disabled：只掉不透明度，不改底/边/影；

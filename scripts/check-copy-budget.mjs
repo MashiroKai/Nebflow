@@ -11,10 +11,10 @@
 //   轴 2 写成多长、放哪档 → **本脚本**（预算表 + 存量基线）
 // 本脚本只判轴 2：**键名段 → 位置档 → 字数上限**，逐条 locale 文案值比对。
 //
-// 数据面 = 规范文件的长度预算表（单源在 stand-dev 插件包内
-//   <包根>/references/frontend/explanatory-copy-spec.md 的「## 2. 长度预算表」节
-//   （列：键名段 | 位置档 | zh 上限 | en 上限 | 说明）。包根定位见
-//   scripts/lib/design-spec-source.mjs；本仓不再保留第二份拷贝。
+// 数据面 = 规范文件的长度预算表（单源在仓内
+//   design-language/references/frontend/explanatory-copy-spec.md 的「## 2. 长度预算表」节
+//   （列：键名段 | 位置档 | zh 上限 | en 上限 | 说明）。定位见
+//   scripts/lib/design-spec-source.mjs。
 //   缺表/空表 = 红（没规范就是没约束）。
 // 判定面 = scripts/lib/locale-entries.mjs（locale 文案值，单源；与 check-self-explaining
 // 同一份实现）。**代码注释不算**。

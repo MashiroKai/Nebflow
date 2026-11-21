@@ -1413,10 +1413,7 @@ body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-float {
 body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-float[data-qd-float="in"] {
   animation: qdFloatIn var(--ds-dur-surface) var(--ds-ease-enter);
 }
-body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-float[data-qd-raised="1"] .ta-qd-answer-input {
-  box-shadow: var(--nf-glass-shadow);
-  transition: box-shadow var(--ds-dur-hover) var(--ds-ease-std);
-}
+/* raised 态的外壳影（box-shadow）归 css/inputSurface.css 的 composer shell 成员段（I2 造型单一源）。 */
 /* 输入件外壳 = 次级 LLM 输入框模板（js/input/secondaryComposer.js）：材质由
    `.nf-glass` 供、外壳圆角在 css/inputSurface.css 的 composer shell 成员表
    （`.ta-qd-answer-input` 已入册），内芯 textarea 走裸件成员表 —— 本文件只写
