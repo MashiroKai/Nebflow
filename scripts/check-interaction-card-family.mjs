@@ -26,7 +26,8 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const CSS_DIR = join(ROOT, 'src/main/resources/web/css');
 
 /** 卡族根类登记（R2）。新增主会话交互卡 = 在此登记。 */
-export const FAMILY_CLASSES = ['option-box', 'llm-failure-card'];
+// `.nfc` = NebulaInteractionCard（接管卡）根类；登记于 2026-11-21 作者裁定（新卡面须过规范闸）。
+export const FAMILY_CLASSES = ['option-box', 'llm-failure-card', 'nfc'];
 
 /** 卡面表面属性（R1）。 */
 const SURFACE_PROPS = new Set([
