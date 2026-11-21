@@ -285,10 +285,10 @@ function forkedRoles() {
  * modelRef，走与设置页完全相同的 putChain（同一 PUT /api/agents/:role/model，同一落盘）。
  */
 export function saveSlotPreferredModel(role, modelRef) {
-  return putChain(role, [modelRef]);
+  return putChain(role, [modelRef], { rethrow: true });
 }
 
-async function putChain(role, chain) {
+async function putChain(role, chain, opts = {}) {
   const body = chain
     ? { model: { preferred: chain[0] || null, fallbacks: chain.slice(1) } }
     : { model: null };
@@ -317,6 +317,9 @@ async function putChain(role, chain) {
     window.__showToast?.(String(e.message || e), 'error');
     await refreshPanel(); // re-render from server state (reverts the local copy)
     emitChainChange();
+    // 卡片入口（saveSlotPreferredModel）需要失败信号：上抛给调用方，卡片据此显示失败；
+    // 设置页入口（rethrow 未置）行为不变（toast + 刷新，吞掉）。
+    if (opts.rethrow) throw e;
   }
 }
 
