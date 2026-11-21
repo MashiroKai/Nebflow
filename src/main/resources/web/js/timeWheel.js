@@ -165,7 +165,11 @@ export class Wheel {
     if (this._a11yIdx !== idx) {
       this._a11yIdx = idx;
       this.host.setAttribute('aria-valuenow', String(idx));
-      this.host.setAttribute('aria-valuetext', this.value() + ' ' + this.unit);
+      // 值串自带单位时不再拼一次（zh 月档 = 「11月」，拼上 unit「月」成了
+      // 「11月 月」；en 的 Jan / 11 不带单位，拼法照旧）。
+      const v = this.value();
+      const hasUnit = !!this.unit && v.includes(this.unit);
+      this.host.setAttribute('aria-valuetext', hasUnit ? v : v + ' ' + this.unit);
     }
   }
 
@@ -349,12 +353,19 @@ export class Wheel {
 
 /** @type {HTMLElement|null} */
 let panel = null;
-/** @type {{trigger:HTMLElement, mode:string, onConfirm:Function, days:number[]|null, allowDays:boolean}|null} */
+/** sheet 皮幕布（懒建；search-page-density 批 2026-11-21 作者令②）。 */
+/** @type {HTMLElement|null} */
+let scrim = null;
+/** @type {{trigger:HTMLElement, mode:string, onConfirm:Function, days:number[]|null, allowDays:boolean, onClose?:Function}|null} */
 let session = null;
 /** @type {Record<string, Wheel>} */
 let wheels = {};
 /** @type {{iso:string,label:string}[]} */
 let dateValues = [];
+/** 日期档（mode='date'）的值域 + 现值：{min, max, y, m0, d}（ISO 串粒度 = 日）。
+ *  与单点档的 dateValues 分家：单点档是「今起 21 天」滚轮窗口，日期档是
+ *  「最早命中 → 今天」的全域范围（搜索页的日期锚是历史定位，不是排期）。 */
+let datePick = { min: '', max: '', y: 0, m0: 0, d: 0 };
 
 function isSheetMode() {
   if (typeof document === 'undefined') return false;
@@ -470,6 +481,19 @@ function ensurePanel() {
     + '    <div class="tw-col" data-role="pm"></div>'
     + '    <div class="tw-fade"></div>'
     + '  </div>'
+    + '</div>'
+    /* 日期档（search-page-density 批 2026-11-21 作者令②）：三列 = 年/月/日。
+       作者令逐字「手机端应使用统一的滑动选择（iOS 风格 wheel picker：年/月/日
+       三列滑动），替换现在的日历+下拉混搭」。**同一份滚轮核心**（Wheel 类）换
+       值集，不是第二套实现 —— 单源纪律见文件头。 */
+    + '<div class="tw-body tw-body-date" hidden>'
+    + '  <div class="tw-wheel-row">'
+    + '    <div class="tw-band"></div>'
+    + '    <div class="tw-col" data-role="dy"></div>'
+    + '    <div class="tw-col" data-role="dm"></div>'
+    + '    <div class="tw-col tw-col-day" data-role="dd"></div>'
+    + '    <div class="tw-fade"></div>'
+    + '  </div>'
     + '</div>';
   document.body.appendChild(el);
   panel = el;
@@ -483,6 +507,10 @@ function ensurePanel() {
     m2: new Wheel(col('m2'), { values: MINS, label: t('timewheel.endMin'), unit: t('timewheel.minUnit'), onChange: () => onWheelChange() }),
     ph: new Wheel(col('ph'), { values: HOURS, label: t('timewheel.hourUnit'), unit: t('timewheel.hourUnit'), onChange: () => {} }),
     pm: new Wheel(col('pm'), { values: MINS, label: t('timewheel.minUnit'), unit: t('timewheel.minUnit'), onChange: () => {} }),
+    // 日期档三列（值集在 openDate 里现装：年档依赖下限、日档依赖当月天数）。
+    dy: new Wheel(col('dy'), { values: ['—'], label: t('timewheel.yearUnit'), unit: t('timewheel.yearUnit'), onChange: () => onDateWheelChange() }),
+    dm: new Wheel(col('dm'), { values: ['—'], label: t('timewheel.monthUnit'), unit: t('timewheel.monthUnit'), onChange: () => onDateWheelChange() }),
+    dd: new Wheel(col('dd'), { values: ['—'], label: t('timewheel.dayUnit'), unit: t('timewheel.dayUnit'), onChange: () => {} }),
   };
 
   /** @type {HTMLElement} */ (el.querySelector('.tw-cancel')).addEventListener('click', () => close(false));
@@ -690,7 +718,11 @@ function hostFaceOf(trigger) {
  *  量测口径 = 当前可见体的真实布局盒（`.tw-item` 行高 / `.tw-col` 列高）：
  *  JS 里不再出现第二份 40/200 常数（改 CSS 不会让滚轮错位）。 */
 function syncWheelGeometry() {
-  const body = panel && panel.querySelector(session && session.mode === 'point' ? '.tw-body-point' : '.tw-body-range');
+  // 现役皮的值集（三档各自一条：时段 / 单点 / 日期）。量测对象必须与 open* 选的
+  // body 同源，否则日期档会量到隐藏 body 里的零尺寸（滚轮行程整条错位）。
+  const bodySel = session && session.mode === 'point' ? '.tw-body-point'
+    : session && session.mode === 'date' ? '.tw-body-date' : '.tw-body-range';
+  const body = panel && panel.querySelector(bodySel);
   if (!body) return;
   const item = /** @type {HTMLElement|null} */ (body.querySelector('.tw-item'));
   const col = /** @type {HTMLElement|null} */ (body.querySelector('.tw-col'));
@@ -729,6 +761,11 @@ function place(trigger) {
     el.prepend(grab);
     bindGrabber(grab);
   } else if (!sheet && grab) grab.remove();
+
+  // 幕布（sheet 皮专属；search-page-density 批 2026-11-21 作者令②的「遮罩下层内容」
+  // 那一支）。桌面 popover 不挂幕布：它是点选式小浮层，盖不住页面，挂幕布反而把
+  // 触发它的面一起压黑（既有交互零改动）。
+  if (sheet) showScrim(); else hideScrim();
 
   if (!sheet) {
     const r = trigger.getBoundingClientRect();
@@ -778,8 +815,28 @@ function place(trigger) {
   trigger.setAttribute('aria-expanded', 'true');
   document.addEventListener('pointerdown', outsideCloser, true);
   document.addEventListener('keydown', escCloser, true);
-  const first = session && session.mode === 'point' ? wheels.d1.host : wheels.h1.host;
+  const first = session && session.mode === 'point' ? wheels.d1.host
+    : session && session.mode === 'date' ? wheels.dy.host : wheels.h1.host;
   setTimeout(() => first.focus({ preventScroll: true }), sheet ? 300 : 170);
+}
+
+/** 幕布（sheet 皮的「遮罩下层内容」腿；材质 = `.nf-glass-scrim` 单源档）。
+ *  懒建 + 复用；点幕布 = 取消（与点外关闭同一条语义）。 */
+function showScrim() {
+  if (!scrim) {
+    scrim = document.createElement('div');
+    scrim.className = 'tw-scrim nf-glass-scrim';
+    scrim.addEventListener('pointerdown', () => close(false));
+    document.body.appendChild(scrim);
+  }
+  scrim.classList.remove('out');
+  scrim.classList.add('in');
+}
+
+function hideScrim() {
+  if (!scrim) return;
+  scrim.classList.remove('in');
+  scrim.classList.add('out');
 }
 
 /** @param {Event} ev */
@@ -882,6 +939,203 @@ export function openPoint(trigger, opts) {
 }
 
 /**
+ * 打开**日期**选择器（年/月/日三列；search-page-density 批 2026-11-21 作者令②）。
+ *
+ * 消费者 = 搜索面板「日期」tab 的日期锚（手机端）。作者令逐字：「点「日期」tab
+ * 的日期选择，手机端应使用统一的滑动选择（iOS 风格 wheel picker：年/月/日三列
+ * 滑动），替换现在的日历+下拉混搭。」
+ *
+ * 与单点档（openPoint）的分工：单点档选的是「某天某时」（值域 = 今起 21 天，
+ * 未来向）；日期档选的是「某一天」（值域 = [minDate, maxDate]，历史向，默认上限
+ * = 今天 —— 搜索的日期锚只定位历史，不筛未来内容）。两档共用同一份 Wheel 核心
+ * 与同一个面板单例（单源纪律，见文件头）—— 这里只换值集与两列的联动。
+ *
+ * @param {HTMLElement} trigger 触发钮（提供 dataset.date 作为初值；可为哑元）
+ * @param {{title?:string, date?:string, min?:string, max?:string, onConfirm?:Function}} [opts]
+ */
+export function openDate(trigger, opts) {
+  const el = ensurePanel();
+  const o = opts || {};
+  if (session && session.trigger === trigger && el.classList.contains('in')) return;
+  if (session) close(false);
+  session = { trigger, mode: 'date', onConfirm: o.onConfirm || (() => {}), days: null, allowDays: false };
+  const title = o.title || t('timewheel.titleDate');
+  /** @type {HTMLElement} */ (el.querySelector('.tw-title')).textContent = title;
+  el.setAttribute('aria-label', title);
+  /** @type {HTMLElement} */ (el.querySelector('.tw-body-range')).hidden = true;
+  /** @type {HTMLElement} */ (el.querySelector('.tw-body-point')).hidden = true;
+  /** @type {HTMLElement} */ (el.querySelector('.tw-body-date')).hidden = false;
+  /** @type {HTMLElement} */ (el.querySelector('.tw-input-toggle')).hidden = true;
+  /** @type {HTMLButtonElement} */ (el.querySelector('.tw-confirm')).disabled = false;
+
+  const today = isoOf(new Date());
+  const min = o.min || today;
+  const max = o.max || today;
+  const init = o.date || trigger.dataset.date || max;
+  datePick = { min, max, ...parseIso(clampIso(init, min, max)) };
+  mountDateWheels();
+  place(trigger);
+}
+
+/* ── 日期档：ISO / 值集 / 联动 ─────────────────────────────────────────── */
+
+/** @param {Date} d */
+function isoOf(d) {
+  return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+}
+
+/** @param {string} iso */
+function parseIso(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  const now = new Date();
+  if (!m) return { y: now.getFullYear(), m0: now.getMonth(), d: now.getDate() };
+  return { y: Number(m[1]), m0: Number(m[2]) - 1, d: Number(m[3]) };
+}
+
+/** @param {string} iso @param {string} min @param {string} max */
+function clampIso(iso, min, max) {
+  if (iso < min) return min;
+  if (iso > max) return max;
+  return iso;
+}
+
+/** @param {number} y @param {number} m0 */
+function daysInMonth(y, m0) { return new Date(y, m0 + 1, 0).getDate(); }
+
+/** 年档 = [min 年, max 年] 升序（iOS 惯例）。 */
+function yearItems() {
+  const lo = parseIso(datePick.min).y;
+  const hi = parseIso(datePick.max).y;
+  const out = [];
+  for (let y = lo; y <= hi; y++) out.push(String(y));
+  return out;
+}
+
+/** 月档 = 恒 12 档；越界月由 clampDatePick 收口（不隐藏档位，滚轮不跳）。 */
+function monthItems() {
+  const zh = isZh();
+  return Array.from({ length: 12 }, (_, i) => (zh ? (i + 1) + '月'
+    : new Date(2000, i, 1).toLocaleDateString(localeTag(), { month: 'short' })));
+}
+
+function dayItems(y, m0) {
+  return Array.from({ length: daysInMonth(y, m0) }, (_, i) => String(i + 1));
+}
+
+function isZh() { return localeTag().startsWith('zh'); }
+
+/** locale 标签（与全站 getLocale 同源；本文件不引 i18n 的 getLocale 以免循环）。 */
+function localeTag() {
+  return (document.documentElement.lang || navigator.language || 'zh-CN');
+}
+
+/** 换值集（年/日两列随上下限与当月天数变长变短；Wheel 重建列 = 唯一做法）。 */
+function mountDateWheels() {
+  const years = yearItems();
+  wheels.dy.values = years;
+  wheels.dy.N = years.length;
+  const months = monthItems();
+  wheels.dm.values = months;
+  wheels.dm.N = months.length;
+  remountColumn('dy', years);
+  remountColumn('dm', months);
+  remountColumn('dd', dayItems(datePick.y, datePick.m0));
+  setDateWheels(false);
+}
+
+/** 列值集变化 ⇒ 重铺该列的 strip（Wheel 内部的 items 与 N 必须同步重建）。 */
+function remountColumn(role, values) {
+  const w = wheels[role];
+  const host = w.host;
+  // 清空走 replaceChildren（不写 inner 串）：本列只装自建的 .tw-strip +
+  // .tw-item 节点，没有 HTML 串可解析 ⇒ 不需要那条赋值路（R5 净化面计数
+  // 只许减不许增，见 scripts/check-component-contract.mjs）。
+  host.replaceChildren();
+  w.values = values;
+  w.N = values.length;
+  const strip = document.createElement('div');
+  strip.className = 'tw-strip';
+  w.items = [];
+  for (let r = 0; r < REP; r++) {
+    for (let i = 0; i < w.N; i++) {
+      const it = document.createElement('div');
+      it.className = 'tw-item';
+      it.textContent = values[i];
+      strip.appendChild(it);
+      w.items.push(it);
+    }
+  }
+  host.appendChild(strip);
+  w.strip = strip;
+  w.pos = w.N;
+  w._a11yIdx = null;
+  host.setAttribute('aria-valuemax', String(w.N - 1));
+  w.render();
+}
+
+/** 现值写回三列（animate 只在确定回退时用）。
+ *
+ *  🔴 重入闸（2026-11-21 证据期实测抓出）：`setTo` 结尾会 `emit()`，而年/月列的
+ *  onChange 就是 `onDateWheelChange` —— 三列是**逐列**写的（dy → dm → dd），
+ *  写 dy 那一刻 dm 还停在 remountColumn 给的 pos=N（值 idx 0 = 「1月」），
+ *  于是 onDateWheelChange 把 datePick.m0 从真值（如 10 = 11月）改写成 0，
+ *  后面的 setTo 再照这个被污染的 m0 落位 ⇒ 每次开面板月份都跳成 1 月
+ *  （日列随之按 1 月重铺）。闸 = 写值期间不让「写」被读成「用户拨动」。 */
+let dateSyncing = false;
+
+function setDateWheels(animate) {
+  dateSyncing = true;
+  try {
+    wheels.dy.setToValue(String(datePick.y), animate);
+    wheels.dm.setTo(datePick.m0, animate);
+    wheels.dd.setTo(datePick.d - 1, animate);
+  } finally {
+    dateSyncing = false;
+  }
+}
+
+/** 越界收口：日 > 当月天数 ⇒ 收到月末；整日 > max ⇒ 整体收 max；< min ⇒ 收 min。 */
+function clampDatePick() {
+  const dim = daysInMonth(datePick.y, datePick.m0);
+  if (datePick.d > dim) datePick.d = dim;
+  const iso = isoOf(new Date(datePick.y, datePick.m0, datePick.d));
+  if (iso > datePick.max) {
+    const m = parseIso(datePick.max);
+    datePick.y = m.y; datePick.m0 = m.m0; datePick.d = m.d;
+    return true;
+  }
+  if (iso < datePick.min) {
+    const m = parseIso(datePick.min);
+    datePick.y = m.y; datePick.m0 = m.m0; datePick.d = m.d;
+    return true;
+  }
+  return false;
+}
+
+/** 年/月列变动 ⇒ 日列值集重铺 + 越界收口（值 → 视图单向流动，不反向写滚动位）。
+ *  写值期间的 emit 不算用户拨动（见 setDateWheels 的重入闸注）。 */
+function onDateWheelChange() {
+  if (dateSyncing) return;
+  if (!session || session.mode !== 'date') return;
+  const y = Number(wheels.dy.value());
+  const m0 = wheels.dm.valueIdx();
+  if (!Number.isFinite(y)) return;
+  const changed = y !== datePick.y || m0 !== datePick.m0;
+  datePick.y = y;
+  datePick.m0 = m0;
+  const dim = daysInMonth(y, m0);
+  if (datePick.d > dim) datePick.d = dim;
+  if (changed) {
+    remountColumn('dd', dayItems(y, m0));
+    wheels.dd.setTo(datePick.d - 1, false);
+  }
+  if (clampDatePick()) {
+    remountColumn('dd', dayItems(datePick.y, datePick.m0));
+    setDateWheels(true);
+  }
+}
+
+/**
  * 关闭面板。commit=true 提交（时段 = 一次提交起止两值；单点 = 日期+时刻）；
  * 取消 / ESC / 点外 / grabber 甩关 = 还原（不写回）。
  * @param {boolean} commit
@@ -898,6 +1152,8 @@ export function close(commit) {
   if (commit) {
     if (s.mode === 'range') {
       s.onConfirm({ start: hm(true), end: hm(false), days: s.days });
+    } else if (s.mode === 'date') {
+      s.onConfirm({ date: isoOf(new Date(datePick.y, datePick.m0, datePick.d)) });
     } else {
       const picked = dateValues[wheels.d1.valueIdx()];
       s.onConfirm({ date: picked ? picked.iso : '', time: wheels.ph.value() + ':' + wheels.pm.value() });
@@ -905,6 +1161,7 @@ export function close(commit) {
   }
   el.classList.remove('in');
   el.classList.add('out');
+  hideScrim();
   setTimeout(() => {
     if (!session) el.classList.remove('in', 'out');
     el.style.transform = '';

@@ -71,6 +71,10 @@ import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 import { chatViews } from './chatView.js';
 import { sendWs } from './ws.js';
 import { expandGroupContaining } from './turnGroup.js';
+// 手机层导航事件日志（来源档切换 / 同行化归位留痕；手机层统一 logEvent 单点）。
+import { logEvent } from './mobile/navEvents.js';
+// 日期滚轮（手机层「日期」tab）：全站唯一滚轮组件单源（作者令 2026-11-21）。
+import { openDate as openDateWheel, close as closeWheel } from './timeWheel.js';
 // 跳转回位胶囊（作者令 2026-11-01）：样式逐字复用现役「↓ N 条新消息」胶囊
 // （.scroll-new-pill 同家族），锚点/降级/消失时机契约见 searchReturnPill.js 头注。
 import { captureReturnAnchor, armReturnPill } from './searchReturnPill.js';
@@ -324,6 +328,8 @@ let searchTailEl = null;
 /** 结果面/状态面的现役节点（续取腿要用；renderStreamFresh 现装 ⇒ 零新增跨面直查）。 */
 let searchResultsEl = /** @type {HTMLElement|null} */ (null);
 let searchStatusEl = /** @type {HTMLElement|null} */ (null);
+/** 来源筛选行容器（mountSourceChips 现装 ⇒ 同款缓存腿，零新增跨面直查）。 */
+let sourceRowEl = /** @type {HTMLElement|null} */ (null);
 /** 主弹层现役节点（locale 重绘腿要用；openSearchModal 现装 ⇒ 零新增跨面直查 ——
  *  component-contract R2 基线只许减不许增：locale-changed 监听器（FE 整合新增腿）
  *  一律读这里的缓存，不再自带 getElementById 直查）。 */
@@ -355,7 +361,7 @@ function setToolOptions(options, value = '') { setFilterOptions('search-tool', o
 function openToolMenu(button) {
   closeToolMenu();
   const menu = document.createElement('div');
-  menu.className = 'project-open-menu nf-glass';
+  menu.className = 'project-open-menu nf-glass search-filter-menu';
   menu.setAttribute('role', 'menu');
   for (const option of filterOptions.get(button.id) || []) {
     const item = document.createElement('button');
@@ -479,12 +485,14 @@ export function initChatSearch() {
   });
 
   // Outside click discards the staged calendar pick (staging-confirm
-  // semantics: only OK applies).
+  // semantics: only OK applies). 手机层滚轮（timeWheel 面板，body 直挂）自带
+  // 点外关闭腿 ⇒ 这里只需排除它，避免两套 outside 判定互相打架。
   document.addEventListener('pointerdown', (e) => {
     if (!calOpen || !(e.target instanceof Element)) return;
     const pop = document.getElementById('search-date-popover');
     const tab = document.getElementById('search-tab-date');
-    if (pop?.contains(e.target) || tab?.contains(e.target)) return;
+    const wheel = document.querySelector('.tw-panel');
+    if (pop?.contains(e.target) || tab?.contains(e.target) || wheel?.contains(e.target)) return;
     closeCalendar(false);
   }, true);
 
@@ -608,6 +616,11 @@ export function openSearchModal(scope = null) {
   const eff = scope || pendingConvScope || null; // 手机页面化入口的暂存消费（见上）
   pendingConvScope = null;
   setConvScope(eff || null); // 3(b)：会话档先落位（resetSearchState 不清它）
+  // 手机层两件归位（v3.6 裁定② 恒主会话 + search-page-density 批 作者令② 同行化）。
+  // 落点从 mobile/searchFace.js 收回**属主**：那座 DOM 是本模块建的，R2
+  // cross-face-dom 不许 mobile 面直查它 ⇒ 「什么时候归位」也归这里（开面板 /
+  // 语言切换 / 收编重挂三处同一个幂等调用）。
+  if (isMobileLayer()) { pinScopeToCurrent(); seatSelectFilesInline(); }
   resetSearchState();   // Spotlight mode: every open is a fresh session
   renderStaticLabels();
   syncTabsUI();
@@ -691,6 +704,8 @@ function renderStaticLabels() {
   }
   syncDateTabLabel();
   syncSourceChips();
+  // 手机层「选择文件」钮归位（幂等）：语言切换 / 面板重开 / 收编重挂都走这条腿。
+  if (isMobileLayer()) seatSelectFilesInline();
   const go = document.getElementById('search-go');
   if (go) go.textContent = t('search.go');
   const status = document.getElementById('search-status');
@@ -767,9 +782,55 @@ function clearAnchor() {
 }
 
 // ── Calendar popover (date anchor picker) ──────────────────
+// 两皮一核（search-page-density 批 2026-11-21 作者令②）：
+//   · 桌面 ⇒ 日历弹层（本文件既有的 #search-date-popover，几何/键盘契约零改动）；
+//   · 手机层 ⇒ 滚轮（js/timeWheel.js 的 openDate —— **全站唯一滚轮组件单源**，
+//     作者令「手机端应使用统一的滑动选择（iOS 风格 wheel picker：年/月/日三列
+//     滑动），替换现在的日历+下拉混搭」）。本文件不建第二个滚轮实现
+//     （断言 = tests/time-wheel-picker.spec.mjs T1 单源用例）。
 function toggleCalendar() {
   if (calOpen) closeCalendar(true);
+  else if (isMobileLayer()) openMobileDateWheel();
   else openCalendar();
+}
+
+/** 手机层日期滚轮：值域 = [最早命中年, 今天]（搜索的日期锚只定位历史）。
+ *  确认 ⇒ 写 anchorDate + 定位检索（与桌面 cal-confirm 同一条落点腿）。
+ *
+ *  🔴 年列**最小三档**（2026-11-21 证据期实测抓出）：值域原样 = [earliestMessageYear,
+ *  今年]，历史集中在一个年度内时（新装/夹具/刚归档的会话）年列只剩 1 个值 ——
+ *  环形滚轮于是把同一个「2026」铺成上下三行，读起来像渲染坏了（截图见批证据）。
+ *  iOS 惯例：年列恒可回退，取 max(3, 实际跨度) 档。 */
+function openMobileDateWheel() {
+  const tab = document.getElementById('search-tab-date');
+  if (!tab) return;
+  const today = new Date();
+  const nowIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const firstYear = Math.min(earliestMessageYear(), today.getFullYear());
+  const minYear = Math.min(firstYear, today.getFullYear() - 2);   // ≥3 档年列
+  const minD = new Date(minYear, 0, 1);
+  const minIso = `${minD.getFullYear()}-${String(minD.getMonth() + 1).padStart(2, '0')}-01`;
+  const cur = anchorDate
+    ? `${anchorDate.y}-${String(anchorDate.m0 + 1).padStart(2, '0')}-${String(anchorDate.d).padStart(2, '0')}`
+    : nowIso;
+  calOpen = true;
+  calWheelOpen = true;
+  tab.setAttribute('aria-expanded', 'true');
+  openDateWheel(/** @type {HTMLElement} */ (tab), {
+    date: cur,
+    min: minIso,
+    max: nowIso,
+    onConfirm: ({ date }) => {
+      calOpen = false;
+      calWheelOpen = false;
+      tab.setAttribute('aria-expanded', 'false');
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(date || ''));
+      if (!m) return;
+      anchorDate = { y: Number(m[1]), m0: Number(m[2]) - 1, d: Number(m[3]) };
+      syncTabsUI();
+      triggerSearch();   // apply the anchor
+    },
+  });
 }
 
 function openCalendar() {
@@ -799,12 +860,19 @@ function closeCalendar(refocus) {
   calPopEl = null; // locale 重绘腿缓存同步清档（下一次 openCalendar 现装）
   pillListboxEl?.remove();
   pillListboxEl = null;
+  // 手机层滚轮也在这条关闭腿上收（ESC / 关面板 / 点外三处不各写一遍）。
+  // 显式传 false：`close(commit)` 是必填参（省略 = TS2554，闸红），false = 取消/不写回
+  // ——本腿本来就是「关掉面板」，不是提交。
+  if (calWheelOpen) { closeWheel(false); }
   const pop = document.getElementById('search-date-popover');
   if (pop) pop.hidden = true;
   const tab = document.getElementById('search-tab-date');
   tab?.setAttribute('aria-expanded', 'false');
   if (refocus) tab?.focus();
 }
+
+/** 滚轮面板是否由本面板打开（timeWheel 的 session 状态不可直接读 ⇒ 本地镜像）。 */
+let calWheelOpen = false;
 
 /** Anchor the popover under the Date tab; keep it inside the panel on
  *  narrow layouts (left edge ≥ 12px handled by CSS at ≤768px). Vertical
@@ -1117,11 +1185,14 @@ function setActive(i, scroll = false) {
 }
 
 /** Focus trap: Tab/Shift+Tab cycle inside the modal (or inside the open
- *  calendar popover), never escaping to the background chat area. */
+ *  calendar popover / 手机层日期滚轮), never escaping to the background chat area. */
 function trapFocus(e) {
-  const scope = calOpen
+  // 手机层滚轮 = timeWheel 面板（body 直挂，自带 spinbutton 键盘契约与 ESC 收场）
+  // ⇒ calOpen 且滚轮在场时把焦点圈收在它身上。
+  const wheel = /** @type {HTMLElement|null} */ (document.querySelector('.tw-panel.in'));
+  const scope = wheel || (calOpen
     ? document.getElementById('search-date-popover')
-    : document.getElementById('search-modal');
+    : document.getElementById('search-modal'));
   if (!scope) return;
   const focusables = /** @type {HTMLElement[]} */ ([...scope.querySelectorAll('button, input, select, [tabindex="0"]')])
     .filter(el => !(/** @type {HTMLButtonElement} */ (el).disabled) &&
@@ -1441,20 +1512,40 @@ function activeToolFilter() {
   return currentTab === 'all' ? (selectById('search-tool')?.value || '') : '';
 }
 
-/** 手机层 P2 角色筛选缝（mobile-secondary-screens 实施批；v3.6 作者裁定②的
- *  角色档：全部来源/用户/助手/AI/工具）。档值只由手机层 js/mobile/searchFace.js
- *  写入 window.__mhSearchKind（'' = 全部来源）；桌面路径恒 undefined ⇒ 恒真，
- *  零行为改动。词表 = data-kind 同款（user|agent|ai|tool）。 */
-function matchesKind(m) {
-  const kind = (typeof window !== 'undefined' && /** @type {any} */ (window).__mhSearchKind) || '';
-  return !kind || m.kind === kind;
+/** 来源筛选（search-page-density 批 2026-11-21 作者令①②）：来源 chips 是**唯一**
+ *  来源筛选点。原手机层角色 select（`#mh-search-kind`：全部来源/用户/助手/AI）
+ *  与 chips 行功能重复，整件退役 —— 档值随之从 window.__mhSearchKind 缝收回到
+ *  本模块的 `currentSource`（chips 本来就有的那一份状态，零第二状态点）。
+ *  词表 = chips 三档：'' 全部来源（不筛）/ 'user' 用户行 / 'agent' 助手行。
+ *  行级映射：用户 ⇒ m.kind==='user'；助手 ⇒ m.kind==='ai'（messageKind 把
+ *  ai/agent/ask 三型归一为 'ai'，显示名就是「助手」）。
+ *  生效范围 = chips 在场（sourceChipsVisible）：手机层恒在场；桌面只在类型网格档
+ *  在场 ⇒ 桌面「全部」档仍由 scope/agent/tool 三枚 select 负责，零行为漂移。 */
+function matchesSource(m) {
+  if (!sourceFilterActive()) return true;
+  return currentSource === 'user' ? m.kind === 'user' : m.kind === 'ai';
+}
+
+/** chips 在场判据（= 来源筛选可用判据）。 */
+function sourceChipsVisible() {
+  return isMobileLayer() || MEDIA_TABS.includes(currentTab);
+}
+
+/** 来源筛选正在改变结果集（chips 在场且选了具体档）。 */
+function sourceFilterActive() {
+  return !!currentSource && sourceChipsVisible();
+}
+
+/** 手机层判据：`body.mobile-layer` 是手机层唯一开关（样式面同源）。 */
+function isMobileLayer() {
+  return document.body.classList.contains('mobile-layer');
 }
 
 /** Filtered + display-sorted view: timestamped newest-first, untimestamped
  *  (ts=0: tool/ask/agent) last by reverse document order. */
 function buildView(all) {
   const toolSel = activeToolFilter();
-  const arr = all.filter(m => matchesTab(m) && matchesTool(m, toolSel) && matchesKind(m));
+  const arr = all.filter(m => matchesTab(m) && matchesTool(m, toolSel) && matchesSource(m));
   arr.sort((a, b) => ((b.ts || 0) - (a.ts || 0)) || (b.ord - a.ord));
   return arr;
 }
@@ -1861,7 +1952,7 @@ function applyIndexResults(body, sessions, sessionNameById, mySeq, statusEl, res
     const kind = h.kind === 'tool' ? 'tool' : ((h.extra && h.extra.role) || 'ai');
     const m = { kind, tool: (h.extra && h.extra.tool) || '' };
     if (!matchesTool(m, toolSel)) continue;
-    if (!matchesKind(m)) continue; // 手机层角色筛选缝（桌面恒真）
+    if (!matchesSource(m)) continue; // 来源 chips 筛选（chips 不在场时恒真）
     rows.push({
       sessionId: h.sid,
       sessionName: nameOf(h.sid),
@@ -2215,7 +2306,7 @@ async function runSearch() {
         if (m.kind === 'tool') continue;
         if (!matchesTab(m)) continue;
         if (!matchesTool(m, toolSel)) continue;
-        if (!matchesKind(m)) continue; // 手机层角色筛选缝（桌面恒真）
+        if (!matchesSource(m)) continue; // 来源 chips 筛选（chips 不在场时恒真）
         if (!m.text.toLowerCase().includes(kwLower)) continue;
         results.push({
           sessionId: session.id,
@@ -2469,8 +2560,13 @@ function statusSummary() {
     ? convScope.name
     : (document.body.classList.contains('mobile-layer') ? t('search.scopeMain') : '');
   const pager = streamMode === 'search' ? searchPager : null;
-  const total = pager ? pager.total : lastTotal;
-  const loaded = pager ? pager.loaded : lastTotal;
+  // 来源筛选生效 ⇒ 读数 = 屏上可见条目（2026-11-21 批：筛选后的计数必须与所见
+  // 一致，不报未过滤的 pager.total）；未筛选 ⇒ 既有分页口径逐值不变。
+  const scoped = sourceFilterActive();
+  const total = scoped
+    ? (MEDIA_TABS.includes(currentTab) ? filteredEntries().length : lastResults.length)
+    : (pager ? pager.total : lastTotal);
+  const loaded = scoped ? total : (pager ? pager.loaded : lastTotal);
   // 还有未取命中 ⇒ 报「已加载 N/M 条」（可继续下翻到最早一条）；取尽 ⇒ 报总数。
   const count = (pager && total > loaded)
     ? t('search.loadedOf', { n: loaded, m: total })
@@ -2725,33 +2821,95 @@ function buildTabBar() {
 //     searchSourceChips owns only the source-filter row and exposes sync/unmount.
 //   chatSearch owns search data, query scheduling, result rendering, calendar
 //     staging, keyboard focus/roving navigation and result-to-chat navigation.
-//   Mobile searchFace only pins scope and contributes its role select; it calls
-//     the compatibility scheduleSearch() method rather than owning search logic.
+//   Mobile adapters call the compatibility scheduleSearch() method rather than
+//     owning search logic; the former mobile/searchFace.js was RETIRED in the
+//     search-page-density batch (2026-11-21) — its two duties (pin scope to the
+//     main session + seat 「选择文件」 inline) are this module's own (face
+//     ownership = path prefix; the mobile face must not query search-face DOM).
 // Method compatibility surface: initChatSearch, openSearchModal, closeSearchModal,
 // scheduleSearch and stageConvScope remain the integration methods.
 
-/** Mount the source-chip component; query/filter behavior remains here. */
+/** Mount the source-chip component; query/filter behavior remains here.
+ *  search-page-density 批（2026-11-21）：chips 挂在自有的 `#search-filter-row`
+ *  行容器里 —— 手机层「选择文件」钮由本模块 seatSelectFilesInline() 搬进同一行，
+ *  桌面端该行只装 chips（几何与改前一致：仍是 .search-controls 内一行）。
+ *  来源档改变 ⇒ 就地重绘当前视图（零重取、零改分页状态）。 */
 function mountSourceChips() {
   const controls = /** @type {HTMLElement|null} */ (document.querySelector('#search-modal .search-controls'));
   if (!controls || sourceChips) return;
-  sourceChips = mountSearchSourceChips(controls, {
+  let row = document.getElementById('search-filter-row');
+  if (!row) {
+    row = document.createElement('div');
+    row.id = 'search-filter-row';
+    row.hidden = true;
+    controls.appendChild(row);
+  }
+  sourceRowEl = row;
+  sourceChips = mountSearchSourceChips(row, {
     getSource: () => currentSource,
     onChange: (source) => {
       currentSource = source;
       syncSourceChips();
-      // Re-filter from the already-fetched entries — no refetch.
-      if (MEDIA_TABS.includes(currentTab)) {
-        const resultsEl = document.getElementById('search-results');
-        const statusEl = document.getElementById('search-status');
-        if (resultsEl && statusEl) { clearResults(resultsEl); renderMediaGrid(resultsEl, statusEl); }
-      }
+      rerenderForSource();
+      logEvent('p2-source-filter', { source });
     },
   });
 }
 
+/** 手机层同行化（作者令②）：把「选择文件」钮收进来源 chips 行。
+ *  由**本模块**（`#search-modal` 这座 DOM 的属主）对外提供 —— 手机层
+ *  手机层 adapter（原 mobile/searchFace.js，本批退役）曾直查本面的 `#search-*`
+ *  节点 —— 那是 R2 cross-face-dom 违规（面归属 = 路径前缀，mobile 模块碰
+ *  `#search-*` 即红），故落点收回属主，adapter 随之整件删除。
+ *  幂等：已在行内 / 行或钮缺席 = 零动作。 */
+export function seatSelectFilesInline() {
+  const row = document.getElementById('search-filter-row');
+  const selectFiles = document.getElementById('search-select-files');
+  if (!row || !selectFiles || selectFiles.parentElement === row) return false;
+  row.appendChild(selectFiles);
+  return true;
+}
+
+/** 手机层恒主会话（v3.6 裁定②）：默认落 current 档。
+ *  同样由属主对外提供 —— 手机层不直查 `#search-scope`。幂等。 */
+export function pinScopeToCurrent() {
+  const scope = /** @type {(HTMLElement & {value: string})|null} */ (document.getElementById('search-scope'));
+  if (!scope || scope.value === 'current') return false;
+  scope.value = 'current';
+  return true;
+}
+
+/** 来源档改变后的就地重绘：
+ *   · 关键字检索档（streamMode='search'）⇒ 重跑检索（筛选谓词在命中收集面 ——
+ *     lastResults 的行不带原始 `all`，不能靠 rebuild 视图）；
+ *   · 类型网格档 ⇒ 重画网格（条目全在手，零取数）；
+ *   · 浏览/锚点档 ⇒ 各会话视图按新谓词重算后整面重绘（零取数）。
+ *  三条腿都不动 searchPager / 游标状态：来源筛选是视图谓词，不是数据谓词。 */
+function rerenderForSource() {
+  const resultsEl = searchResultsEl;
+  const statusEl = searchStatusEl;
+  if (!resultsEl || !statusEl) return;
+  if (streamMode === 'search') { triggerSearch(); return; }
+  if (MEDIA_TABS.includes(currentTab)) {
+    clearResults(resultsEl);
+    renderMediaGrid(resultsEl, statusEl);
+    return;
+  }
+  for (const s of streamSessions) {
+    s.view = buildView(s.all);
+    s.start = 0;
+    s.end = s.view.length;
+  }
+  buildModel();
+  renderStreamFresh(resultsEl, statusEl);
+}
+
 /** Keep the component state synchronized without exposing its internal DOM. */
 function syncSourceChips() {
-  sourceChips?.sync({ visible: MEDIA_TABS.includes(currentTab) });
+  const visible = sourceChipsVisible();
+  sourceChips?.sync({ visible });
+  // 行容器由 mountSourceChips 现装并持有引用（零新增跨面直查）。
+  if (sourceRowEl) sourceRowEl.hidden = !visible;
 }
 
 /** All index entries across the loaded sessions. */
