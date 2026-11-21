@@ -183,7 +183,8 @@ object LlmKernel:
       case CandidateSource.NebulaChain =>
         registry.getCandidatesForAgent(nebflow.core.SchemePolicy.nebulaChain())
       case CandidateSource.Slot(agentModel) =>
-        registry.getCandidatesForAgent(agentModel)
+        // 统一模型层（P1）：候选构造收口到 ModelDecision（与 resolveRequest 同一出口）。
+        nebflow.llm.ModelDecision.candidatesOf(registry, agentModel)
       case CandidateSource.Explicit(list) =>
         IO.pure(list)
       case CandidateSource.DecisionRoute(name) =>

@@ -456,29 +456,9 @@ case class SharedResources(
    * 零新选择路径）；配置源 = `providerRegistry.currentConfig`（同一份热读 configRef）。
    */
   private[agent] def assignFallbackChain(actorId: String, agentDef: AgentDef): IO[Option[nebflow.llm.PinnedChain]] =
-    if providerRegistry == null then
-      nebflow.llm.ProviderConcurrency
-        .logAssign(actorId, agentDef.name, None, None, Some("registry-absent"))
-        .as(None)
-    else
-      for
-        cfg <- providerRegistry.currentConfig
-        chain <- providerRegistry.getCandidatesForAgentUnfiltered(agentDef.model)
-        configuredHead = chain.headOption.map(c => s"${c.providerId}/${c.model}")
-        pin <- nebflow.llm.ProviderConcurrency.assign(
-          providerConcurrency,
-          cfg,
-          actorId,
-          chain.map(c => c.providerId -> c.model)
-        )
-        _ <- nebflow.llm.ProviderConcurrency.logAssign(
-          actorId,
-          agentDef.name,
-          pin,
-          configuredHead,
-          Some(if chain.isEmpty then "empty-chain" else "all-full")
-        )
-      yield pin
+    nebflow.llm.ModelDecision
+      .spawnPin(providerRegistry, providerConcurrency, actorId, agentDef.name, agentDef.model)
+      .map(_.pin)
 
   /**
    * 钉链失效判读（model-404-freeze 批 2026-11-07）——纯判据在
