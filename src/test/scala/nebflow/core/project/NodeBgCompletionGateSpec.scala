@@ -361,6 +361,12 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
 
+  // 桩 LLM 首轮应答 = 请求首行。节点 spawn 输入现含 PromptCatalog.Shared.WorktreeDiscipline
+  // 纪律块（有意注入，PromptCatalog.scala:377），其首行即桩应答；旧 createNode 任务文本不再
+  // 出现在首行，期望随之更新为该注入首行（断言强度不变）。
+  private val injectedDisciplineFirstLine: String =
+    "Worktrees and temporary artifacts: use <project>/.stand/worktrees/<wt> and <project>/.stand/tmp/<wt>/{delivery,evidence}; validate the manifest in the linked worktree."
+
   // ── G1 三态·无后台：立即完成（现状零变化）────────────────────
 
   test("G1: node without background tasks completes immediately (zero behavior change)") {
@@ -384,7 +390,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(a.status, NodeLifecycle.Completed, "no-bg node must complete immediately")
-      assertEquals(a.result, Some("result-PLAIN"))
+      assertEquals(a.result, Some(injectedDisciplineFirstLine))
       assert(imms.exists(_.text.contains("[Node 'plain-a' completed]")), "delivery must happen immediately")
       assertEquals(jobs, Nil, "no bg task registered in this test")
     end for
@@ -731,7 +737,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(done.status, NodeLifecycle.Completed, "sealed gate: a pending wait-set task must not hold the node")
-      assertEquals(done.result, Some("result-SEALED"), "first-turn text finalizes immediately")
+      assertEquals(done.result, Some(injectedDisciplineFirstLine), "first-turn text finalizes immediately")
       assert(imms.exists(_.text.contains("[Node 'sealed-a' completed]")), "delivery is not delayed by the bg task")
       assert(waiting.nonEmpty, "the wait-set task was registered and present (evidence the gate is what changed)")
       assert(!events.exists(_.contains("\"bg-wait\"")), "no bg-wait hold event may be emitted when sealed")
