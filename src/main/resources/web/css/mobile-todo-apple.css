@@ -698,6 +698,13 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-option 
   gap: 12px;
   min-height: 44px;
 }
+/* 选项长说明（决策选项 {id,title,detail} 的 detail 段；作者 2026-11-21 23:48 报障
+   同一处渲染修复的配套：标题与说明分两段显示，说明用次级文字色）。 */
+body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-option-detail {
+  font-size: var(--mfs-sub);
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-status,
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-submit { color: var(--color-text-muted); }
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-submit {
@@ -1385,6 +1392,14 @@ body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt-body 
 body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt-label {
   font-size: var(--mfs-sub);
   color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+/* 同族：快速决策卡里的选项长说明段（`.ta-decision-option-detail` 的卡片侧对应）。 */
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt-detail {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--mfs-sub);
+  color: var(--color-text-muted);
   overflow-wrap: anywhere;
 }
 /* ── ⑥ 悬浮控件带（作者令 2026-11-21 ⑥：输入框等控件悬浮 —— floating bar，

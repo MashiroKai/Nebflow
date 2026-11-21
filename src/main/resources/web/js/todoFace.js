@@ -1047,6 +1047,12 @@ class TodoFace {
     // ⑤ 关标签窗的那一次点按不兼任「开新建行」（见 bindTagPopoverDismiss）
     const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     if (this.tagDismissAt && now - this.tagDismissAt < 400) { this.tagDismissAt = 0; return; }
+    // ⓪ 编辑中点空白区 = 落盘收起该条（点外部收起；编辑面板/行内控件内的点击不算外部）
+    if (this.editingId != null && !this.creating) {
+      const t0 = e.target;
+      if (!(t0 && t0.closest && t0.closest('.tfl-row, .tfl-edit-panel, button, input, textarea, a, [role="button"]'))) this.saveEditing();
+      return;
+    }
     // ① 互斥：创建行在开 / 任一输入框聚焦 ⇒ 不打断不重开
     if (this.creating || this.editingId != null) return;
     const active = document.activeElement;
@@ -1409,6 +1415,7 @@ class TodoFace {
         e.preventDefault();
         e.stopPropagation();
         const open = detail.hidden;
+        if (open) this.collapseOtherRowDetails(row);
         detail.hidden = !open;
         foldBtn.setAttribute('aria-expanded', String(open));
         row.classList.toggle('tfl-row-open', open);
@@ -1427,10 +1434,11 @@ class TodoFace {
     // 点击行体：手机腿 = 原位浮出**互动框**（impl-row-reply 批 2026-11-06 ③，
     // 不再跳详情/编辑页）；桌面腿 = 进编辑（展开+聚焦统一入口；编辑态点击文本区
     // = 保存收起）。
+    // 桌面：点别的行 = startEditing 内先落盘收起上一条（accordion，同一时间只编一条）。
     if (!editing) {
       main.addEventListener('click', () => {
         if (this.mobile) this.toggleItemBox(item.id);
-        else if (!this.editingId) this.startEditing(item.id);
+        else this.startEditing(item.id);
       });
     }
     row.appendChild(main);
@@ -1479,6 +1487,7 @@ class TodoFace {
     main.addEventListener('click', (e) => {
       if (detail.contains(/** @type {Node} */ (e.target))) return;
       const open = detail.hidden;
+      if (open) this.collapseOtherRowDetails(row);
       detail.hidden = !open;
       row.classList.toggle('tfl-row-open', open);
     });
@@ -2024,6 +2033,8 @@ class TodoFace {
   startEditing(id) {
     if (this.creating) this.saveCreate(); // 互斥：先保存收起创建行（复刻）
     if (this.editingId === id) { this.saveEditing(); return; }
+    // accordion：另一条正在编辑 ⇒ 先落盘收起它，再开新的（否则点别的行无反应，编辑态卡死）
+    if (this.editingId) this.saveEditing();
     this.editingId = id;
     this.selectedId = id;
     this.expandedJustRendered = true;
@@ -2047,6 +2058,18 @@ class TodoFace {
     this.expandedJustRendered = true;
     this.renderRows();
     this.refocusList();
+  }
+
+  /** 桌面 accordion：展开某条详情/问题卡前，收起列表内其它已展开条目（同一时间只开一条）。 */
+  collapseOtherRowDetails(keepRow) {
+    for (const r of this.listInner.querySelectorAll('.tfl-row.tfl-row-open')) {
+      if (r === keepRow) continue;
+      r.classList.remove('tfl-row-open');
+      const d = r.querySelector(':scope > .tfl-row-main > .tfl-row-detail');
+      if (d) d.hidden = true;
+      const f = r.querySelector('.tfl-row-fold');
+      if (f) f.setAttribute('aria-expanded', 'false');
+    }
   }
 
   /** 创建行当前宿主（手机腿 = 底部抽屉；桌面腿 = 列表流内）。单一取值口：

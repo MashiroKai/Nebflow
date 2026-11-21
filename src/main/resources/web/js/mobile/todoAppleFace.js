@@ -32,7 +32,7 @@ import { createIconsIn, looksLikeMarkdown, renderMarkdownWithMath } from '../uti
 import { setHtmlTree } from '../dom.js';
 import { bindMdExtGate } from '../mdLinkGate.js';
 import { todoStore, TAG_COLOR_PRESETS, PRIORITY_COLORS } from '../todoStore.js';
-import { isAskRow, buildAskCardForRow } from '../askTodoQuestion.js';
+import { isAskRow, buildAskCardForRow, decisionOptionLabel, decisionOptionDetail } from '../askTodoQuestion.js';
 import { bindImeGuard, commitEnter } from '../imeGuard.js';
 import state from '../state.js';
 // 次级 LLM 输入框唯一模板（todo-mobile 批 2026-11-18 作者令）：详情页「回复这个
@@ -966,12 +966,18 @@ function buildList(root, section, nav) {
         elIn(detail, 'div', 'ta-decision-question', String(it.decision.question || ''));
         const options = Array.isArray(it.decision.options) ? it.decision.options : [];
         options.forEach((option) => {
+          // 选项真源形 = {id,title,detail,media}：取 title（有 detail 附一行），
+          // 解不出标签的选项跳过；全部为空 ⇒ 不渲染任何选项行（不落 [object Object]）。
+          const text = decisionOptionLabel(option);
+          if (!text) return;
           const label = elIn(detail, 'label', 'ta-decision-option');
           const input = document.createElement('input');
           input.type = it.decision.multiSelect ? 'checkbox' : 'radio';
           input.disabled = true;
           label.appendChild(input);
-          elIn(label, 'span', '', String(option));
+          elIn(label, 'span', '', text);
+          const sub = decisionOptionDetail(option);
+          if (sub) elIn(label, 'span', 'ta-decision-option-detail', sub);
         });
         bodyBtn.addEventListener('click', () => {
           detail.hidden = !detail.hidden;
@@ -1498,7 +1504,7 @@ function buildQuick(root, section) {
   const pickedLabels = (item) => {
     const opts = item && item.decision && Array.isArray(item.decision.options) ? item.decision.options : [];
     return [...selectedSet(item.id)].sort((a, b) => a - b)
-      .map((i) => (opts[i] == null ? '' : String(opts[i]))).filter(Boolean);
+      .map((i) => decisionOptionLabel(opts[i])).filter(Boolean);
   };
   /** 作答正文合成（回传链路的单点）：纯手输 ⇒ 逐字；带选中 ⇒ `输入（选项…）`；
    *  只点选不输入 ⇒ 选中项本身（作者令 ③ 端到端「点选 → 回传」得以闭环）。
@@ -1752,7 +1758,9 @@ function buildQuick(root, section) {
     input.name = `ta-qd-${item.id}`;
     input.checked = selectedSet(item.id).has(i);
     const body = el('span', 'ta-qd-opt-body');
-    body.appendChild(el('span', 'ta-qd-opt-label', String(option)));
+    body.appendChild(el('span', 'ta-qd-opt-label', decisionOptionLabel(option)));
+    const sub = decisionOptionDetail(option);
+    if (sub) body.appendChild(el('span', 'ta-qd-opt-detail', sub));
     row.append(input, body);
     input.addEventListener('change', () => selectOption(item.id, i, input.checked, multi));
     return row;
@@ -1869,13 +1877,19 @@ function buildQuick(root, section) {
     if (dec) {
       if (dec.question) scroll.appendChild(el('div', 'ta-qd-q', String(dec.question)));
       const options = Array.isArray(dec.options) ? dec.options : [];
-      if (options.length) {
+      // 只渲染解得出标签的选项（真源形 = {id,title,detail,media}）；下标沿用原序，
+      // 选中态/回传按原始选项序寻址。全部为空 ⇒ 整段选项列表不渲染。
+      const renderable = options.filter((o) => !!decisionOptionLabel(o)).length;
+      if (renderable) {
         const list = el('div', 'ta-qd-opts');
         // Single-select → radiogroup; multi-select → checkbox group. Native
         // controls, same as the list page's decision rows (no second control
         // recipe); selection state is local view state.
         list.setAttribute('role', dec.multiSelect ? 'group' : 'radiogroup');
-        options.forEach((option, i) => { list.appendChild(optionRow(item, i, option, !!dec.multiSelect)); });
+        options.forEach((option, i) => {
+          if (!decisionOptionLabel(option)) return;
+          list.appendChild(optionRow(item, i, option, !!dec.multiSelect));
+        });
         scroll.appendChild(list);
       }
     }
