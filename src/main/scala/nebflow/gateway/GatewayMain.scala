@@ -2421,7 +2421,12 @@ object GatewayMain extends IOApp:
                                                             // 流面一字不碰——理由复核与 ETag 取舍见
                                                             // [[ApiGzipMiddleware]] 类头注。
                                                             "/api" -> ApiGzipMiddleware(
-                                                              chatRoutes.routes <+> restApiRoutes.routes <+> restApiRoutes
+                                                              chatRoutes.routes <+> restApiRoutes.routes <+> ConsoleTakeoverRoutes
+                                                                .routes(
+                                                                  gatewaySessions,
+                                                                  consoleTakeover,
+                                                                  logger
+                                                                ) <+> restApiRoutes
                                                                 .presenceWsRoutes(wsb) <+> StaticRoutes
                                                                 .pluginAssetsRoutes(
                                                                   tokenRef,

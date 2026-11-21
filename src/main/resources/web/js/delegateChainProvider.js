@@ -67,6 +67,8 @@ const observedTasks = new Map();
 const taskRequests = new Map();
 const taskListeners = new Set();
 let taskAuthEpoch = 0;
+/** 每根最近一次已落地快照的强 ETag（ETag-skip 判据；与 scopedTasks 同步清理）。 */
+const scopedEtags = new Map();
 
 export function listScopedTasks(rootSessionId) {
   return Array.from((scopedTasks.get(String(rootSessionId || '')) || new Map()).values());
@@ -87,7 +89,7 @@ function notifyTasks(rows) {
 /** A current authenticated request is the only authority for this root's rows. */
 export async function refreshScopedTasks(rootSessionId = state.activeSessionId) {
   const root = String(rootSessionId || '');
-  if (!root) return;
+  if (!root || state.consoleSuperseded) return;
   if (taskRequests.has(root)) return taskRequests.get(root);
   const epoch = taskAuthEpoch;
   const request = (async () => {
@@ -106,13 +108,19 @@ export async function refreshScopedTasks(rootSessionId = state.activeSessionId) 
       if (response.status === 401 || response.status === 403) {
         taskAuthEpoch++;
         scopedTasks.clear();
+        scopedEtags.clear();
         observedTasks.clear();
         notifyTasks([]);
         return;
       }
-      if (!response.ok || epoch !== taskAuthEpoch) return;
+      if (!response.ok || epoch !== taskAuthEpoch || state.consoleSuperseded) return;
+      // CPU 修复批（2026-11-21）：同一根的 ETag 与上一次已落地的一致 ⇒ 载荷内容相同
+      // （服务端 ETag = 投影内容的强哈希），零 json() 解析、零逐行 diff、零广播。
+      // 只在「已落地且缓存仍在」时跳过，避免清缓存后的空白面被误判为未变。
+      const etag = (response.headers && typeof response.headers.get === 'function') ? response.headers.get('ETag') : null;
+      if (etag && scopedEtags.get(root) === etag && scopedTasks.has(root)) return;
       const body = await response.json();
-      if (epoch !== taskAuthEpoch || body.rootSessionId !== root || !Array.isArray(body.tasks)) return;
+      if (epoch !== taskAuthEpoch || state.consoleSuperseded || body.rootSessionId !== root || !Array.isArray(body.tasks)) return;
       const previous = scopedTasks.get(root) || new Map();
       const next = new Map();
       const changed = [];
@@ -139,6 +147,7 @@ export async function refreshScopedTasks(rootSessionId = state.activeSessionId) 
       // remove rows. Keep those invalidations while silencing unchanged polls.
       if (!changed.length && next.size === previous.size) return;
       scopedTasks.set(root, next);
+      if (etag) scopedEtags.set(root, etag); else scopedEtags.delete(root);
       notifyTasks(changed);
     } catch (_) { /* Keep the last good projection on transient failure. */ }
   })();

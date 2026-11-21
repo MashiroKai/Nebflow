@@ -217,8 +217,21 @@ function blockAtOrBefore(mdViewer, line) {
 let wikiIndexCache = null;
 const WIKI_INDEX_TTL = 30_000;
 
-async function wikiGraph() {
-  if (wikiIndexCache && Date.now() - wikiIndexCache.at < WIKI_INDEX_TTL) return wikiIndexCache.data;
+/** 在途请求合并（CPU 修复批 2026-11-21）：文档页首屏并发渲染多个 wikilink 块时，
+ *  缓存尚未落地，每个调用都会各发一次 ~7MB 的全量图谱（实测一拍 6 次突发 ≈ 42MB）。
+ *  同一时刻只允许一条在途请求，后来的调用共享其 promise；失败同样广播给全部等待者。 */
+/** @type {Promise<any>|null} */
+let wikiGraphInflight = null;
+
+function wikiGraph() {
+  if (wikiIndexCache && Date.now() - wikiIndexCache.at < WIKI_INDEX_TTL) return Promise.resolve(wikiIndexCache.data);
+  if (!wikiGraphInflight) {
+    wikiGraphInflight = fetchWikiGraph().finally(() => { wikiGraphInflight = null; });
+  }
+  return wikiGraphInflight;
+}
+
+async function fetchWikiGraph() {
   const { authHeaders } = await import('../flowHelpers.js');
   const res = await fetch('/api/wiki/graph', { headers: { ...authHeaders() } });
   if (!res.ok) {

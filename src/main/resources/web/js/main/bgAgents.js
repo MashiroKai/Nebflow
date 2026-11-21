@@ -1732,15 +1732,25 @@ function bgRowPlan(model, bucketSid) {
  */
 function bgPanelModel(bucketSid) {
   const bgAgents = { ...((bucketSid && state.sessionBgAgents[bucketSid]) || {}) };
+  // CPU 修复批（2026-11-21）：原实现对每个子任务线性扫一遍 Object.keys（O(n²)，实测
+  // 59% self-time）。改为一次性建索引：归一化会话 id → 首个命中的键（与原 find 同序取
+  // 第一个），本轮新写入的键同步登记，结果与原实现逐项一致。
+  const keyBySid = new Map();
+  const normSid = (v) => String(v || '').replace(/^team-/, '');
+  for (const key of Object.keys(bgAgents)) {
+    const sid = normSid(bgAgents[key]?.sessionId || key);
+    if (!keyBySid.has(sid)) keyBySid.set(sid, key);
+  }
   for (const child of listScopedTasks(bucketSid)) {
-    const existing = Object.keys(bgAgents).find(key =>
-      String(bgAgents[key]?.sessionId || key).replace(/^team-/, '') === child.taskId);
+    const existing = keyBySid.get(child.taskId);
     // Durable status wins; the existing key preserves management/click routing.
-    bgAgents[existing || child.taskId] = {
+    const target = existing || child.taskId;
+    bgAgents[target] = {
       ...(existing ? bgAgents[existing] : {}),
       ...bgScopeStoreInfo(child, child.parentSessionId),
       durableTask: true,
     };
+    if (!keyBySid.has(child.taskId)) keyBySid.set(child.taskId, target);
   }
   const entries = visibleBgAgentEntries(bgAgents);
   const { groups, leftovers, orphanBy } = bgDelegateGroups(entries, bucketSid);
@@ -3087,10 +3097,19 @@ export function clearBgStuck(msg) {
 // 节点子智能体可见性批（2026-11-07）：provider 镜像补拉到达 ⇒ 面板在开时重渲染
 // （帧只当触发器，零帧解读——与 delegateChainView / taskList 的同名监听同园口径）。
 // 只在合并载体开着时刷：关着不打扰（下一次打开会读到新镜像）。
+// CPU 修复批（2026-11-21）：镜像更新事件成串到达时（一拍内多条增量/补拉），每条都全量
+// 重算徽标与面板是 bgPanelModel 热点的放大器。改为尾沿防抖：窗口内只落一次重算，
+// 语义不变（读的是最新镜像，不丢更新）。
+const MIRROR_REFRESH_DEBOUNCE_MS = 120;
+let mirrorRefreshTimer = 0;
 if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
   window.addEventListener(EVENTS.DELEGATE_CHAIN_MIRROR_UPDATED, () => {
-    updateBgAgentIndicator(null, { keepDropdownOpen: true });
-    const dd = activeView && activeView.dom && activeView.dom.bgDropdownEl;
-    if (dd && !dd.classList.contains('hidden')) renderBgAgentDropdown();
+    if (mirrorRefreshTimer) return;
+    mirrorRefreshTimer = setTimeout(() => {
+      mirrorRefreshTimer = 0;
+      updateBgAgentIndicator(null, { keepDropdownOpen: true });
+      const dd = activeView && activeView.dom && activeView.dom.bgDropdownEl;
+      if (dd && !dd.classList.contains('hidden')) renderBgAgentDropdown();
+    }, MIRROR_REFRESH_DEBOUNCE_MS);
   });
 }

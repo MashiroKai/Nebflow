@@ -124,6 +124,9 @@ import { initMicOrb } from './micOrb.js';
 // 挂 liveSource + boot 首刷 + WS 触发防刷/重连对账。渲染面（taskList/delegateChainView
 // 读取口调用）零改动；夹具在场 = stub 读取口恒夹具优先（harness 兼容缝）。
 import { refreshScopedTasks, onDurableTasksChanged } from './delegateChainProvider.js';
+// 控制台单实例批（2026-10-27）：接管独占客户端腿——模块副作用 = 注册 takeover/
+// takeoverResult 帧消费 + 接管模态按钮接线（叶子模块，只依赖 ws.js/state/i18n）。
+import './takeoverModal.js';
 // keyboard-first 一期（2026-11-01）：键盘层引导 —— 模块副作用 = 建模式指示器 +
 // 注册 meta/edit 双模态直键 + 命令面板命令表（keymap.js / mode.js /
 // commandPalette.js / focusTrap.js 四件，入口仅此一行）。为什么走 import 而不是
