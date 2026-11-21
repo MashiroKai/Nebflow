@@ -86,7 +86,8 @@ object TaskStuckWatcher:
   val LoopFreezeReasonWire: String = "loop"
 
   /** 与 WebSocketRoutes.filterActiveAgents 相同的 task 集合（保持单一事实源意识）。 */
-  private val taskKinds = Set(AgentKind.Delegate, AgentKind.Flow, AgentKind.SubTask)
+  // B3：SubTask 换标后子代理会话即 Delegate（§4.1 衍生清单 3），集合不再需要该成员。
+  private val taskKinds = Set(AgentKind.Delegate, AgentKind.Flow)
 
   /**
    * 2026-09-10 卡死判据换轴（唯一判据事实源）：本 watcher 的扫描 + AgentControlTool

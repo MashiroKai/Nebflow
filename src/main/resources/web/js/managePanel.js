@@ -31,6 +31,8 @@ import { isBgAgentId } from './utils.js';
 import { wakeableOf, delegateFreezeIsInfra } from './freezeState.js';
 
 /** Kinds the user may stop/restart (AgentControl §4 operable bucket). */
+// 'SubTask' 自阶段 B3 换标后不再由引擎产出（子代理会话 = Delegate），保留该成员是
+// 对旧快照/旧盘行的兼容容忍（无副作用：新帧永不为该词）。
 export const OPERABLE_KINDS = new Set(['Delegate', 'SubTask', 'Ephemeral']);
 
 /** Read-only kinds get greyed buttons with a reason tooltip.

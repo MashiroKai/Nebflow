@@ -488,7 +488,10 @@ private[agent] object AgentFinishTurn:
               .fold(IO.unit) { sid =>
                 resources.agentRegistry.get.flatMap { registry =>
                   registry.get(sid) match
-                    case Some(rec) if rec.kind == AgentKind.SubTask && rec.parentSessionId.nonEmpty =>
+                    // B3：子代理会话换标为 Delegate ⇒ 判据收窄为「有父会话」；真正的
+                    // 分流在下面的任务行 source ∈ {subtask, subagent} 与 parentSessionId
+                    // 相等（真 Delegate 批次的行 source=delegate ⇒ 天然不进债面）。
+                    case Some(rec) if rec.parentSessionId.nonEmpty =>
                       resources.subAgentTaskStore.findByTaskId(sid).flatMap {
                         case Some(row)
                             if Set("subtask", "subagent").contains(

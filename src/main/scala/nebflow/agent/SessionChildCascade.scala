@@ -45,7 +45,8 @@ object SessionChildCascade:
       resources.agentRegistry.get.flatMap { registry =>
         val children = registry.values.filter { rec =>
           rec.parentSessionId == sessionId &&
-          (rec.kind == AgentKind.Delegate || rec.kind == AgentKind.SubTask)
+          // B3：SubTask 换标后子代理会话即 Delegate（§4.1 衍生清单 3）。
+          rec.kind == AgentKind.Delegate
         }.toList
         val classify = resources.executionCommitPort.candidates.flatMap {
           case Left(reason) => IO.raiseError(new IllegalStateException(s"execution-discovery-unavailable: $reason"))

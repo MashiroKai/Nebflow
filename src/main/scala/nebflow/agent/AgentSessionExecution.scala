@@ -2953,12 +2953,12 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             pluginPrefixes.exists(t.startsWith)
         )
     // Flow nodes are isolated leaves: no delegation tools and no team task-board
-    // tools left (TeamTask* retired in the B2 batch, so only the delegation set
-    // remains to strip). Mail stays available to team-category nodes. SubTask is
-    // retired globally.
+    // tools left (TeamTask* retired in the B2 batch; the SubTask tool name is inert
+    // after B3 — the blocking subagent entry point is `Subagent`, so only
+    // `Delegate` remains to strip). Mail stays available to team-category nodes.
     val categoryFiltered =
       if isFlowNode then
-        val leafStripped = mcpFiltered -- Set("SubTask", "Delegate")
+        val leafStripped = mcpFiltered - "Delegate"
         // 轨道二 #5（专用化护栏，设计 §C1）：T1 flow worker 默认剥离面向用户
         // 的展示类工具——引擎级剥离而非提示词恳求（deck-v6 实证：提示词约束在
         // 错位人设下会被推翻）。即使 agent.json 显式声明也扣掉；userFacing:true
@@ -3030,7 +3030,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     val withDelegateMail = if delegateSession then withDelegateFace + "Mail" else withDelegateFace
     // Strip only the two Ask-exclusive message/history tools from other roles.
     // Shared lookup tools and Bash retain their existing role permissions.
-    (withDelegateMail - "SubTask") -- nebflow.core.ask.AskSessions.AskExclusiveTools
+    // B3：`SubTask` 工具名已退役（不在注册表）⇒ 剥离集不再需要它。
+    withDelegateMail -- nebflow.core.ask.AskSessions.AskExclusiveTools
 
   end buildAllowedToolSet
 
