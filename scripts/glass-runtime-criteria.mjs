@@ -13,7 +13,7 @@
 //     · 该面被不透明层完全覆盖    ⇒ 它的贡献根本到不了最终画面，该样本**不可判**（豁免）
 //
 // 阈值**不在本文件写死**，由设计规范 §9 的机器可读块解析而来（design spec 即单源，
-// 见 glass-spec.md 的 ```glass-runtime-criteria 块）；本文件只是解析 + 判定逻辑。
+// 见 references/frontend/glass-runtime-spec.md 的 ```glass-runtime-criteria 块）；本文件只是解析 + 判定逻辑。
 // **禁止**在本文件或任一消费者里再抄一份数字。
 //
 // 用法：
@@ -23,8 +23,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
+// 仓内规范单源：references/frontend/glass-runtime-spec.md（§9.2 阈值块）。不再引用 seed/插件包路径。
 export const SPEC_PATH = fileURLToPath(new URL(
-  './../src/main/resources/seed/plugins/design-language/skills/design-language/references/glass-spec.md', import.meta.url));
+  '../references/frontend/glass-runtime-spec.md', import.meta.url));
 
 const FENCE = /```glass-runtime-criteria\r?\n([\s\S]*?)```/;
 

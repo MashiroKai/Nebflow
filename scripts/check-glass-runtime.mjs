@@ -92,7 +92,7 @@ if (!existsSync(join(WEB, 'index.html'))) {
 // `desktop-canvas-header-under-panel-backdrop-root` 已**撤除** —— 真缺陷已修，
 // 不再需要豁免。修法 = 把壳的模糊从 `#canvas-panel` 挪到 `#canvas-panel::before`
 // （伪元素不是表头的祖先 ⇒ 不切断；见 css/split.css「材质层重排」注 +
-// glass-spec.md §9）。该条的反证（坏源码直跑必须报红）见批证据目录
+// references/frontend/glass-runtime-spec.md §9）。该条的反证（坏源码直跑必须报红）见批证据目录
 // `~/<evidence-root>/glass-desktop-header-20261118/`：改前树直跑 exit 1
 //（R2 × 6 条 violation 指 `#canvas-panel`），改后树 exit 0。
 // 注意：本闸的 desktop-canvas 腿自本批起渲染正文并把首行滚到表头之下 —— 空面板的

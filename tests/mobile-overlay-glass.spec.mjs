@@ -391,7 +391,7 @@ test('G3 true see-through: the composer glass shows real, blurred backdrop conte
 });
 
 // ── 严格腿 G3s：真透过的**像素判据**（判据**单源**：与运行时闸 R1 共用
-//    `scripts/glass-runtime-criteria.mjs`；阈值来自设计规范 §9 的 ```glass-runtime-criteria 块，
+//    `scripts/glass-runtime-criteria.mjs`；阈值来自references/frontend/glass-runtime-spec.md §9.2 的 ```glass-runtime-criteria 块，
 //    本文件**零阈值拷贝**）──────────────────────────────────────────────────────
 //
 // 不变式：**玻璃贡献只在背后样本可判时才成立** ——
