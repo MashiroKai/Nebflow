@@ -83,11 +83,46 @@ private[gateway] object SessionRoutes:
           }
         }
 
-      // Session history
+      // Session history — **paged** (手机面板卡顿修复批 2026-11-21 · 根因二b).
+      //
+      // 修前本腿写死 `getUiMessages(sessionId, 0, 0)`（`limit=0` = 不限量）⇒ 客户端
+      // 传 `?limit=50` 与不传**字节完全相同**（实测 10 991 449B / 1600+ 条），前端
+      // 只能整取后自己切页（chatSearch.js `fetchHistory` 头注自陈「backend ignores
+      // unknown params today」）。超长会话在手机隧道腿上就是每开一次搜一次拉 11MB。
+      //
+      // 现按 WS 历史腿**同一档**归一（`WsSessionChatHandlers.clampHistoryLimit`：
+      // 缺省 50、上限 500、坏值不惩罚）——两条历史读面单一口径，不新增第二套页码语义。
+      //   · `limit` 缺席 ⇒ [[DefaultHistoryPage]]（**行为变更**：修前是「全部」）；
+      //     要全量的旧消费方显式传 `limit=all`（或 `0`），这两者是本腿的显式
+      //     「不限量」拼写，与 clampHistoryLimit 的 `<=0 → 默认` 故意分叉：REST 腿
+      //     的历史消费方里有整表扫描用途（导出/索引重建），不能把它们静默截断。
+      //   · `offset` 缺席 ⇒ 0（正向分页起点，与 `SessionStore.getUiMessages` 同义）。
+      //   · 应答**只增不减**：`messages`/`total`/`sessionId` 三键逐字保留，新增
+      //     `offset`/`limit`/`hasMore` 三键（加宽纪律，旧前端零改动可用）。
       case req @ GET -> Root / "sessions" / sessionId / "history" =>
         withAuth(req) {
-          sessionStore.getUiMessages(sessionId, 0, 0).flatMap { case (messages, total) =>
-            Ok(Json.obj("messages" -> messages.asJson, "total" -> total.asJson, "sessionId" -> sessionId.asJson))
+          val rawLimit = req.params.get("limit")
+          // `limit=all` / `limit=0` = this leg's explicit "no limit" spelling (bulk
+          // readers: export, index rebuild). Everything else normalizes through the
+          // WS leg's own clamp — one paging vocabulary, not two.
+          val unlimited = rawLimit.exists(v => v == "all" || v.trim == "0")
+          val limit =
+            if unlimited then 0
+            else WsSessionChatHandlers.clampHistoryLimit(rawLimit.flatMap(_.toIntOption))
+          val offset = req.params.get("offset").flatMap(_.toIntOption).filter(_ >= 0).getOrElse(0)
+          sessionStore.getUiMessages(sessionId, offset, limit).flatMap { case (messages, total) =>
+            val start = math.min(offset, total)
+            val returned = messages.size
+            Ok(
+              Json.obj(
+                "messages" -> messages.asJson,
+                "total" -> total.asJson,
+                "sessionId" -> sessionId.asJson,
+                "offset" -> start.asJson,
+                "limit" -> limit.asJson,
+                "hasMore" -> (start + returned < total).asJson
+              )
+            )
           }
         }
 
