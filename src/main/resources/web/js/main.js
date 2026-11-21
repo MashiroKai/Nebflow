@@ -1892,10 +1892,7 @@ onMessage('modelUnavailable', (msg, view) => {
   // ——任何槽共用同一张（`msg.slot` 是载荷字段）。best-effort 追加进当前会话流
   // （容器缺失 = 不抛，卡仍可就地由调用方挂载）。
   try {
-    const host =
-      document.getElementById('chat-stream') ||
-      document.querySelector('.chat-stream') ||
-      document.getElementById('messages');
+    const host = llmFailureHost();
     const card = renderModelUnavailable(msg);
     if (host && card) host.appendChild(card);
     else console.warn('[modelUnavailable] no chat container; card not mounted', msg && msg.slot);
@@ -1907,10 +1904,9 @@ onMessage('modelUnavailable', (msg, view) => {
 // LLM 失败卡片（卡片批 2026-11-21；第 3 轮：聚合键 = 层级+模型）：非阻塞。llmFailure 出卡/更新
 // （同层级同模型组整体替换，卡上列出受影响代理）；llmFailureRecovered 组清空后收卡。
 // 换模型经 saveSlotPreferredModel（与设置页同一写入口）。
+// 消息流容器 = #chat（index.html；与 chat.js/main.js 其它渲染同口径）。
 function llmFailureHost() {
-  return document.getElementById('chat-stream') ||
-    document.querySelector('.chat-stream') ||
-    document.getElementById('messages');
+  return document.getElementById('chat');
 }
 onMessage('llmFailure', (msg) => {
   try {
