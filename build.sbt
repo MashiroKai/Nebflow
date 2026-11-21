@@ -72,6 +72,16 @@ lazy val root = (project in file("."))
       if (sys.props.contains(prop) && (d / "web-dist" / "index.html").exists()) Seq(d)
       else Seq.empty
     },
+    // 发布态必须 dist 且 fresh（2026-11-21）：装配带 webdist 属性时，资源收集前先经
+    // `build-web.mjs --ensure` 判内容新鲜度——源已变即就地重打包；打包失败 ⇒ 装配失败，
+    // 绝不把过期 dist 静默打进 jar。CI 的显式 build-web 步骤仍在前，本闸是同款兜底。
+    Compile / unmanagedResources := (Compile / unmanagedResources).dependsOn(Def.task {
+      val base = baseDirectory.value
+      if (sys.props.contains(s"${BrandingBuild.lowerName}.webdist")) {
+        val rc = scala.sys.process.Process(Seq("node", "scripts/build-web.mjs", "--ensure"), base).!
+        if (rc != 0) sys.error(s"web-dist freshness ensure failed (node scripts/build-web.mjs --ensure, rc=$rc)")
+      }
+    }).value,
     scalaVersion := "3.5.2",
     libraryDependencies ++= Seq(
       // CLI
