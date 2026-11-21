@@ -215,6 +215,10 @@ Author ruling, verbatim: 「除了我们这些固定的分支之外，就是在�
 2. **Cap: at most 10 in-use worktree branches.** When the count exceeds 10, each excess branch must
    either be **merged** into `feat/base` (landing, then reclaim the tree under rule 2 above) or
    **cleaned up** (tree removed and branch retired). Neither may wait indefinitely.
+   Exception to "the branch is always kept" (rule 2 above): a patch-equivalent branch
+   (`git cherry feat/base <branch>` shows 0 unlanded patches) that has been explicitly authorized
+   may be deleted with `git branch -D`. Re-run the `git cherry` check immediately before each
+   deletion; skip and record any branch that is no longer at 0.
 3. **Retirement of merged branches.** This cap ruling refines rule 2 above for branches whose tip is
    an ancestor of `feat/base`: after `git worktree remove` (never `--force`), `git branch -d` (never
    `-D`) may retire the branch. Branches not merged into `feat/base` are not retired by this rule
