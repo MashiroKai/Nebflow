@@ -168,6 +168,27 @@ class ConsoleTakeoverSameEndSpec extends CatsEffectSuite:
       assertEquals(cleared.map(_.hcursor.downField("type").as[String].getOrElse("?")), List("takeover"),
         "清账后回连仍由既有 past 分支给一次 superseded 通知（非补推账）")
 
+  test("W7 pending ledger survives an engine restart: the missed notice is replayed after reboot"):
+    val path = java.nio.file.Files.createTempDirectory("tbf-pending").resolve("console-takeover-pending.json")
+    for
+      sent1 <- Ref.of[IO, List[(String, Json)]](Nil)
+      reg1 = new ConsoleTakeover(
+        (c, j) => sent1.update(_.prepended((c, j))), logger, pendingStorePath = Some(path))
+      _ <- reg1.onConnect(sidPhone, "conn-phone-1", meta(cidPhone, uaPhone))
+      _ <- reg1.onDisconnect("conn-phone-1")
+      _ <- reg1.onConnect("sid-desk-1", "conn-desk-1", meta("desk-cid-1", uaDesk)) // 电脑接管，手机离线
+      fileExists <- IO(java.nio.file.Files.exists(path))
+      // 引擎重启：新实例、同一账本文件，旧内存全部丢弃
+      sent2 <- Ref.of[IO, List[(String, Json)]](Nil)
+      reg2 = new ConsoleTakeover(
+        (c, j) => sent2.update(_.prepended((c, j))), logger, pendingStorePath = Some(path))
+      _ <- reg2.onConnect(sidPhone, "conn-phone-2", meta(cidPhone, uaPhone))
+      phone2 <- framesTo(sent2, "conn-phone-2")
+    yield
+      assert(fileExists, "接管时账本已原子落盘")
+      assertEquals(phone2.map(_.hcursor.downField("type").as[String].getOrElse("?")), List("takeover"),
+        "引擎重启后补推仍生效（账本从盘读回）")
+
   test("W5 noteActivity keeps a watching incumbent live — the takeover frame IS pushed then"):
     for
       (reg, sent) <- fixture(activityTtlMs = 200L)

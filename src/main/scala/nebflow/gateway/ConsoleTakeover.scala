@@ -166,7 +166,12 @@ final class ConsoleTakeover(
    */
   activityTtlMs: Long = ConsoleTakeover.ActivityTtlMs,
   /** 自动化端观察位开关（同端判据批 C；缺省读 env，spec 可显式开/关）。 */
-  automationSpectator: Boolean = ConsoleTakeover.automationSpectator
+  automationSpectator: Boolean = ConsoleTakeover.automationSpectator,
+  /**
+   * 补推账落盘路径（2026-11-21 作者裁定 5「错过事件不能静默丢」）：None = 纯内存（spec 缺省）；
+   * 生产 = `<dataRoot>/console-takeover-pending.json`。启动时同步读回，每次账变更原子写盘。
+   */
+  pendingStorePath: Option[java.nio.file.Path] = None
 ):
   // Default domain combines console control and shared Canvas; subject to author review.
   // Both console ownership and Canvas fencing live in this single authoritative record.
@@ -252,7 +257,27 @@ final class ConsoleTakeover(
    * `takeoverAck` 且 at 相等才清。该键下一次连接（握手腿或在带声明腿）即补推。
    * 注意：in-memory，引擎重启即丢（已知限制，见终报）。
    */
-  private val pendingNoticeRef: Ref[IO, Map[String, Long]] = Ref.unsafe(Map.empty)
+  private val pendingNoticeRef: Ref[IO, Map[String, Long]] =
+    Ref.unsafe(pendingStorePath.fold(Map.empty[String, Long])(ConsoleTakeover.loadPending))
+
+  /** 账变更 ⇒ 原子落盘（tmp + move）。落盘失败只记日志：内存账仍生效，不阻断接管。 */
+  private def persistPending(m: Map[String, Long]): IO[Unit] =
+    pendingStorePath.traverse_ { p =>
+      IO.blocking {
+        java.nio.file.Files.createDirectories(p.toAbsolutePath.getParent)
+        val tmp = p.resolveSibling(p.getFileName.toString + ".tmp")
+        java.nio.file.Files.writeString(tmp, ConsoleTakeover.encodePending(m))
+        java.nio.file.Files.move(
+          tmp,
+          p,
+          java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+          java.nio.file.StandardCopyOption.ATOMIC_MOVE
+        )
+      }.handleErrorWith(e => IO(logger.warn(s"console-takeover: pending ledger persist failed — ${e.getMessage}")))
+    }
+
+  private def updatePending(f: Map[String, Long] => Map[String, Long]): IO[Unit] =
+    pendingNoticeRef.modify(m => { val n = f(m); (n, n) }).flatMap(persistPending)
 
   /** 补推：若 key 有未确认通知，经 connId 重发一次 takeover 帧（幂等，客户端 show() 不叠弹）。 */
   private def replayPending(key: String, connId: String): IO[Unit] =
@@ -265,7 +290,7 @@ final class ConsoleTakeover(
     for
       m <- instancesRef.get
       _ <- m.collectFirst { case (k, i) if i.conns.contains(connId) => k } match
-        case Some(k) => pendingNoticeRef.update(p => if p.get(k).contains(at) then p - k else p)
+        case Some(k) => updatePending(p => if p.get(k).contains(at) then p - k else p)
         case None => IO.unit
     yield ()
 
@@ -403,7 +428,9 @@ final class ConsoleTakeover(
             for
               now <- nowMs()
               moved <- migrateConn(connId, key, sessionId, full, now)
-              _ <- replayPending(key, connId)
+              // 只在真正换键（握手无 clientId ⇒ 退路键迁到身份键）时补推：握手已带身份
+              // 的连接在 onConnect 已补过，这里再推即双帧（2026-11-21 裁定 6）。
+              _ <- if moved then replayPending(key, connId) else IO.unit
               cur <- controlRef.get.map(_.owner)
               _ <- if moved && !cur.contains(key) then settle(key, connId) else IO.unit
               _ <- migrateNote(moved)
@@ -587,7 +614,7 @@ final class ConsoleTakeover(
                   for
                     n <- nowMs()
                     _ <- claim(key)
-                    _ <- if prev.exists(!_.automated) then pendingNoticeRef.update(_ + (prevOwner -> n)) else IO.unit
+                    _ <- if prev.exists(!_.automated) then updatePending(_ + (prevOwner -> n)) else IO.unit
                     _ <- prevConns.traverse_(cid => sendTo(cid, ConsoleTakeover.takeoverFrame(n)))
                     _ <- logWith(
                       s"console-takeover: ${label(key)} took over from ${label(prevOwner)} — " +
@@ -986,6 +1013,25 @@ object ConsoleTakeover:
 
   /** 服务端→旧实例的接管帧（无 sessionId：前端 GLOBAL 路由，不抢 activeView）。 */
   def takeoverFrame(atMs: Long): Json = Json.obj("type" -> "takeover".asJson, "at" -> atMs.asJson)
+
+  /** 补推账落盘编码：`{ "<holderKey>": <at ms>, … }`。 */
+  def encodePending(m: Map[String, Long]): String =
+    Json.fromFields(m.map { case (k, v) => k -> Json.fromLong(v) }).noSpaces
+
+  /** 启动读回（同步，仅 boot 一次）：缺文件/坏文件 ⇒ 空账（不阻断启动，坏内容不静默吞：记 stderr 不可得，故以空账兜底并在日志由调用方可见）。 */
+  def loadPending(path: java.nio.file.Path): Map[String, Long] =
+    try
+      if java.nio.file.Files.exists(path) then
+        io.circe.parser
+          .parse(java.nio.file.Files.readString(path))
+          .toOption
+          .flatMap(_.asObject)
+          .map { obj =>
+            obj.toList.flatMap { case (k, v) => v.asNumber.flatMap(_.toLong).map(k -> _) }.toMap
+          }
+          .getOrElse(Map.empty)
+      else Map.empty
+    catch case _: Exception => Map.empty
 
   /** retake 回执帧。 */
   def resultFrame(ok: Boolean): Json = Json.obj("type" -> "takeoverResult".asJson, "ok" -> ok.asJson)
