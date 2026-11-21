@@ -105,11 +105,12 @@ class ModelDecisionGoldenSpec extends CatsEffectSuite:
       assertEquals(again.pin.map(_.headRef), first.pin.map(_.headRef))
   }
 
-  test("G6 trace：每个候选至少一条 candidate 命中") {
+  test("G6 trace：每个候选至少一条 candidate 命中（并打印真实 trace 样例）") {
     for
       r <- reg
       d <- ModelDecision.resolveRequest(r, ModelDecision.RequestCtx(None), base)
     yield
+      d.trace.foreach(h => println(s"[TRACE-SAMPLE] ${h.step} :: ${h.detail}"))
       val candHits = d.trace.count(_.step == "candidate")
       assertEquals(candHits, d.candidates.size)
       assert(d.candidates.nonEmpty, "fixture must yield at least one candidate")
