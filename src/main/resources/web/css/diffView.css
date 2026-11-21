@@ -944,6 +944,19 @@ span.nf-rcpt-note { cursor: default; }
   padding: var(--nf-dv-band-pad);
   min-width: 0;
 }
+/* 键位提示（G10，keyboard-focus-audit 批 2026-11-21）：动作钮左侧的弱色说明，
+   不改动作区几何（flex 尾部追加，组容器尺寸由 .nf-dv-allgroup 自己持有）。
+   字色走既有 muted 令牌；不参与点击（pointer-events:none）。 */
+.nf-dv-keyhint {
+  margin-right: auto;
+  padding-left: 2px;
+  font-size: var(--ds-fs-meta, 11px);
+  line-height: var(--nf-dv-ctl-size);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+}
 .nf-dv-allgroup {
   display: flex;
   align-items: center;
