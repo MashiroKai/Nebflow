@@ -460,7 +460,8 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
    * 星型子代理按父投影（delegate-ui 批 2026-10-08 · G3 查询面）：`GET /api/delegates/
    * :id/children` 的唯一数据源——本 store 本就按父分文件（`<parentSessionId>.json`），
    * 本投影 = 该文件的整表读（持锁纪律与 loadTasks 同缝）；条目自带 `source`
-   * （subagent/subtask/delegate——嵌套 Delegate 也在本域），过滤归消费端。查无文件 =
+   * （subagent/subtask/delegate——嵌套 Delegate 也在本域；source 是**台账事实**，
+   * 与已退役的 SubTask kind 无关），过滤归消费端。查无文件 =
    * Nil（子代理计数 0，绝不 404——空集是合法形态）。
    */
   def findByParent(parentSessionId: String): IO[List[SubAgentTask]] =

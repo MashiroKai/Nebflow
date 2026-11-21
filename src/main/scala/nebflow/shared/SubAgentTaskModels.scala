@@ -7,7 +7,8 @@ package nebflow.shared
 import io.circe.{Codec, Decoder, Encoder}
 
 /**
- * Persisted metadata for a sub-agent task (Delegate / SubTask).
+ * Persisted metadata for a sub-agent task (Delegate family — the SubTask *kind*
+ *  is retired as of 批次 B3/B4; `source` still distinguishes the tracks).
  *
  * Written at spawn time, updated on completion/failure, used for:
  *  - Crash recovery: if the process restarts, tasks in `Running` status
@@ -27,7 +28,7 @@ case class SubAgentTask(
   spawnedAt: Long, // epoch millis
   completedAt: Option[Long], // epoch millis
   lastError: Option[String], // last error message if failed
-  source: String, // "delegate" | "subtask"
+  source: String, // "delegate" | "subagent" (子代理轨) | "subtask"（历史工人轨，旧盘行兼容）
   /**
    * #692（网络不可达退避等待修批，2026-10-21 作者令）：**当前 status 的写入时刻**
    * （epoch millis）。重启屏障 watchdog 的判据输入——status=restarting 且 statusAt
