@@ -5,9 +5,13 @@
    任何没被单独点到的控件键盘聚焦时完全无视觉反馈（设计文档 §1.2）。
    基线必须是「一条规则 + 一个单源 token」，否则下一次又会漏。
 
-   颜色纪律：零裸 hex。焦点环 = --btn-focus-ring（蓝族单源，亮 #3b82f6 /
-   暗 #60a5fa 双档，已由 sapphire.css:927 与 stand-tokens.css:133/141 定义），
-   因此暗/亮两套主题下都可见，且不引入新色。
+   颜色纪律：零裸 hex。焦点环 = --nf-focus-ring，**本文件是高亮框唯一的色源与
+   几何源**（focus-ring-unify 批 2026-11-22，作者批 B 案：灰系 #9ca3af 亮暗同值，
+   内缩 2px）。历史：本槽曾是 --btn-focus-ring 的别名（蓝族，亮 #3b82f6 / 暗 #60a5fa）；
+   因为 --btn-focus-ring 另有非焦点场景引用（链接字色 friends.css「设备描述保存」
+   一类文字链），焦点改用独立令牌直接赋灰值，链路蓝仍留 --btn-focus-ring。
+   --btn-ring / --ds-focus-ring / --dropdown-focus / --nf-field-ring 四个别名同批收编
+   至 0 引用，由 scripts/check-focus-ring.mjs F6 钉住。
 
    🔴 §2 模式指示器（.nf-mode-chip）与对话输入框本体环（#input:focus-visible）
    已随作者令 2026-11-03 10:11 ④（输入框键盘提示与高亮移除）整块退役；本文件
@@ -15,9 +19,14 @@
    ══════════════════════════════════════════════════════════════════════════ */
 
 :root {
-  --nf-focus-ring: var(--btn-focus-ring, currentColor);
+  /* ── 焦点环（全站唯一色源 + 唯一几何源；规范正文 design-language/references/
+        frontend/focus-ring-spec.md §2.1）────────────────────────────────────
+     作者裁定 2026-11-22（B 案）：灰系 #9ca3af，**亮暗同值**，内缩 2px。
+     实测对比（WCAG 相对亮度解析估算，纯色底）：对 #ffffff 2.53:1（低于 3:1，
+     作者知情接受，规范 §2.4 明列）；对 #0d1117 7.53:1。运行时门槛 P-2 因此
+     分档：暗 ≥3:1 硬门槛，亮 ≥2.5:1 且 <3:1 的组件必带显式标注。 */
+  --nf-focus-ring: #9ca3af;
   --nf-focus-ring-w: 2px;
-  --nf-focus-ring-offset: 2px;
   --nf-chip-bg: rgb(var(--sapphire) / 0.10);
   --nf-chip-border: rgb(var(--sapphire) / 0.32);
   --nf-chip-bg-on: rgb(var(--sapphire) / 0.20);
@@ -27,11 +36,13 @@
 /* ── 1 焦点环基线 ────────────────────────────────────────────────────────
    只在 :focus-visible（键盘 / 程序化键盘态）出现，鼠标点击不出环；用 outline
    而非 box-shadow —— box-shadow 会和组件既有投影互相覆盖，outline 不会。
-   特异性 (0,1,0)：组件自己写过更具体的环规则时以组件为准（既有 26 处的环
-   一个都不被推翻），没写的才由本条兜底。 */
+   **内缩**（offset = -width）：外环与框体之间必有缝，读作「外面又一圈」；内缩环
+   不占盒、也不被带 overflow 裁切的祖先（树行 / 叠卡 / 胶囊条）剪掉。
+   特异性 (0,1,0)：组件自己写过更具体的环规则时以组件为准，没写的才由本条兜底；
+   组件侧只允许写同一对声明（同一令牌、同一内缩值）——判据 F1/F2 钉住。 */
 :focus-visible {
   outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
-  outline-offset: var(--nf-focus-ring-offset);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* 组件把 outline 压成 none 却没补环的既有面（nav.css:61/291、sidebar.css:764/987、
@@ -50,7 +61,7 @@
 #canvas-toggle-btn:focus-visible,
 #deck-fab:focus-visible {
   outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
-  outline-offset: var(--nf-focus-ring-offset);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* 输入框环：🔴 对话输入框本体的键盘态高亮已随作者令 2026-11-03 10:11 ④
@@ -65,7 +76,7 @@
    overflow 裁掉。 */
 .nf-nav-stop:focus-visible {
   outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
-  outline-offset: -3px;
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* 层容器（陷阱宿主）自身不出环：它是「盒子」不是「控件」。 */

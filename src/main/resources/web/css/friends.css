@@ -66,8 +66,8 @@ body.mobile-layer .fm-req-time { font-size: var(--ds-fs-hint); }
 .fm-row:hover { background: var(--glass-control-bg-hover); }
 
 .fm-row:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.6);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 .fm-row[aria-selected="true"] {
@@ -336,8 +336,8 @@ button.fm-search-btn:disabled {
   cursor: not-allowed;
 }
 button.fm-search-btn:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.6);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* 亮档反馈层（作者 2026-09-11 P4 裁定：亮底衬上白 alpha 填充递进肉眼不可辨，
@@ -481,8 +481,8 @@ button.fm-verify-cancel:disabled {
 }
 
 button.fm-verify-cancel:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.6);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* 「新的朋友」 entry */
@@ -499,8 +499,8 @@ button.fm-verify-cancel:focus-visible {
 .fm-nf-entry:hover { background: var(--glass-control-bg-hover); }
 
 .fm-nf-entry:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.6);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 .fm-nf-icon {
@@ -566,8 +566,8 @@ button.fm-req-accept:disabled {
   cursor: not-allowed;
 }
 button.fm-req-accept:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.6);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* 拒绝 = 次操作（中性玻璃 rest 档 + 400 字重 + 全量四态 ramp） */
@@ -602,8 +602,8 @@ button.fm-req-decline:disabled {
   cursor: not-allowed;
 }
 button.fm-req-decline:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.6);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* ── Messages panel: conversation list (§3.2) ───────────── */
@@ -795,7 +795,7 @@ button.fm-req-decline:focus-visible {
    使 `.fm-modal-id`（成员数）起始 x == 本元素 border-right ⇒ offset 2px 时环最右
    绘制像素（x=609）压过成员数首字 ink（x=607）**2px**（4x 对照图可见「3」被环切断）；
    offset 0 ⇒ 环最右像素 == 标签 ink 左缘（gap 0px，零穿越），可见性读数不变。 */
-.fm-modal-title-btn:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 0; }
+.fm-modal-title-btn:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 .fm-modal-name {
   font-size: var(--ds-fs-title);
@@ -830,7 +830,7 @@ button.fm-req-decline:focus-visible {
   cursor: pointer;
 }
 .fm-fwd-cancel:hover { background: var(--color-frame-hover); }
-.fm-fwd-cancel:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 0; }
+.fm-fwd-cancel:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 /* ── ④ 转发窗口（D7 · 本批**新增面**，照案形态）─────────────────────────────
    形似「创建群聊」+ 作者令②「可输入附言 + 选择好友」。四段 = ① 附言（下沉面，
@@ -938,7 +938,7 @@ button.fm-req-decline:focus-visible {
 }
 .fm-fwd-row + .fm-fwd-row { border-top: 1px solid var(--glass-etched-border); }
 .fm-fwd-row:hover { background: var(--color-frame-hover); }
-.fm-fwd-row:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: -2px; }
+.fm-fwd-row:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 /* 勾选圆 = 多选态同一族（22px / 1.5px 描边 / 选中 = sapphire 实心 + 白勾）。 */
 .fm-fwd-check {
   flex: none;
@@ -1225,11 +1225,11 @@ button.fm-req-decline:focus-visible {
   height: 30px;
 }
 .file-card .fm-att-dl svg { width: 16px; height: 16px; }
-.fm-att-dl:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
+.fm-att-dl:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 /* 可点面（点击 = Canvas 预览）：cursor 由卡面自带（file-card/pop-media-flat 既有
    pointer），这里只保留键盘焦点环（可达性与改前同档）。 */
-.fm-att-previewable:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
+.fm-att-previewable:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 /* ── 图片附件直显槽（`.fm-att-inline` 旧段）已随 fm-att-card-unify 批退役 ──────────
    图片附件的出帧面 = 主会话媒体卡（chat.css `.pop-media-flat` + popArtifacts
@@ -1309,7 +1309,7 @@ button.fm-req-decline:focus-visible {
   cursor: pointer;
 }
 .fm-upload-cancel:hover { background: var(--color-frame-hover); }
-.fm-upload-cancel:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
+.fm-upload-cancel:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 /* 附件消息的正文（与占位正文区分：占位文本被隐藏时不留空行） */
 .fm-msg-text { white-space: pre-wrap; }
@@ -1585,8 +1585,8 @@ button.fm-req-decline:focus-visible {
 
 /* 焦点环补齐（现状 = 浏览器默认蓝环）：与 .fm-row:focus-visible 同款 */
 .fm-msg-act:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.6);
-  outline-offset: 0;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* ── 手机档热区（≥44×44，Apple 硬标准）—— ui-final-four ⑧（2026-11-03）──────────
@@ -1940,8 +1940,8 @@ body:not(.mobile-layer) #profile-face-overlay {
    （设计硬约束「无 accent bars」）—— 是一次性整块 fade，与 `.search-hit-flash` 同族。 */
 .fm-quote-block[data-quote-jump="ready"] { cursor: pointer; }
 .fm-quote-block[data-quote-jump="ready"]:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.5);
-  outline-offset: 1px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .fm-msg.fm-quote-target { animation: fmQuoteTargetFlash 1.8s ease; border-radius: var(--ds-radius-xl); }
 @keyframes fmQuoteTargetFlash {
@@ -1970,7 +1970,7 @@ body:not(.mobile-layer) #profile-face-overlay {
 .fm-quote-strip .att-ref { max-width: 100%; }
 /* ❌ 的落位（形态/材质在 input.css 的共享块；此处只定宿主内的排布）。 */
 .fm-quote-remove { align-self: center; margin-left: var(--ds-space-2); }
-.fm-quote-remove:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
+.fm-quote-remove:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 /* ── ③ 多选态：勾选面（固定左列）+ 头部计数 + 等分动作条 ──────────────────
    🔴 **D4（照案）**：勾选圆 16px → **22px**、`left:-16px` → `left:0`（**通栏固定左列**）、
@@ -2011,7 +2011,7 @@ body:not(.mobile-layer) #profile-face-overlay {
   border-color: rgb(var(--sapphire));
   color: #fff;
 }
-.fm-msg-check:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
+.fm-msg-check:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 /* 多选工具条（**等分动作** / 计数已上移头部）：与输入条同族（发丝上边线 + 同一节奏）。
    🔴 **D5（照案）**：计数由底部条迁到**头部**（`.fm-modal-select-count`），底部条只留动作；
@@ -2045,7 +2045,7 @@ body:not(.mobile-layer) #profile-face-overlay {
 .fm-select-exit:hover { background: var(--color-frame-hover); }
 .fm-select-act:disabled { opacity: 0.4; cursor: not-allowed; }
 .fm-select-act:focus-visible,
-.fm-select-exit:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 0; }
+.fm-select-exit:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 /* Input bar ── 悬浮毛玻璃条（contact-panel-unify 链 · 作者令 2026-11-06：
    「输入框：同样采用悬浮、毛玻璃半透明、带大圆角的设计」）─────────────────────

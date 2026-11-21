@@ -248,8 +248,8 @@
   background: rgb(var(--sapphire) / 0.2);
 }
 .skip-freeze-btn:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.5);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 #input-bar.frozen:not(.frozen-error) #skip-freeze-btn,
 .fa-input-bar.frozen:not(.frozen-error) #skip-freeze-btn {
@@ -390,7 +390,7 @@
   color: var(--color-text-muted);
   cursor: pointer;
 }
-.att-thumb-retry:focus-visible { outline: 2px solid var(--glass-etched-border-focus, var(--color-text-muted)); outline-offset: 1px; }
+.att-thumb-retry:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 .att-file {
   height: 28px;
   box-sizing: border-box;
@@ -873,8 +873,8 @@
   touch-action: none;
 }
 .micbubble:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.6);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .micbubble .orb-canvas,
 .micbubble .css-orb {

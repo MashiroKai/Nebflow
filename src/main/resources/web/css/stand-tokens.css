@@ -653,11 +653,10 @@ html[data-theme="light"] {
   /* 裸件（嵌在已成形的容器里，如主会话输入条 / 记事本 / 搜索胶囊）：
      背景/边框/阴影全让位给外壳，只保留字与色 */
   --nf-field-bare-bg: transparent;
-  /* 键盘可见焦点环：唯一允许出现「蓝」的地方 —— 且是压灰的蓝族混色
-     （品牌蓝 45% + 正文色），不是整块品牌蓝框；对比度见规范 §3 */
-  --nf-field-ring: color-mix(in srgb, var(--btn-focus-ring) 45%, var(--color-text));
-  --nf-field-ring-w: 2px;
-  --nf-field-ring-offset: -1px;                       /* 内缩：压在框体自己的边上 */
+  /* 键盘可见焦点环：几何/颜色唯一源 = css/keyboard.css 的 --nf-focus-ring*。
+     focus-ring-unify 批（2026-11-22，作者批 B 案）取消了输入件的「压灰混色」——
+     焦点环是全站一种颜色，不再由输入面另立一套（原 --nf-field-ring / -w / -offset
+     三槽删除，0 引用由 scripts/check-focus-ring.mjs F6 钉住）。 */
   /* 输入条外壳档（.ask-input 等「装着输入件的条」）：与 #input-bar 同族圆角 */
   --nf-field-shell-radius: var(--ds-radius-xl);
   /* 错误态边（同一种形态的状态档，不是第二套形态） */
@@ -786,9 +785,7 @@ html[data-theme="light"] {
   --nf-toggle-knob-bg: var(--ctl-send-ink);        /* 亮档 #ffffff（与发送键字色同值，零新色） */
   --nf-toggle-knob-stroke: var(--st-toggle-off-border);
   --nf-toggle-accent: rgb(var(--brand-green));     /* 品牌绿 #07c160（2026-11-01 作者令回绿） */
-  --nf-toggle-ring: var(--btn-focus-ring);
-  --nf-toggle-ring-w: 2px;
-  --nf-toggle-ring-offset: 2px;
+  --nf-toggle-ring: var(--nf-focus-ring);          /* 焦点环色 = 全站唯一色源（focus-ring-unify 批 2026-11-22） */
   --nf-toggle-disabled-opacity: var(--btn-disabled-opacity);
   --nf-toggle-busy-opacity: 0.55;                  /* 不确定态：圆钮降不透明（纯线语言，不发光） */
 }

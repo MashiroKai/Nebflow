@@ -728,7 +728,7 @@
   transition: opacity 0.15s ease, background 0.15s ease;
 }
 .fm-chain-chev:hover { opacity: 1; background: rgba(128, 128, 128, 0.14); }
-.fm-chain-chev:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); }
+.fm-chain-chev:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 .fm-chain-chev svg { width: 10px; height: 10px; display: block; }
 /* 展开态控件（链入口成员卡 head 行右端）：chevron 转 90° 朝下 = 「已展开，点击折起」，
    与归档条目 .fm-entry.expanded .fm-entry-chev 同一语义语言。 */
@@ -749,7 +749,7 @@
   transition: opacity 0.15s ease, background 0.15s ease;
 }
 .fm-chain-cancel:hover { opacity: 1; background: rgba(128, 128, 128, 0.14); }
-.fm-chain-cancel:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); }
+.fm-chain-cancel:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 .fm-chain-cancel svg { width: 9px; height: 9px; display: block; }
 /* 紧随其后的 chevron：余白已被取消控件吸走 ⇒ 让出 auto（两控件成右对齐的一组）。
    无取消控件时本规则不生效 ⇒ chevron 保持原 `margin-left:auto`，既有视觉零漂移。 */
@@ -915,8 +915,8 @@
   transform: none;
 }
 .fm-fab:focus-visible {
-  outline: var(--btn-ring-w) solid var(--btn-ring);
-  outline-offset: var(--btn-ring-offset); }
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 /* 计数徽章（§4.3：team-mail-badge 构型；计数 = 面板链条目数，TTL 清理同步减） */
 .fm-archive-badge {
@@ -971,7 +971,7 @@
 }
 .fm-panel-close svg { width: 12px; height: 12px; display: block; }
 .fm-panel-close:hover { opacity: 1; }
-.fm-panel-close:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); border-radius: var(--ds-radius-badge); }
+.fm-panel-close:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); border-radius: var(--ds-radius-badge); }
 .fm-panel-body {
   flex: 1; overflow-y: auto; padding: var(--ds-space-3) 14px;
   scrollbar-width: thin; scrollbar-color: var(--color-frame-border) transparent;
@@ -1008,7 +1008,7 @@
   transition: background 0.15s, border-color 0.15s;
 }
 .fm-entry:hover { background: rgba(128, 128, 128, 0.1); border-color: rgba(128, 128, 128, 0.18); }
-.fm-entry:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); }
+.fm-entry:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 .fm-entry.expanded { background: rgba(128, 128, 128, 0.1); border-color: rgba(91, 127, 191, 0.25); }
 .fm-entry.flash { animation: fm-entry-flash 0.5s ease 1; }
 @keyframes fm-entry-flash {
@@ -1073,7 +1073,7 @@
 }
 .fm-member:last-child { margin-bottom: 0; }
 .fm-member:hover { background: rgba(128, 128, 128, 0.09); border-color: rgba(128, 128, 128, 0.16); }
-.fm-member:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); }
+.fm-member:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 .fm-member-row { display: flex; align-items: center; gap: var(--ds-space-1h); min-width: 0; }
 .fm-member-name {
   flex: 0 1 auto; min-width: 0; font: 500 var(--ds-fs-hint)/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
@@ -1144,7 +1144,7 @@
 }
 .fm-detail-close svg { width: 12px; height: 12px; display: block; }
 .fm-detail-close:hover { opacity: 1; }
-.fm-detail-close:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); border-radius: var(--ds-radius-badge); }
+.fm-detail-close:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); border-radius: var(--ds-radius-badge); }
 .fm-detail-body {
   flex: 1; min-height: 0; overflow-y: auto; padding: var(--ds-space-3) 14px;
   display: flex; flex-direction: column; /* 卡内唯一竖向滚动容器（2026-09-11 滚动一体化批） */

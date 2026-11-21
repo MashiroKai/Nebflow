@@ -160,8 +160,8 @@
 .tfl-capsule:hover { background: var(--ctl-neutral-bg-hover); }
 .tfl-capsule:active { background: var(--ctl-neutral-bg-active); }
 .tfl-capsule:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 /* 内容层切换（灵动岛批 2026-11-05）：展开后胶囊层**不消失、只退成内容层** ——
    同一节点仍在岛内（judge：`#todo-island` 恒为同一引用），淡出 + 失焦模糊，
@@ -733,8 +733,8 @@
 }
 .tfl-tag-btn.is-primary:hover { background: var(--color-primary-hover); }
 .tfl-tag-btn:focus-visible {
-  outline: 2px solid var(--btn-focus-ring, var(--color-info));
-  outline-offset: 1px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* ── 列表 ─────────────────────────────────────────────────────────────── */
@@ -1163,8 +1163,8 @@
 }
 .tfl-fab-add:active { transform: scale(0.94); }
 .tfl-fab-add:focus-visible {
-  outline: 1.5px solid color-mix(in srgb, var(--color-text) 45%, transparent);
-  outline-offset: 1px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 /* C 批：图标占比单源 = 直径 45%（手机腿由 body.mobile-layer .g2-fab svg
    （--band-icon，同为 45%）接管，双档同比例）。 */

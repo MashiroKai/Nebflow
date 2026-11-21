@@ -106,8 +106,8 @@
 .set-nav:hover { background: color-mix(in srgb, var(--ds-text) 4%, transparent); }
 .set-nav:active { background: color-mix(in srgb, var(--ds-text) 7%, transparent); }
 .set-nav:focus-visible {
-  outline: var(--ds-focus-width) solid var(--btn-focus-ring);
-  outline-offset: -2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* 图标位：固定盒（宽高同源 --set-icon-box），图标本体居中。 */
@@ -311,8 +311,8 @@
 }
 .set-disclosure:hover { background: color-mix(in srgb, var(--ds-text) 4%, transparent); }
 .set-disclosure:focus-visible {
-  outline: var(--ds-focus-width) solid var(--btn-focus-ring);
-  outline-offset: -2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .set-disclosure-chevron {
   flex: 0 0 auto;

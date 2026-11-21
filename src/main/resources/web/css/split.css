@@ -3070,8 +3070,8 @@ body.mobile-layer .canvas-video-viewer {
   outline: none;
 }
 .canvas-video-stage:focus-visible {
-  outline: var(--btn-ring-w) solid var(--btn-ring);
-  outline-offset: var(--btn-ring-offset);
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
   border-radius: var(--ds-radius-input);
 }
 
@@ -3173,8 +3173,8 @@ body.mobile-layer .canvas-video-viewer {
 }
 /* 滑轨键盘焦点：与按钮同一个描边环口径（环是线不是影）。 */
 :is(.cvv-scrub, .cvv-vol):focus-visible {
-  outline: var(--btn-ring-w) solid var(--btn-ring);
-  outline-offset: var(--btn-ring-offset);
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* 音量条 = 桌面档（作者规格「音量（桌面）」）：无 hover 面与手机层都不给 ——
@@ -3964,7 +3964,7 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 .document-term-summary { margin-top: 8px; white-space: pre-wrap; line-height: 1.5; }
 .document-term-meta, .document-term-path { margin-top: 8px; font-size: 12px; opacity: .8; }
 .document-term-open { margin-top: 12px; cursor: pointer; }
-.document-term-open:focus-visible { outline: 2px solid var(--ds-link-term, #2684ff); outline-offset: 2px; }
+.document-term-open:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 /* 词条点击释义弹层：桌面/触屏均为小弹层，固定在 body 顶层避免滚动容器裁剪。 */
 .nf-term-tip {

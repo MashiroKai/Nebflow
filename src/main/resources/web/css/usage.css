@@ -226,8 +226,8 @@
    （input-focus-ring 批 2026-11-05）；下列按键/开关仍走自己的描边环。 */
 .ud-srange:focus-visible, .ud-hdim:focus-visible,
 .ud-cm:focus-visible, .ud-dim:focus-visible {
-  outline: 2px solid var(--glass-etched-border-focus);
-  outline-offset: 1px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .ud-colormode { margin-left: auto; }
 
@@ -284,8 +284,8 @@
 }
 .ud-cell[data-date]:hover { box-shadow: 0 0 0 1px var(--sapphire-edge-strong); }
 .ud-cell[data-date]:focus-visible {
-  outline: 2px solid rgb(var(--sapphire));
-  outline-offset: 1px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .ud-cell.ud-active { box-shadow: 0 0 0 2px rgb(var(--sapphire)); }
 .ud-pad { visibility: hidden; pointer-events: none; }

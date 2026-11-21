@@ -211,6 +211,14 @@ export const CHECKS = [
   // + 文案完整 + 凭据不出诊断线（形态见 scripts/check-ask-status.mjs 头注）。
   nodeCheck('ask-status', 'check-ask-status'),
   nodeCheck('input-surface', 'check-input-surface', ['static', 'frontend']),
+  // 焦点环统一批（focus-ring-unify-impl 2026-11-22，作者已批 B 案）：全站键盘焦点指示器
+  // 一条规则 + 一个色源（--nf-focus-ring #9ca3af · 内缩 2px · 禁光晕）。静态腿判「源码
+  // 写的是不是那一条」（F1–F6，含别名收编 0 引用与豁免台账只减）；运行时腿判「屏幕画出来
+  // 的是不是那一条」（P-1–P-4，差分像素 + 对比读数 + 玻璃弹层内可读）。规范正文 =
+  // design-language/references/frontend/focus-ring-spec.md。
+  nodeCheck('focus-ring', 'check-focus-ring', ['static', 'frontend']),
+  { name: 'focus-ring-runtime', profiles: ['frontend'], timeoutMs: 600_000,
+    argv: [process.execPath, 'scripts/check-focus-ring-runtime.mjs'] },
   nodeCheck('dropdown-single-control', 'check-dropdown-single-control'),
   nodeCheck('mobile-canvas-strip', 'check-mobile-canvas-strip'),
   // dock 悬浮批（作者裁定 2026-11-21 10:41「手机端 dock 在其他页面都是悬浮效果，但主会话

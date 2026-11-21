@@ -51,7 +51,8 @@
   --ds-border: var(--color-frame-border);
   --ds-accent: var(--color-primary);            /* 身份/状态绿（2026-10-30 降级语义） */
   --ds-accent-ink: rgb(var(--brand-green));     /* 开关 ON / 圆钮实心 */
-  --ds-focus-ring: var(--btn-focus-ring);
+  /* 焦点色锚 = 全站唯一 `--nf-focus-ring`（css/keyboard.css）；原 `--ds-focus-ring`
+     别名已收编（focus-ring-unify 批 2026-11-22），0 引用由 check-focus-ring.mjs F6 钉住。 */
   /* 词条引用字色（term-system-v2 词条视觉面批 2026-11-05，作者令「词条被使用
      的时候，应该是一个蓝色的文字」）：语义角色 = 「词条」这一实体的字色。
      值 = 蓝族 ink 双档（stand-tokens.css 的 --term-link-ink；亮 70 99 156 /
@@ -258,8 +259,9 @@
      1px 为四家共识（Apple/IBM/NVIDIA/SpaceX hairline 全 1px），玻璃描边亦 1px。 */
   --ds-border-width: 1px;
   --ds-border-glass: var(--glass-border);   /* 玻璃描边单源别名（不复制值） */
-  --ds-focus-width: 2px;                    /* IBM / NVIDIA focus 双源 2px */
-  /* focus 色锚 = 既有 --ds-focus-ring（var(--btn-focus-ring)），草案条目精确归属，不另立槽 */
+  /* focus 的宽度与颜色都不在本文件立槽：唯一一条焦点规则 + 唯一色源在
+     `css/keyboard.css` 的 `--nf-focus-ring-w / --nf-focus-ring`（focus-ring-unify 批
+     2026-11-22；原 --ds-focus-width / --ds-focus-ring 已收编，0 引用）。 */
 
   /* ── ⑩ 聊天流面既有值档（ui-unification-20261103-chat-stream）──
      缺槽先扩再消费：以下四槽 = chat.css .bubble / .tool-card 的**现盘读数逐字搬迁**
@@ -509,7 +511,7 @@
   --ds-resize-hit: 44px;             /* 拖柄热区边长（HIG / WCAG 2.5.5 下限） */
   --ds-resize-grip: 18px;            /* 可见抓手本体边长（= ::before 直角弧的臂长） */
   --ds-resize-ink: var(--ds-text-muted);        /* 静息把手色（低对比，不争焦点） */
-  --ds-resize-ink-active: var(--ds-focus-ring); /* hover / 拖拽态把手色 */
+  --ds-resize-ink-active: var(--nf-focus-ring); /* hover / 拖拽态把手色 */
   --ds-resize-bg-active: var(--ds-veil-focus);  /* hover / 拖拽态底（极低调洗选） */
   --ds-resize-border: var(--ds-etched-border);  /* hover / 拖拽态描边 */
   --ds-resize-min-w: 260px;          /* 拖拽宽度下限（≤ 此宽度列内气泡已不可读） */
@@ -731,8 +733,8 @@
 .ds-btn--danger:active { color: var(--btn-danger-ink); border-color: var(--btn-danger-stroke); }
 /* 键盘焦点：描边环（不用 box-shadow —— 环是「线」不是「影」） */
 .ds-btn:focus-visible {
-  outline: var(--btn-ring-w) solid var(--btn-ring);
-  outline-offset: var(--btn-ring-offset);
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 /* 禁用：只降不透明 + not-allowed */
 .ds-btn:disabled,
@@ -799,7 +801,7 @@
   /* 本体 < 44 ⇒ 负 inset 外扩；本体 ≥ 44 ⇒ 收到 0（不减缩、不外溢） */
   inset: min(0px, calc((100% - var(--ds-turn-hit)) / 2));
 }
-.ds-turn-btn:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 2px; }
+.ds-turn-btn:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 /* 发送档：微信绿实底（--ctl-send-* 一跳别名，亮暗同值） */
 .ds-turn-btn--send,
 .ds-turn-btn--send:disabled {
@@ -870,11 +872,19 @@
               color var(--ds-dur-hover) var(--ds-ease-std);
 }
 .ds-resize-handle:hover,
-.ds-resize-handle:focus-visible,
 .ds-resize-handle[data-resizing='true'] {
   opacity: 1;
   color: var(--ds-resize-ink-active);
   outline: none;
+}
+/* 键盘焦点单独一条（focus-ring-unify 批 2026-11-22）：原先与 hover/拖拽态共用
+   一条规则，`outline:none` 会把键盘态也压成零反馈 —— 拖柄是键盘可达控件
+   （方向键调宽），必须看得见环。 */
+.ds-resize-handle:focus-visible {
+  opacity: 1;
+  color: var(--ds-resize-ink-active);
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 /* 可见形态 = 左上角直角弧（L 形拐角 + 拐角圆角）：两条边臂沿面板上缘/左缘
    走到 18px 处收头，拐角 7px 圆角（--ds-radius-chip 档）。紧贴面板外缘
@@ -1240,7 +1250,7 @@
   transition: background var(--ds-dur-hover) var(--ds-ease-std), color var(--ds-dur-hover) var(--ds-ease-std);
 }
 .ds-tool-card .tool-img-ref:hover { color: var(--ds-text); background: var(--ds-veil-focus); }
-.ds-tool-card .tool-img-ref:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 1px; }
+.ds-tool-card .tool-img-ref:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 /* ══ ⑧ 侧栏族（.ds-side-*）——ui-unification-20261103-sidebar ═══════════
    侧栏导航项的**形态唯一家**：行基座 / 紧凑树行 / 行主文案 / 行 meta /

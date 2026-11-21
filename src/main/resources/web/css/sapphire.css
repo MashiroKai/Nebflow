@@ -1091,9 +1091,9 @@ button.glass-control.fm-login-btn:disabled {
   --btn-press-scale: 0.98;        /* 按下幅度（桌面档；2% 触感，不配阴影） */
   --btn-press-scale-touch: 0.97;  /* 触屏档（无 hover 面：反馈只走按下） */
   --btn-press-fade: 0.92;         /* prefers-reduced-motion 兜底：禁位移，改用透明度 */
-  --btn-ring-w: 2px;              /* 焦点描边环宽（键盘导航可见，WCAG 2.4.7） */
-  --btn-ring-offset: 2px;         /* 环与本体间隙（不侵入邻钮） */
-  --btn-ring: var(--btn-focus-ring);
+  /* 焦点环几何/颜色已收编 `css/keyboard.css` 的 `--nf-focus-ring*`（focus-ring-unify
+     批 2026-11-22：全站一条环、一个色源）。原 `--btn-ring / -w / -offset` 三槽删除，
+     0 引用由 scripts/check-focus-ring.mjs F6 钉住。 */
   --btn-disabled-opacity: 0.5;    /* 禁用档：只降不透明 + not-allowed，不灰到不可读 */
   --btn-hover-bg: var(--glass-control-bg-hover);   /* hover 底色阶（仅 (hover:hover) 生效） */
   --btn-press-bg: color-mix(in srgb, var(--glass-control-bg-hover) 88%, var(--color-text) 12%); /* 按下底色阶 = 比 hover 再深一档 */
@@ -1342,8 +1342,8 @@ button.glass-control.fm-req-accept:active {
     button.fm-send-btn:not(.ds-turn-btn), button.fm-verify-send, button.fm-send-chip,
     button.glass-control.fm-gs-save,
     button.glass-control.fm-req-accept):focus-visible {
-  outline: 2px solid var(--btn-focus-ring);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* 开关本体 `.nb-toggle`（js/toggle.js）—— **本文件不再参与其造型**（toggle-unify 批

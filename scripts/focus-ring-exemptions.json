@@ -1,31 +1,66 @@
 {
-  "_why": "B3-1 显式豁免表（照 build-web.mjs ORPHAN_EXEMPTIONS 的惯例：每条必须写理由）。判据不是「有没有写 outline:none」，而是「键盘聚焦时该元素有没有**别的**可见聚焦视觉」——只有自带 glow/border 的才允许无环；纯删环一律走 keyboard.css:28 的 :focus-visible 兜底。",
-  "_consumedBy": "scripts/keyboard-check.mjs ⑬（css/ 内 :focus 规则里未配对 :focus-visible 的 outline:none 条数 − 本表 = 0）",
+  "_why": "焦点环统一批（focus-ring-unify 2026-11-22）的具名豁免表。判据不是「有没有写 outline:none」，而是「键盘聚焦时该元素有没有**别的**可见聚焦视觉 / 或它根本不是控件」——只有这两类才允许无环；纯删环一律走 keyboard.css 的 :focus-visible 兜底。每条必须写理由，理由短于 8 字 = 台账红（F5）。",
+  "_consumedBy": "scripts/check-focus-ring.mjs F4/F5（本表 = 无环焦点规则的具名豁免 + §2.6 方角造型件登记）；scripts/keyboard-check.mjs ⑬（同表复核 :focus 侧零反馈面）",
+  "_baseline": 4,
+  "_baselineWhy": "本批登记数 = 4（实施批基线；改前 5 条里有 4 条是「靠光晕代环」的历史豁免，光晕退役后它们改由统一环覆盖，故删除。F5 钉住「只许减不许增」）。",
   "exemptions": [
-    {
-      "file": "css/modal.css",
-      "selector": ".modal-input:focus, #modal-input:focus, #memory-content-input:focus, #rules-input:focus",
-      "reason": "Sapphire focus glow：2px+4px 双层 box-shadow + border-color 变化，键盘聚焦时有比 2px 描边更强的可见反馈（模态输入框内再套一圈描边会与呼吸态冲突）。"
-    },
-    {
-      "file": "css/neblink.css",
-      "selector": ".neblink-paircode-input:focus",
-      "reason": "配对码输入框聚焦有 border-color: var(--color-primary) 变色，属于该组件的既定聚焦语言。"
-    },
-    {
-      "file": "css/secrets.css",
-      "selector": ".secrets-input:focus",
-      "reason": "border-color + 2px sapphire 外发光（与 secrets 面其余控件同族），键盘/鼠标同一视觉。"
-    },
-    {
-      "file": "css/social.css",
-      "selector": ".social-input:focus",
-      "reason": "border-color + 2px sapphire 外发光，同 secrets-input 口径。"
-    },
     {
       "file": "css/sidebar.css",
       "selector": "#config-editor:focus",
       "reason": "配置编辑器（monaco）自管聚焦视觉；DOM 侧描边会被编辑器内部选区/光标顶掉，属计划书 §5.2 明列的「monaco 内部键位不接管」。"
+    },
+    {
+      "file": "css/inputSurface.css",
+      "selector": "html[data-nf-modality=\"pointer\"] :where( input:not([type]), input[type=\"text\"]",
+      "reason": "指针模态复位：js/focusModality.js 在 pointerdown 时挂 data-nf-modality=pointer，键盘态才是环的主人（「点」没有环、「Tab」有环）。同文件上方即配对的内缩环，本行只是把它压回中性。"
+    },
+    {
+      "file": "css/inputSurface.css",
+      "selector": "#input:focus, #input:focus-visible, .fm-input:focus, .fm-input:focus-visible",
+      "reason": "主会话输入条内层：作者令 2026-11-03 10:11 ④「输入区键盘态不再给输入区加高亮」——焦点由 body[data-nf-mode] 承载（零视觉痕迹）。这是输入面规范 §4 例外清单第 1 行的同一件事。"
+    },
+    {
+      "file": "css/keyboard.css",
+      "selector": ".nf-trap-root:focus, .nf-trap-root:focus-visible",
+      "reason": "焦点陷阱宿主本身不是控件（它是「盒子」）：用户 Tab 的是它里面的东西，给宿主画环等于画两层。"
+    }
+  ],
+  "squareCorners": [
+    {
+      "file": "css/split.css",
+      "selector": ".explorer-item",
+      "radius": "0",
+      "reason": "文件树行：整行命中面、行与行紧贴成列，圆角会把连续树列切成一串胶囊；方角是造型语义（行 ≠ 卡片）。"
+    },
+    {
+      "file": "css/diffView.css",
+      "selector": ".nf-dv-file",
+      "radius": "0",
+      "reason": "diff 文件行：同上，行族不带圆角；相邻行共用分隔线，圆角会破线。"
+    },
+    {
+      "file": "css/settingsRows.css",
+      "selector": ".set-nav",
+      "radius": "0",
+      "reason": "设置导航行：iOS 行族（整行按钮、组内首尾由容器给圆角），行本体必须方。"
+    },
+    {
+      "file": "css/chat.css",
+      "selector": ".bg-task-row",
+      "radius": "0",
+      "reason": "后台任务行：面板内行族，与 .set-nav 同口径（作者令 2026-11-03 ⑤「非常非常低调」）。"
+    },
+    {
+      "file": "css/usage.css",
+      "selector": ".ud-cell",
+      "radius": "2px (--ds-radius-thin)",
+      "reason": "统计/日历表格格：格子间距 1px，6px 圆角会把格子读成独立 chip，破坏表格语义。"
+    },
+    {
+      "file": "css/todo-face.css",
+      "selector": ".tfl-row",
+      "radius": "4px (--ds-radius-badge)",
+      "reason": "待办行：既有行族取 badge 档 4px（design-system 令牌账本既定档），高于方角、低于 6px，具名保留。"
     }
   ]
 }

@@ -721,8 +721,8 @@
   color: inherit;
 }
 .settings-avatar-entry:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.65);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .settings-avatar-frame {
   position: relative;
@@ -801,8 +801,8 @@
 }
 .settings-identity-capsule:active { transform: scale(0.98); }
 .settings-identity-capsule:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.65);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .settings-identity-username {
   font-weight: 600;
@@ -1099,7 +1099,7 @@
   transition: background var(--dur-2) ease, color var(--dur-2) ease;
 }
 .nf-ptab[aria-selected="true"] { background: var(--ctl-primary-bg); color: var(--ctl-primary-ink); }
-.nf-ptab:focus-visible { outline: 2px solid var(--btn-focus-ring); outline-offset: 2px; }
+.nf-ptab:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 @media (hover: hover) {
   .nf-ptab[aria-selected="false"]:hover { background: var(--ctl-neutral-bg-hover); }
 }
@@ -1200,7 +1200,7 @@
 }
 
 .cfg-btn:active { background: var(--ctl-neutral-bg-active); }
-.cfg-btn:focus-visible { outline: 2px solid var(--btn-focus-ring); outline-offset: 2px; }
+.cfg-btn:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 .cfg-btn-sm { font-size: var(--ds-fs-btn); padding: var(--ds-space-1) var(--ds-space-3); border-radius: var(--ds-radius-pill); }
 .cfg-btn-primary {
   font-size: var(--ds-fs-btn); padding: var(--ds-space-1h) var(--ds-space-5); border-radius: var(--ds-radius-pill);
@@ -2007,8 +2007,8 @@
   background: var(--color-frame-hover);
 }
 .seg-remove:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.5);
-  outline-offset: 1px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* ---------- Appearance section: micOrb palette presets (v8.3.0) ----------
@@ -2278,8 +2278,8 @@
 }
 .plugins-card-head[data-plugin-item]:hover { background: var(--glass-control-bg-hover); }
 .plugins-card-head[data-plugin-item]:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.5);
-  outline-offset: 1px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 /* 行 1 = 图标 + 名称 + meta（flex-wrap：长名自然换行不截断，meta 随流）。 */
 .plugins-item-id {
@@ -2396,8 +2396,8 @@
   border-color: color-mix(in srgb, var(--status-error-icon) 45%, transparent);
 }
 .plugins-item-uninstall:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--status-error-icon) 50%, transparent);
-  outline-offset: 1px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .plugins-item-uninstall .st-ic { width: 12px; height: 12px; }
 /* 拒载卡「已迁移」处置提示（迁移批 2026-10-29）：旧名包的拒载不再只是裸报错——
@@ -2430,8 +2430,8 @@
 }
 .plugins-item-doc:hover { border-color: rgb(var(--sapphire) / 0.35); }
 .plugins-item-doc:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.5);
-  outline-offset: 1px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .plugins-item-doc[hidden] { display: none; }
 .plugins-item-doc .st-ic { width: 12px; height: 12px; }
@@ -2589,8 +2589,8 @@
   background: var(--glass-control-bg-hover);
 }
 .plugins-skill-capsule:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.5);
-  outline-offset: 1px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .plugins-skill-capsule .st-ic {
   width: 11px;
@@ -2694,8 +2694,8 @@
 .nb-toggle:not(.on):hover { border-color: var(--nf-toggle-stroke-hover); }
 /* 焦点环：线，不是影子（flat-button-spec §1.2） */
 .nb-toggle:focus-visible {
-  outline: var(--nf-toggle-ring-w) solid var(--nf-toggle-ring);
-  outline-offset: var(--nf-toggle-ring-offset);
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 /* 禁用：只降不透明 + not-allowed，过渡关闭（不假装还能动） */
 .nb-toggle:disabled,
@@ -2749,7 +2749,7 @@
   transition: color 0.15s, border-color 0.15s;
 }
 .cfg-model-test:hover { color: var(--color-frame-text); border-color: rgba(91, 127, 191, 0.4); }
-.cfg-model-test:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.3); outline-offset: 1px; }
+.cfg-model-test:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 .cfg-model-test:disabled { cursor: default; opacity: 0.7; }
 .cfg-model-test .st-ic { width: 12px; height: 12px; }
 .cfg-model-test-spinner {

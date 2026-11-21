@@ -279,8 +279,8 @@ body.sidebar-collapsed #activity-bar {
    扁平化批 2026-11-05：环从 `box-shadow: 0 0 0 2px` 改为 outline 描边环 ——
    环是「线」不是「影」，且 outline 不占盒、不改几何。 */
 .activity-btn:focus-visible {
-  outline: var(--btn-ring-w) solid var(--btn-ring);
-  outline-offset: var(--btn-ring-offset);
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .activity-btn:active { transform: scale(0.97); }
 .activity-btn { -webkit-tap-highlight-color: transparent; }

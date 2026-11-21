@@ -382,10 +382,14 @@
 /* 面板高亮极低调档（作者令 2026-11-03 10:11 ⑤「面板键盘焦点/选中高亮改为非常
    非常低调——几乎不可见但仍有线索」）：键盘焦点 = --ds-veil-focus 4% 蓝雾，
    **2px 蓝强调条（inset box-shadow rgb(var(--sapphire)/0.8)）退役**——那是本仓
-   最响的一条焦点信号，与「几乎不可见」直接冲突。描边走既有 hairline 口径
-   （outline:none 保留：行是整行命中面，环会画出盒感）。 */
+   最响的一条焦点信号，与「几乎不可见」直接冲突。
+   focus-ring-unify 批（2026-11-22）改判：光晕换成全站统一的 2px **灰**内缩环
+   （不是被 ⑤ 否决的那条蓝强调条 —— 内缩灰环贴着行边、无外扩、无发光，仍是
+   最低调档；环与蓝雾一起构成「仍有线索」），`outline:none` 因此退休：零环的
+   行在键盘路径上等于没有线索（规范 §2.2 R-4）。 */
 .bg-task-row:focus-visible {
-  outline: none;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
   background: var(--ds-veil-focus);
 }
 /* delegate-ui 批（2026-10-08 · C2 两级层级）：一级行 = delegate 组头（bg-task-row-head，
@@ -843,9 +847,11 @@
    Focus = hover background (no accent bar — visual-style iron rule). */
 #bg-dropdown .bg-task-row { cursor: pointer; }
 /* 同 ⑤（2026-11-03 10:11）：焦点底色退到 --ds-veil-focus 最低档（原 --color-frame-hover
-   是「面板行 hover 级」的可见wash，作者要「非常非常低调」）。 */
+   是「面板行 hover 级」的可见wash，作者要「非常非常低调」）。环口径同 .bg-task-row
+   （focus-ring-unify 批 2026-11-22：内缩灰环 + 蓝雾，零环不再允许）。 */
 #bg-dropdown .bg-task-row:focus-visible {
-  outline: none;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
   background: var(--ds-veil-focus);
 }
 /* Project attribution (2026-09-06 author ruling): Flow rows label the owning
@@ -2881,8 +2887,8 @@ body:not(.mobile-layer) .option-preview-media {
   max-width: 100%;
 }
 .ask-attachments-wrap .ask-att-thumb:focus-visible {
-  outline: 2px solid var(--ds-focus-ring);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
   border-radius: var(--ds-radius-input);
 }
 /* 卡内文件 chip：可点档（role=button）光标 + 键盘焦点环；高度放 auto（降级态
@@ -2898,8 +2904,8 @@ body:not(.mobile-layer) .option-preview-media {
   padding-bottom: var(--ds-space-1);
 }
 .option-box .att-file.ask-att-file:focus-visible {
-  outline: 2px solid var(--ds-focus-ring);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .option-box .att-file.ask-att-file .att-file-name { min-width: 0; }
 /* 折叠收件（>3 枚默认只显前 3）：两成特异度压过 .att-file 的 inline-flex
@@ -2922,7 +2928,7 @@ body:not(.mobile-layer) .option-preview-media {
   cursor: pointer;
   padding: 0;
 }
-.att-file .ask-att-retry:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 2px; }
+.att-file .ask-att-retry:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 /* ---------- Chat-native onboarding (onboarding-redesign-spec §8.4) ---------- */
 /* Typewriter simulation: paragraph stack + blinking cursor + skip button.
@@ -3842,8 +3848,8 @@ body:not(.mobile-layer) .option-preview-media {
 }
 .turn-header:hover { opacity: 1; }
 .turn-header:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.6);
-  outline-offset: 1px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
   border-radius: var(--ds-radius-badge);
 }
 .turn-header .nf-chevron { flex-shrink: 0; transition: transform 0.2s ease; }
@@ -4258,8 +4264,8 @@ body:not(.mobile-layer) .option-preview-media {
   padding-bottom: var(--ds-space-block-y);
 }
 .perm-cmd:focus-visible {
-  outline: 2px solid var(--sapphire-edge);
-  outline-offset: 1px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .perm-cmd-toggle {
   align-self: flex-start;
@@ -4506,7 +4512,7 @@ body:not(.mobile-layer) .option-preview-media {
   transform: translateY(-1px);
 }
 .ws-pick-target:active { transform: translateY(0); }
-.ws-pick-target:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
+.ws-pick-target:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 .ws-pick-target svg { flex: 0 0 auto; color: rgb(var(--sapphire) / 0.9); }
 .ws-pick-texts { display: flex; flex-direction: column; gap: var(--ds-space-half); min-width: 0; }
 .ws-pick-title { font-size: var(--ds-fs-subtitle); font-weight: 600; color: var(--color-text); }
@@ -4906,7 +4912,7 @@ body:not(.mobile-layer) .option-preview-media {
   background: var(--btn-press-bg);
 }
 .scroll-new-pill.hidden { display: none; }
-.scroll-new-pill:focus-visible { outline: 2px solid var(--sapphire-refraction); outline-offset: 2px; }
+.scroll-new-pill:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 @keyframes nf-pill-in {
   from { opacity: 0; transform: translateX(-50%) translateY(4px); }
@@ -5482,7 +5488,7 @@ body:not(.mobile-layer) .option-preview-media {
   cursor: pointer;
 }
 .fm-msg.in .fm-image-retry { background: color-mix(in srgb, var(--color-bubble-ai) 82%, transparent); }
-.fm-image-retry:focus-visible { outline: 2px solid var(--glass-etched-border-focus, var(--color-text-muted)); outline-offset: 2px; }
+.fm-image-retry:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 /* ── 视频内容封面（video-cover 批 2026-11-05，作者令逐字「不管是在对话框还是
    canvas，都应该有一个内容预览的一个封面」）─────────────────────────────────
    `.nf-video-cover` 由 js/videoCover.js 在抓到帧之后**插在 `<video>` 之后**（DOM
@@ -5561,7 +5567,7 @@ body:not(.mobile-layer) .option-preview-media {
   font-size: var(--ds-fs-hint);
   cursor: pointer;
 }
-.nf-media-retry:focus-visible { outline: 2px solid var(--glass-etched-border-focus, var(--color-text-muted)); outline-offset: 2px; }
+.nf-media-retry:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 .play-ring {
   position: absolute; top: 50%; left: 50%;
   width: 54px; height: 54px; margin: -27px 0 0 -27px;
@@ -5628,7 +5634,7 @@ body:not(.mobile-layer) .option-preview-media {
 /* Pop 引用入口沿用 footer 小图标语言，不改变文件卡主体几何。 */
 .file-card .fc-quote-btn { margin-left: auto; flex: 0 0 auto; }
 .option-box .ask-att-question-card { cursor: pointer; max-width: 100%; }
-.option-box .ask-att-question-card:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 2px; }
+.option-box .ask-att-question-card:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 /* 问面文件卡降级态（⑤a「原因 + 动作」）：卡内可换行容纳原因档 + 重试键；
    不可用 = 虚线描边（与缩略/chip 面同档语义）。 */
 .option-box .ask-att-question-card { box-sizing: border-box; min-width: 0; flex-wrap: wrap; }
@@ -6292,8 +6298,8 @@ object.search-media-thumb { object-fit: initial; }
    禁「点了没反应」半成品入口 —— friends.css paintJumpAffordance 同纪律）。 */
 .msg-quote-block[data-quote-jump="ready"] { cursor: pointer; }
 .msg-quote-block[data-quote-jump="ready"]:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.5);
-  outline-offset: 1px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .row.quote-target-flash { animation: msgQuoteTargetFlash 1.8s ease; border-radius: var(--ds-radius-xl); }
 @keyframes msgQuoteTargetFlash {
@@ -6404,8 +6410,8 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
   font: inherit;
 }
 .ap-pane .ap-avatar-box:focus-visible {
-  outline: 2px solid rgba(91, 127, 191, 0.45);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
   border-radius: var(--ds-radius-xl);
 }
 .ap-pane .ap-avatar-img {
@@ -6522,8 +6528,8 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
   .msg-token-chip:hover { background: rgba(255, 255, 255, 0.1); }
 }
 .msg-token-chip:focus-visible {
-  outline: 2px solid var(--glass-etched-border-focus, rgba(91, 127, 191, 0.3));
-  outline-offset: 1px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* ── msg-token popover（原消息小窗；🔴 无 overlay 遮罩层——visual-style 铁律 1：

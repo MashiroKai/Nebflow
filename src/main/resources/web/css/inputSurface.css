@@ -173,8 +173,8 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes,
   select
 ):focus-visible,
 .nf-field:focus-visible {
-  outline: var(--nf-field-ring-w) solid var(--nf-field-ring);
-  outline-offset: var(--nf-field-ring-offset);
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* 指针来的焦点：环压回中性（上面的 :focus 灰线加深仍生效） */

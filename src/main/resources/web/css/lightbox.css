@@ -73,8 +73,8 @@ body.nf-lightbox-open { overflow: hidden; }
 }
 .nf-lightbox-close:hover { opacity: 0.7; transform: scale(1.08); }
 .nf-lightbox-close:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.7);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 .nf-lightbox-status {
@@ -186,8 +186,8 @@ img.nf-zoom-img { cursor: pointer; }
 }
 .nf-lightbox-ctl:hover { background: var(--glass-control-bg-hover); color: var(--ds-ink-inverse); }
 .nf-lightbox-ctl:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.7);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .nf-lightbox-ctl svg { width: 15px; height: 15px; }
 .nf-lightbox-pct {
@@ -279,8 +279,8 @@ body.mobile-layer .nf-lightbox .nf-lightbox-close { display: flex; }
 }
 .nf-lightbox-opentab:hover { opacity: 0.85; transform: scale(1.08); }
 .nf-lightbox-opentab:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.7);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 @media (prefers-reduced-motion: reduce) {

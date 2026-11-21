@@ -715,8 +715,8 @@ html[data-theme="light"] {
 #deck-fab:focus-visible,
 #canvas-head-close:focus-visible,
 .g2-fab:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.5);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* .g2-fab 基准几何（40px 圆 / 图标 18——原 17px 对齐 --cv-icon 单源） */
@@ -829,8 +829,8 @@ html[data-theme="light"] {
   transform: scale(var(--btn-press-scale));
 }
 .g2-pill:focus-visible {
-  outline: var(--btn-ring-w) solid var(--btn-ring);
-  outline-offset: var(--btn-ring-offset);
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .g2-pill:disabled,
 .g2-pill[aria-disabled="true"] {
@@ -917,8 +917,8 @@ html[data-theme="dark"] {
 #memory-modal-save:disabled:active { transform: none; }
 .g2-pill-primary:focus-visible,
 #memory-modal-save:focus-visible {
-  outline: var(--btn-ring-w) solid var(--btn-ring);
-  outline-offset: var(--btn-ring-offset);
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* ── 手机尺寸/弹簧档（body.mobile-layer 总开关，桌面零命中）──────────────
