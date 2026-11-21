@@ -207,6 +207,14 @@ export const CHECKS = [
   nodeCheck('input-surface', 'check-input-surface', ['static', 'frontend']),
   nodeCheck('dropdown-single-control', 'check-dropdown-single-control'),
   nodeCheck('mobile-canvas-strip', 'check-mobile-canvas-strip'),
+  // dock 悬浮批（作者裁定 2026-11-21 10:41「手机端 dock 在其他页面都是悬浮效果，但主会话
+  // 却是截断的——落成标准和规范，进行自动化检查，都得是悬浮的」）：这是**第 9 道设计闸**
+  // （前 8 道 = 读数/造型/面板/披露/文案/令牌那批），判据面与前 8 道不重叠 —— 前 8 道
+  // 全部只读「件自己的声明」，而本条的缺陷在**件与宿主之间**：`#mobile-pages` 容器上色
+  // 把 dock 带区变垫层，聊天根内容被硬切。为什么不能只扫 `#mobile-dock`：改前实测五个
+  // 页面的胶囊几何逐值正确（r999/三边 inset/blur 全在档）⇒ 只扫本体必全绿，而作者看到的
+  // 红就在带区。单源正文 = design-language/references/frontend/mobile-chrome-spec.md。
+  nodeCheck('mobile-dock-float', 'check-mobile-dock-float', ['static', 'frontend']),
   nodeCheck('panel-unify', 'check-panel-unify', ['static', 'frontend']),
   nodeCheck('settings-ios-rows', 'check-settings-ios-rows'),
   // 前端设计要求批（ui-design-requirements 2026-11-18）：作者令「浮现式披露 / 不要有重复的
@@ -264,6 +272,8 @@ export const CHECKS = [
       'scripts/check-ui-structure.mjs', 'scripts/check-copy-budget.mjs', 'scripts/check-button-source.mjs',
       // 写时复制 M1 闸（2026-11-19）：新闸本体同受 lint 覆盖。
       'scripts/check-wt-cow.mjs',
+      // dock 悬浮批（2026-11-21，第 9 道设计闸）
+      'scripts/check-mobile-dock-float.mjs',
       'scripts/lib/', 'scripts/tests/'] },
   { name: 'script-tests', profiles: ['static'], timeoutMs: 120_000,
     argv: [process.execPath, '--test', ...scriptTests] },

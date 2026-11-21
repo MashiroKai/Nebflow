@@ -5,29 +5,31 @@ status: active
 
 # design-language —— 前端设计规范正文（本仓单源）
 
-本目录是 Stand 前端**设计规范正文的唯一一份**，由 8 道静态闸直接读取（改判据改这里，
+本目录是 Stand 前端**设计规范正文的唯一一份**，由静态闸直接读取（改判据改这里，
 脚本只是执行器）。作者裁定（2026-11-21）：「先查源仓 → 其次是落仓内」——退役提交
 `af404938c`（2026-11-18）把正文「唯一一份」外置进 stand-dev 插件包，而主线从未收到
-（插件 v1.5.0 里一份都没有，8 道闸只能记 SKIP）；本目录把它取回仓内，闸随之实跑。
+（插件 v1.5.0 里一份都没有，闸只能记 SKIP）；本目录把它取回仓内，闸随之实跑。
 
 ## 目录
 
 ```
 design-language/
-  references/frontend/          规范条文（7 篇）
+  references/frontend/          规范条文（9 篇）
     flat-button-spec.md         按钮扁平化 + 统一来源（§5/§6 族登记表）
     glass-spec.md               毛玻璃唯一形态 + §9 运行时判据 R1–R3
     input-surface-spec.md       输入面唯一造型
     panel-spec.md               面板族版式
+    mobile-chrome-spec.md       移动端 dock 悬浮 + 页面内浮条座位（§1.3/§1.4 两张表）
     disclosure-dedup-spec.md    渐进式披露 · 单一来源无重复
     explanatory-copy-spec.md    解释性文字写作与长度预算
     design-tokens-ledger.md     几何刻度账本（四表 + 迁移清单 + 取值流）
+    performance-budget-spec.md  性能设计红线（网络/加载/内存渲染三块，**阈值待 perf-fixes 批回填**）
   assets/design-system/
     tokens.css                  账本镜像（`--dl-*`，与运行时 `--ds-*` 逐值对位）
     components.css              固定尺寸组件原型（§5.4 建族先查的那份）
 ```
 
-## 谁读它（8 道静态闸 → 正文落点）
+## 谁读它（静态闸 → 正文落点）
 
 | 闸 | 读的正文 |
 |---|---|
@@ -39,6 +41,11 @@ design-language/
 | `scripts/check-ui-structure.mjs` | `references/frontend/disclosure-dedup-spec.md`（§2/§3 三张表） |
 | `scripts/check-copy-budget.mjs` | `references/frontend/explanatory-copy-spec.md`（§2 长度预算表） |
 | `scripts/check-design-spec-sync.mjs` | `references/frontend/design-tokens-ledger.md` + `assets/design-system/tokens.css` |
+| `scripts/check-mobile-dock-float.mjs` | `references/frontend/mobile-chrome-spec.md`（§1.3 浮条座位表 / §1.4 垫层豁免表） |
+
+> **闸的数法**：前 8 道 = 2026-11-21 取回批的实跑化名单（读「件自己的声明」）；
+> `check-mobile-dock-float` 是**同批追加的第 9 道**（作者裁定 10:41 dock 悬浮），
+> 判据面是「件与宿主之间有没有垫层」——与前 8 道不重叠，数字上单列，不并入 8 道。
 
 定位器 = `scripts/lib/design-spec-source.mjs`：**仓内本目录**是唯一真源；
 `--spec-root=<dir>` 只作测试/一次性覆盖（契约测试把规范拷进一次性包根跑同一判据）。
@@ -47,6 +54,12 @@ design-language/
 要求，作者令 2026-11-21）**尚无对应机检项** —— 摘要区 / 全文区是否重复同一事实、「一处读数
 是否可由另一处推导」（D1/D3/D5）需要语义标注，静态源码判不出。当前效力来自设计期自检问句
 与该文 §4 人工评审项；机检只覆盖同文 §3.2 表 2 的「信息组渲染点」计数（U2）。
+
+**第二处缺口（同批）**：`performance-budget-spec.md`（性能设计红线，作者令 2026-11-21 11:37）
+目前是 **draft 骨架 —— 阈值未定稿、闸尚未出生**。stable id（`PERF-NET/LOAD/MEM/RENDER/PLUGIN-*`）
+与四张登记表已落文，具体数值由性能修复批 `feat/panel-mobile-perf-fixes` 以本机诊断基线
+（参照：打包后首屏 76 文件 / 1.07 MB gzip）回填后，再由该批新增 `scripts/check-perf-budget.mjs`
+并注册闸。**在此之前性能红线只有设计期效力（评审用），不是机检判据** —— 不装作已有闸。
 
 ## 为什么不在 `src/main/resources/seed/plugins/`（原路径）
 
@@ -78,5 +91,6 @@ design-language/
 - 同一主题只许一份正文：插件包内不得再出现同名第二份（本目录即唯一一份）。
 - 本目录不是插件：无 `plugin.json`、无 `Plugin.md`、无 `SKILL.md`，不被种子树枚举。
 
-相关：[[glass-spec]]、[[input-surface-spec]]、[[panel-spec]]、[[flat-button-spec]]、
-[[disclosure-dedup-spec]]、[[explanatory-copy-spec]]、[[design-tokens-ledger]]。
+相关：[[glass-spec]]、[[input-surface-spec]]、[[panel-spec]]、[[mobile-chrome-spec]]、
+[[flat-button-spec]]、[[disclosure-dedup-spec]]、[[explanatory-copy-spec]]、
+[[design-tokens-ledger]]、[[performance-budget-spec]]。
