@@ -41,12 +41,13 @@ export const OPERABLE_KINDS = new Set(['Delegate', 'SubTask', 'Ephemeral']);
  *  AgentControl cancel / WS cancelAgent 已放行），stop 可操作；restart 对
  *  单次会话无意义（cancel + 重新触发），retry 恒隐。 */
 export function managePolicy(kind, sessionId) {
-  if (kind === 'Team') return { operable: false, reason: t('manage.readonlyTeam') };
+  // B5：`kind === 'Team'` 分支已删——枚举值退场（Mail 激活的长驻会话现为 Root），
+  // 该分支再无生产者；Root 仍只读，但原因文案改为自我保护口径（不再借用团队措辞）。
   if (kind === 'Flow') {
     if (isBgAgentId(sessionId)) return { operable: true, projectFlow: true, reason: '' };
     return { operable: false, reason: t('manage.readonlyFlow') };
   }
-  if (kind === 'Root') return { operable: false, reason: t('manage.readonlyTeam') };
+  if (kind === 'Root') return { operable: false, reason: t('manage.readonlyRoot') };
   return { operable: true, reason: '' };
 }
 

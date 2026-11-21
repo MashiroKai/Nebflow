@@ -261,7 +261,9 @@ class AllowedToolSetSpec extends FunSuite:
     )
     assert(!CoreProbe.allowed(nebula).contains("SubTask"), "retired SubTask is absent from Nebula")
     assert(!CoreProbe.allowed(teamAgent).contains("Delegate"), "non-Nebula never gets Delegate")
-    assert(!CoreProbe.allowed(teamAgent).contains("SubTask"), "retired tool cannot be explicitly granted")
+    // B3/B5：`SubTask` 工具早已退役（注册层无 schema）⇒ 声明里残留的该名不构成可授权面：
+    // 原始 allowed 集可以带着这个名字（无人消费），交付面（∩ 已注册 schema）必须为空。
+    assert(!CoreProbe.face(teamAgent).contains("SubTask"), "retired tool cannot be granted (face)")
     // Delegate stripped for non-Nebula at all depths
     val anyone = mkDef("anyone", List("Read", "Delegate"))
     assert(!CoreProbe.allowed(anyone, depth = 0).contains("Delegate"), "depth 0")
@@ -272,7 +274,7 @@ class AllowedToolSetSpec extends FunSuite:
     val defn = mkDef("backend", List("Read", "SubTask")).copy(category = "team")
     val allowed = CoreProbe.allowed(defn)
     assert(allowed.contains("Mail"), "team agent keeps Mail")
-    assert(!allowed.contains("SubTask"), "team agent does not get retired SubTask")
+    assert(!CoreProbe.face(defn).contains("SubTask"), "team agent does not get retired SubTask (face)")
 
   // ===== Retired SubTask is absent from team and standalone faces =====
 
@@ -294,7 +296,7 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!allowed.contains("SubTask"), "standalone agent has no SubTask (leaf — no team context)")
     // Explicit listing cannot restore the retired tool.
     val explicit = mkDef("solo-explicit", List("Read", "SubTask"))
-    assert(!CoreProbe.allowed(explicit).contains("SubTask"), "standalone explicit listing cannot restore SubTask")
+    assert(!CoreProbe.face(explicit).contains("SubTask"), "standalone explicit listing cannot restore SubTask (face)")
 
   test("flow agents do NOT get SubTask auto-injected"):
     val flow = mkDef("scanner", List("Read", "Grep")).copy(category = "flow")
@@ -434,7 +436,7 @@ class AllowedToolSetSpec extends FunSuite:
   test("isFlowNode leaf rule still strips explicitly listed SubTask"):
     val sneaky = mkDef("sneaky", List("Read", "SubTask")).copy(category = "team")
     val allowed = CoreProbe.allowed(sneaky, isFlowNode = true)
-    assert(!allowed.contains("SubTask"), "explicitly listed SubTask stripped for flow nodes")
+    assert(!CoreProbe.face(sneaky).contains("SubTask"), "explicitly listed SubTask not delivered for flow nodes (face)")
 
   // ===== 团队类型面删除批阶段 B2：TeamTask* 工具面退役（作者裁定 Q11） =====
 

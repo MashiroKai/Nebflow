@@ -53,7 +53,7 @@ Actions:
 - **cancel**: terminate an agent's current task. The parent session receives a "cancelled" notification and any wait barrier is released — nobody waits forever. Allowed kinds: Delegate (covers subagent sessions), Project node/dispatcher sessions (node-*/dispatcher-*, settles via the session bridge). With scope="bgTask" + jobId: cancel ONE background task inside the target session instead of the session (local shell job or remote device job) — the session and its other tasks keep running.
 - **restart**: kill the stuck turn and resume from the last persisted checkpoint (same mechanism as crash recovery — completed work is kept). Allowed kinds: Delegate (ephemeral; subagent sessions share the same budget — they consume the supervisor's restart budget, 2 per 5min; exceeding it fails the task).
 
-Safety rules: you cannot cancel/restart yourself, Root/plan sessions (self-preservation guard), or dag-* Flow workers (flow cancellation goes through cancelFlow / RunningFlowRegistry). Project node/dispatcher sessions (node-*/dispatcher-*) support cancel only (single-shot — no restart; cancel the dispatcher and re-dispatch via Delegate(task=..., project=<name>) — Mail dispatches nothing). Delegate sessions (including subagent ones) under your own root session are always controllable. Team targets are not manageable at all: the team feature (team members, team Managers and their scope) was retired on 2026-11-04, so the team scope of this tool is gone with it — a `kind: Team` target is refused explicitly rather than silently downgraded.
+Safety rules: you cannot cancel/restart yourself, Root/plan sessions (self-preservation guard), or dag-* Flow workers (flow cancellation goes through cancelFlow / RunningFlowRegistry). Project node/dispatcher sessions (node-*/dispatcher-*) support cancel only (single-shot — no restart; cancel the dispatcher and re-dispatch via Delegate(task=..., project=<name>) — Mail dispatches nothing). Delegate sessions (including subagent ones) under your own root session are always controllable. The team feature (team members, team Managers and their scope) was retired on 2026-11-04, and the `Team` kind itself is gone (B5): Mail-activated long-lived sessions are `Root`-kind and therefore stay unmanageable by this tool (self-preservation guard) — dispatch/Cancel their work through Delegate subagents instead, and use `status` for the read-only detail card.
 
 When to use:
 - A delegated task has been silent far longer than expected → list, then status the suspicious session.
@@ -185,18 +185,8 @@ When to use:
             "Flow workers follow the DAG lifecycle — cancelling one directly would break the flow state machine. " +
               "Use flow-level cancellation instead (cancelFlow(instanceId) / RunningFlowRegistry; NodeCancel for Project nodes)."
           )
-      case AgentKind.Team =>
-        // 团队功能删除批（team-feature-deletion-20261104）阶段 3：本条原为「条件
-        // 放行」——直接父（团队 Manager）/ root 桶调用者放行，其余只读，并配
-        // Manager 强确认门与审计行。作者裁定 team scope **整段删除**，故条件放行
-        // 与其后的 confirm+reason 审计腿一并删除；`AgentKind.Team` 目标改为显式
-        // 拒绝（fail-closed：不留「静默变成不可管理」的模糊态，枚举值本身保留 ——
-        // 去留仍待作者裁定）。
-        Some(
-          "Team targets are not manageable: the team feature was retired on 2026-11-04 " +
-            "(team members / team Managers / team scope are gone, so no caller has a team scope any more). " +
-            "Manage background sessions (Delegate / SubTask / Project node / dispatcher) instead."
-        )
+      // B5：`case AgentKind.Team =>` 显式拒绝分支已删——枚举值退场后不可能出现 Team
+      // 目标；Mail 激活的长驻会话改登记为 Root，由下一条 Root 分支拒绝。
       case AgentKind.Root =>
         Some("Root sessions cannot be managed with this tool (self-preservation guard).")
       case AgentKind.External =>
@@ -380,7 +370,8 @@ When to use:
       // （Manager/owner 管理自有 Team 成员；Delegate/SubTask 的父同理）。
       // 团队功能删除批阶段 3：Team 分支的「Manager 需 confirm=true + 非空 reason」
       // 强确认门与 `auditTeamAction` 审计腿随 team scope 整段删除（作者裁定）——
-      // `AgentKind.Team` 目标现由 [[kindRejection]] 直接显式拒绝，走不到这里。
+      // B5：Team 枚举值已删；Mail 激活的长驻会话改登记为 Root，由 Root 的
+      // self-preservation 拒绝承载同一「不可管理」结果。
       val callerIsDirectParent = rec.parentSessionId.nonEmpty && rec.parentSessionId == callerSessionId
       kindRejection(rec, action, callerIsDirectParent, callerIsRoot = rootBucket) match
         case Some(msg) => IO.pure(Left(ToolError(msg)))
@@ -1101,7 +1092,7 @@ When to use:
               case Right(_) => IO.unit
               case Left(err) => logger.warn(s"cancel tombstone write failed for '${rec.sessionId}': $err")
             }
-          val rowReceiptApplies = rec.kind == AgentKind.Delegate || rec.kind == AgentKind.SubTask
+          val rowReceiptApplies = rec.kind == AgentKind.Delegate
           val verifyBudget = nebflow.core.delegate.CancelReceipt.verifyBudgetMs
           tombstoneWrite *> (sup ! AgentEvent.Cancelled(rec.sessionId, reason)).flatMap { _ =>
             val panelFrame =
@@ -1175,7 +1166,6 @@ When to use:
           // 无任务行的老记录按 kind 回落。
           val source = observedTask.map(_.source).filter(_.nonEmpty).getOrElse {
             rec.kind match
-              case AgentKind.SubTask => "subtask"
               case AgentKind.Delegate => "delegate"
               case AgentKind.External => "external"
               case _ => "background-task"

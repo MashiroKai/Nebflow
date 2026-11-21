@@ -200,7 +200,7 @@ class MailActivateLifecycleSpec extends FunSuite:
       // 团队功能删除批阶段 3：夹具从已退役的登记表 actorMap 换成统一 agentRegistry
       // （本看护现在只负责这一份权威记录的卫生：死则删记录）。
       _ <- resources.agentRegistry.update(
-        _ + (sid -> AgentRecord(sessionId = sid, ref = victim, kind = AgentKind.Team, rootSessionId = sid))
+        _ + (sid -> AgentRecord(sessionId = sid, ref = victim, kind = AgentKind.Root, rootSessionId = sid))
       )
       _ <- system.spawn(
         MailTool.teamAgentDeathWatch(sid, "victim", victim, resources),

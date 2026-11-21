@@ -361,7 +361,7 @@ class WebSocketRoutes(
     pendingEvent: AgentCommand.ExternalEvent
   ): IO[BgSessionActivator.ActivationResult] =
     kind match
-      case AgentKind.Delegate | AgentKind.SubTask =>
+      case AgentKind.Delegate =>
         IO.pure(
           BgSessionActivator.Deferred(
             s"session family $kind revival is owned by its supervisor respawn / boot-sweep legs"
@@ -3417,14 +3417,15 @@ object WebSocketRoutes:
    *
    * 团队功能删除批（team-feature-deletion-20261104）阶段 3：原有第二条腿「Team
    * 记录按 busyMap 过滤」随 busy 标记面整体退役（busyMap 的唯一读者就是它，而
-   * `AgentKind.Team` 记录的唯一生产者是以团队会话登记表为底座的冷激活腿 ⇒ 两侧
+   * Team 记录的唯一生产者是以团队会话登记表为底座的冷激活腿 ⇒ 两侧
    * 同时失去数据源）。呈现面因此零变化：本仓再也产生不出 Team 记录。
    *
    * Standalone (zero class deps) so it is directly unit-testable
    * (ActiveAgentsFilterSpec).
    */
   def filterActiveAgents(registry: Map[String, AgentRecord]): IO[List[AgentRecord]] =
-    val taskKinds = Set(AgentKind.Delegate, AgentKind.Flow, AgentKind.SubTask)
+    // B5：SubTask kind 已删（子代理会话在 B3 换标为 Delegate）；Team 亦然。
+    val taskKinds = Set(AgentKind.Delegate, AgentKind.Flow)
     IO.pure(registry.values.toList.filter(r => taskKinds.contains(r.kind)))
 
   /**
@@ -3482,7 +3483,8 @@ object WebSocketRoutes:
    * 本就持有批次标题，此处对齐为单一解析缝。
    *
    * - `AgentKind.Delegate`：registryTitle 优先（跨重启权威），storeDescription 回填。
-   * - `AgentKind.SubTask`：DelegateRegistry 只装 delegate——只走 storeDescription。
+   * - 子代理会话（B3 换标后 kind=Delegate，DelegateRegistry 无记录）：registryTitle 为
+   *   None ⇒ 走 storeDescription。
    * - 其余 kind：None（既有三档链逐字不动）。
    *
    * 纯函数、零类依赖（`handleGetActiveAgents` 薄调用；IO 包装在调用方）。
@@ -3494,8 +3496,9 @@ object WebSocketRoutes:
     storeDescription: Option[String]
   ): Option[String] =
     val store = storeDescription.filter(_.trim.nonEmpty)
+    // B5：SubTask 分支删除（子代理会话是 Delegate；DelegateRegistry 只装真 delegate ⇒
+    // registryTitle 对它为 None，`.orElse(store)` 已承担原 SubTask 分支的全部效果）。
     if kind == AgentKind.Delegate then registryTitle.filter(_.trim.nonEmpty).orElse(store)
-    else if kind == AgentKind.SubTask then store
     else None
 
   /**

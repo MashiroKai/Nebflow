@@ -24,9 +24,17 @@ import nebflow.shared.*
  * 挂终态」这条不变式，**不参与监督与恢复**（恢复由 `ExternalOutputStore` /
  * CLI resume 承担）——这是设计件 §1.4 #13 的 (a) 口径，也是本枚举唯一一条
  * **ref 恒为 null** 的记录（见 [[nebflow.actor.ExternalAgentRecord]]）。
+ *
+ * **阶段 B5 删值（2026-11-22，作者裁定 Q11/Q1）**：`Team` 与 `SubTask` 已删——
+ * `Team` 的唯一生产者是以团队会话登记表为底座的冷激活腿（已随团队面退役），
+ * `SubTask` 的子会话在 B3 已换标为 `Delegate`。**`Flow` 保留**（设计件 §0 的
+ * 「AgentKind.Flow 零命中」判定在今日树上不成立：FlowDagExecutor / NodeStarter /
+ * ProjectActor / NodeLoopRunner 仍是活跃生产者，project 节点与分发器会话靠它分类）。
+ * 本枚举**不落盘**（注册表是内存 Ref；`SubAgentTask` 盘的字段是 `source: String`），
+ * 故删值不产生反序列化兼容负担——旧盘行无需兼容解码。
  */
 enum AgentKind:
-  case Root, Team, Flow, Delegate, External, SubTask
+  case Root, Flow, Delegate, External
 
 /**
  * Unified registry entry — one identity per agent (P1 统一注册表).

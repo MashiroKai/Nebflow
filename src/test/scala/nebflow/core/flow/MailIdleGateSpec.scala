@@ -22,7 +22,7 @@ class MailIdleGateSpec extends FunSuite:
 
   private def rec(
     sid: String,
-    kind: AgentKind = AgentKind.Team,
+    kind: AgentKind = AgentKind.Root,
     status: AgentStatus = AgentStatus.Idle,
     parentRef: Option[AR] = None,
     outstanding: Int = 0
@@ -103,7 +103,7 @@ class MailIdleGateSpec extends FunSuite:
     // 若不排除 Team kind，gate 检查发送者会永久误判忙。
     val registry = Map(
       "t" -> rec("t"),
-      "member" -> rec("member", AgentKind.Team, parentRef = Some(nullRef))
+      "member" -> rec("member", AgentKind.Root, parentRef = Some(nullRef))
     )
     assert(MailIdleGate.isAgentTreeIdle("t", registry))
 

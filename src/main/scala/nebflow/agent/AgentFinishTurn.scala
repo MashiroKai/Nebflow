@@ -1113,8 +1113,8 @@ private[agent] object AgentFinishTurn:
 
   // ═══ 团队 busy 标记面（团队功能删除批阶段 3：整体退役）══════════════
   // 原 `markTeamBusy` / `markTeamIdle` 写「团队会话登记表」的 busyMap，唯一读者是
-  // WebSocketRoutes.filterActiveAgents 的 `AgentKind.Team` 过滤腿。活体终局：
-  // `AgentKind.Team` 记录的唯一生产者是以团队会话登记表为底座的冷激活腿（团队退役
+  // WebSocketRoutes.filterActiveAgents 的 Team 过滤腿。活体终局：
+  // Team 记录的唯一生产者是以团队会话登记表为底座的冷激活腿（团队退役
   // 后在生产路径上零调用方）⇒ busyMap 两侧（写方 gated on `agentDef.category ==
   // "team"`、读方过滤 Team 记录）同时失去数据源，该面整体删除，`activeAgents`
   // 的呈现因此零变化（无记录可过滤）。

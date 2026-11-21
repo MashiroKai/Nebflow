@@ -2455,9 +2455,19 @@ $message"""
                   session.id -> AgentRecord(
                     sessionId = session.id,
                     ref = ref,
-                    // 团队会话 kinds 面：团队退役后本腿已无生产调用方（仅遗留队列层
-                    // spec 直调），kind 值保持 `Team` 以免动枚举（作者未裁定枚举去留）。
-                    kind = AgentKind.Team,
+                    // B5（枚举 Team 值删除）：Mail 激活的会话登记为 `Root`——它就是
+                    // **本会话自己的 agent**（每个会话只有一个 agent，depth=1 的子会话
+                    // 形态是 Delegate/subagent，不是本条腿）。
+                    //
+                    // 选 Root 而不选 Delegate 的理由 = 换标前 Team 记录在四个消费点的
+                    // 语义逐条等价，行为零变化（铁律 2 的同类要求）：
+                    //  · TaskStuckWatcher：本记录带 parentSessionId ⇒ 命中「Root kind + 有父
+                    //    会话」的 attention-only 腿（只广播不 Stop）＝ 原 Team 腿；
+                    //  · 树根 Nebula（非 Mail 激活）与本条靠 parentSessionId 区分，互不干扰；
+                    //  · MailIdleGate：Root 不在 taskKinds ⇒ 不计入发送者子树忙判 ＝ 原 Team 腿；
+                    //  · filterActiveAgents：Root 不在 taskKinds ⇒ 不出现在子代理行集 ＝ 原 Team 腿；
+                    //  · AgentControl：Root 被显式拒绝（self-preservation guard）＝ 原 Team 被显式拒绝。
+                    kind = AgentKind.Root,
                     rootSessionId = rootSid,
                     parentRef = ctx.agentActorRef,
                     // Block 0 链的 parent 语义随团队退役收敛为「激活方会话」。

@@ -145,7 +145,7 @@ class EscalationNotifyStormSpec extends CatsEffectSuite:
           ),
           sid
         )
-        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Team, sid, Some(parentRef))))
+        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Root, sid, Some(parentRef))))
         // fallback 废除批（作者令 2026-11-06「不再向上通知」）：429 是 provider 家族
         // 冻结（llm-transient，呈现面 autoRecoverable）——冻结/退避循环照旧，但
         // **永不进升级链、永不向父会话发 error-escalated**。原「连续 ≥3 ⇒ L1 链 +
@@ -215,7 +215,7 @@ class EscalationNotifyStormSpec extends CatsEffectSuite:
         resources <- mkResources(system, tmp, GatedFailLlm(counter, succeedRef))
         now <- IO(System.currentTimeMillis())
         expired = EscalationInfo(level = 2, escalateAt = now - 1000L, awaitedParentSessionId = "")
-        rec = AgentRecord("scan-target", probe, AgentKind.Team, "scan-root", None).copy(escalation = Some(expired))
+        rec = AgentRecord("scan-target", probe, AgentKind.Root, "scan-root", None).copy(escalation = Some(expired))
         _ <- resources.agentRegistry.update(_ + (rec.sessionId -> rec.copy(status = AgentStatus.Frozen)))
         _ <- FreezeScheduler.scan(resources)
         _ <- IO.sleep(300.millis)

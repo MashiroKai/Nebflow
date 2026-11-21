@@ -156,7 +156,7 @@ class AgentControlToolSpec extends CatsEffectSuite:
           "team-nebflow-project-Backend" -> AgentRecord(
             "team-nebflow-project-Backend",
             teamRef,
-            AgentKind.Team,
+            AgentKind.Root,
             "team-nebflow-project-Backend"
           )
         )
@@ -228,7 +228,7 @@ class AgentControlToolSpec extends CatsEffectSuite:
           "team-member-x" -> AgentRecord(
             "team-member-x",
             memRef,
-            AgentKind.Team,
+            AgentKind.Root,
             "root-t1",
             startedAt = System.currentTimeMillis() - 30_000,
             status = AgentStatus.Processing,
@@ -242,10 +242,11 @@ class AgentControlToolSpec extends CatsEffectSuite:
     val res = program.guarantee(system.stopAll.attempt.void).unsafeRunSync()
     // 阶段 3 口径：status 是**只读**面（诊断可见性保留，便于看残留记录），
     // 但可管理性判定经同一 `kindRejection` ⇒ Team 恒 "manageable: no (read-only kind)"。
-    val out = res.toOption.getOrElse(fail(s"status must still render for a Team record, got: $res"))
-    assert(out.contains("kind: Team"), out)
+    val out = res.toOption.getOrElse(fail(s"status must still render for a Root (mail-activated) record, got: $res"))
+    // B5：Mail 激活的长驻会话登记为 Root（Team 枚举值已删）⇒ 恒不可管。
+    assert(out.contains("kind: Root"), out)
     assert(out.contains("manageable: no (read-only kind)"), out)
-    assert(!out.contains("manageable: cancel"), s"Team target must not advertise cancel/restart:\n$out")
+    assert(!out.contains("manageable: cancel"), s"Root target must not advertise cancel/restart:\n$out")
   }
 
   test("status detects orphan task files (registry empty, task still running)") {
@@ -296,7 +297,7 @@ class AgentControlToolSpec extends CatsEffectSuite:
           "team-nebflow-project-Backend" -> AgentRecord(
             "team-nebflow-project-Backend",
             teamRef,
-            AgentKind.Team,
+            AgentKind.Root,
             "self-session"
           ),
           // 同桶 Flow —— cancelFlow 指引
@@ -315,9 +316,10 @@ class AgentControlToolSpec extends CatsEffectSuite:
       assert(rootRes.left.exists(_.message.contains("cannot be managed")), rootRes.toString)
       // 团队功能删除批阶段 3：Team 目标恒显式拒绝（team scope 整段删除；Block 2
       // §C3 的「root 桶全局可管 Team」随之作废）。
+      // B5：Mail 激活的长驻会话现为 Root ⇒ 由 self-preservation 拒绝承载同一「不可管」结果。
       assert(
-        teamRes.left.exists(_.message.contains("Team targets are not manageable")),
-        s"Team target must be refused for every caller, got: $teamRes"
+        teamRes.left.exists(_.message.contains("cannot be managed")),
+        s"Root (mail-activated) target must be refused for every caller, got: $teamRes"
       )
       assert(flowRes.left.exists(_.message.contains("cancelFlow")), flowRes.toString)
       assert(crossRes.left.exists(_.message.contains("Permission denied")), crossRes.toString)

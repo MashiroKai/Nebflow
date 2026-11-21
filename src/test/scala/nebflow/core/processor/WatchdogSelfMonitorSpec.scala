@@ -167,7 +167,8 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
     toolName: Option[String] = None,
     parentRef: Option[ActorRef[AgentCommand]] = None,
     supervisorRef: Option[ActorRef[AgentEvent]] = None,
-    status: AgentStatus = AgentStatus.Processing
+    status: AgentStatus = AgentStatus.Processing,
+    parentSessionId: String = ""
   ): AgentRecord =
     AgentRecord(
       sessionId = sid,
@@ -175,6 +176,7 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
       kind = kind,
       rootSessionId = rootSid,
       parentRef = parentRef,
+      parentSessionId = parentSessionId,
       status = status,
       lastActivityMs = lastActivityMs,
       currentToolName = toolName,
@@ -248,29 +250,33 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
         Map(
           "team-merged" -> mkRecord(
             "team-merged",
-            AgentKind.Team,
+            AgentKind.Root,
             ref0,
             "root-1",
             lastActivityMs = now - 20 * 60 * 1000L,
             toolStartedAt = now - 30 * 60 * 1000L,
-            toolName = Some("Bash")
+            toolName = Some("Bash"),
+            // Mail 激活形态（B5 后 = Root + 激活方会话）⇒ attention-only 腿
+            parentSessionId = "root-1"
           ),
           "team-agent-stale" -> mkRecord(
             "team-agent-stale",
-            AgentKind.Team,
+            AgentKind.Root,
             ref0,
             "root-1",
             lastActivityMs = now - 20 * 60 * 1000L,
-            toolStartedAt = 0L
+            toolStartedAt = 0L,
+            parentSessionId = "root-1"
           ),
           "team-tool-overdue" -> mkRecord(
             "team-tool-overdue",
-            AgentKind.Team,
+            AgentKind.Root,
             ref0,
             "root-1",
             lastActivityMs = now - 1000L,
             toolStartedAt = now - 30 * 60 * 1000L,
-            toolName = Some("Bash")
+            toolName = Some("Bash"),
+            parentSessionId = "root-1"
           )
         )
       )
@@ -282,7 +288,7 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
     yield
       assertEquals(merged.size, 1, s"merged 分支应恰好一条事件，得 $merged")
       assertEquals(str(merged.head, "branch"), Some(TaskStuckWatcher.BranchMerged))
-      assertEquals(str(merged.head, "kind"), Some("Team"))
+      assertEquals(str(merged.head, "kind"), Some("Root")) // B5：Team 值已删，夹具记录为 Root
       assertEquals(str(merged.head, "level"), Some("attention"))
       assertEquals(num(merged.head, "attempt"), Some(0L))
       assert(num(merged.head, "toolPhaseMs").exists(_ > 0), s"toolPhaseMs 应 > 0: ${merged.head}")
@@ -316,7 +322,7 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
         Map(
           "wd-idle" -> mkRecord(
             "wd-idle",
-            AgentKind.Team,
+            AgentKind.Root,
             ref0,
             "root-1",
             lastActivityMs = now - 30 * 60 * 1000L,
@@ -332,7 +338,7 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
         Map(
           "wd-ask" -> mkRecord(
             "wd-ask",
-            AgentKind.Team,
+            AgentKind.Root,
             ref0,
             "root-1",
             lastActivityMs = now - 30 * 60 * 1000L,
@@ -345,7 +351,7 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
       askRows <- fires("wd-ask")
       // ③ lastActivityMs==0（刚注册未 touch）+ 无在飞工具
       _ <- res.agentRegistry.set(
-        Map("wd-fresh" -> mkRecord("wd-fresh", AgentKind.Team, ref0, "root-1", lastActivityMs = 0L, toolStartedAt = 0L))
+        Map("wd-fresh" -> mkRecord("wd-fresh", AgentKind.Root, ref0, "root-1", lastActivityMs = 0L, toolStartedAt = 0L))
       )
       _ <- TaskStuckWatcher.scan(res, new WsHub(), threshold)
       freshRows <- fires("wd-fresh")

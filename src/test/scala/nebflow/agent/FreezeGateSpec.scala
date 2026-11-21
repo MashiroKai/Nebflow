@@ -1246,7 +1246,7 @@ class FreezeGateSpec extends CatsEffectSuite:
           ),
           sid
         )
-        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Team, sid, Some(parentRef))))
+        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Root, sid, Some(parentRef))))
         _ <- ref ! AgentCommand.UserInput("keep failing")
         // 轮1：失败1(retry) → 失败2 → ErrorFrozen#1
         _ <- waitUntil(System.currentTimeMillis() + 15000)(
