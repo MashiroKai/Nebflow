@@ -1,4 +1,5 @@
 import { mountProjectWorkspaces } from './projectWorkspaces.js';
+import { panelWorkspaceSectionsHidden, gitvizSealed } from './featureFlags.js';
 import { openDropdownMenu } from './dropdownMenu.js';
 // projectTab.js — Project 标签页（#27 方向调整：项目入口以标签页呈现，参考 team 面板设计）。
 // 点击侧边栏 Project 按钮 → 打开 `projects` Canvas 标签页；一行/卡片一个 project，
@@ -1089,8 +1090,10 @@ function projectCardHtml(p) {
         <div class="team-card-title"><span class="project-card-name">${esc(contentText('project', name, 'name', name))}</span>${badge}<span class="project-empty-tag" data-cv-hint="empty" hidden>${esc(t('project.noNodes'))}</span></div>
         <div class="team-card-summary is-pending"><span class="dot"></span><span class="project-summary-skeleton" aria-hidden="true"></span></div>
         <!-- Git 可视化入口（gitviz-mvp 批 2026-11-19）：卡头第二入口钮 ⇒ 卡片翻转
-             到次级面板（作者 2026-11-19 14:06 逐字）。只读面：它只读 git，不写仓库。 -->
-        <button class="project-gitviz-btn" data-gitviz-project="${esc(name)}" type="button" title="${esc(t('project.gitVizOpen'))}" aria-label="${esc(t('project.gitVizOpen'))} ${esc(name)}">${GITVIZ_BTN_SVG}</button>
+             到次级面板（作者 2026-11-19 14:06 逐字）。只读面：它只读 git，不写仓库。
+             🔴 hide-workspace-sections 批（作者 2026-11-21 12:03「git可视化面板完全
+             先封存」）：整面板封存 ⇒ 本钮不渲染（面板与点击腿一行未删，条件渲染）。 -->
+        ${gitvizSealed() ? '' : `<button class="project-gitviz-btn" data-gitviz-project="${esc(name)}" type="button" title="${esc(t('project.gitVizOpen'))}" aria-label="${esc(t('project.gitVizOpen'))} ${esc(name)}">${GITVIZ_BTN_SVG}</button>`}
         <button class="project-unmount-btn" data-unmount-project="${esc(name)}" title="${esc(t('project.unmountBtn'))}" aria-label="${esc(t('project.unmountBtn'))} ${esc(name)}" aria-haspopup="dialog">${UNMOUNT_BTN_SVG}</button>
       </div>
       <div class="project-fields">
@@ -1297,7 +1300,10 @@ async function showProjectOpenMenu(button, name) {
  *  title 的点击**总是**绑定，命中与否由 `data-open-flowmap` 在场判定——定点刷新下
  *  卡的「无节点」态会随后到达的摘要改变，按属性选择器择时绑定会漏/重。 */
 function bindProjectCard(card) {
-  mountProjectWorkspaces(card, card.dataset.project);
+  // hide-workspace-sections 批（作者令 2026-11-21「先隐藏」）：卡内「▶ 工作区」折叠
+  // 区块整块不挂载 ⇒ UI 零入口。条件渲染开关见 featureFlags.js
+  // PANEL_HIDE_WORKSPACE_SECTIONS（改 false 即回，组件与端点一行未删）。
+  if (!panelWorkspaceSectionsHidden()) mountProjectWorkspaces(card, card.dataset.project);
   card.querySelector('[data-open-agent]')?.addEventListener('click', (e) => {
     e.stopPropagation();
     openAgentFile(e.currentTarget?.getAttribute('data-open-agent') || '');
@@ -1316,6 +1322,9 @@ function bindProjectCard(card) {
   // gitviz-mvp 批（作者 2026-11-19 14:06）：卡头「Git 可视化」钮 ⇒ 卡片翻转进次级面板。
   // 复用既有就地视图机制（pane.dataset.projectsView），不新造第二套壳；返回钮回列表。
   // 懒加载 gitVizView.js（与 delegateChainView 同范式：视图不进首屏包）。
+  // 🔴 hide-workspace-sections 批（作者 2026-11-21 12:03「完全先封存」）：
+  // 封存态下钮本身不渲染（见 projectCardHtml），本绑定因此无宿主元素、自然不挂
+  // （`?.` 短路）。恢复点 = featureFlags.js `GITVIZ_SEALED` 改 false，一行即回。
   card.querySelector('[data-gitviz-project]')?.addEventListener('click', (e) => {
     e.stopPropagation();
     const pane = /** @type {HTMLElement | null} */ (card.closest('.canvas-tab-pane'));
