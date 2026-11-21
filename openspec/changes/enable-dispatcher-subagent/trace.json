@@ -145,7 +145,7 @@
       "tests": [
         {
           "path": "src/test/scala/nebflow/core/ask/AskToolFaceSpec.scala",
-          "name": "F1 Ask has exactly twelve tools (the registry-derived face)"
+          "name": "F1 Ask has exactly fourteen tools (the registry-derived face)"
         },
         {
           "path": "src/test/scala/nebflow/core/ask/AskToolFaceSpec.scala",
