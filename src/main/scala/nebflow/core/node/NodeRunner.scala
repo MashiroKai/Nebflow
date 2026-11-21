@@ -144,8 +144,27 @@ object NodeRunner:
     /** Durable checkpoint state restored before the protected actor starts. */
     initialState: Option[AgentState] = None,
     /** Protected recovery must continue from the next legal boundary on spawn. */
-    continueOnSpawn: Boolean = false
-  )
+    continueOnSpawn: Boolean = false,
+    // ── 阶段 A 收口的等价旋钮（G1，行为不变）：默认值 = 收口前 spawnAgentActor 的既有行为。
+    // 直连路径（root WS / MailTool 团队成员）经此把各自原有差异显式声明，阶段 B/C 清理时移除。
+    /** AgentActor 构造实参透传（root 路径原本传入，spawnAgentActor 旧版不传）。 */
+    rulesMd: Option[String] = None,
+    folderId: Option[String] = None,
+    gitBranch: Option[String] = None,
+    compactThresholdRatio: Option[Double] = None,
+    /** 非 None ⇒ 覆盖工厂的 contextWindow（root 按会话 modelOverrides 解出；团队成员原本取 Defaults）。 */
+    contextWindowOverride: Option[Int] = None,
+    /** false ⇒ 跳过 provider 并发占坑（root/团队成员原本不占坑）。 */
+    pinProvider: Boolean = true,
+    /** false ⇒ 不走 executionCommitPort.withUnprotectedSession 准入闸（root/团队成员原本不走）。 */
+    admissionGuard: Boolean = true,
+    /** false ⇒ 跳过 KernelChildSpawnGate（团队成员原本不过闸；Q10 冲突待作者裁，见终报）。 */
+    kernelGate: Boolean = true,
+    /** true ⇒ AgentActor.sessionName 传 None（root 无会话 meta 时旧行为；忽略 sessionName 字段）。 */
+    sessionNameAbsent: Boolean = false
+  ):
+    /** AgentActor.sessionName 实参（spawnActor 唯一取值口径；None 与 Some("") 在 AgentStart 线上不同）。 */
+    def sessionNameOpt: Option[String] = if sessionNameAbsent then None else Some(sessionName)
 
   /**
    * 共享 spawn:readTracker/fileHistory 创建 + AgentActor spawn。
