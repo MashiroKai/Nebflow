@@ -6,6 +6,7 @@ import { mainBubbleClass } from './chatUi.js';
 // 消息条目统一批 2026-11-18：气泡节点装配基座单点（chatItem.js）。
 import { messageBubbleNode } from './chatItem.js';
 import { key } from './branding.js';
+import { bindImeGuard, commitEnter } from './imeGuard.js';
 // voice 块补封批 2026-10-31（作者令「封存所有会话的 voice 块」，漏网面）：TTS
 // 输出族（<voice> 块 + VoicePlayer 播报）与全双工同 flag 封存（voiceEnabled，
 // 缺席即封存；utils 渲染面剥签，此处把住播放面三入口 prefetch/enqueue/replay）。
@@ -2671,7 +2672,8 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
           const input = make('input', 'option-custom-input');
           input.placeholder = '输入或选择分支'; input.setAttribute('aria-label', '添加分支'); input.value = addDraft;
           input.oninput = () => { addDraft = input.value; if (addError) { addError = ''; area.querySelector('.ask-merge-add-error')?.remove(); } };
-          input.onkeydown = e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); addNow(); } };
+          bindImeGuard(input);
+          input.onkeydown = e => { if (commitEnter(e, input)) addNow(); };
           const datalist = make('datalist'); datalist.id = 'ask-merge-candidates-' + qi + '-' + Math.random().toString(36).slice(2); input.setAttribute('list', datalist.id);
           (Array.isArray(config.candidates) ? config.candidates : []).filter(c => typeof c === 'string' && !branches.some(b => b.name === c)).forEach(c => { const opt = make('option'); opt.value = c; datalist.append(opt); });
           addRow.append(input, datalist, button('添加条目', addNow)); area.append(addRow);
