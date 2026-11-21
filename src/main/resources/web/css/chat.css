@@ -2288,6 +2288,31 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
     --ask-ring: 0 0 0 3px rgba(7, 193, 96, 0.22);
   }
 }
+/* 显式档镜像（2026-11-21 暗色令牌裁定，同 base.css）：应用内选暗色而系统为亮色时，
+   上面媒体块不命中 ⇒ 卡面仍是白底，而卡内文字走 html[data-theme="dark"] 的亮字
+   ⇒ 亮底亮字不可读（真实页面实测：.llm-failure-card 卡面白底、文字 rgb(232,234,237)）。
+   属性选择器 (0,1,1) 高于媒体块 :root (0,1,0)，手动档优先；无 data-theme 时零回归。
+   改值须三处同步（:root / 本两段 / 媒体块）。 */
+html[data-theme="dark"] {
+  --ask-card-top: #272c3a;
+  --ask-card-bot: #1f232d;
+  --ask-card-bd: rgba(255, 255, 255, 0.09);
+  --ask-card-shadow: 0 2px 4px rgba(0, 0, 0, 0.35), 0 14px 36px rgba(0, 0, 0, 0.50);
+  --ask-card-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --ask-line-strong: rgba(255, 255, 255, 0.30);
+  --ask-btn-shadow: 0 2px 8px rgba(7, 193, 96, 0.32);
+  --ask-ring: 0 0 0 3px rgba(7, 193, 96, 0.22);
+}
+html[data-theme="light"] {
+  --ask-card-top: #ffffff;
+  --ask-card-bot: #f5f7fa;
+  --ask-card-bd: rgba(20, 26, 40, 0.08);
+  --ask-card-shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 12px 32px rgba(16, 24, 40, 0.10);
+  --ask-card-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  --ask-line-strong: rgba(28, 30, 34, 0.30);
+  --ask-btn-shadow: 0 2px 6px rgba(7, 193, 96, 0.30), 0 6px 18px rgba(7, 193, 96, 0.20);
+  --ask-ring: 0 0 0 3px rgba(7, 193, 96, 0.14);
+}
 
 /* ---------- Universal Option Box (AskUser / SlashCmd / Permission) ---------- */
 /* 浮层容器（style-2 外壳）：渐变面 + 1px 发丝描边 + 16px 圆角 + 双层柔影 +
@@ -4269,17 +4294,6 @@ body:not(.mobile-layer) .option-preview-media {
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.perm-risk-badge {
-  flex: 0 0 auto;
-  padding: 0 var(--ds-space-1);
-  border: 1px solid currentColor;
-  border-radius: var(--ds-radius-chip);
-  font-size: var(--ds-fs-meta);
-  line-height: 1.6;
-}
-.perm-risk-badge.lv-1 { color: var(--color-warning); }
-.perm-risk-badge.lv-2,
-.perm-risk-badge.lv-3 { color: var(--status-error-icon); }
 .perm-reason-gate,
 .perm-reason-rule {
   font-size: var(--ds-fs-meta);

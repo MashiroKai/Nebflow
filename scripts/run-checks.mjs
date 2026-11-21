@@ -44,9 +44,12 @@ export const CHECKS = [
   { name: 'noclip-floating-geometry', profiles: ['frontend'], timeoutMs: 240_000,
     argv: [process.execPath, 'tests/noclip-floating-geometry.spec.mjs'] },
   nodeCheck('design-tokens', 'check-design-tokens'),
-  // 主会话交互卡统一风格（作者裁定 B，2026-11-21）：卡族（.option-box / llm-failure-card）
-  // 卡面表面属性只许经 var(--…) 令牌承载；新造字面量卡面即红。
+  // 主会话交互卡统一风格（作者裁定 B，2026-11-21）：卡族（.option-box / llm-failure-card / .nfc）
+  // 卡面表面属性只许经 var(--…) 令牌承载；新造字面量卡面即红。与 check-component-contract
+  // 判据不重叠（本闸只读 CSS 卡面声明，不看 JS DOM 写法）。
   nodeCheck('interaction-card-family', 'check-interaction-card-family'),
+  // 双档令牌镜像闸（2026-11-21）：base.css 的亮/暗显式档 ≡ 媒体暗档，逐令牌；与卡族闸同档。
+  nodeCheck('theme-token-mirror', 'check-theme-token-mirror'),
   nodeCheck('message-style', 'check-msgstyle-single-source'),
   nodeCheck('message-item-unify', 'check-message-item-unify'),
   // notice-unify 批（2026-11-18，作者令「形成 lint 检查…统一到 2-3 种风格和类型的通知」）：

@@ -3,7 +3,7 @@
 // 的静态壳要在任何应用模块求值取节点之前填充完成（时序契约见 chatMount.js 头注）。
 import './chatMount.js';
 import { renderProviderFailureStatus } from './providerFailureStatus.js';
-import { renderLlmFailureCard, findLlmFailureCard } from './llmFailureCard.js';
+import { renderLlmFailureCard, findLlmFailureCard, llmFailureKey } from './llmFailureCard.js';
 import { saveSlotPreferredModel, getAllModelRefs } from './modelPanel.js';
 import { key } from './branding.js'; // MUST be first: storage-key migration runs at module init, before state.js/i18n.js read localStorage.
 import state from './state.js';
@@ -44,7 +44,7 @@ if (document.documentElement.dataset.nfEmbedded === '1') {
 // 验证脚本只能从产品自己的模块图取到**同一实例**，否则键盘闸永远只能验源树。
 installProbeSurface();
 import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
-import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, setTodoListProvider, enhanceMentionSpansInDom, bgHealthNorm } from './utils.js';
+import { createIconsIn, initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, setTodoListProvider, enhanceMentionSpansInDom, bgHealthNorm } from './utils.js';
 // mermaid-md batch (2026-10-23): ONE global hydration point — every markdown
 // face that shares renderMarkdownWithMath gets its ```mermaid placeholders
 // hydrated by this observer (chat bubbles, flow/report cards, popups). The
@@ -1892,10 +1892,7 @@ onMessage('modelUnavailable', (msg, view) => {
   // ——任何槽共用同一张（`msg.slot` 是载荷字段）。best-effort 追加进当前会话流
   // （容器缺失 = 不抛，卡仍可就地由调用方挂载）。
   try {
-    const host =
-      document.getElementById('chat-stream') ||
-      document.querySelector('.chat-stream') ||
-      document.getElementById('messages');
+    const host = llmFailureHost();
     const card = renderModelUnavailable(msg);
     if (host && card) host.appendChild(card);
     else console.warn('[modelUnavailable] no chat container; card not mounted', msg && msg.slot);
@@ -1904,21 +1901,26 @@ onMessage('modelUnavailable', (msg, view) => {
   }
 });
 
-// LLM 失败卡片（卡片批 2026-11-21）：非阻塞。llmFailure 出卡（同 agent 覆盖旧卡）；
-// llmFailureRecovered 收卡。换模型经 saveSlotPreferredModel（与设置页同一写入口）。
+// LLM 失败卡片（卡片批 2026-11-21；第 3 轮：聚合键 = 层级+模型）：非阻塞。llmFailure 出卡/更新
+// （同层级同模型组整体替换，卡上列出受影响代理）；llmFailureRecovered 组清空后收卡。
+// 换模型经 saveSlotPreferredModel（与设置页同一写入口）。
+// 消息流容器 = #chat（index.html；与 chat.js/main.js 其它渲染同口径）。
+function llmFailureHost() {
+  return document.getElementById('chat');
+}
 onMessage('llmFailure', (msg) => {
   try {
-    const host =
-      document.getElementById('chat-stream') ||
-      document.querySelector('.chat-stream') ||
-      document.getElementById('messages');
-    if (!host) return console.warn('[llmFailure] no chat container; card not mounted', msg && msg.agentName);
-    const stale = findLlmFailureCard(host, msg.agentName);
+    const host = llmFailureHost();
+    const key = llmFailureKey(msg.layer, msg.modelRef);
+    if (!host) return console.warn('[llmFailure] no chat container; card not mounted', key);
+    const stale = findLlmFailureCard(host, key);
     if (stale) stale.remove();
-    host.appendChild(renderLlmFailureCard(msg, {
+    const card = renderLlmFailureCard(msg, {
       saveModel: saveSlotPreferredModel,
       modelRefs: getAllModelRefs,
-    }));
+    });
+    host.appendChild(card);
+    createIconsIn(card);
   } catch (e) {
     console.warn('[llmFailure] render failed', e);
   }
@@ -1926,11 +1928,8 @@ onMessage('llmFailure', (msg) => {
 
 onMessage('llmFailureRecovered', (msg) => {
   try {
-    const host =
-      document.getElementById('chat-stream') ||
-      document.querySelector('.chat-stream') ||
-      document.getElementById('messages');
-    const card = host && findLlmFailureCard(host, msg.agentName);
+    const host = llmFailureHost();
+    const card = host && findLlmFailureCard(host, llmFailureKey(msg.layer, msg.modelRef));
     if (card) card.remove();
   } catch (e) {
     console.warn('[llmFailureRecovered] collapse failed', e);

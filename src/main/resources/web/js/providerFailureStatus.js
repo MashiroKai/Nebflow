@@ -32,7 +32,12 @@ export function renderProviderFailureStatus(view, digest, openTask) {
   if (signature !== surface.signature) {
     surface.signature = signature;
     node.replaceChildren(...groups.map(group => h('details', {}, [
-      h('summary', {}, t('subagents.providerFailureGroup', {
+      // 族区分呈现（2026-11-21 作者裁定）：同 bgAgents —— presentation 由后端给出。
+      h('summary', {}, t(group.presentation === 'shape'
+        ? 'subagents.providerFailureGroupShape'
+        : group.presentation === 'config'
+          ? 'subagents.providerFailureGroupConfig'
+          : 'subagents.providerFailureGroup', {
         count: group.sessionIds.length, provider: group.provider,
       })),
       h('p', {}, group.reason),

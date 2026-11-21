@@ -123,7 +123,15 @@ private[agent] object AgentProcessing:
                       .warn(s"usage record failed: ${e.getMessage}")
                   )
               case _ => IO.unit
-          usageEvent *> usageRecordIO *> handleLlmCompleteBranch(
+          // 卡片批收卡钩子（2026-11-21 补接）：成功调用 ⇒ 若本代理在失败表内则发
+          // llmFailureRecovered / 收窄后的组快照；无失败态 ⇒ None，零刷帧。
+          val recoveredIO: IO[Unit] =
+            updatedState.sessionId.fold(IO.unit)(sid =>
+              nebflow.llm.LlmFailureCard.recordSuccess(sid, agentDef.name) match
+                case Some(frame) => updatedState.wsSend(frame).handleErrorWith(_ => IO.unit)
+                case None => IO.unit
+            )
+          usageEvent *> usageRecordIO *> recoveredIO *> handleLlmCompleteBranch(
             agentDef,
             resources,
             depth,
@@ -430,7 +438,9 @@ private[agent] object AgentProcessing:
                          sid,
                          agentDef.name,
                          Option(error.getMessage).getOrElse("unknown").take(300),
-                         errCls.reason.toString
+                         errCls.reason.toString,
+                         LlmFailureCard.layerOf(depth, replyTo.isEmpty && parentRef.isDefined),
+                         LlmFailureCard.modelRefOf(error, agentDef.model.flatMap(_.preferred))
                        )
                      )
                      .handleErrorWith(_ => IO.unit)
@@ -521,7 +531,9 @@ private[agent] object AgentProcessing:
                           sid,
                           agentDef.name,
                           Option(error.getMessage).getOrElse("unknown").take(300),
-                          errCls.reason.toString
+                          errCls.reason.toString,
+                          LlmFailureCard.layerOf(depth, replyTo.isEmpty && parentRef.isDefined),
+                          LlmFailureCard.modelRefOf(error, agentDef.model.flatMap(_.preferred))
                         )
                       )
                       .handleErrorWith(_ => IO.unit)

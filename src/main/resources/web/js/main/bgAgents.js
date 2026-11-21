@@ -2701,7 +2701,15 @@ export function renderBgAgentDropdown() {
     headerEl.textContent = t('subagents.header', { count: model.total }) + digestText;
     for (const group of digest?.providerGroups || []) {
       const line = document.createElement('div');
-      line.textContent = t('subagents.providerFailureGroup', {
+      // 族区分呈现（2026-11-21 作者裁定）：presentation 由后端唯一给出，前端不猜族。
+      // format/image-capability = 形状不对（我们的请求与上游契约不符）；auth/model/quota
+      // = 需要人处理；其余（可用性族）才是「服务商不可用」。
+      const key = group.presentation === 'shape'
+        ? 'subagents.providerFailureGroupShape'
+        : group.presentation === 'config'
+          ? 'subagents.providerFailureGroupConfig'
+          : 'subagents.providerFailureGroup';
+      line.textContent = t(key, {
         provider: group.provider, count: group.count,
       });
       line.title = group.reason || '';

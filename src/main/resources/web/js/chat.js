@@ -4122,9 +4122,9 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
   // 同一事实只落一处：Write/Edit 的正文（内容 / -+ 行）由本块唯一给出，原先并列的
   // `permissionDetails` 第二份「完整区」已退役（见 permissionDetails.js 删除批注）。
   if (cardBox && cardBox.firstElementChild) {
-    renderPermDetail(cardBox, detailInfo, t, { level, before: cardBox.firstElementChild, dangerShown: !!dangerConf, labelShown: level >= 2 && !!riskLabel });
+    renderPermDetail(cardBox, detailInfo, t, { before: cardBox.firstElementChild, labelShown: level >= 2 && !!riskLabel });
   } else if (cardBox) {
-    renderPermDetail(cardBox, detailInfo, t, { level, dangerShown: !!dangerConf, labelShown: level >= 2 && !!riskLabel });
+    renderPermDetail(cardBox, detailInfo, t, { labelShown: level >= 2 && !!riskLabel });
   }
   // permission-landing 批 P1/P2 续做（2026-11-18）：requestId 走 showOptions 的**第 7 参**
   //（= 卡盒 data-request-id）——超时撤回（hub CloseRequest ⇒ askUserClosed{reason:

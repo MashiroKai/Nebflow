@@ -103,7 +103,7 @@ function staticAssertions() {
 
   // live 腿：三要素插进 showOptions 交出的卡盒（问句之前）
   const call = /const cardBox = showOptions\(/.test(chat)
-    && /renderPermDetail\(cardBox, detailInfo, t, \{ level, before: cardBox\.firstElementChild,/.test(chat)
+    && /renderPermDetail\(cardBox, detailInfo, t, \{ before: cardBox\.firstElementChild,/.test(chat)
     && /permDetailFrom\(\{\s*toolName,\s*input: inputJson,\s*permDetail/.test(chat);
   call ? ok('F1', 'live 卡把三要素插进原卡盒（问句之前）')
     : bad('F1', 'live 卡必须在原卡盒里渲染三要素', 'chat.js 缺 cardBox/showOptions 返回值或 renderPermDetail(cardBox, detailInfo, …, before)');
@@ -116,7 +116,7 @@ function staticAssertions() {
   truncated ? bad('F3', '来源 badge 必须显示完整 session id', '仍有 sourceSession.substring(0, 12)（截成 delegate-neb…）')
     : ok('F3', '来源 badge 显示完整 session id');
 
-  const histLegs = (persistence.match(/renderPermDetail\(box, histDetail, t, \{ level, before: q,/g) || []).length;
+  const histLegs = (persistence.match(/renderPermDetail\(box, histDetail, t, \{ before: q,/g) || []).length;
   histLegs >= 2 ? ok('F4', '两条历史重放腿都渲染三要素（且同落卡盒问句之前）', `legs=${histLegs}`)
     : bad('F4', '历史重放腿必须同样渲染三要素', `legs=${histLegs} (expect ≥2)`);
 
@@ -216,7 +216,7 @@ window.__render = (i) => {
   const detail = permDetailFrom({ toolName: frame.toolName, input: frame.input ?? null, permDetail: frame.permDetail });
   // 与 chat.js 生产调用同形：横幅承载档位；>=2 档横幅文案带 {detail}=人话标签 ⇒ 事实块不复述。
   const riskLabel = (frame.permDetail.reason && (frame.permDetail.reason.label || frame.permDetail.reason.levelLabel)) || '';
-  const node = renderPermDetail(box, detail, t, { level, before: box.firstElementChild, dangerShown: !!keys[level], labelShown: level >= 2 && !!riskLabel });
+  const node = renderPermDetail(box, detail, t, { level, before: box.firstElementChild, labelShown: level >= 2 && !!riskLabel });
   return { rendered: !!node, level, detail };
 };
 window.__READY = true;
@@ -269,8 +269,7 @@ async function readCard(page) {
     const rule = box ? box.querySelector('.perm-reason-rule') : null;
     const gate = box ? box.querySelector('.perm-reason-gate') : null;
     const label = box ? box.querySelector('.perm-reason-label') : null;
-    const badge = box ? box.querySelector('.perm-risk-badge') : null;
-    const scopeItems = box ? [...box.querySelectorAll('.perm-scope-item')].map((r) => ({
+        const scopeItems = box ? [...box.querySelectorAll('.perm-scope-item')].map((r) => ({
       k: r.querySelector('.perm-scope-key')?.textContent || '',
       v: r.querySelector('.perm-scope-val')?.textContent || '',
     })) : [];
@@ -294,7 +293,6 @@ async function readCard(page) {
       label: label ? label.textContent : '',
       rule: rule ? rule.textContent : '',
       gate: gate ? gate.textContent : '',
-      badge: badge ? badge.textContent : '',
       scopeItems,
       // 内联落点：三要素必须在卡盒里、且在问句之前
       inBox: !!box && !!pre && box.contains(pre),
@@ -406,12 +404,11 @@ async function browserAssertions() {
       } else {
         bad(`D2[${tag}]`, '人话标签必须整卡只出现一次', `count=${labelCount} label=${JSON.stringify(r.label)}`);
       }
-      // D3：危险类型（档位）只一处 —— 横幅在场 ⇒ 理由行不得再出 L 徽标
-      const bannerOn = !!st.bannerText.trim();
-      if (Number(r.level) > 0 && bannerOn && !/L\d/.test(st.badge)) {
-        ok(`D3[${tag}]`, '危险类型只在横幅一处（理由行无重复 L 徽标）', st.bannerText.trim());
+      // D3：权限卡不显示风险分档（作者第 4 轮裁定）—— 理由行任何档位都不得出现 L 徽标
+      if (!st.badge) {
+        ok(`D3[${tag}]`, '权限卡不显示风险分档（理由行无 L 徽标）', `level=${r.level}`);
       } else {
-        bad(`D3[${tag}]`, '危险类型必须只出现一次', `banner=${JSON.stringify(st.bannerText)} badge=${JSON.stringify(st.badge)} level=${r.level}`);
+        bad(`D3[${tag}]`, '权限卡不得显示风险分档', `badge=${JSON.stringify(st.badge)} level=${r.level}`);
       }
 
       const s = d.scope || {};
