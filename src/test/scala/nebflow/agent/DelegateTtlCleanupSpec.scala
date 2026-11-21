@@ -653,6 +653,188 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
     os.proc("git", "-C", repo, "commit", "-m", "seed").call()
     repo
 
+  // ── 改后绿 J：worktree 现场三态判据（孤儿行全清 ops 复核批 2026-11-21）───────
+  //
+  // 旧闸 = 「worktree 字段非空 ⇒ InFlight」，在年龄判定之前返回。字段是登记时刻的意图
+  // 快照，不是现场存续：695 条过期行里 694 条字段非空，其中 634 条目录早已不在盘上
+  // ⇒ 行永不到期、面板孤儿行计数无法归零。新判据 = 目录在盘 ∧ 仍被 git 登记。
+
+  test(
+    "J1 · worktree 三态: field non-empty + dir present + git-registered = InFlight; dir gone = age verdict; dir present but unregistered = age verdict"
+  ) {
+    import nebflow.core.delegate.{DelegateRegistry, DelegateTerminalTtl, DelegateWorktreeRegistry}
+    // 真实时钟：本用例的行由 mkTask 以墙钟锚（NineDaysAgo / now-2d）构造，判读必须同基。
+    val now = System.currentTimeMillis()
+    val parent = "ttl-parent-j1"
+    // 9 天前的终态行：过了 7 天 TTL ⇒ 只要不被 worktree 闸判在飞，就应当 Expired。
+    val ancientRow = mkTask("delegate-nebflow-ttl-j1", parent, status = "completed", completedAt = NineDaysAgo)
+    val registeredDir = os.temp.dir(prefix = "ttl-wt-registered")
+    val unregisteredDir = os.temp.dir(prefix = "ttl-wt-unregistered")
+    val goneDirPath = os.temp.dir(prefix = "ttl-wt-gone")
+    os.remove.all(goneDirPath) // 目录已亡（登记字段仍指向它）
+    val goneDir = goneDirPath.toString
+    // 仓库根提示 = 当前工作目录（快照的登记清单键）；三个候选目录本身都不是 git 仓库，
+    // 因此仓库根全部由 `projectWorkspace` 提示推导——与生产记录同形（694/694 条都有该字段）。
+    val root = os.pwd.toString
+
+    def recWith(id: String, wt: String) =
+      mkRecord(id, parent, wt).copy(worktree = Some(wt), projectWorkspace = Some(root))
+
+    val rec = recWith("delegate-nebflow-ttl-j1", registeredDir.toString)
+    // 三态快照：registered 目录登记在册；unregistered 目录不在清单里。
+    val snap = DelegateWorktreeRegistry.Snapshot.of(Map(root -> Set(registeredDir.toString)))
+    // ① 字段非空 + 目录在盘 + 已登记 ⇒ InFlight（保险丝语义：现场没拆，绝不清理）。
+    assertEquals(
+      DelegateWorktreeRegistry.presenceOf(rec, snap),
+      DelegateWorktreeRegistry.Presence.Live,
+      "present dir still registered = Live"
+    )
+    assertEquals(
+      DelegateTerminalTtl.verdict(rec, Some(ancientRow), now, snap),
+      DelegateTerminalTtl.InFlight,
+      "Live worktree keeps the in-flight fuse"
+    )
+    // ② 字段非空 + 目录不在盘 ⇒ 按年龄判过期（634 条主路径）。
+    val goneRec = recWith("delegate-nebflow-ttl-j1", goneDir)
+    assertEquals(
+      DelegateWorktreeRegistry.presenceOf(goneRec, snap),
+      DelegateWorktreeRegistry.Presence.Gone,
+      "missing dir = Gone"
+    )
+    DelegateTerminalTtl.verdict(goneRec, Some(ancientRow), now, snap) match
+      case DelegateTerminalTtl.Expired(_, name) => assertEquals(name, "task-row")
+      case other => fail(s"expected Expired(task-row) for a gone worktree dir, got $other")
+    // ③ 字段非空 + 目录在盘 + **未**登记 ⇒ 按年龄判过期（同名目录不是活座位）。
+    val unregRec = recWith("delegate-nebflow-ttl-j1", unregisteredDir.toString)
+    assertEquals(
+      DelegateWorktreeRegistry.presenceOf(unregRec, snap),
+      DelegateWorktreeRegistry.Presence.Unregistered,
+      "present dir not in the repo registration = Unregistered"
+    )
+    DelegateTerminalTtl.verdict(unregRec, Some(ancientRow), now, snap) match
+      case DelegateTerminalTtl.Expired(_, name) => assertEquals(name, "task-row")
+      case other => fail(s"expected Expired(task-row) for an unregistered worktree dir, got $other")
+    // ④ 未满 TTL 的行即使 worktree 已亡也保留（年龄判定本体不变）。
+    val freshRow = mkTask("delegate-nebflow-ttl-j1", parent, status = "completed", completedAt = now - 2L * Day)
+    DelegateTerminalTtl.verdict(goneRec, Some(freshRow), now, snap) match
+      case DelegateTerminalTtl.WithinTtl(_, name) => assertEquals(name, "task-row")
+      case other => fail(s"expected WithinTtl(task-row) for a fresh gone-worktree row, got $other")
+    // ⑤ 字段缺省（无 worktree）= Gone，与入参无关。
+    assertEquals(
+      DelegateWorktreeRegistry.presenceOf(mkRecord("delegate-nebflow-ttl-j1", parent, "/tmp/x"), snap),
+      DelegateWorktreeRegistry.Presence.Gone,
+      "absent worktree field = Gone (not in-flight)"
+    )
+  }
+
+  test(
+    "J2 · 现场快照: registration is read from the REAL git worktree list (linked worktree = Live, pruned dir = Gone, stray dir = Unregistered)"
+  ) {
+    import nebflow.core.delegate.{DelegateRegistry, DelegateWorktreeRegistry}
+    val repo = gitRepo("ttl-wt-repo")
+    val linked = repo / os.up / s"ttl-wt-linked-${java.util.UUID.randomUUID().toString.take(6)}"
+    os.proc("git", "-C", repo, "worktree", "add", linked, "-b", "ttl-spec-linked").call(cwd = repo)
+    val stray = os.temp.dir(prefix = "ttl-wt-stray") // 只是个目录，从没 worktree add 过
+    val prunedDir = repo / os.up / s"ttl-wt-pruned-${java.util.UUID.randomUUID().toString.take(6)}"
+    os.proc("git", "-C", repo, "worktree", "add", prunedDir, "-b", "ttl-spec-pruned").call(cwd = repo)
+    os.remove.all(prunedDir) // 目录被手工删掉，git 登记残留（prunable）——仍须判 Gone
+
+    def rec(id: String, wt: os.Path) =
+      mkRecord(id, "ttl-parent-j2", repo.toString)
+        .copy(worktree = Some(wt.toString), projectWorkspace = Some(repo.toString))
+
+    val records = List(
+      rec("delegate-nebflow-ttl-j2-live", linked),
+      rec("delegate-nebflow-ttl-j2-gone", prunedDir),
+      rec("delegate-nebflow-ttl-j2-unreg", stray)
+    )
+    val snap = DelegateWorktreeRegistry.Snapshot.capture(records)
+    assertEquals(snap.repoRoots, Set(DelegateWorktreeRegistry.canonical(repo.toString)), "one git call per repo root")
+    assertEquals(
+      DelegateWorktreeRegistry.presenceOf(records.head, snap),
+      DelegateWorktreeRegistry.Presence.Live,
+      "linked worktree still registered = Live"
+    )
+    assertEquals(
+      DelegateWorktreeRegistry.presenceOf(records(1), snap),
+      DelegateWorktreeRegistry.Presence.Gone,
+      "directory removed (registration possibly stale/prunable) = Gone — the 634-row main path"
+    )
+    assertEquals(
+      DelegateWorktreeRegistry.presenceOf(records(2), snap),
+      DelegateWorktreeRegistry.Presence.Unregistered,
+      "stray directory never registered = Unregistered"
+    )
+    os.proc("git", "-C", repo, "worktree", "remove", "--force", linked).call(check = false)
+  }
+
+  test(
+    "J3 · sweep 主路径: a registered-but-dead delegate (record + row + worktree dir gone) is now collected by the main leg"
+  ) {
+    withFx("worktree-gone-e2e", verifiedLegacy = true) { fx =>
+      val parent = "ttl-parent-j3"
+      val deadId = "delegate-nebflow-ttl-wt-dead"
+      val liveId = "delegate-nebflow-ttl-wt-live"
+      val repo = gitRepo("ttl-j3-repo")
+      val liveWt = repo / os.up / s"ttl-j3-live-${java.util.UUID.randomUUID().toString.take(6)}"
+      os.proc(
+        "git",
+        "-C",
+        repo,
+        "worktree",
+        "add",
+        liveWt,
+        "-b",
+        s"ttl-j3-${java.util.UUID.randomUUID().toString.take(6)}"
+      ).call(cwd = repo)
+      val goneWt = repo / os.up / s"ttl-j3-gone-${java.util.UUID.randomUUID().toString.take(6)}"
+      os.proc(
+        "git",
+        "-C",
+        repo,
+        "worktree",
+        "add",
+        goneWt,
+        "-b",
+        s"ttl-j3g-${java.util.UUID.randomUUID().toString.take(6)}"
+      ).call(cwd = repo)
+      os.remove.all(goneWt) // 目录已亡、登记残留 ⇒ 本次要打通的主路径
+      for
+        _ <- fx.sessionStore.getOrCreateSession(parent, "ttl spec parent", agentName = Some("Nebula"))
+        _ <- fx.store.recordTask(mkTask(deadId, parent, status = "completed", completedAt = NineDaysAgo))
+        _ <- fx.store.recordTask(mkTask(liveId, parent, status = "completed", completedAt = NineDaysAgo))
+        _ <- IO(
+          nebflow.core.delegate.DelegateRegistry.put(
+            mkRecord(deadId, parent, goneWt.toString).copy(
+              worktree = Some(goneWt.toString),
+              projectWorkspace = Some(repo.toString)
+            )
+          )
+        )
+        _ <- IO(
+          nebflow.core.delegate.DelegateRegistry.put(
+            mkRecord(liveId, parent, liveWt.toString).copy(
+              worktree = Some(liveWt.toString),
+              projectWorkspace = Some(repo.toString)
+            )
+          )
+        )
+        report <- DelegateTtlSweep.run(fx.resources)
+        _ = assertEquals(report.expired, List(deadId), s"only the dead worktree entry is collected: ${report.summary}")
+        _ = assertEquals(report.taskRowsPruned, List(deadId), "the dead row is pruned")
+        _ = assertEquals(report.recordsRemoved, List(deadId), "the dead registry entry is removed")
+        goneRec <- IO(nebflow.core.delegate.DelegateRegistry.find(deadId))
+        _ = assertEquals(goneRec, None, "the dead entry leaves the registry")
+        liveRec <- IO(nebflow.core.delegate.DelegateRegistry.find(liveId).map(_.id))
+        _ = assertEquals(liveRec, Some(liveId), "a still-registered worktree keeps the in-flight fuse (zero touch)")
+        liveRow <- fx.store.findByTaskId(liveId)
+        _ = assert(liveRow.nonEmpty, "the live worktree's row is untouched")
+        _ = os.proc("git", "-C", repo, "worktree", "remove", "--force", liveWt).call(check = false)
+      yield ()
+      end for
+    }
+  }
+
   // ── 改后绿 I：TTL 单源对齐 ────────────────────────────────────────────
 
   test(
