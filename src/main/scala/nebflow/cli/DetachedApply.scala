@@ -165,12 +165,29 @@ object DetachedApply:
 
   // ── launcher / 安装根解析（两平台生产形态的既定布局）───────────────────
 
-  /** 平台 launcher 解析：posix = `~/.stand/bin/stand`；windows = `%LOCALAPPDATA%\stand\stand.cmd`。 */
+  /**
+   * 平台 launcher 解析。候选链（先命中先赢）：
+   *   1. `STAND_LAUNCHER` 显式覆盖；
+   *   2. `INSTALL_DIR` —— 安装器自己的安装根旋钮（隔离安装正是这么装的）；
+   *   3. **本进程正在跑的那个 jar 所在目录** —— 唯一不靠假设的证词：launcher
+   *      就躺在它启动的 jar 旁边（2026-11-21 跨机 E2E 缺陷 ⑥）；
+   *   4. 平台缺省（posix `~/.stand/bin/stand`；windows `%LOCALAPPDATA%\stand\stand.cmd`）。
+   *
+   * 为什么补 2/3：原先只有 1/4 ⇒ **隔离安装后 `stand update --from <jar>` 必然失败**
+   * （实测：`stand launcher not found (posix: ~/.stand/bin/stand; windows:
+   * %LOCALAPPDATA%\stand\stand.cmd)`，而该实例装在 `C:\stand-e2e\bin`）。
+   * `update`/`restart` 是隔离实例验收的核心面，装得下却更新不了不算装成功。
+   */
   def resolveLauncher(env: Map[String, String], home: String, isWindows: Boolean): Option[String] =
+    val launcherName = if isWindows then s"${Branding.lowerName}.cmd" else Branding.lowerName
+    def at(dir: os.Path): Option[String] =
+      Some((dir / launcherName).toString).filter(p => os.exists(os.Path(p)))
     env
       .get("STAND_LAUNCHER")
       .map(_.trim)
       .filter(_.nonEmpty)
+      .orElse(env.get("INSTALL_DIR").map(_.trim).filter(_.nonEmpty).flatMap(d => at(os.Path(d))))
+      .orElse(launcherBesideRunningJar(isWindows).flatMap(dir => at(dir)))
       .orElse(
         if isWindows then
           env.get("LOCALAPPDATA").map(l => os.Path(l) / "stand" / "stand.cmd").filter(os.exists).map(_.toString)
@@ -178,6 +195,16 @@ object DetachedApply:
           Some((os.Path(home) / Branding.homeDirName / "bin" / "stand").toString)
             .filter(p => os.exists(os.Path(p)))
       )
+
+  /**
+   * 正在运行的 jar 所在目录（= 安装根）。打包形态下 `java.class.path` 就是那个 fat jar
+   * 的绝对路径；sbt/dev 形态解析不出 ⇒ None（各腿自然落到下一候选，绝不猜）。
+   */
+  private def launcherBesideRunningJar(isWindows: Boolean): Option[os.Path] =
+    nebflow.core.RestartHelper.resolveJarPath().flatMap { jar =>
+      val p = os.Path(jar, os.pwd)
+      if os.exists(p) then Some(p / os.up) else None
+    }
 
   /** 安装根 = launcher 所在目录（Mac: ~/.stand/bin 指针布局；Windows: AppData 扁平布局）。 */
   def installDirOf(launcher: String): os.Path = os.Path(launcher) / os.up
