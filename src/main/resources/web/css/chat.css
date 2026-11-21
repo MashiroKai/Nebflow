@@ -4603,7 +4603,10 @@ body:not(.mobile-layer) .option-preview-media {
   border: 1px solid rgba(91, 127, 191, 0.35);
   color: rgb(91, 127, 191);
   background: rgba(91, 127, 191, 0.06);
-  transition: all 0.25s ease;
+  /* 手机面板卡顿诊断批（2026-11-21）：`transition: all` 退役 → 显式白名单。
+     本钮 hover/active 实际只变 background + border-color（见 :4608 块）；
+     `all` 会把任何未来新增的布局属性也拖进过渡（同 hover 零布局批裁定）。 */
+  transition: background-color 0.25s ease, border-color 0.25s ease;
 }
 .wsp-mkdir-ok:hover {
   background: rgba(91, 127, 191, 0.14);
@@ -4645,7 +4648,13 @@ body:not(.mobile-layer) .option-preview-media {
   border: 1px solid var(--glass-border);
   background: rgba(91, 127, 191, 0.03);
   color: var(--color-frame-text-dim);
-  transition: all 0.25s ease;
+  /* 手机面板卡顿诊断批（2026-11-21）：显式白名单（同 .wsp-mkdir-ok 档：
+     hover 只动 background/border-color/color/box-shadow，见 :4650 块）。 */
+  transition:
+    background-color 0.25s ease,
+    border-color 0.25s ease,
+    color 0.25s ease,
+    box-shadow 0.25s ease;
 }
 .wsp-cancel:hover, .wsp-pick:hover, .wsp-mkdir:hover {
   background: rgba(91, 127, 191, 0.08);
@@ -4735,7 +4744,9 @@ body:not(.mobile-layer) .option-preview-media {
   border: 1px solid var(--glass-border);
   background: rgba(91, 127, 191, 0.03);
   color: var(--color-frame-text-dim);
-  transition: all 0.25s ease;
+  /* 手机面板卡顿诊断批（2026-11-21）：显式白名单（hover 只动 background/
+     border-color/color，见 :4741 块）。 */
+  transition: background-color 0.25s ease, border-color 0.25s ease, color 0.25s ease;
 }
 @media (hover: hover) {
   .wsp-goto-btn:hover {
