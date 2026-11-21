@@ -1190,7 +1190,7 @@ object BackoffSupervisor:
                 notifyParentAndStop(
                   "failed",
                   nebflow.llm.LlmFailureSignal.parentPayload(
-                    error.errorType == AgentErrorType.LlmFailed,
+                    error.llmClass,
                     description
                   )(s"${error.message}$sessionInfo"),
                   fc,

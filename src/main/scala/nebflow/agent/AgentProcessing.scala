@@ -420,7 +420,23 @@ private[agent] object AgentProcessing:
                       .max(LlmFailBackoffBaseMs * (1L << math.max(state.llmFailRetries, 1) - 1), OverloadBackoffMinMs),
                     LlmFailBackoffMaxMs
                   ) + jitter
-              enterErrorFrozen(agentDef, resources, depth, parentRef, state, replyTo, errReason, resumeInMs, error)
+              // 卡片批（2026-11-21）：LLM 类冻结 ⇒ 发 llmFailure 卡（非阻塞：发帧即返回，
+              // 退避到期自动续跑，续跑成功由 recordSuccess 发 recovered 收卡）。
+              (if nebflow.llm.LlmFailureSignal.isLlmClass(error) then
+                 state.sessionId.fold(IO.unit)(sid =>
+                   state
+                     .wsSend(
+                       nebflow.llm.LlmFailureCard.recordFailure(
+                         sid,
+                         agentDef.name,
+                         Option(error.getMessage).getOrElse("unknown").take(300),
+                         errCls.reason.toString
+                       )
+                     )
+                     .handleErrorWith(_ => IO.unit)
+                 )
+               else IO.unit) *>
+                enterErrorFrozen(agentDef, resources, depth, parentRef, state, replyTo, errReason, resumeInMs, error)
             else
               // 2026-11-02「循环检测误杀整批任务」批 ③：L1 终止路径的**交付面
               // 文本** = 终止原因 + 被终止那一轮已产出的助手输出（salvagedText）。
@@ -439,7 +455,9 @@ private[agent] object AgentProcessing:
                   depth,
                   AgentErrorType.LlmFailed,
                   errorText,
-                  retryable = Some(AgentActor.llmFailureRetryable(error))
+                  retryable = Some(AgentActor.llmFailureRetryable(error)),
+                  // 判据单点：LlmFailureSignal（卡片批）。团队路径与 subtask 路径共读此位。
+                  llmClass = nebflow.llm.LlmFailureSignal.isLlmClass(error)
                 )
               val errMsg = error match
                 case e: FallbackExhaustedError =>
@@ -493,6 +511,22 @@ private[agent] object AgentProcessing:
                   resources.sessionStore.durableSwapMessages(sid, cleanedState.messages) *>
                     resources.sessionStore.flushIndex
                 }
+                // 卡片批（2026-11-21）：致命 LLM 类失败 ⇒ llmFailure 卡（非阻塞）。判据 = agentError.llmClass
+                // （单点 LlmFailureSignal），与上级注入的 llmClass 同源。
+                _ <- cleanedState.sessionId.fold(IO.unit)(sid =>
+                  if agentError.llmClass then
+                    cleanedState
+                      .wsSend(
+                        nebflow.llm.LlmFailureCard.recordFailure(
+                          sid,
+                          agentDef.name,
+                          Option(error.getMessage).getOrElse("unknown").take(300),
+                          errCls.reason.toString
+                        )
+                      )
+                      .handleErrorWith(_ => IO.unit)
+                  else IO.unit
+                )
                 // #25: a fatal failure must discharge the completion debt with
                 // Failed — a parked requester (supervisor/bridge waiting for the
                 // post-batch answer) would otherwise hang forever, and the clone
@@ -524,7 +558,7 @@ private[agent] object AgentProcessing:
                       // LLM 类（卡片批 2026-11-21）：provider 原文零注入，只给中性句；
                       // 非 LLM 类（代码异常等）逐字保留原文。
                       payload =
-                        if nebflow.llm.LlmFailureSignal.isLlmClass(error) then
+                        if agentError.llmClass then
                           s""""${agentDef.name}" (team member) hit a fatal LLM failure: """ +
                             s"${nebflow.llm.LlmFailureSignal.ParentNeutralNotice}$sessionInfo"
                         else

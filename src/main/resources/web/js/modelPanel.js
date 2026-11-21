@@ -280,6 +280,14 @@ function forkedRoles() {
 
 // ── Writes (per-action save) ───────────────────────────────
 
+/**
+ * LLM 失败卡片「换模型」的同源写入口（卡片批 2026-11-21）：把某槽的首选模型设为
+ * modelRef，走与设置页完全相同的 putChain（同一 PUT /api/agents/:role/model，同一落盘）。
+ */
+export function saveSlotPreferredModel(role, modelRef) {
+  return putChain(role, [modelRef]);
+}
+
 async function putChain(role, chain) {
   const body = chain
     ? { model: { preferred: chain[0] || null, fallbacks: chain.slice(1) } }

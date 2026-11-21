@@ -194,6 +194,17 @@ private[agent] object AgentFinishTurn:
   // Finish turn
   // ============================================================
 
+  /**
+   * 卡片批（2026-11-21）：回合正常结束 = LLM 调用成功 ⇒ 若该 agent 处于 LLM 失败卡态，
+   * 发 `llmFailureRecovered` 收卡（非阻塞；无失败态时 recordSuccess 为 None，零帧）。
+   */
+  private def recoverLlmFailureCard(agentName: String, state: AgentState): IO[Unit] =
+    state.sessionId.fold(IO.unit)(sid =>
+      nebflow.llm.LlmFailureCard
+        .recordSuccess(sid, agentName)
+        .fold(IO.unit)(frame => state.wsSend(frame).handleErrorWith(_ => IO.unit))
+    )
+
   private[agent] def finishTurn(
     agentDef: AgentDef,
     resources: SharedResources,
@@ -206,6 +217,22 @@ private[agent] object AgentFinishTurn:
     thinkingSignature: Option[String] = None,
     textAlreadyStreamed: Boolean = false,
     model: Option[String] = None
+  )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
+    recoverLlmFailureCard(agentDef.name, state) *>
+      finishTurnBody(agentDef, resources, depth, parentRef, state, replyTo, text, thinking, thinkingSignature, textAlreadyStreamed, model)
+
+  private def finishTurnBody(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    replyTo: Option[ActorRef[AgentEvent]],
+    text: String,
+    thinking: Option[String],
+    thinkingSignature: Option[String],
+    textAlreadyStreamed: Boolean,
+    model: Option[String]
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     // ── Zombie-compaction guard ──
     // A pending CompactionJob must never survive into idle: the next normal
@@ -346,7 +373,7 @@ private[agent] object AgentFinishTurn:
       yield result
     end if
 
-  end finishTurn
+  end finishTurnBody
 
   /**
    * 完成信号目标兜底（**dispatcher 终态批 2026-11-05** · 作者报障「dispatcher 模式
