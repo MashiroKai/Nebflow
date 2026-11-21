@@ -1185,9 +1185,14 @@ object BackoffSupervisor:
                 if source == "delegate" then settlementFace().map(f => (f._1.deepMerge(failureMeta), f._2, Some(f._3)))
                 else IO.pure((failureMeta, Nil, None))
               withFcAndFace.flatMap { case (fc, countedOids, partial) =>
+                // LLM 类失败（卡片批 2026-11-21）：上级邮箱正文只给中性句，provider 原文
+                // 零注入（屏障仍经同一 failed 事件释放）；非 LLM 类逐字原路径。
                 notifyParentAndStop(
                   "failed",
-                  s""""$description": ${error.message}$sessionInfo""",
+                  nebflow.llm.LlmFailureSignal.parentPayload(
+                    error.errorType == AgentErrorType.LlmFailed,
+                    description
+                  )(s"${error.message}$sessionInfo"),
                   fc,
                   roundCountedOids = countedOids,
                   roundPartial = partial

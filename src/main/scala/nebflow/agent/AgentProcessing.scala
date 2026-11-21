@@ -521,8 +521,15 @@ private[agent] object AgentProcessing:
                     parent ! AgentCommand.ExternalEvent(
                       source = "team",
                       eventType = "failed",
-                      payload = s""""${agentDef.name}" (team member) hit a fatal LLM failure: """ +
-                        s"${Option(error.getMessage).getOrElse("unknown").take(200)}$sessionInfo",
+                      // LLM 类（卡片批 2026-11-21）：provider 原文零注入，只给中性句；
+                      // 非 LLM 类（代码异常等）逐字保留原文。
+                      payload =
+                        if nebflow.llm.LlmFailureSignal.isLlmClass(error) then
+                          s""""${agentDef.name}" (team member) hit a fatal LLM failure: """ +
+                            s"${nebflow.llm.LlmFailureSignal.ParentNeutralNotice}$sessionInfo"
+                        else
+                          s""""${agentDef.name}" (team member) hit a fatal LLM failure: """ +
+                            s"${Option(error.getMessage).getOrElse("unknown").take(200)}$sessionInfo",
                       metadata = JsonObject(
                         "failedSessionId" -> sid.asJson,
                         "retryable" -> true.asJson,
