@@ -2282,7 +2282,10 @@ object GatewayMain extends IOApp:
                                                     // 缺省启用）。不重启引擎不生效，随下一波上线。
                                                     val consoleTakeover = ConsoleTakeover(
                                                       wsHub.sendTo,
-                                                      NebflowLogger.forName("nebflow.console-takeover")
+                                                      NebflowLogger.forName("nebflow.console-takeover"),
+                                                      pendingStorePath = Some(
+                                                        PathUtil.dataRoot.toNIO.resolve("console-takeover-pending.json")
+                                                      )
                                                     )
                                                     logger.info(
                                                       s"console-takeover: single-instance gate " +

@@ -120,9 +120,10 @@ class ConsoleTakeoverSameEndSpec extends CatsEffectSuite:
         "同端（UA 指纹相同）⇒ 静默让位给带身份的连接：所有权平滑移交，不是被「另一个端」抢")
       assertEquals(types, Nil, "旧会话记录不算第二端：一条帧都不许发")
 
-  // ── W4 旧端已无可见活动 ⇒ 静默让位（作者令④后半句） ───────────────────────
+  // ── W4 旧端无可见活动 ⇒ 仍推帧（2026-11-21 作者令：推所有已知旧连接，不限活动窗；
+  //    错过的通知记入补推账，见 W6）──────────────────────────────────────────
 
-  test("W4 idle/ghost incumbent is silently superseded — no takeover frame when it is not watching"):
+  test("W4 idle/ghost incumbent is still pushed the takeover frame — no activity-window gate"):
     for
       (reg, sent) <- fixture(activityTtlMs = 60L)
       _ <- reg.onConnect(sidPhone, "conn-phone-1", meta(cidPhone, uaPhone))
@@ -132,7 +133,61 @@ class ConsoleTakeoverSameEndSpec extends CatsEffectSuite:
       types <- typesOf(sent)
     yield
       assertEquals(ownerNow, Some("c:desk-cid-1"), "互斥权照样翻位（谁在看谁拿）")
-      assertEquals(types, Nil, "旧端已无可见活动 ⇒ 静默让位，不弹框")
+      assertEquals(types.map(_._2), List("takeover"), "旧端已知连接一律收到接管帧（不再以活动窗过滤）")
+
+  // ── W6 端未连接 ⇒ 重连补推，ack 才清账（2026-11-21 作者令：错过事件不能静默丢） ──
+
+  test("W6 displaced phone offline at takeover: notice replayed on reconnect, cleared only by matching ack"):
+    for
+      (reg, sent) <- fixture()
+      _ <- reg.onConnect(sidPhone, "conn-phone-1", meta(cidPhone, uaPhone))
+      _ <- reg.onDisconnect("conn-phone-1") // 手机此刻未连接（息屏/断网）
+      _ <- reg.onConnect("sid-desk-1", "conn-desk-1", meta("desk-cid-1", uaDesk)) // 电脑接管
+      // 手机重连：补推账在场 ⇒ 本连接收一次 takeover（at 即接管时刻）
+      _ <- reg.onConnect(sidPhone, "conn-phone-2", meta(cidPhone, uaPhone))
+      phone2 <- framesTo(sent, "conn-phone-2")
+      at = phone2.headOption.flatMap(_.hcursor.downField("at").as[Long].toOption).getOrElse(-1L)
+      // 错误 at 的确认不清账
+      _ <- reg.ackNotice("conn-phone-2", at + 1)
+      _ <- reg.onDisconnect("conn-phone-2")
+      _ <- reg.onConnect(sidPhone, "conn-phone-3", meta(cidPhone, uaPhone))
+      stillPending <- framesTo(sent, "conn-phone-3")
+      // 正确 at 确认 ⇒ 清账
+      _ <- reg.ackNotice("conn-phone-2", at)
+      _ <- reg.onDisconnect("conn-phone-3")
+      _ <- reg.onConnect(sidPhone, "conn-phone-4", meta(cidPhone, uaPhone))
+      cleared <- framesTo(sent, "conn-phone-4")
+    yield
+      assertEquals(phone2.map(_.hcursor.downField("type").as[String].getOrElse("?")), List("takeover"),
+        "重连补推：本连接收一次接管帧")
+      assert(at > 0L, "补推帧携带接管时刻 at")
+      assertEquals(stillPending.map(_.hcursor.downField("type").as[String].getOrElse("?")), List("takeover"),
+        "错误 at 的确认不清账：下次连接仍补推")
+      // 清账后仍有一帧：既有「旧主回连 ⇒ superseded 通知」（past 分支，回连非 owner 的
+      // 被踢面出路）不随 ack 消失——补推账只管「错过的那次」，不改回连既有语义。
+      assertEquals(cleared.map(_.hcursor.downField("type").as[String].getOrElse("?")), List("takeover"),
+        "清账后回连仍由既有 past 分支给一次 superseded 通知（非补推账）")
+
+  test("W7 pending ledger survives an engine restart: the missed notice is replayed after reboot"):
+    val path = java.nio.file.Files.createTempDirectory("tbf-pending").resolve("console-takeover-pending.json")
+    for
+      sent1 <- Ref.of[IO, List[(String, Json)]](Nil)
+      reg1 = new ConsoleTakeover(
+        (c, j) => sent1.update(_.prepended((c, j))), logger, pendingStorePath = Some(path))
+      _ <- reg1.onConnect(sidPhone, "conn-phone-1", meta(cidPhone, uaPhone))
+      _ <- reg1.onDisconnect("conn-phone-1")
+      _ <- reg1.onConnect("sid-desk-1", "conn-desk-1", meta("desk-cid-1", uaDesk)) // 电脑接管，手机离线
+      fileExists <- IO(java.nio.file.Files.exists(path))
+      // 引擎重启：新实例、同一账本文件，旧内存全部丢弃
+      sent2 <- Ref.of[IO, List[(String, Json)]](Nil)
+      reg2 = new ConsoleTakeover(
+        (c, j) => sent2.update(_.prepended((c, j))), logger, pendingStorePath = Some(path))
+      _ <- reg2.onConnect(sidPhone, "conn-phone-2", meta(cidPhone, uaPhone))
+      phone2 <- framesTo(sent2, "conn-phone-2")
+    yield
+      assert(fileExists, "接管时账本已原子落盘")
+      assertEquals(phone2.map(_.hcursor.downField("type").as[String].getOrElse("?")), List("takeover"),
+        "引擎重启后补推仍生效（账本从盘读回）")
 
   test("W5 noteActivity keeps a watching incumbent live — the takeover frame IS pushed then"):
     for
