@@ -16,7 +16,6 @@ import { dropDeviceMessageCache } from './fmDropboxCache.js';
 import { evict as evictLocalStore } from './localStore.js';
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
-import { permissionDetails } from './permissionDetails.js';
 import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, appendUserTextWithFences, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId, shouldFollowBottom, deviceTagHtml } from './utils.js';
 // output 块语法批（作者令 2026-10-31）：历史重放腿同 live 腿一个 output 面——
 // 平衡 <output> 对 ⇒ 正常态只渲染块内，角标展开回原文（turnGroup toggle）。
@@ -960,7 +959,6 @@ export function restoreFromStorage(opts = {}) {
       chat.appendChild(row);
       const box = document.createElement('div');
       box.className = 'permission-pending-box option-box';
-      if (m.toolName === 'Edit' || m.toolName === 'Write') box.appendChild(permissionDetails(m.toolName, m.input));
       const q = document.createElement('div');
       q.className = 'option-q';
       q.textContent = t('chat.allowTool', { tool: m.toolName || '?' });
@@ -977,7 +975,7 @@ export function restoreFromStorage(opts = {}) {
       });
       box.appendChild(optsDiv);
       bubble.appendChild(box);
-      renderPermDetail(box, histDetail, t, { level, before: q });
+      renderPermDetail(box, histDetail, t, { level, before: q, dangerShown: !!dInfo, labelShown: level >= 2 && !!(histDetail.reason && (histDetail.reason.label || histDetail.reason.levelLabel)) });
     } else if (m.type === 'ask') {
       // Ask question (user side)
       const qRow = document.createElement('div');
@@ -1466,7 +1464,6 @@ function buildHistoryRow(m, i, ctx) {
       fragment.appendChild(row);
       const box = document.createElement('div');
       box.className = 'permission-pending-box option-box';
-      if (m.toolName === 'Edit' || m.toolName === 'Write') box.appendChild(permissionDetails(m.toolName, m.input));
       const q = document.createElement('div');
       q.className = 'option-q';
       q.textContent = t('chat.allowTool', { tool: m.toolName || '?' });
@@ -1483,7 +1480,7 @@ function buildHistoryRow(m, i, ctx) {
       });
       box.appendChild(optsDiv);
       bubble.appendChild(box);
-      renderPermDetail(box, histDetail, t, { level, before: q });
+      renderPermDetail(box, histDetail, t, { level, before: q, dangerShown: !!dInfo, labelShown: level >= 2 && !!(histDetail.reason && (histDetail.reason.label || histDetail.reason.levelLabel)) });
     } else if (m.type === 'ask') {
       // Ask question (user side)
       const qRow = document.createElement('div');

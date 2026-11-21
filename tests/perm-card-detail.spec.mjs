@@ -28,6 +28,11 @@
 //   H1 气泡零边框（外层大方框去掉，档位底色仍在横幅上）
 //   H2 三要素在卡盒内容流内、位于问句之前（内联，不是卡外新块）
 //   H3 375 视口零横向溢出
+//   I  去重（瘦身批 2026-11-21 · 作者令「信息不要重复——同一事实卡内只出现一次」）：
+//      I1 危险类型（档位 + 人话标签）整卡只出现一次（卡首横幅承载）
+//      I2 作用域目标路径整卡只出现一次（作用域行承载，正文块不再复述）
+//      I3 Write/Edit 正文只一份（无 permissionDetails 第二完整区 / 无 <details> 复刻）
+//      I4 静态：permissionDetails.js 已退役，调用点不存在
 //
 // 负控（`--negative-control`）：把本次渲染**整块中和**（renderPermDetail 直接返回
 // null）后跑同一套判据 —— **必须红**。红 = 控制有效（exit 0，逐条打红读数）；
@@ -98,7 +103,7 @@ function staticAssertions() {
 
   // live 腿：三要素插进 showOptions 交出的卡盒（问句之前）
   const call = /const cardBox = showOptions\(/.test(chat)
-    && /renderPermDetail\(cardBox, detailInfo, t, \{ level, before: cardBox\.firstElementChild \}\)/.test(chat)
+    && /renderPermDetail\(cardBox, detailInfo, t, \{ level, before: cardBox\.firstElementChild,/.test(chat)
     && /permDetailFrom\(\{\s*toolName,\s*input: inputJson,\s*permDetail/.test(chat);
   call ? ok('F1', 'live 卡把三要素插进原卡盒（问句之前）')
     : bad('F1', 'live 卡必须在原卡盒里渲染三要素', 'chat.js 缺 cardBox/showOptions 返回值或 renderPermDetail(cardBox, detailInfo, …, before)');
@@ -111,7 +116,7 @@ function staticAssertions() {
   truncated ? bad('F3', '来源 badge 必须显示完整 session id', '仍有 sourceSession.substring(0, 12)（截成 delegate-neb…）')
     : ok('F3', '来源 badge 显示完整 session id');
 
-  const histLegs = (persistence.match(/renderPermDetail\(box, histDetail, t, \{ level, before: q \}\)/g) || []).length;
+  const histLegs = (persistence.match(/renderPermDetail\(box, histDetail, t, \{ level, before: q,/g) || []).length;
   histLegs >= 2 ? ok('F4', '两条历史重放腿都渲染三要素（且同落卡盒问句之前）', `legs=${histLegs}`)
     : bad('F4', '历史重放腿必须同样渲染三要素', `legs=${histLegs} (expect ≥2)`);
 
@@ -136,6 +141,13 @@ function staticAssertions() {
   (!leftoverContainer && !leftoverBubbleBorder)
     ? ok('F9', '无外层容器、无气泡彩边（外部大方框已去掉）')
     : bad('F9', '不得残留外层容器或气泡彩边', `container=${leftoverContainer} bubbleBorder=${leftoverBubbleBorder}`);
+
+  // I4（瘦身批）：第二份「完整区」模块已退役 —— 文件不在、无任何 import / 调用点。
+  const permissionDetailsFile = existsSync(join(WEB, 'js', 'permissionDetails.js'));
+  const reuse = ['chat.js', 'persistence.js'].filter((f) => /from '\.\/permissionDetails\.js'|\bpermissionDetails\(/.test(read('src/main/resources/web/js/' + f)));
+  (!permissionDetailsFile && reuse.length === 0)
+    ? ok('I4', '第二完整区 permissionDetails.js 已退役（无文件、无调用点）')
+    : bad('I4', '不得残留第二份完整区', `file=${permissionDetailsFile} refs=${reuse.join(',')}`);
 }
 
 // ── 浏览器判据（真渲染器 + 真样式表） ──────────────────────────────────────
@@ -202,7 +214,9 @@ window.__render = (i) => {
   box.appendChild(opts);
   host.appendChild(box);
   const detail = permDetailFrom({ toolName: frame.toolName, input: frame.input ?? null, permDetail: frame.permDetail });
-  const node = renderPermDetail(box, detail, t, { level, before: box.firstElementChild });
+  // 与 chat.js 生产调用同形：横幅承载档位；>=2 档横幅文案带 {detail}=人话标签 ⇒ 事实块不复述。
+  const riskLabel = (frame.permDetail.reason && (frame.permDetail.reason.label || frame.permDetail.reason.levelLabel)) || '';
+  const node = renderPermDetail(box, detail, t, { level, before: box.firstElementChild, dangerShown: !!keys[level], labelShown: level >= 2 && !!riskLabel });
   return { rendered: !!node, level, detail };
 };
 window.__READY = true;
@@ -263,7 +277,10 @@ async function readCard(page) {
     const lh = pre ? parseFloat(getComputedStyle(pre).lineHeight) || 0 : 0;
     const cs = pre ? getComputedStyle(pre) : null;
     const padY = cs ? (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0) : 0;
+    const host = document.getElementById('host');
     return {
+      hostText: host ? host.textContent : '',
+      bannerText: (() => { const b = document.querySelector('.perm-danger-banner'); return b ? b.textContent : ''; })(),
       text: pre ? pre.textContent : '',
       clientH: pre ? pre.clientHeight : 0,
       contentH: pre ? pre.clientHeight - padY : 0,
@@ -322,19 +339,21 @@ async function browserAssertions() {
       const frame = frames[i];
       const d = frame.permDetail || {};
       const cmd = typeof d.command === 'string' ? d.command : '';
+      // 正文源（瘦身批）：Write = 要写入的内容原文（路径不再复述）；其余 = 命令正文
+      const body = frame.toolName === 'Write' && frame.input && typeof frame.input.content === 'string' ? frame.input.content : cmd;
       const tag = frame.name || d.tool || `frame${i}`;
       const rendered = await page.evaluate((idx) => window.__render(idx), i);
       await page.waitForTimeout(60);
       const st = await readCard(page);
 
-      if (rendered.rendered && st.text && st.text.trim() && st.text === cmd) {
-        ok(`A1[${tag}]`, '命令正文节点非空且全文一致', `${st.text.length} 字 / ${cmd.split('\n').length} 行`);
+      if (rendered.rendered && st.text && st.text.trim() && st.text === body) {
+        ok(`A1[${tag}]`, '调用正文节点非空且全文一致', `${st.text.length} 字 / ${body.split('\n').length} 行`);
       } else {
         bad(`A1[${tag}]`, '命令正文节点必须非空且未被静默截断',
           `node=${JSON.stringify((st.text || '').slice(0, 60))} fixture=${JSON.stringify(cmd.slice(0, 60))}`);
       }
 
-      const lineCount = cmd.split('\n').length;
+      const lineCount = body.split('\n').length;
       if (lineCount > 6) {
         const sixLineH = st.lineHeight * 6;
         // 内容高（去掉 padding）≈ 6 行；容器仍可滚动 ⇒ 折叠真的发生在第 6 行
@@ -373,22 +392,26 @@ async function browserAssertions() {
       }
 
       const r = d.reason || {};
+      // 理由行 = 出处（闸 + 规则 id）；人话标签按去重契约只在横幅（>=2 档）或此行（warning 档）一次
       const reasonOk = !!st.reason.trim()
-        && (!r.label || st.reason.includes(String(r.label)))
         && (!r.ruleId || st.rule.includes(String(r.ruleId)))
         && (!r.gate || st.gate.includes(String(r.gate)));
       reasonOk
         ? ok(`D1[${tag}]`, '为什么危险（一行）：标签 + 规则 id + 闸名（后端判定）', `${st.reason.trim()} | ${st.rule.trim()} | ${st.gate.trim()}`)
         : bad(`D1[${tag}]`, '理由行必须非空且带标签/规则 id/闸名', `reason=${JSON.stringify(st.reason)} rule=${JSON.stringify(st.rule)} gate=${JSON.stringify(st.gate)}`);
-      if (r.label && st.label.trim() === String(r.label).trim()) {
-        ok(`D2[${tag}]`, '人话标签在理由行可见（不是只有闸/规则黑话）', st.label.trim());
+      // D2（瘦身批去重）：人话标签整卡只出现一次 —— 在卡首横幅（危险类型），理由行不复述。
+      const labelCount = r.label ? st.hostText.split(String(r.label)).length - 1 : 0;
+      if (!r.label || labelCount === 1) {
+        ok(`D2[${tag}]`, '人话标签整卡只出现一次（横幅承载危险类型）', `count=${labelCount}`);
       } else {
-        bad(`D2[${tag}]`, '理由行必须写出命中的规则的人话标签', `label=${JSON.stringify(st.label)} expect=${JSON.stringify(r.label)}`);
+        bad(`D2[${tag}]`, '人话标签必须整卡只出现一次', `count=${labelCount} label=${JSON.stringify(r.label)}`);
       }
-      if (Number(r.level) > 0 && /L\d/.test(st.badge)) {
-        ok(`D3[${tag}]`, '风险档可见', st.badge.trim());
+      // D3：危险类型（档位）只一处 —— 横幅在场 ⇒ 理由行不得再出 L 徽标
+      const bannerOn = !!st.bannerText.trim();
+      if (Number(r.level) > 0 && bannerOn && !/L\d/.test(st.badge)) {
+        ok(`D3[${tag}]`, '危险类型只在横幅一处（理由行无重复 L 徽标）', st.bannerText.trim());
       } else {
-        bad(`D3[${tag}]`, '风险档必须可见', `badge=${JSON.stringify(st.badge)} level=${r.level}`);
+        bad(`D3[${tag}]`, '危险类型必须只出现一次', `banner=${JSON.stringify(st.bannerText)} badge=${JSON.stringify(st.badge)} level=${r.level}`);
       }
 
       const s = d.scope || {};
@@ -436,6 +459,24 @@ async function browserAssertions() {
       ? ok('H3', '375 视口零横向溢出', `scrollWidth=${m.docScrollW} boxW=${m.boxW.toFixed(1)} cmdW=${m.preW.toFixed(1)}`)
       : bad('H3', '375 视口不得横向溢出', `scrollWidth=${m.docScrollW} boxW=${m.boxW.toFixed(1)}`);
     await mobile.close();
+
+    // I2 目标路径整卡只一次；I3 Write 正文只一份（内容原文出现次数 = 1）
+    const wr = frames.findIndex((f) => f.toolName === 'Write');
+    if (wr >= 0) {
+      const wf = frames[wr];
+      await page.evaluate((idx) => window.__render(idx), wr);
+      const wst = await readCard(page);
+      const target = (wf.permDetail && wf.permDetail.scope && wf.permDetail.scope.target) || '';
+      const tgtCount = target ? wst.hostText.split(target).length - 1 : 0;
+      tgtCount === 1
+        ? ok('I2[Write]', '目标路径整卡只出现一次（作用域行承载）', `count=${tgtCount}`)
+        : bad('I2[Write]', '目标路径必须整卡只出现一次', `count=${tgtCount}`);
+      const content = (wf.input && wf.input.content) || '';
+      const bodyCount = content ? wst.hostText.split(content).length - 1 : 0;
+      bodyCount === 1
+        ? ok('I3[Write]', 'Write 正文只一份（无第二完整区复刻）', `count=${bodyCount}`)
+        : bad('I3[Write]', 'Write 正文必须只出现一份', `count=${bodyCount}`);
+    }
 
     const errs = pageErrors.concat((await readCard(page)).errors || []);
     errs.length === 0 ? ok('G1', '零 pageerror') : bad('G1', '页面不得报错', errs.slice(0, 3).join(' | '));

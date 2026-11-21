@@ -465,7 +465,6 @@ const LOCALE_ASYM_BASELINE = {
     'chat.allowTool',
     'chat.copied',
     'chat.copy',
-    'chat.permExecCmd',
     'chat.permLevel.critical',
     'chat.permLevel.dangerous',
     'chat.permLevel.warning',
@@ -489,8 +488,8 @@ test('P locale parity: zh/en asymmetry held at the frozen baseline (no new drift
     .toEqual(LOCALE_ASYM_BASELINE.onlyZh);
   expect(counts.onlyEn, 'keys only in en must stay within the frozen baseline')
     .toEqual(LOCALE_ASYM_BASELINE.onlyEn);
-  // 净差（zh - en）恒等基线差值 7：新增键必须两侧对称，不得加剧不对称。
-  expect(counts.zh - counts.en, 'zh/en net key-count difference must stay at the baseline (7)').toBe(7);
+  // 净差（zh - en）恒等基线差值 6（件 · 权限卡瘦身 2026-11-21 删 chat.permExecCmd 一个 zh 独有键，基线只许变小）：新增键必须两侧对称。
+  expect(counts.zh - counts.en, 'zh/en net key-count difference must stay at the baseline (6)').toBe(6);
 });
 
 // ══ 双主题截图（设置全貌 / 账号块特写 / 头像双态）══════════════

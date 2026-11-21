@@ -2,7 +2,6 @@
 // All DOM manipulation for messages, bubbles, tool cards, option boxes, and status.
 
 import state, { AGENT_PALETTE } from './state.js';
-import { permissionDetails } from './permissionDetails.js';
 import { mainBubbleClass } from './chatUi.js';
 // 消息条目统一批 2026-11-18：气泡节点装配基座单点（chatItem.js）。
 import { messageBubbleNode } from './chatItem.js';
@@ -88,7 +87,7 @@ import { applyOutputFace } from './outputTag.js';
 import { bindCollapsibleToggle } from './chat/collapsible.js';
 // 输入行为包批（2026-11-02 作者令）：busy↔idle 按钮 chrome = input/composer.js
 // 统一状态机（主会话 setBusy/clearBusy 与 canvas ask 共用同一实现）。
-import { applyTurnChrome } from './input/composer.js';
+import { applyTurnChrome, setComposerText } from './input/composer.js';
 import { withFocusKey } from './focusTrap.js';
 // 审批卡三要素（命令正文 / 为什么危险 / 作用域）单点 —— 报障批 2026-11-19。
 // live 渲染与两条历史重放腿共用同一个 builder，卡面形态不得分叉。
@@ -2054,7 +2053,9 @@ function resendLastInput(v) {
   if (!lastMsg) return;
   const sid = v && v.sessionId;
   const resendId = (sid && state.lastUserSendId[sid]) || '';
-  if (v && v.dom && v.dom.input) v.dom.input.value = lastMsg;
+  // 程序化回填走唯一入口（输入框显示缺陷批 2026-11-21）：重发一条长消息也必须
+  // 量高 + 把光标位拉进视口，否则内容塌在一行里、尾段读不到。
+  if (v && v.dom && v.dom.input) setComposerText(v.dom.input, lastMsg);
   import('./input.js').then(({ send }) => { setActiveView(v); send(resendId || undefined); });
 }
 
@@ -3821,14 +3822,17 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     3: { cls: 'perm-critical', icon: criticalIcon, i18nKey: 'chat.permLevel.critical' }
   };
   const dangerConf = dangerConfigs[level];
+  // 「危险类型」只在卡首横幅出现一次：档位（横幅底色+文案）；危险/严重档的横幅文案
+  // 带 {detail}=人话标签，注意档（warning）的文案不带 ⇒ 标签只在 >=2 档被横幅承载，
+  // 其余档由判定出处行给出一次（作者令：同一事实卡内只出现一次）。
+  const riskLabel = (detailInfo.reason && detailInfo.reason.label)
+    || (detailInfo.reason && detailInfo.reason.levelLabel) || '';
   if (dangerConf) {
     bubble.classList.add(dangerConf.cls);
     const banner = document.createElement('div');
     banner.className = 'perm-danger-banner';
     // 横幅只说**命中的规则**（后端判定给的人话标签），命令正文走下方正文块
     // —— 改前这里塞的是整条命令（且因解析失败恒为空），既不全也不该在这行。
-    const riskLabel = (detailInfo.reason && detailInfo.reason.label)
-      || (detailInfo.reason && detailInfo.reason.levelLabel) || '';
     const bannerText = t(dangerConf.i18nKey, { detail: riskLabel });
     banner.innerHTML = dangerConf.icon + '<span>' + escapeHtml(bannerText) + '</span>';
     bubble.appendChild(banner);
@@ -3898,10 +3902,13 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
 
   const allowLabel = t('chat.allow');
   const denyLabel = t('chat.deny');
-  const allowDesc = isDangerous ? t('chat.permExecCmd') : (summary || '');
+  // 装饰性说明已删（作者令「去掉冗余说明」）：允许/拒绝只留动作本身。`summary` 只在
+  // 卡上**没有任何事实块**（旧帧无 permDetail 且无可派生正文）时作为唯一信息回落 ——
+  // 有事实块时它就是同一条调用的复述，不得再出现。
+  const hasFacts = !!(detailInfo.command || detailInfo.reason || detailInfo.scope);
   const permOptions = [
-    { label: allowLabel, desc: allowDesc },
-    { label: denyLabel, desc: t('chat.skipTool') }
+    { label: allowLabel, desc: hasFacts ? '' : (summary || '') },
+    { label: denyLabel, desc: '' }
   ];
   /* Permission escalation chain (Backend contract a56f7437; target changed by
      permshield S1, 2026-09-13): when the card's mode is one step below the
@@ -3971,16 +3978,14 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     row.remove();
     window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
   }, undefined, requestId);
-  // 三要素插到原卡内容流的最前面（问句之前）：命令正文 → 理由一行 → 作用域一行，
+  // 事实块插到原卡内容流的最前面（问句之前）：完整调用信息 → 作用域一行 → 判定出处，
   // 再往下才是「允许 Bash？」与选项 —— 先看清事实，再作答。
+  // 同一事实只落一处：Write/Edit 的正文（内容 / -+ 行）由本块唯一给出，原先并列的
+  // `permissionDetails` 第二份「完整区」已退役（见 permissionDetails.js 删除批注）。
   if (cardBox && cardBox.firstElementChild) {
-    renderPermDetail(cardBox, detailInfo, t, { level, before: cardBox.firstElementChild });
+    renderPermDetail(cardBox, detailInfo, t, { level, before: cardBox.firstElementChild, dangerShown: !!dangerConf, labelShown: level >= 2 && !!riskLabel });
   } else if (cardBox) {
-    renderPermDetail(cardBox, detailInfo, t, { level });
-  }
-  // Edit/Write previews contain requested content not represented by the projected path.
-  if (cardBox && (toolName === 'Edit' || toolName === 'Write')) {
-    cardBox.insertBefore(permissionDetails(toolName, inputJson), cardBox.firstElementChild);
+    renderPermDetail(cardBox, detailInfo, t, { level, dangerShown: !!dangerConf, labelShown: level >= 2 && !!riskLabel });
   }
   // permission-landing 批 P1/P2 续做（2026-11-18）：requestId 走 showOptions 的**第 7 参**
   //（= 卡盒 data-request-id）——超时撤回（hub CloseRequest ⇒ askUserClosed{reason:

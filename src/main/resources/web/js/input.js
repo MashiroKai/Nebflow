@@ -63,7 +63,7 @@ export { enterAskMode, cancelAskMode, enterSkillMode, cancelSkillMode, enterComp
 import { addFileAttachment, pendingAttCount, isRefOnlyFrame, syncRefOnlyGate, showAttError, joinAbsPath } from './input/attachments.js';
 export { addFileAttachment, wireAttachmentsOf, isRefOnlyFrame, syncRefOnlyGate, appendRefToActiveView, initGlobalFileDrop } from './input/attachments.js';
 // 输入行为包（2026-11-02 作者令）：键盘契约装配 + 中断帧单点（ask 与主会话共用）。
-import { bindComposerKeys, requestTurnInterrupt, growComposerInput, composerPlaceholder } from './input/composer.js';
+import { bindComposerKeys, requestTurnInterrupt, growComposerInput, setComposerText, composerPlaceholder } from './input/composer.js';
 
 // ---------- 真人消息 turn 标志（2026-09-16 msunread-r2；作者裁定 ①）----------
 // 「本机派发了一条真人消息 = 本 turn 的起点」的 per-session turn 级标志。
@@ -1282,12 +1282,7 @@ function recallQueuedItem(sessionId, item) {
     const text = item.mode === 'compact'
       ? `/compact ${item.text}`.trim()
       : item.skillName ? `/${item.skillName} ${item.text}` : item.text;
-    view.dom.input.value = text;
-    view.dom.input.style.height = 'auto';
-    view.dom.input.focus();
-    // Place cursor at end
-    const len = view.dom.input.value.length;
-    view.dom.input.setSelectionRange(len, len);
+    setComposerText(view.dom.input, text, { focus: true });
     // A-batch (msgqueue-recall-attach, 2026-09-14): the splice above removed the
     // last live reference to item.attachments, so the attachment payload used to
     // vanish right here with no trace. Feed it back through the SAME path send()
@@ -1628,8 +1623,9 @@ export function initInput(view) {
   // 闸的视觉态 = 发送键禁用（syncRefOnlyGate）+ placeholder 文案（下方两个 helper）。
 
   // Auto-resize textarea + 同步纯引用帧闸（文本变化会改变闸判据）。
+  // 显示缺陷批 2026-11-21：`height='auto'` 不再手写在调用点 —— 量高原语
+  // （growComposerInput）自己先塌陷再量、并按光标锚定视口，本条只剩「接线」。
   input.addEventListener('input', () => {
-    input.style.height = 'auto';
     growComposerInput(input);
     syncRefOnlyGate(view);
     // 输入使闸解除时（blocked→false）占位符立即回到附件/通用文案 ——
@@ -1883,11 +1879,11 @@ export function initInput(view) {
         } else if (view.historyIndex > 0) {
           view.historyIndex--;
         }
-        input.value = state.inputHistory[view.historyIndex];
+        // 程序化回填走唯一入口（显示缺陷批 2026-11-21）：写值 → 量高（封顶）→
+        // 光标落末尾并锚定视口。此前是「写值 + height='auto' + 量高 + 落光标」——
+        // 量高时读的还是上一次的光标位置，20 行历史一召回就只剩视口开头那一段。
+        setComposerText(input, state.inputHistory[view.historyIndex]);
         recallHistoryAttachments(view);
-        input.style.height = 'auto';
-        growComposerInput(input);
-        input.setSelectionRange(input.value.length, input.value.length);
         return true;
       }
       if (e.key === 'ArrowDown' && input.selectionStart === input.value.length && input.selectionEnd === input.selectionStart) {
@@ -1895,15 +1891,12 @@ export function initInput(view) {
         if (view.historyIndex === -1) return true;
         if (view.historyIndex >= state.inputHistory.length - 1) {
           view.historyIndex = -1;
-          input.value = view.historyDraft;
+          setComposerText(input, view.historyDraft);
         } else {
           view.historyIndex++;
-          input.value = state.inputHistory[view.historyIndex];
+          setComposerText(input, state.inputHistory[view.historyIndex]);
         }
         recallHistoryAttachments(view);
-        input.style.height = 'auto';
-        growComposerInput(input);
-        input.setSelectionRange(input.value.length, input.value.length);
         return true;
       }
     }
@@ -1955,26 +1948,23 @@ export function initInput(view) {
         // Replace [voiceAnchor, voiceAnchor + voiceInterimLen) with new interim text
         const before = input.value.substring(0, voiceAnchor);
         const after = input.value.substring(voiceAnchor + voiceInterimLen);
-        input.value = before + text + after;
+        const next = before + text + after;
         voiceInterimLen = text.length;
-        voiceBaseline = input.value;
-        input.focus();
-        input.setSelectionRange(voiceAnchor + text.length, voiceAnchor + text.length);
-        input.style.height = 'auto';
-        growComposerInput(input);
+        voiceBaseline = next;
+        // 程序化写值走唯一入口（显示缺陷批 2026-11-21）：落点 = 本段文本末尾，
+        // 量高与锚定由入口一次做完（改前量高读的是写值前的光标 ⇒ 视口留在旧段）。
+        setComposerText(input, next, { caret: voiceAnchor + text.length, focus: true });
       },
       onText: (text) => {
         // Replace interim with final text + trailing space
         const before = input.value.substring(0, voiceAnchor);
         const after = input.value.substring(voiceAnchor + voiceInterimLen);
         const insert = text + ' ';
-        input.value = before + insert + after;
+        const next = before + insert + after;
         voiceInterimLen = 0;
         voiceAnchor = before.length + insert.length;
-        voiceBaseline = input.value;
-        input.setSelectionRange(voiceAnchor, voiceAnchor);
-        input.style.height = 'auto';
-        growComposerInput(input);
+        voiceBaseline = next;
+        setComposerText(input, next, { caret: voiceAnchor });
       },
       onState: (state, data) => {
         updateVoiceUI(state, data);
