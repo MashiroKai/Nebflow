@@ -132,4 +132,41 @@ class NebulaPromptOutputStyleSpec extends FunSuite:
       "the retired state is stated in place, so the model cannot re-derive the old pointer"
     )
 
+  // ============================================================
+  // 停教批（2026-11-21 作者令，作者 10:08「按你推荐」）：显示/TTS 面封存期间
+  // 提示词不再教 `<voice>` 块。断言面 = **组装路径**（基座 `entry("Nebula")` +
+  // 条件段），与上面「读的是加载路径上的那份提示词」同一口径——段常量
+  // `PromptSections.voiceSection` 仍留在源码里（可逆恢复面），但它不再进组装结果。
+  // ============================================================
+
+  private def withIsolatedDataRoot[A](body: => A): A =
+    val prevRoot = nebflow.shared.PathUtil.dataRoot
+    val tempRoot = os.pwd / "target" / "test-voice-teaching-parked-isolation"
+    try
+      os.remove.all(tempRoot)
+      os.makeDir.all(tempRoot)
+      nebflow.shared.PathUtil.setDataRoot(tempRoot)
+      body
+    finally
+      nebflow.shared.PathUtil.setDataRoot(prevRoot)
+      os.remove.all(tempRoot)
+
+  test("组装出的 Nebula 提示词不含 `<voice>` 教段（停教态）"):
+    withIsolatedDataRoot {
+      val joined = nebflow.agent.PromptSections.assembleSystemPrompt(
+        nebulaPrompt,
+        nebflow.agent.PromptSections.buildConditionalBlocks(
+          nebflow.agent.PromptSections.PromptContext(isRootAgent = true, voiceEnabled = true)
+        )
+      )
+      assert(!joined.contains("## Voice Output"), s"order-500 教段不得进组装结果：$joined")
+      assert(!joined.contains("<voice></voice>"), "不得教 `<voice></voice>` 标签")
+      assert(!joined.contains("played as audio, stripped from the display"), "教段判据句不得出现")
+      // 反面：段文本本体保留（恢复语音功能时重新挂载的唯一改动点 = latch 翻回）。
+      assert(
+        nebflow.agent.PromptSections.voiceSection.contains("<voice></voice>"),
+        "段文本本体保留 —— 停教只停挂载，不删文本"
+      )
+    }
+
 end NebulaPromptOutputStyleSpec

@@ -62,17 +62,37 @@ class PromptSectionsSpec extends munit.FunSuite:
 
   // ============================================================
   // Feature-flag sections
+  //
+  // 停教批（2026-11-21 作者令，作者 10:08「按你推荐」）：显示/TTS 面封存期间
+  // 提示词不再教 `<voice>` 块 ⇒ order-500 槽位不再挂载，判据从「按 flag 两态」
+  // 翻转为「latch 恒停教」。段文本本体 `voiceSection` 仍在（可逆恢复面）。
   // ============================================================
 
-  test("Voice section included when voiceEnabled"):
-    val ctx = PromptContext(voiceEnabled = true)
-    val blocks = buildConditionalBlocks(ctx)
-    assert(blocks.contains("## Voice Output"))
+  test("Voice section NOT injected while voice teaching is parked (even with voiceEnabled = true)"):
+    withIsolatedDataRoot {
+      val blocks = buildConditionalBlocks(PromptContext(voiceEnabled = true))
+      assert(!blocks.contains("## Voice Output"), s"停教态下 voice 段不得注入：$blocks")
+      assert(!blocks.contains("<voice></voice>"), s"停教态下不得教 `<voice>` 标签：$blocks")
+      assert(PromptSections.voiceSection.contains("## Voice Output"), "段文本本体保留（恢复语音功能时重新挂载）")
+    }
 
   test("Voice section excluded when voice muted"):
     val ctx = PromptContext(voiceEnabled = false)
     val blocks = buildConditionalBlocks(ctx)
     assert(!blocks.contains("## Voice Output"))
+
+  test("数据根同序覆盖文件（prompts/sections/voice.md）在停教态下同样不挂载"):
+    withIsolatedDataRoot {
+      val dir = PathUtil.dataRoot / "prompts" / "sections"
+      os.makeDir.all(dir)
+      os.write(
+        dir / "voice.md",
+        "<!-- Condition: voiceEnabled is true -->\n<!-- Order: 500 -->\n## Voice Output\n\noverride body"
+      )
+      val blocks = buildConditionalBlocks(PromptContext(voiceEnabled = true))
+      assert(!blocks.contains("override body"), s"覆盖文件不得绕过停教：$blocks")
+      assert(!blocks.contains("## Voice Output"), s"覆盖文件不得绕过停教：$blocks")
+    }
 
   // ============================================================
   // Runtime-state sections
@@ -149,15 +169,15 @@ class PromptSectionsSpec extends munit.FunSuite:
       rulesMd = Some("rule1")
     )
     val blocks = buildConditionalBlocks(ctx)
-    val voiceIdx = blocks.indexOf("## Voice Output")
     val devicesIdx = blocks.indexOf("# Devices")
     val sessionsIdx = blocks.indexOf("# Active Sessions")
     val langIdx = blocks.indexOf("# Language")
     val skillsIdx = blocks.indexOf("# Skills")
     val rulesIdx = blocks.indexOf("## Project Rules")
 
-    assert(voiceIdx >= 0, "Voice section should be present")
-    assert(voiceIdx < devicesIdx, "Voice should come before Devices")
+    // 停教批后 order-500 voice 槽位不再挂载 ⇒ 段序从 Devices 起读。
+    assert(!blocks.contains("## Voice Output"), "停教态下 voice 段不参与段序")
+    assert(devicesIdx >= 0, "Devices section should be present")
     assert(devicesIdx < sessionsIdx, "Devices should come before Sessions")
     assert(sessionsIdx < langIdx, "Sessions should come before Language")
     assert(langIdx < skillsIdx, "Language should come before Skills")
@@ -408,6 +428,21 @@ class PromptSectionsSpec extends munit.FunSuite:
       )
     }
 
+  // 停教批（2026-11-21 作者令，作者 10:08「按你推荐」）：**组装面**判据——
+  // 显示/TTS 面封存期间，真实组装出来的根提示词（基座 + 条件段）不含 `<voice>` 教段。
+  // 断言读的是组装路径上的那份文本（与 [[NebulaPromptOutputStyleSpec]] 同一口径），
+  // 不是源文件里那个仍保留的段常量。
+  test("assembled root prompt teaches no `<voice>` block while voice teaching is parked"):
+    withIsolatedDataRoot {
+      val base = nebflow.core.entity.BuiltinAgents.entry("Nebula").map(_.systemPrompt).getOrElse("")
+      val joined = PromptSections.assembleSystemPrompt(base, buildConditionalBlocks(PromptContext(isRootAgent = true)))
+      assert(!joined.contains("## Voice Output"), s"order-500 段不得出现在组装结果里：$joined")
+      assert(!joined.contains("<voice></voice>"), "组装结果不得教 `<voice></voice>` 标签")
+      assert(!joined.contains("played as audio, stripped from the display"), "教段判据句不得出现")
+      // 反面：段文本本体仍在源码里（可逆恢复面），只是未挂载。
+      assert(PromptSections.voiceSection.contains("## Voice Output"), "voiceSection 常量本体保留")
+    }
+
   test("MountedProjectList.renderLines renders empty list as the explicit placeholder"):
     assertEquals(MountedProjectList.renderLines(Nil), MountedProjectList.EmptyText)
 
@@ -631,7 +666,7 @@ class PromptSectionsSpec extends munit.FunSuite:
       assert(blocks.contains(traceBodyLine), s"正文行必须逐字出现：$blocks")
     }
 
-  test("文档溯源段位于 env(order 100) 之后、## Voice Output(order 500) 之前"):
+  test("文档溯源段位于 env(order 100) 之后（停教态 order-500 voice 槽位不挂载）"):
     withIsolatedDataRoot {
       // 隔离数据根内自建 order-100 env 文件段（沿用 envInfoSection 用例写法）。
       val envDir = PathUtil.dataRoot / "prompts" / "sections" / "environment"
@@ -642,20 +677,18 @@ class PromptSectionsSpec extends munit.FunSuite:
       val blocks = buildConditionalBlocks(PromptContext(voiceEnabled = true))
       val envIdx = blocks.indexOf("## Environment")
       val traceIdx = blocks.indexOf("## Document provenance")
-      val voiceIdx = blocks.indexOf("## Voice Output")
       assert(envIdx >= 0, s"env 段应存在：$blocks")
       assert(traceIdx >= 0, s"溯源段应存在：$blocks")
-      assert(voiceIdx >= 0, s"voice 段应存在：$blocks")
       assert(envIdx < traceIdx, "溯源段必须在 env(100) 之后")
-      assert(traceIdx < voiceIdx, "溯源段必须在 Voice Output(500) 之前")
+      // 停教批（2026-11-21 作者令）翻转前锚：「voice 段应存在」+「溯源段在 voice(500) 之前」。
+      assert(!blocks.contains("## Voice Output"), s"停教态下 voice 段不挂载：$blocks")
 
-      // 读数：注册表 order 分布——env 文件段(100) < 溯源(350) < voice(500)。
+      // 读数：注册表 order 分布——env 文件段(100) < 溯源(350)；voice(500) 停教不挂载。
       val orders = PromptSections.all.map(_.order).sorted
       assertEquals(orders.head, 100, s"env(100) 仍是首个段：$orders")
       assert(orders.contains(350), s"注册表须含 order 350：$orders")
-      assert(orders.contains(500), s"voice(500) 仍在：$orders")
+      assert(!orders.contains(PromptSections.VoiceSectionOrder), s"停教态注册表不含 voice(500)：$orders")
       assert(orders.indexOf(350) > orders.indexOf(100), s"350 在 100 之后：$orders")
-      assert(orders.indexOf(350) < orders.indexOf(500), s"350 在 500 之前：$orders")
     }
 
   test("文档溯源段是静态体（无动态字段）——落在稳定前缀的读数依据"):
