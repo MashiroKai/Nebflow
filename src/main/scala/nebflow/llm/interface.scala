@@ -130,11 +130,9 @@ object LlmInterface extends LlmRuntime:
         val skipLog =
           if restricted.isEmpty then IO.unit
           else
-            IO(
-              logger.warn(
-                s"schedule-restricted skipped: " +
-                  restricted.map { case (c, w) => s"${c.providerId}/${c.model} ($w)" }.mkString(", ")
-              )
+            logger.warn(
+              s"schedule-restricted skipped: " +
+                restricted.map { case (c, w) => s"${c.providerId}/${c.model} ($w)" }.mkString(", ")
             )
         skipLog *>
           IO.raiseWhen(available.isEmpty)(

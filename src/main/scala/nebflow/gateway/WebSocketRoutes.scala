@@ -2132,9 +2132,8 @@ class WebSocketRoutes(
                                   }
                               case _ =>
                                 blocks += ContentBlock.Image(data, mimeType)
-                                IO(
-                                  logger
-                                    .warn(s"Image '$name' was not persisted: owner access unavailable or invalid data")
+                                logger.warn(
+                                  s"Image '$name' was not persisted: owner access unavailable or invalid data"
                                 )
                             end match
                           else if mimeType.startsWith("image/") then
@@ -2197,10 +2196,8 @@ class WebSocketRoutes(
                                           logger.warn(s"Failed to save attachment '$name': ${error.getMessage}")
                                       }
                                   case _ =>
-                                    IO(
-                                      logger.warn(
-                                        s"Attachment '$name' was not persisted: owner access unavailable or invalid data"
-                                      )
+                                    logger.warn(
+                                      s"Attachment '$name' was not persisted: owner access unavailable or invalid data"
                                     )
                                 end match
                               case None =>

@@ -145,7 +145,7 @@ object ProjectRemount:
                             s"remounted by $actor at $at (unmount marker cleared; workspace files kept byte-for-byte)"
                           )
                           .handleErrorWith(e =>
-                            IO(logger.warn(s"[$canonical] remount audit append failed: ${e.getMessage}"))
+                            logger.warn(s"[$canonical] remount audit append failed: ${e.getMessage}")
                           )
                           .as(Right(RemountReport(canonical, at, alreadyMounted = false, unmountedAt = unmountedAt)))
                   }

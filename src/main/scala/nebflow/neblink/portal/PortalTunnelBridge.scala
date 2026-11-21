@@ -1738,10 +1738,8 @@ private[neblink] final class PortalConnection(dispatcher: Dispatcher[IO]):
       case Some(bridge) =>
         dispatcher.unsafeRunAndForget(
           bridge.controlSender.send(text).handleErrorWith { e =>
-            IO(
-              logger.debug(
-                s"tunnel control frame (pong) not delivered after sender budget: ${NeblinkRelayTunnel.describeErr(e)}"
-              )
+            logger.debug(
+              s"tunnel control frame (pong) not delivered after sender budget: ${NeblinkRelayTunnel.describeErr(e)}"
             )
           }
         )
