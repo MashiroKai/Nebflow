@@ -1,7 +1,12 @@
-// hide-workspace-sections.spec.mjs — 「面板工作区区块暂时隐藏」判据（hide-workspace-sections 批）
+// hide-workspace-sections.spec.mjs — 「项目面板工作区入口不设置」判据
+// （hide-workspace-sections 批）
 //
 // 作者令（2026-11-21）：「git 可视化面板和项目面板的工作区都**先隐藏**（「先」=暂时
-// 隐藏，功能保留可恢复，不是删除）」。
+// 隐藏，功能保留可恢复，不是删除）」；同日 12:03 澄清逐字：「我要的是git可视化面板
+// 完全先封存 项目面板也不设置入口」——两项各归一个独立开关，本 spec 只管**项目面板**：
+//   · 本 spec（PANEL_HIDE_WORKSPACE_SECTIONS）= 卡内「▶ 工作区」折叠区块不设置入口；
+//   · Git 可视化面板的**整面板封存**（GITVIZ_SEALED）见 `tests/gitviz-seal.spec.mjs`。
+// 两个开关语义正交、禁混用（两 spec 各自断言对方开关的值不变）。
 //
 // 判据（每条都能被负控打红 —— 见文末「负控」）：
 //   C1 项目卡：开关 ON（出厂值 true）⇒ 卡上**零** `.project-workspaces` 折叠区块，
@@ -116,6 +121,20 @@ try {
   assert.equal(workspaceRequests.length, 0,
     `C3: no /workspaces fetch while hidden (saw: ${workspaceRequests.join(', ')})`);
 
+  // ── C4：与 gitviz 整面板封存开关正交（各自独立，禁混用）──────────────────
+  // 本 spec 只管项目卡的工作区块；gitviz 面板封存（GITVIZ_SEALED）另有其 spec。
+  // 这里只钉两件事：该开关仍是 true（未被本批顺手改），且它的入口钮确实不在卡上。
+  const orthogonality = await session.page.evaluate(async () => {
+    const m = await import('/js/featureFlags.js');
+    return {
+      gitvizSealed: m.GITVIZ_SEALED,
+      fn: m.gitvizSealed(),
+      buttons: document.querySelectorAll('.project-card .project-gitviz-btn').length,
+    };
+  });
+  assert.equal(orthogonality.gitvizSealed, true, 'C4: GITVIZ_SEALED untouched by the workspace switch');
+  assert.equal(orthogonality.buttons, 0, 'C4: no gitviz button on cards (both seals coexist)');
+
   console.log('PASS hide-workspace-sections: project card fold block hidden, card intact, '
     + 'switch + component restorable, zero workspace fetches');
 
@@ -127,6 +146,16 @@ try {
   await session.page.screenshot({ path: `${outDir}/projects-panel-after.png`, fullPage: false });
   await session.page.setViewportSize({ width: 375, height: 812 });
   await settle(session.page, 300);
+  // 手机档走**手机层**入口（桌面 pane 在 mobile-layer 下不可见；项目页 = navController
+  // 的 'projects' 页，内部仍走同一个 openProjectsTab ⇒ 同一卡片模板、同一隐藏判据）。
+  await session.page.evaluate(async () => {
+    const nav = await import('/js/mobile/navController.js');
+    nav.navigateTo('projects');
+  });
+  await session.page.waitForFunction(
+    () => document.querySelectorAll('.team-card.project-card').length >= 2,
+    null, { timeout: 15000 });
+  await settle(session.page, 600);
   await session.page.screenshot({ path: `${outDir}/projects-panel-after-mobile.png`, fullPage: false });
 
   await session.close();
