@@ -530,6 +530,32 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
     }
   }
 
+  test("directory fsync capability is POSIX-only so Windows boot does not fail") {
+    // 2026-11-21 cross-machine E2E defect #3: FileChannel.open(<dir>, READ) is a
+    // POSIX capability. On Windows it threw AccessDeniedException inside the
+    // first-run config path (MainBoot.ensureFirstRunConfig -> shell.scala:1665),
+    // so the engine could not boot on Windows at all. The predicate is pure, so
+    // both platforms are asserted here regardless of the host running the suite.
+    assert(ExecutionCommitStore.directoryForceSupported("Mac OS X"))
+    assert(ExecutionCommitStore.directoryForceSupported("Linux"))
+    assert(ExecutionCommitStore.directoryForceSupported("FreeBSD"))
+    assert(!ExecutionCommitStore.directoryForceSupported("Windows 11"))
+    assert(!ExecutionCommitStore.directoryForceSupported("Windows Server 2022"))
+    assert(!ExecutionCommitStore.directoryForceSupported("windows"))
+    assert(ExecutionCommitStore.directoryForceSupported("")) // 未知平台 = POSIX 口径（既有语义不变）
+  }
+
+  test("directory fsync stays best-effort: an unusable directory never fails the write legs") {
+    isolated { root =>
+      val missing = root.resolve("no-such-directory")
+      IO.blocking {
+        // 空目录/不存在目录不再抛：best-effort 语义与 AtomicJson.forceParentDir 同族
+        ExecutionCommitStore.forceDirectory(missing)
+        ExecutionCommitStore.forceDirectory(root)
+      }
+    }
+  }
+
   test("different admission cannot replace the original") {
     isolated { root =>
       ExecutionCommitStore.resource(root).use { store =>

@@ -38,7 +38,15 @@ $HomeDir = ".stand"
 # default is USERPROFILE + brand home. NEBFLOW_HOME is never consulted here -
 # the installer never writes the legacy root (legacy read-only is runtime-only).
 $StandBase = if ($env:STAND_HOME) { $env:STAND_HOME } else { Join-Path $env:USERPROFILE $HomeDir }
-$ConfigFile = "nebflow.json"
+$ConfigFile = "stand.json"
+# 2026-11-05 config-single-source batch (author ruling ②): the historical file
+# name stays READ-ONLY compatible — never let the installer create an empty
+# stand.json next to a populated nebflow.json (that would strand the user's
+# configuration in a file the engine no longer reads). install.sh got this
+# migration in that batch; install.ps1 was left behind and kept CREATING
+# nebflow.json on every fresh Windows install (2026-11-21 cross-machine E2E
+# defect ②), so the two installers disagreed on the config surface.
+$LegacyConfigFile = "nebflow.json"
 $WrapperName = "stand"
 $CosBaseCn = "https://$CosBucket.oss-cn-hangzhou.aliyuncs.com"
 # Single-source conclusion unchanged: the Nebflow jar download and the version
@@ -1177,6 +1185,16 @@ Write-Stage 7 7 "Setting up config..."
 
 $configDir = $StandBase
 $configPath = Join-Path $configDir "$ConfigFile"
+$legacyConfigPath = Join-Path $configDir "$LegacyConfigFile"
+# config-single-source migration (parity with install.sh): carry the legacy file
+# over BEFORE the "create default" branch, so an existing install keeps every
+# value. Byte-identical copy + legacy renamed to .bak (never deleted).
+if (-not (Test-Path $configPath) -and (Test-Path $legacyConfigPath)) {
+    Write-Info "Migrating $LegacyConfigFile -> $ConfigFile..."
+    Copy-Item -Path $legacyConfigPath -Destination $configPath -Force
+    Move-Item -Path $legacyConfigPath -Destination "$legacyConfigPath.bak" -Force
+    Write-Ok "Config migrated: $configPath (backup: $legacyConfigPath.bak)"
+}
 if (-not (Test-Path $configPath)) {
     New-Item -ItemType Directory -Force -Path $configDir | Out-Null
     $configContent = "{}"

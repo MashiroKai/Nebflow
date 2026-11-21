@@ -155,4 +155,51 @@ class AutoStartHomeSpec extends munit.FunSuite:
       assert(cmd.contains("start"), "命令串主体不得被这次追加破坏")
     }
 
+  test("缺陷④: Windows 计划任务走 XML 逐字存参——含空格的 java 路径不被 /tr 剥引号切开"):
+    // 2026-11-21 跨机 E2E 实测（DESKTOP-V7EUCHT）：schtasks /create /tr 会把内层引号剥掉，
+    // 于是 %ProgramFiles%\Eclipse Adoptium\…\java.exe 按空白切开 ⇒ 任务建不出来
+    // （exit -2147467259）。断言 XML 面把整条命令行逐字面保留，且 Command 是全路径。
+    val spacey = "C:\\Program Files\\Eclipse Adoptium\\jdk-21.0.12.101-hotspot\\bin\\java.exe"
+    val cmd = AutoStartService.renderWindowsTaskCmd(spacey, "C:\\stand-e2e\\bin\\stand-assembly-x.jar", None)
+    val xml = AutoStartService.renderWindowsTaskXml(cmd)
+
+    assert(xml.contains("<DisallowStartIfOnBatteries>false"), "电池闸必须显式关断（否则 /run 假成功不执行）")
+    assert(xml.contains("<LogonTrigger>"), "autostart 语义 = 登录触发")
+    assert(xml.contains("\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"), "Command 必须是全路径 PS")
+    // 逐字面保参：路径与 jar 都在，且没有被切分成两个 XML 属性/节点
+    assert(xml.contains(spacey), s"含空格的 java 路径必须逐字面保留：\n$xml")
+    assert(xml.contains("stand-assembly-x.jar"), "jar 路径必须在命令行里")
+    assert(!xml.contains("&lt;"), "命令串里没有需要转义的尖括号（负控：转义过度即可疑）")
+
+  test("缺陷④: XML 参数的 XML 元字符被转义（引号/尖括号不得破标签）"):
+    val cmd = AutoStartService.renderWindowsTaskCmd("/usr/bin/java", "/opt/a&b/<c>.jar", None)
+    val xml = AutoStartService.renderWindowsTaskXml(cmd)
+    assert(xml.contains("&amp;"), "& 必须转义")
+    assert(!xml.contains("/<c>.jar"), "裸尖括号不得出现在文本节点里")
+    assert(xml.contains("&quot;"), "命令行里的引号必须转成 &quot;")
+
+  test("缺陷⑤: 自启命令必须钉死 --home 与 --port（隔离实例绝不能被默默指回默认根）"):
+    // 2026-11-21 跨机 E2E 实测：隔离实例执行 `stand autostart enable` 时，
+    // accountHomeIfAny 在平铺/未登录档返回 None ⇒ 计划任务命令行**不带 --home**，
+    // 登录自启于是静默去起默认数据根（author 的机器上恰好没有在跑实例，否则就是
+    // 互踢）。端口同理：不带 --port 就会被评成品牌缺省 6138 = 生产口。
+    // 现约束：自启一律钉 machineRoot 与解析出的端口；本 spec 断言纯渲染面确实把
+    // 这两个事实写进了命令行（三个平台腿同一条纪律）。
+    val home = os.Path("/tmp/e2e-isolated-home")
+    val winCmd = AutoStartService.renderWindowsTaskCmd("/usr/bin/java", "/opt/a.jar", Some(home), Some(6139))
+    assert(winCmd.contains("--home \"/tmp/e2e-isolated-home\""), s"Windows 自启必须带 --home：$winCmd")
+    assert(winCmd.contains("--port 6139"), s"Windows 自启必须带 --port：$winCmd")
+
+    val args = AutoStartService.programArguments("/usr/bin/java", "/opt/a.jar", Some(home), Some(6139))
+    assert(args.contains("/tmp/e2e-isolated-home"), s"macOS plist 参数必须含 home：$args")
+    assert(args.sliding(2).exists(w => w == List("--port", "6139")), s"macOS plist 参数必须含 --port 6139：$args")
+
+    val desktop = AutoStartService.renderDesktopEntry("/usr/bin/java", "/opt/a.jar", Some(home), Some(6139))
+    assert(desktop.contains("--home '/tmp/e2e-isolated-home'"), s"Linux Exec 行必须带 --home：$desktop")
+    assert(desktop.contains("--port 6139"), s"Linux Exec 行必须带 --port：$desktop")
+
+    // 负控：默认根（与今日字节相同）仍不带 --port 覆盖时不得凭空多出该旗标
+    assert(!AutoStartService.renderDesktopEntry("/usr/bin/java", "/opt/a.jar", None).contains("--port"))
+    assert(!AutoStartService.renderWindowsTaskCmd("/usr/bin/java", "/opt/a.jar", None).contains("--port"))
+
 end AutoStartHomeSpec
