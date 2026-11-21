@@ -127,7 +127,7 @@ class AllowedToolSetSpec extends FunSuite:
       }
     }
 
-  test("team agent concrete tools list yields those tools + base + Mail + TeamTask*"):
+  test("team agent concrete tools list yields those tools + base + Mail (TeamTask* retired)"):
     val defn = mkDef("researcher", List("Read", "Glob", "Grep")).copy(category = "team")
     val allowed = CoreProbe.allowed(defn)
     assertEquals(
@@ -139,10 +139,7 @@ class AllowedToolSetSpec extends FunSuite:
         "Write",
         "Edit",
         "Bash",
-        "Mail",
-        "TeamTaskCreate",
-        "TeamTaskUpdate",
-        "TeamTaskList"
+        "Mail"
       )
     )
 
@@ -439,9 +436,9 @@ class AllowedToolSetSpec extends FunSuite:
     val allowed = CoreProbe.allowed(sneaky, isFlowNode = true)
     assert(!allowed.contains("SubTask"), "explicitly listed SubTask stripped for flow nodes")
 
-  // ===== 任务工具重做 (2026-08-30): TeamTask* team-member injection + Nebula/leaf exclusion =====
+  // ===== 团队类型面删除批阶段 B2：TeamTask* 工具面退役（作者裁定 Q11） =====
 
-  test("team lead AND member both get the full TeamTask set (progress display — everyone)"):
+  test("team category fixed face = BaseTools + Mail; the TeamTask set no longer exists"):
     val lead = mkDef("Manager", List("Read", "Grep", "Bash", "Mail")).copy(category = "team")
     val member = mkDef("backend", List("Read", "Grep", "Bash", "Mail")).copy(category = "team")
     for (who, allowed) <- Seq(
@@ -449,9 +446,11 @@ class AllowedToolSetSpec extends FunSuite:
         "member" -> CoreProbe.allowed(member)
       )
     do
-      assert(allowed.contains("TeamTaskCreate"), s"$who: TeamTaskCreate")
-      assert(allowed.contains("TeamTaskUpdate"), s"$who: TeamTaskUpdate")
-      assert(allowed.contains("TeamTaskList"), s"$who: TeamTaskList")
+      assert(allowed.contains("Mail"), s"$who: Mail (team 面固定件之一)")
+      assert(allowed.contains("Bash"), s"$who: BaseTools 仍在")
+      assert(!allowed.contains("TeamTaskCreate"), s"$who: TeamTaskCreate 已退役")
+      assert(!allowed.contains("TeamTaskUpdate"), s"$who: TeamTaskUpdate 已退役")
+      assert(!allowed.contains("TeamTaskList"), s"$who: TeamTaskList 已退役")
 
   test("Nebula gets NO TeamTask tools (任务工具重做: tasks are team-only)"):
     val nebula = mkDef("Nebula", List("Read", "Delegate"))
@@ -463,11 +462,18 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!allowed.contains("TaskUpdate"), "Nebula: no session TaskUpdate (retired)")
     assert(!allowed.contains("TaskQuery"), "Nebula: no session TaskQuery (retired)")
 
-  test("standalone / flow agents never get TeamTask tools — even when declared"):
+  test("declared TeamTask names are inert strings after retirement (never injected by any category)"):
+    // 团队类型面删除批阶段 B2：三件工具已从注册表摘除。声明解析保留（名字可留在
+    // allowedSet 惰性字符串层 —— 决策 A① 同款），但任何 category 的**固定面**都
+    // 不再注入它们；真判据是「注册表里没有 = 无 schema、无执行路径」。
     val solo = mkDef("explorer", List("Read", "Grep", "TeamTaskList"))
     val flow = mkDef("scanner", List("Read", "TeamTaskCreate")).copy(category = "flow")
-    assert(!CoreProbe.allowed(solo).contains("TeamTaskList"), "standalone: explicit declaration is inert")
-    assert(!CoreProbe.allowed(flow).contains("TeamTaskCreate"), "flow agent: explicit declaration is inert")
+    for name <- List("TeamTaskCreate", "TeamTaskUpdate", "TeamTaskList") do
+      assert(!ToolRegistry.TOOL_MAP.contains(name), s"$name 未注册（退役=注册层不挂）")
+    val teamFace = CoreProbe.allowed(mkDef("researcher", List("Read")).copy(category = "team"))
+    assert(!teamFace.contains("TeamTaskList"), "team 固定面不再注入 TeamTask*")
+    assert(CoreProbe.allowed(solo).contains("Read"), "standalone: 其它声明不受影响")
+    assert(CoreProbe.allowed(flow).contains("Read"), "flow: 其它声明不受影响")
 
   // ===== Block 1 (supervision trio §C2): AgentControl mechanism-layer grant =====
 
@@ -496,14 +502,14 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!allowed.contains("TeamTaskUpdate"), "flow node: no TeamTaskUpdate")
     assert(!allowed.contains("TeamTaskList"), "flow node: no TeamTaskList")
 
-  test("depth>=2 '*' agent strips TeamTask* (leaf treatment)"):
+  test("depth>=2 '*' agent keeps the leaf treatment (TeamTask* retired, base face unchanged)"):
     val deep = mkDef("deep-worker", List("*")).copy(category = "team")
     val allowed = CoreProbe.allowed(deep, depth = 2, isTeamLead = true)
-    assert(!allowed.contains("TeamTaskCreate"), "depth≥2 '*': no TeamTaskCreate")
-    assert(!allowed.contains("TeamTaskUpdate"), "depth≥2 '*': no TeamTaskUpdate")
-    assert(!allowed.contains("TeamTaskList"), "depth≥2 '*': no TeamTaskList")
+    // 团队类型面删除批阶段 B2：TeamTask* 已无生产者，叶子剥离只剩 Delegation/AgentControl 面。
+    assert(!allowed.contains("TeamTaskCreate"), "depth≥2 '*': no TeamTaskCreate (retired)")
+    assert(allowed.contains("Read") && allowed.contains("Bash"), "depth≥2 '*': BaseTools 面不变")
     val leadShallow = CoreProbe.allowed(deep, depth = 0, isTeamLead = true)
-    assert(leadShallow.contains("TeamTaskCreate"), "depth 0 lead keeps TeamTask*")
+    assert(leadShallow.contains("AgentControl"), "depth 0 lead keeps the AgentControl mechanism grant")
 
   // ===== #404 工具体系精简 (user ruling 2026-08-25 17:49) =====
 

@@ -177,16 +177,6 @@ object EntityLoader:
             case None => IO.pure(None)
       }
 
-  /** Load team-local agent: `teams/<teamName>/agents/<agentName>/` → fallback to global. */
-  def loadTeamAgent(teamName: String, agentName: String): IO[Option[AgentEntry]] =
-    IO.blocking {
-      val teamAgentDir = teamsDir / teamName / "agents" / agentName
-      if os.exists(teamAgentDir / "agent.json") then loadAgentFromDir(teamAgentDir) else None
-    }.flatMap {
-      case Some(entry) => IO.pure(Some(entry))
-      case None => loadAgent(agentName) // fallback to global
-    }
-
   /** Load flow-local agent: `flows/<flowName>/agents/<agentName>/` → fallback to global. */
   def loadFlowAgent(flowName: String, agentName: String): IO[Option[AgentEntry]] =
     IO.blocking {
@@ -227,31 +217,6 @@ object EntityLoader:
         else name -> entry
       }
     yield inferred
-
-  /**
-   * List team-local agent entries under `teams/<teamName>/agents/`.
-   *
-   * Keys cover BOTH reference forms — the directory name (how loadTeamAgent
-   * resolves) and the resolved agent.json name (how findAgentByName matches)
-   * — so team validation accepts either. Team-local agents are invisible to
-   * listAgents(); this scan is what makes them resolvable for validation.
-   */
-  def listTeamAgents(teamName: String): IO[Map[String, AgentEntry]] =
-    IO.blocking {
-      val agentsSubDir = teamsDir / teamName / "agents"
-      if !os.exists(agentsSubDir) then Map.empty[String, AgentEntry]
-      else
-        os.list(agentsSubDir)
-          .filter(os.isDir)
-          .toList
-          .flatMap { agentDir =>
-            loadAgentFromDir(agentDir).map { entry =>
-              if entry.name == agentDir.last then Map(agentDir.last -> entry)
-              else Map(agentDir.last -> entry, entry.name -> entry)
-            }
-          }
-          .foldLeft(Map.empty[String, AgentEntry])(_ ++ _)
-    }
 
   /**
    * Agent names declared under flows/<flowName>/agents/ — flow-local agents

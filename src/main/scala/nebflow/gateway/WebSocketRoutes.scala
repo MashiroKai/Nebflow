@@ -125,14 +125,10 @@ class WebSocketRoutes(
         case Some(agentName) =>
           sharedResources.agentLibrary.get(agentName).flatMap {
             case Some(defn) => IO.pure(defn)
-            case None =>
-              metaOpt.flatMap(_.flowName) match
-                case Some(fn) =>
-                  nebflow.core.entity.EntityLoader.loadTeamAgent(fn, agentName).flatMap {
-                    case Some(entry) => IO.pure(entry.toAgentDef)
-                    case None => rootFallback(agentName)
-                  }
-                case None => rootFallback(agentName)
+            // 团队类型面删除批阶段 B2（作者裁定 Q2：teams/ 盘上遗留直接丢弃）：
+            // 原 flowName → EntityLoader.loadTeamAgent 的团队局部定义查找腿删除，
+            // 全局 agent 库缺席时直接走 Nebula 兜底（不再读 teams/<flowName>/agents/）。
+            case None => rootFallback(agentName)
           }
         case None =>
           sharedResources.agentLibrary.get(RootAgentIdentity.Name).flatMap {

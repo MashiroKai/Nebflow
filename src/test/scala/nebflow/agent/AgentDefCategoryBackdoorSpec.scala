@@ -57,18 +57,23 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
         AgentCore.imageGenSealedStrip
     else face
 
-  /** legacyFixedTools 的 category=team 分支产物：BaseTools + Mail ++ TeamTaskTools。 */
-  private val LegacyTeamFace: Set[String] = AgentCore.BaseTools + "Mail" ++ AgentCore.TeamTaskTools
+  /**
+   * legacyFixedTools 的 category=team 分支产物：BaseTools + Mail。
+   * 团队类型面删除批阶段 B2：TeamTask 三件随团队任务工具面退役（作者裁定 Q11），
+   * team 固定面只剩 BaseTools + Mail。
+   */
+  private val LegacyTeamFace: Set[String] = AgentCore.BaseTools + "Mail"
 
   /**
-   * TeamTask 三件与已退役的 SubTask 名称共同组成负向守卫。
-   * 收敛名的机制固定集与 BaseTools 有正当交集（Read/Glob/Grep 等），故「遗留件
-   * 零出现」只能按 team 面独有件判定，不能拿整集求交。
+   * 已退役的 SubTask 名称（连同已无生产者、只剩字符串身份的 TeamTask 三件名）
+   * 组成负向守卫。收敛名的机制固定集与 BaseTools 有正当交集（Read/Glob/Grep 等），
+   * 故「遗留件零出现」只能按 team 面独有件判定，不能拿整集求交。
    * R2「一个 Mail 统一」（2026-09-12）后 `Mail` 从本集合摘除——它已是 Nebula
    * （NebulaOrchestrationTools）与分发器（DispatcherFixedTools）机制固定集的
-   * 正当成员，不再标志「team 面遗留件」。SubTask/TeamTask* 维持原判。
+   * 正当成员，不再标志「team 面遗留件」。团队类型面删除批阶段 B2 起 TeamTask 三件
+   * 已从固定集与注册表摘除，本集合以字面量保留（仍是「零出现」的守卫对象）。
    */
-  private val LegacyTeamOnlyTools: Set[String] = Set("SubTask") ++ AgentCore.TeamTaskTools
+  private val LegacyTeamOnlyTools: Set[String] = Set("SubTask", "TeamTaskCreate", "TeamTaskUpdate", "TeamTaskList")
 
   private def fixture(name: String, json: String): os.Path =
     val dir = os.temp.dir(prefix = "agentdef-cat-spec-") / name

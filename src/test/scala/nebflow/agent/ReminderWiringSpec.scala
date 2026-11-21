@@ -329,6 +329,7 @@ class ReminderWiringSpec extends CatsEffectSuite:
   // 再断言 `team:<name>` 作用域任务出现在该会话的 turn 文本里。团队会话登记表本体
   // 已删 ⇒ 团队归属**恒 None**，该注入腿结构上不可达。
   // 删因：**团队会话归属能力已退役**（不是「跑不过」）。团队作用域任务存储
-  // （`TaskStore.teamScopeKey`）与 TeamTask* 工具**未删**（作者未裁定），只是不再
-  // 有会话能被判为团队作用域。
+  // （`TaskStore.teamScopeKey`）按 T5「删工具不删存储」保留；TeamTask* 三件工具已在
+  // 团队类型面删除批阶段 B2 退役（作者裁定 Q11）——存储仍在，工具面与注入面已无，
+  // 故不再有会话能被判为团队作用域。
 end ReminderWiringSpec

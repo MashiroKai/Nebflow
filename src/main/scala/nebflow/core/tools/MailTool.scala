@@ -2344,13 +2344,14 @@ $message"""
           // （`_index.json` 的盘上遗留值：全局 confirm-edits 时被 Mail 激活的成员会
           // 继承盘上 auto-all），也不再有会话覆盖面。
           safetyMode <- resources.effectiveSafetyMode.map(nebflow.core.SafetyMode.toString)
-          entryOpt <- session.flowName match
-            case Some(teamName) => EntityLoader.loadTeamAgent(teamName, agentName)
-            case None => EntityLoader.loadAgent(agentName)
+          // 团队类型面删除批阶段 B2（作者裁定 Q2：teams/ 盘上遗留直接丢弃）：原
+          // `session.flowName match Some(teamName) => loadTeamAgent(teamName, …)` 的
+          // 团队局部定义查找腿删除，激活身份只走全局 agent 库（磁盘 agents/ + 内置）。
+          entryOpt <- EntityLoader.loadAgent(agentName)
           _ <- IO {
             if entryOpt.isEmpty then
               logger.warn(
-                s"[mail] activation failed: agent def '$agentName' not loadable (team=${session.flowName.getOrElse("-")}) for session ${sessionId.take(8)} (issue #22 observability)"
+                s"[mail] activation failed: agent def '$agentName' not loadable for session ${sessionId.take(8)} (issue #22 observability)"
               )
           }
           _ <- entryOpt.traverse_ { entry =>
