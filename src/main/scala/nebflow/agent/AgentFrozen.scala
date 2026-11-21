@@ -22,6 +22,15 @@ import nebflow.shared.{NebflowLogger, *}
 private[agent] object AgentFrozen:
   import nebflow.agent.AgentActor.*
 
+  /** agent 层冻结原因 → delegate 台账原因（可观测性补洞 2026-11-21）：模型/provider 族
+    * 一律归 LlmFailure（面板与 digest 按此族的 wire 值呈现），循环检测归 EngineFault。 */
+  private[agent] def delegateFreezeReasonOf(reason: FreezeReason): nebflow.core.delegate.DelegateFreeze.Reason =
+    reason match
+      case FreezeReason.LlmTransient | FreezeReason.Network | FreezeReason.ProviderDown |
+          FreezeReason.WaitingNetwork =>
+        nebflow.core.delegate.DelegateFreeze.Reason.LlmFailure
+      case _ => nebflow.core.delegate.DelegateFreeze.Reason.EngineFault
+
   /**
    * 冻结态迁移留痕（状态迁移日志单点，冻结态误报批 2026-11-05）：**谁**在**什么条件**
    * 下把会话置成了**什么**。与「谁冻的」有关的疑问（作者报障「我没有冻结它」）在
@@ -78,6 +87,37 @@ private[agent] object AgentFrozen:
       _ <- state.sessionId.fold(IO.unit) { sid =>
         resources.sessionStore.durableSwapMessages(sid, state.messages) *>
           resources.sessionStore.flushIndex
+      }
+      // ── 可观测性补洞（2026-11-21 作者裁定）────────────────────────────────
+      // 冻结有两条腿：supervisor 的 freezeAndHold 会调 DelegateFreeze.park（registry 冻结槽 +
+      // 台账 status=frozen），而本函数（在途 agent 的 error-freeze）此前**不写**——于是同一类
+      // 故障，「冻结了却看不见」：面板无行、delegateFreezeDigest 恒 total=0。此处对 delegate
+      // 记录补同一份落盘。fail-soft：无 registry 记录（root/团队 agent）= 跳过，冻结腿其余
+      // 动作不受影响。
+      _ <- state.sessionId.fold(IO.unit) { sid =>
+        // 台账行键 = registry 记录的 parentSessionId（AgentState 不持有该槽）。
+        val parentOf = IO.blocking(
+          nebflow.core.delegate.DelegateRegistry.find(sid).map(_.parentSessionId).getOrElse("")
+        )
+        parentOf.flatMap(parent =>
+          nebflow.core.delegate.DelegateFreeze
+          .park(
+            resources,
+            sid,
+            parent,
+            delegateFreezeReasonOf(reason),
+            Option(error.getMessage).getOrElse("unknown").take(300),
+            trigger = "error-freeze"
+          )
+          .flatMap(_ =>
+            nebflow.core.delegate.DelegateFreeze
+              .markRegistryState(resources, sid, delegateFreezeReasonOf(reason))
+              .handleErrorWith(_ => IO.unit)
+          )
+          .handleErrorWith(e =>
+            IO(AgentActor.logger.warn(s"[error-freeze] delegate park skipped for $sid: ${e.getMessage}"))
+          )
+        )
       }
       _ <- IO {
         logAgentEvent(

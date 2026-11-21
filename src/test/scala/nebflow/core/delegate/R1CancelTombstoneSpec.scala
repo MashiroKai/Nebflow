@@ -154,4 +154,35 @@ class R1CancelTombstoneSpec extends FunSuite:
     assert(rec.cancelRequestedAt.isDefined, "tombstone must remain")
   }
 
+
+  // 可观测性补洞（2026-11-21 作者裁定）：error-freeze 与 supervisor 的 freezeAndHold 是两条
+  // 冻结腿，只有后者写 registry/台账 ⇒ 在途子代理冻结对作者完全不可见（digest 恒 0）。
+  // 修法 = enterErrorFrozen 对 delegate 记录补 DelegateFreeze.park（同语义）。本用例钉住
+  // 「落盘 ⇒ digest 可见；取消 ⇒ 墓碑清槽、行消失」的链条（不依赖 actor 台架）。
+  test("T10 error-freeze 落盘可见：parkFrozen ⇒ digest total≥1 且行含 frozenSince；取消 ⇒ 清槽归 0、墓碑在") {
+    val id = "delegate-nebflow-t10"
+    DelegateRegistry.put(mkRecord(id))
+    assert(
+      DelegateRegistry
+        .parkFrozen(
+          id,
+          DelegateFreeze.detailedWireValue(DelegateFreeze.Reason.LlmFailure, "All providers failed (2 attempt(s); families: server)"),
+          "All providers failed (2 attempt(s); families: server)",
+          "error-freeze"
+        )
+        .isRight
+    )
+    val rec = DelegateRegistry.find(id).get
+    assert(rec.frozenSince.isDefined, "error-freeze must write frozenSince")
+    assertEquals(rec.frozenTrigger, Some("error-freeze"))
+    val digest = FreezeNotice.fullDigest(List(rec), System.currentTimeMillis())
+    assertEquals(digest.total, 1, "面板/digest 必须看得见这次冻结")
+    assert(digest.items.head.frozenSince > 0L)
+    assert(DelegateRegistry.markCancelRequested(id, "the user panel").isRight)
+    val after = DelegateRegistry.find(id).get
+    assert(after.cancelRequestedAt.isDefined, "tombstone must remain")
+    assertEquals(after.frozenSince, None)
+    assertEquals(FreezeNotice.fullDigest(List(after), System.currentTimeMillis()).total, 0, "取消后行必须消失")
+  }
+
 end R1CancelTombstoneSpec
