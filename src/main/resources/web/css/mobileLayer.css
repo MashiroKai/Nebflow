@@ -3944,7 +3944,9 @@ body.mobile-layer #main [data-nf-search-return="1"] { z-index: 170; }
 body.mobile-layer .mfs-back { z-index: 40; }
 body:not(.mobile-layer) .mfs-back { display: none !important; }
 
-/* ── A 族：透明承接层 + 居中玻璃盒，手机端铺平 ── */
+/* ── A 族：透明承接层 + 居中玻璃盒，手机端铺平 ──
+   例外：#takeover-box（强制二选一系统中断卡）不铺平——回到居中浮层卡（bc652038b
+   前的口径；卡本体为 cards.css .nfc 实色家族卡，宽度 86vw 上限）。 */
 body.mobile-layer .bgt-overlay,
 body.mobile-layer #secrets-overlay,
 body.mobile-layer .wsp-overlay,
@@ -3956,6 +3958,12 @@ body.mobile-layer .flow-agent-overlay.fullscreen {
   padding: 0;
   align-items: stretch;
   justify-content: stretch;
+}
+body.mobile-layer #modal-overlay.takeover-live {
+  background: rgba(15, 18, 24, 0.14);
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
 }
 body.mobile-layer .bgt-overlay .bgt-modal,
 body.mobile-layer #secrets-modal,

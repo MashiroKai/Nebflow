@@ -35,7 +35,7 @@
 //                             （被顶出态一律不渲染新内容帧，只放行接管协议帧）。
 
 import state from './state.js';
-import { onMessage } from './ws.js';
+import { onMessage, sendWs } from './ws.js';
 import { t } from './i18n.js';
 import { showToast } from './modal.js';
 import { getProfileUrl } from './brand.js';
@@ -220,7 +220,12 @@ export function takeoverExit() {
 // （HTTP 腿单点），但旧缓存页/服务端既有拦截面仍可能产出本帧——ok ⇒ reload 语义
 // 不变，!ok ⇒ 与 HTTP 腿同一失败收口（不静默）。
 
-onMessage('takeover', () => { show(); });
+onMessage('takeover', (msg) => {
+  show();
+  // 补推账确认（2026-11-21）：卡已渲染 ⇒ 回 at，服务端据此清掉未确认通知；
+  // 离线时 sendWs 入队，重连后随 identify 送达（同 at 幂等）。
+  if (msg && typeof msg.at === 'number') sendWs({ type: 'takeoverAck', at: msg.at });
+});
 
 onMessage('takeoverResult', (msg) => {
   if (msg && msg.ok) {

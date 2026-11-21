@@ -1276,6 +1276,9 @@ class WebSocketRoutes(
                               val handled =
                                 if takeover.enabled && ConsoleTakeover.isRetakeFrame(text) then
                                   takeover.handleRetake(hubConnId, perConnJsonSend)
+                                else if takeover.enabled && ConsoleTakeover.isAckFrame(text) then
+                                  // 接管通知确认（补推账清账）：客户端渲染后回 at，服务端只认同 at。
+                                  ConsoleTakeover.ackAt(text).fold(IO.unit)(at => takeover.ackNotice(hubConnId, at))
                                 else if takeover.enabled && ConsoleTakeover.isIdentifyFrame(text) then
                                   (ConsoleTakeover.declaredClientId(text), takeoverSession) match
                                     case (Some(cid), Some(sid)) =>

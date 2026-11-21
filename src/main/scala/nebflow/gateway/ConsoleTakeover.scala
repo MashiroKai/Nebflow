@@ -247,6 +247,29 @@ final class ConsoleTakeover(
   private val pastOwnersRef: Ref[IO, Vector[(String, Long)]] = Ref.unsafe(Vector.empty)
 
   /**
+   * 未确认的接管通知（补推账；2026-11-21 作者令「端未连接 ⇒ 重连后补推，错过事件不能静默丢」）：
+   * 被顶下的 holder 键 → 那次接管的 at。每次接管都记（不论旧端活动窗），仅当客户端回
+   * `takeoverAck` 且 at 相等才清。该键下一次连接（握手腿或在带声明腿）即补推。
+   * 注意：in-memory，引擎重启即丢（已知限制，见终报）。
+   */
+  private val pendingNoticeRef: Ref[IO, Map[String, Long]] = Ref.unsafe(Map.empty)
+
+  /** 补推：若 key 有未确认通知，经 connId 重发一次 takeover 帧（幂等，客户端 show() 不叠弹）。 */
+  private def replayPending(key: String, connId: String): IO[Unit] =
+    pendingNoticeRef.get.flatMap { m =>
+      m.get(key).traverse_(at => sendTo(connId, ConsoleTakeover.takeoverFrame(at)))
+    }
+
+  /** 客户端确认：连接所在键的未确认通知且 at 相等 ⇒ 清账。 */
+  def ackNotice(connId: String, at: Long): IO[Unit] =
+    for
+      m <- instancesRef.get
+      _ <- m.collectFirst { case (k, i) if i.conns.contains(connId) => k } match
+        case Some(k) => pendingNoticeRef.update(p => if p.get(k).contains(at) then p - k else p)
+        case None => IO.unit
+    yield ()
+
+  /**
    * 内容帧闸（2026-10-29 作者令四修 · 隐私面；误报根修批放宽判据）：被顶出
    * （superseded）实例的连接对 wsHub 广播/定向扇出一律断喂对话内容——只放行接管
    * 协议帧（takeover/takeoverResult）。pong/心跳与本连接直回帧（perConnJsonSend）
@@ -323,6 +346,7 @@ final class ConsoleTakeover(
           now <- nowMs()
           _ <- sweepStale(now)
           _ <- addConn(key, sessionId, meta, connId, now)
+          _ <- replayPending(key, connId)
           _ <- settle(key, connId)
         yield ()
       }
@@ -379,6 +403,7 @@ final class ConsoleTakeover(
             for
               now <- nowMs()
               moved <- migrateConn(connId, key, sessionId, full, now)
+              _ <- replayPending(key, connId)
               cur <- controlRef.get.map(_.owner)
               _ <- if moved && !cur.contains(key) then settle(key, connId) else IO.unit
               _ <- migrateNote(moved)
@@ -522,12 +547,23 @@ final class ConsoleTakeover(
               )
             else if past.exists(_._1 == key) then
               // 旧主回连不反抢：owner 不动，向回连方本连接推 superseded 通知。
-              sendTo(connId, ConsoleTakeover.takeoverFrame(now)) *> logWith(
-                s"console-takeover: ${label(key)} reconnected as non-owner — " +
-                  s"superseded notice sent to its connection (owner ${label(prevOwner)} untouched)",
-                key,
-                prevOwner
-              )
+              // 若补推账已在本连接上补过（replayPending），不再重复推，保证每连接一帧。
+              pendingNoticeRef.get.flatMap { pend =>
+                if pend.contains(key) then
+                  logWith(
+                    s"console-takeover: ${label(key)} reconnected as non-owner — " +
+                      s"superseded notice already replayed from pending ledger (owner ${label(prevOwner)} untouched)",
+                    key,
+                    prevOwner
+                  )
+                else
+                  sendTo(connId, ConsoleTakeover.takeoverFrame(now)) *> logWith(
+                    s"console-takeover: ${label(key)} reconnected as non-owner — " +
+                      s"superseded notice sent to its connection (owner ${label(prevOwner)} untouched)",
+                    key,
+                    prevOwner
+                  )
+              }
             else
               ConsoleTakeover.verdict(
                 me.flatMap(_.clientId),
@@ -543,20 +579,20 @@ final class ConsoleTakeover(
                     prevOwner
                   )
                 case ConsoleTakeover.Verdict.Conflict =>
-                  // 批 B：只推给「此刻真有可见活动」的旧主连接；自动化/观察位不接弹窗帧
-                  // （它们不看控制台，弹窗只会污染自动化验证据）。
-                  val prevConns = prev.map(_.conns.toList.sorted).getOrElse(Nil)
-                  val targets =
-                    if prev.exists(p => !p.automated && ConsoleTakeover.isLive(p, now, activityTtlMs)) then prevConns
-                    else Nil
+                  // 2026-11-21 作者令（优先于批 B 的活动窗判据）：推给**所有已知旧连接**
+                  // （不限 120s 活动窗），并把通知记入补推账——旧端此刻未连接/推送落空，
+                  // 其下一次连接即补推，直到客户端 takeoverAck 确认。自动化/观察位仍不接
+                  // 弹窗帧（它们不看控制台，弹窗只会污染自动化验证据）。
+                  val prevConns = prev.filterNot(_.automated).map(_.conns.toList.sorted).getOrElse(Nil)
                   for
                     n <- nowMs()
                     _ <- claim(key)
-                    _ <- targets.traverse_(cid => sendTo(cid, ConsoleTakeover.takeoverFrame(n)))
+                    _ <- if prev.exists(!_.automated) then pendingNoticeRef.update(_ + (prevOwner -> n)) else IO.unit
+                    _ <- prevConns.traverse_(cid => sendTo(cid, ConsoleTakeover.takeoverFrame(n)))
                     _ <- logWith(
                       s"console-takeover: ${label(key)} took over from ${label(prevOwner)} — " +
-                        s"takeover pushed to ${targets.size}/${prevConns.size} live conn(s)" +
-                        (if targets.size < prevConns.size then " (idle/dead conns silently superseded)" else ""),
+                        s"takeover pushed to ${prevConns.size} known conn(s); notice pending until ack" +
+                        (if prevConns.isEmpty then " (no conn now: replayed on its next connect)" else ""),
                       key,
                       prevOwner
                     )
@@ -975,6 +1011,18 @@ object ConsoleTakeover:
       .flatMap(_.hcursor.downField("type").as[String])
       .toOption
       .contains("takeoverRetake")
+
+  /** 客户端接管通知确认帧 `{"type":"takeoverAck","at":ms}`（2026-11-21 补推账）。 */
+  def isAckFrame(text: String): Boolean =
+    io.circe.parser
+      .parse(text)
+      .flatMap(_.hcursor.downField("type").as[String])
+      .toOption
+      .contains("takeoverAck")
+
+  /** 确认帧的 at（缺席/坏体 ⇒ None，静默忽略）。 */
+  def ackAt(text: String): Option[Long] =
+    io.circe.parser.parse(text).flatMap(_.hcursor.downField("at").as[Long]).toOption
 
   /** 帧型常量（客户端 `ws.js` 与前端静态哨兵 `scripts/check-takeover-identify.mjs` 同源比较点）。 */
   val IdentifyFrameType: String = "takeoverIdentify"

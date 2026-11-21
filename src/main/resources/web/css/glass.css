@@ -99,7 +99,10 @@
 /* 幕布档（scrim）——把背景压下去的遮罩层，**不是**毛玻璃面：无玻璃底、
    无描边、无内高光。它只借模糊能力，值在 --nf-glass-scrim* 单源
    （单一质感批 2026-11-15：blur 与唯一毛玻璃配方脱钩，消费自有 token）。 */
-.nf-glass-scrim {
+.nf-glass-scrim,
+/* 接管毛玻璃背景（四修批 2026-10-29 作者令；bc652038b 误删后 2026-11-21 恢复）：
+   被顶出弹窗在场时整页压暗 + 模糊——幕布成员（值仍只读 --nf-glass-scrim* 单源）。 */
+#modal-overlay.takeover-blur {
   background: var(--nf-glass-scrim);
   -webkit-backdrop-filter: var(--nf-glass-scrim-blur);
   backdrop-filter: var(--nf-glass-scrim-blur);
