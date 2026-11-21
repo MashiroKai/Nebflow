@@ -2413,23 +2413,32 @@ $message"""
               // session — the Teams panel double-entry ghost. Delegate /
               // SubTask / DAG spawns already name actors by their
               // nodeSessionId; this aligns the Mail path with them.
-              // AgentActor 构造改经工厂
-              // 镜像(resources 以 this 代入,实参逐字,零行为差)。
-              ref <- actorSystem.spawn(
-                resources.agentActorBehavior(
+              // 阶段 A（G1 收口）：唯一创建入口 resources.spawnAgentActor；
+              // 旧直连（agentActorBehavior 镜像）的差异以等价旋钮逐项声明，行为不变：
+              // 无 readTracker/fileHistory、contextWindow 取 Defaults、不占 provider 坑、
+              // 不走准入闸、不过 KernelChildSpawnGate。
+              ref <- resources.spawnAgentActor(
+                actorSystem,
+                nebflow.core.node.NodeRunner.SpawnParams(
                   agentDef = agentDef,
-                  wsSend = teamWsSend,
+                  resources = resources,
+                  sessionId = session.id,
+                  sessionName = session.name,
                   depth = 1,
                   parentRef = ctx.agentActorRef,
-                  sessionId = Some(session.id),
-                  sessionName = Some(session.name),
-                  initialMessages = history,
+                  wsSend = teamWsSend,
                   projectRoot = Some(ctx.projectRoot),
                   safetyMode = safetyMode,
                   rootSessionId = rootSid,
-                  expectsMail = entry.name != "Manager"
-                ),
-                session.id
+                  initialMessages = history,
+                  expectsMail = entry.name != "Manager",
+                  withTracking = false,
+                  contextWindowOverride = Some(Defaults.ContextWindow),
+                  pinProvider = false,
+                  admissionGuard = false,
+                  kernelGate = false,
+                  actorName = session.id
+                )
               )
               // Death watch: a Mail-activated actor lives OUTSIDE any tree watch
               // system, so its death would be completely silent — the registry
