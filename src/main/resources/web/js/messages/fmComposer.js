@@ -32,7 +32,7 @@ import { startDictation, stopDictation, sttEnabled } from '../voiceEngine.js';
 // 自带注册 IME 守卫与 Enter 判定 —— `bindComposerKeys` 就是主会话 `input.js` 走的
 // 那一份契约（组字前置短路 → cascade → commitEnter），Shift+Enter 交还浏览器默认
 // 换行（textarea），本文件只留 `onSend` 接线；autosize 同走 `growComposerInput`。
-import { bindComposerKeys, growComposerInput, composerPlaceholder } from '../input/composer.js';
+import { bindComposerKeys, growComposerInput, setComposerText, composerPlaceholder } from '../input/composer.js';
 
 /**
  * 装配一条 fm 输入条（三面同款）。返回引用给宿主（messages.js）挂状态收敛。
@@ -148,22 +148,20 @@ export function buildFmComposer(opts) {
         // [anchor, anchor+interimLen) 占位槽原位刷新（同主窗契约）
         const before = input.value.substring(0, voiceAnchor);
         const after = input.value.substring(voiceAnchor + voiceInterimLen);
-        input.value = before + text + after;
         voiceInterimLen = text.length;
-        input.setSelectionRange(voiceAnchor + text.length, voiceAnchor + text.length);
+        // 程序化写值走唯一入口（输入框显示缺陷批 2026-11-21）：量高 + 光标锚定
+        // 一次成型 —— 改前这一腿连量高都没有，多行口述结果会塌在一行里。
+        setComposerText(input, before + text + after, { caret: voiceAnchor + text.length });
       },
       onText: (text) => {
         // 终稿落定 = 占位槽换终稿 + 尾随空格，锚点随移（同主窗契约）
         const before = input.value.substring(0, voiceAnchor);
         const after = input.value.substring(voiceAnchor + voiceInterimLen);
         const insert = text + ' ';
-        input.value = before + insert + after;
         voiceInterimLen = 0;
         voiceAnchor = before.length + insert.length;
-        input.setSelectionRange(voiceAnchor, voiceAnchor);
         // 程序化写入不触发 input 事件 ⇒ 行高与发送键可用态就地同步（同主窗契约）
-        input.style.height = 'auto';
-        growComposerInput(input);
+        setComposerText(input, before + insert + after, { caret: voiceAnchor });
         onTextChange();
       },
       onState: (s, data) => {
@@ -206,7 +204,7 @@ export function buildFmComposer(opts) {
   sendBtn.addEventListener('click', () => onSend());
   // ③ 输入非空 ↔ 发送键可用态即时同步（含发送后清空 ⇒ 回禁用态；禁两态分叉）
   input.addEventListener('input', () => {
-    input.style.height = 'auto';
+    // 显示缺陷批 2026-11-21：塌陷由量高原语自理（见 js/input/composer.js ④）。
     growComposerInput(input);
     onTextChange();
   });
