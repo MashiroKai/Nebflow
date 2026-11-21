@@ -136,4 +136,22 @@ class R1CancelTombstoneSpec extends FunSuite:
     os.remove.all(parentSession)
     os.remove.all(seat)
   }
+  test("T9 终态联动（冻结三路恢复批 2026-11-21）：冻结会话被取消 ⇒ 冻结四槽同写清空，墓碑在场") {
+    val id = "delegate-nebflow-t9"
+    DelegateRegistry.put(mkRecord(id).copy(
+      frozenSince = Some(System.currentTimeMillis() - 1000L),
+      frozenReason = Some("llm-failure"),
+      frozenDetail = Some("All providers failed (1 attempt(s); families: format)"),
+      frozenTrigger = Some("failed-event")
+    ))
+    assert(DelegateRegistry.find(id).get.frozenSince.nonEmpty, "precondition: frozen")
+    assert(DelegateRegistry.markCancelRequested(id, "the user panel").isRight)
+    val rec = DelegateRegistry.find(id).get
+    assertEquals(rec.frozenSince, None, "cancel must clear frozenSince")
+    assertEquals(rec.frozenReason, None, "cancel must clear frozenReason")
+    assertEquals(rec.frozenDetail, None, "cancel must clear frozenDetail")
+    assertEquals(rec.frozenTrigger, None, "cancel must clear frozenTrigger")
+    assert(rec.cancelRequestedAt.isDefined, "tombstone must remain")
+  }
+
 end R1CancelTombstoneSpec

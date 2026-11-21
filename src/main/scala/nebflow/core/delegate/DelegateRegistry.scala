@@ -784,7 +784,16 @@ object DelegateRegistry:
               case None =>
                 try
                   val ts = System.currentTimeMillis()
-                  put(rec.copy(cancelRequestedAt = Some(ts), cancelRequestedBy = Some(by)))
+                  // 终态联动（2026-11-21 冻结三路恢复批）：取消即终止，同一次写里清冻结四槽——
+                  // 否则 digest（providerGroups 只读 frozenSince）会把已终止会话继续当在冻项展示。
+                  put(rec.copy(
+                    cancelRequestedAt = Some(ts),
+                    cancelRequestedBy = Some(by),
+                    frozenSince = None,
+                    frozenReason = None,
+                    frozenDetail = None,
+                    frozenTrigger = None
+                  ))
                   Right(ts)
                 catch case e: Throwable => Left(s"markCancelRequested: write failed: ${e.getMessage}")
       }
