@@ -34,7 +34,7 @@
 //     组件节的 `width` / `height` / `border-radius` 必须走 `var(--nf-toggle-*)`
 //     —— 写死数值 = 第二套几何在长回来。
 //
-// 规范侧（人读条文）：stand-dev 插件包 `<包根>/references/frontend/
+// 规范侧（人读条文）：本仓 `design-language/references/frontend/
 // flat-button-spec.md` §1.0 / §4.1。本脚本只做机械可判的部分。
 //
 // 用法：

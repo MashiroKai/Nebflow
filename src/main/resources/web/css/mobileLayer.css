@@ -2994,14 +2994,10 @@ body.mobile-layer .mf-me-card {
     box-shadow: var(--ds-shadow-card-dark);
   }
 }
-body.mobile-layer .mf-me-names {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--ds-space-half);
-}
-body.mobile-layer .mf-me-card .mf-me-name { font-size: var(--mfs-body); }
+/* `.mf-me-names` / `.mf-me-card .mf-me-name` 随资料卡名块退役（disclosure-dedup-spec.md
+   §3.2 表 2 · U2「同一信息组只允许 1 个渲染点」）：卡内名/邮箱零发射点，身份读数只留
+   读数行 `.mf-me-fields`。`.mf-me-name` / `.mf-me-sub` 本体规则保留 —— 它们属工作台
+   hero（`.mf-me-entry`，本页之外的另一个面）。 */
 body.mobile-layer .mf-me-login { flex: none; }
 /* 分组标签与账号行沿用 mf-hub 家族（mf-me-grouplabel 复用 mf-hub-label 口径，
    个人主页分组与 hub 分组视觉同族）。 */

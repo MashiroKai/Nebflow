@@ -29,9 +29,9 @@
 //  P4 令牌在场：登记表引用的每一个 --* 令牌必须在某个 css 文件里声明（§⑲ 槽
 //     或既有刻度槽）——规范引用了不存在的令牌 = 规范本身失效。
 //
-// 判据与术语的**规范侧**（人读条文、登记表、例外登记）在 stand-dev 插件包内
-//   <包根>/references/frontend/panel-spec.md
-// （包根定位见 scripts/lib/design-spec-source.mjs；本仓不再保留第二份拷贝）。
+// 判据与术语的**规范侧**（人读条文、登记表、例外登记）在仓内
+//   design-language/references/frontend/panel-spec.md
+// （定位见 scripts/lib/design-spec-source.mjs）。
 // 本脚本只做它机械可判的那部分；改判据要先改规范。
 //
 // 用法：
@@ -53,7 +53,7 @@ const ROOT = ROOT_OVERRIDE
 const WEB = join(ROOT, 'src', 'main', 'resources', 'web');
 const CSS_DIR = join(WEB, 'css');
 const JS_DIR = join(WEB, 'js');
-/** 规范正文（单源，在 stand-dev 插件包内；本仓无第二份拷贝）。 */
+/** 规范正文（单源在仓内 design-language/references/frontend/）。 */
 const SPEC = resolveDesignSpec('references/frontend/panel-spec.md');
 const MOBILE_LAYER = join(CSS_DIR, 'mobileLayer.css');
 

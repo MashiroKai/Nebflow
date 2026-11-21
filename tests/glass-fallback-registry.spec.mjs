@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolveDesignSpec, specMissingMessage } from '../scripts/lib/design-spec-source.mjs';
 const root = fileURLToPath(new URL('..', import.meta.url));
-// 规范单源（stand-dev 插件包）缺席时本契约测试跑不了 —— 明确 SKIP（不假绿成 PASS）。
+// 规范单源缺失（本仓 design-language/ 被删或缺件）时本契约测试跑不了 —— 明确 SKIP（不假绿成 PASS）。
 const specFile = resolveDesignSpec('references/frontend/glass-spec.md');
 if (!specFile) {
   console.log(`SKIP glass-fallback-registry — ${specMissingMessage('references/frontend/glass-spec.md')}`);

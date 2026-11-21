@@ -116,11 +116,10 @@ flat-buttons:
 	node scripts/check-flat-buttons.mjs
 
 # ── 前端设计要求四条规范：单闸入口（ui-design-requirements 批 2026-11-18）────────
-# 规范正文（改判据改规范，脚本只是执行器）唯一一份在 stand-dev 插件包内
-# （<包根>/references/frontend/：disclosure-dedup-spec.md 渐进式披露 + 无重复 ·
-#  explanatory-copy-spec.md 解释性文字 · flat-button-spec.md §5/§6 统一按钮来源）；
-# 本仓无第二份拷贝 —— 包根定位见 scripts/lib/design-spec-source.mjs，
-# 缺席时闸以退出码 2 结束（`npm run check:static` 记为 SKIP）。
+# 规范正文（改判据改规范，脚本只是执行器）单源在仓内 design-language/references/frontend/
+# （disclosure-dedup-spec.md 渐进式披露 + 无重复 · explanatory-copy-spec.md 解释性文字 ·
+#  flat-button-spec.md §5/§6 统一按钮来源）；定位见 scripts/lib/design-spec-source.mjs。
+# 正文随提交分发 ⇒ 三闸恒实跑，没有「缺席即 SKIP」这一档（退出码 2 = 红）。
 ui-structure:
 	node scripts/check-ui-structure.mjs
 

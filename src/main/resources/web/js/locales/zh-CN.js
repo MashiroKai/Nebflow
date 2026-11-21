@@ -3522,13 +3522,14 @@ export default {
   // 绑定读数的缺口说明，逐字段出句（zh/en 同键对称）。
   'profile.githubUnavailable': '账号服务未返回 GitHub 绑定用户名（该读数来自登录时下发的 GitHub 账号）。',
   'profile.googleUnavailable': 'Google 绑定只在官网账号页维护，本机账号服务与登录凭据都不含该读数。',
-  'profile.signedIn': '已登录',
+  // `profile.signedIn`（「已登录」）随资料卡名块退役：卡内名/邮箱已撤，身份读数只留
+  // 读数行（disclosure-dedup-spec.md §3.2 表 2 · U2）⇒ 该键零发射点，整键摘除不留死键。
 
   // external-open 批（2026-11-19，作者令「支持外部文件拉取进 canvas 打开」）：
   // 外部文件 / URL 对话框的文案 + 服务端各拒因的**用户可读**说法（拒因词表
   // 与 ExternalOpenRoutes / ExternalOpenPolicy 的 reason 逐键对应）。
   'externalOpen.title': '打开外部文件',
-  'externalOpen.hint': '粘贴本机任意可读文件的绝对路径，或一个 http(s) 链接；远程内容按内容嗅探类型后落盘再打开。',
+  'externalOpen.hint': '粘贴可读文件的绝对路径或 http(s) 链接；远程内容先落盘再打开。',
   'externalOpen.placeholder': '/Users/…/报告.pdf 或 https://example.com/pic.png',
   'externalOpen.open': '打开',
   'externalOpen.cancel': '取消',

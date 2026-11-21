@@ -38,7 +38,7 @@ import { resolveDesignSpec, specMissingMessage } from './lib/design-spec-source.
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const WEB = join(ROOT, 'src', 'main', 'resources', 'web');
-/** 规范正文（§6 按钮族登记表；单源在 stand-dev 插件包内，本仓无第二份拷贝）。 */
+/** 规范正文（§6 按钮族登记表；单源在仓内 design-language/references/frontend/）。 */
 const SPEC_PATH = resolveDesignSpec('references/frontend/flat-button-spec.md');
 const FLAT_LAYER = join(WEB, 'css', 'flatButtons.css');
 const BASELINE_PATH = join(ROOT, 'scripts', 'button-source-baseline.json');

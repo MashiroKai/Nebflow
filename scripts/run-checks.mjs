@@ -11,12 +11,11 @@ const nodeCheck = (name, script, profiles = ['static', 'frontend'], options = {}
   ...options,
 });
 
-// 设计规范单源外置（single-source-rehome 批 2026-11-18）：规范正文（毛玻璃 / 输入面 /
-// 面板 / 按钮 / 披露 / 文案 六篇 + 几何刻度账本）唯一一份在 stand-dev 插件包内，本仓
-// 不保留第二份拷贝；这些闸靠 scripts/lib/design-spec-source.mjs 定位它。规范面缺席
-// （CI 检出、未装插件）时闸以退出码 2 结束 —— 标 envSkip 后这里记为 SKIP（不假绿成
-// PASS，CI 仍能跑完）。
-const SPEC_EXTERNAL = { envSkip: true };
+// 设计规范正文（毛玻璃 / 输入面 / 面板 / 按钮 / 披露 / 文案 六篇 + 几何刻度账本 + 令牌
+// 账本 css）单源在**本仓** `design-language/`，随提交分发；这些闸靠
+// scripts/lib/design-spec-source.mjs 定位它。2026-11-21 裁定批起没有「规范面缺席」这一
+// 档：正文恒在 checkout 里，闸缺席 = 判据消失 = 必须可见的红（原先的 envSkip/SKIP 口径
+// 已撤销，退出码 2 一律按 FAIL 计）。
 
 const scriptTests = readdirSync(new URL('./tests/', import.meta.url))
   .filter(name => name.endsWith('.test.mjs')).sort().map(name => `scripts/tests/${name}`);
@@ -142,8 +141,8 @@ export const CHECKS = [
   // fail-closed 缺省不得被本批翻面。前后端两面都断言 ⇒ static + frontend 双 profile。
   nodeCheck('model-fallback-card', 'check-model-fallback-card'),
   nodeCheck('freeze-state', 'check-freeze-state'),
-  nodeCheck('flat-buttons', 'check-flat-buttons', ['static', 'frontend'], SPEC_EXTERNAL),
-  nodeCheck('glass', 'check-glass-unify', ['static', 'frontend'], SPEC_EXTERNAL),
+  nodeCheck('flat-buttons', 'check-flat-buttons', ['static', 'frontend']),
+  nodeCheck('glass', 'check-glass-unify', ['static', 'frontend']),
   { name: 'glass-runtime', profiles: ['frontend'], timeoutMs: 300_000,
     argv: [process.execPath, 'scripts/check-glass-runtime.mjs'] },
   // 边框权重闸（dark-border-weight 批 2026-11-18）：暗档「边框太明显」——
@@ -205,20 +204,19 @@ export const CHECKS = [
   // Canvas Ask 状态可见性与失败上报闸（2026-11-18）：状态判定单点 + 失败不许静默
   // + 文案完整 + 凭据不出诊断线（形态见 scripts/check-ask-status.mjs 头注）。
   nodeCheck('ask-status', 'check-ask-status'),
-  nodeCheck('input-surface', 'check-input-surface', ['static', 'frontend'], SPEC_EXTERNAL),
+  nodeCheck('input-surface', 'check-input-surface', ['static', 'frontend']),
   nodeCheck('dropdown-single-control', 'check-dropdown-single-control'),
   nodeCheck('mobile-canvas-strip', 'check-mobile-canvas-strip'),
-  nodeCheck('panel-unify', 'check-panel-unify', ['static', 'frontend'], SPEC_EXTERNAL),
+  nodeCheck('panel-unify', 'check-panel-unify', ['static', 'frontend']),
   nodeCheck('settings-ios-rows', 'check-settings-ios-rows'),
   // 前端设计要求批（ui-design-requirements 2026-11-18）：作者令「浮现式披露 / 不要有重复的
   // 功能和信息 / 统一按钮 / 解释性文字写作要求」四条规范的可执行面。三条都是纯静态扫描
   // （无浏览器、无实例），故与其它前端闸同在 static+frontend 两个 profile 下跑。
-  // 规范正文（改判据改规范，脚本只是执行器）唯一一份在 stand-dev 插件包内
-  // （references/frontend/ 的 disclosure-dedup-spec.md / explanatory-copy-spec.md /
-  //  flat-button-spec.md §5/§6），本仓无第二份拷贝 —— 故 SPEC_EXTERNAL。
-  nodeCheck('ui-structure', 'check-ui-structure', ['static', 'frontend'], SPEC_EXTERNAL),
-  nodeCheck('copy-budget', 'check-copy-budget', ['static', 'frontend'], SPEC_EXTERNAL),
-  nodeCheck('button-source', 'check-button-source', ['static', 'frontend'], SPEC_EXTERNAL),
+  // 规范正文（改判据改规范，脚本只是执行器）单源在仓内 design-language/references/frontend/
+  // （disclosure-dedup-spec.md / explanatory-copy-spec.md / flat-button-spec.md §5/§6）。
+  nodeCheck('ui-structure', 'check-ui-structure', ['static', 'frontend']),
+  nodeCheck('copy-budget', 'check-copy-budget', ['static', 'frontend']),
+  nodeCheck('button-source', 'check-button-source', ['static', 'frontend']),
   // 陈旧面板行批（2026-11-18）：后台智能体面板「活跃行 ⊆ 引擎活跃快照」不变量——
   // durable store 的重启打断行（pending-recovery）曾被折成「进行中」+ 690h 时钟。
   nodeCheck('bg-panel-active-liveness', 'check-bg-panel-active-liveness'),
@@ -233,7 +231,7 @@ export const CHECKS = [
   ...[
     ['js-types', 'check-js-types'], ['ime', 'check-ime-guard'],
     ['component-contract', 'check-component-contract'], ['takeover-identify', 'check-takeover-identify'],
-    ['design-spec', 'check-design-spec-sync', SPEC_EXTERNAL], ['prompt-source', 'check-prompt-single-source'],
+    ['design-spec', 'check-design-spec-sync'], ['prompt-source', 'check-prompt-single-source'],
     ['prompt-imports', 'check-prompt-catalog-imports'], ['provider-models', 'check-provider-modellist'],
     ['local-coupling', 'check-local-coupling'], ['tag-format', 'check-tag-format'],
     ['evidence-manifests', 'check-evidence-manifests'], ['scala-layers', 'check-scala-layers'],
@@ -391,13 +389,11 @@ export async function runCheck(check, { cwd = ROOT, log = console.log } = {}) {
       process.removeListener('SIGINT', onInterrupt);
       process.removeListener('SIGTERM', onTerminate);
       const elapsedMs = Math.round(performance.now() - start);
-      // envSkip 闸的退出码 2 = 规范面（stand-dev 插件包）缺席的环境错误，不是违规 ——
-      // 记为 SKIP 而非 FAIL，也不假绿成 PASS（CI 仍能跑完；standalone 直跑仍是退出码 2）。
-      const skipped = check.envSkip === true && !failure && !timedOut && !interrupted && !signal && code === 2;
-      const ok = !failure && !timedOut && !interrupted && !signal && (code === 0 || skipped);
+      // 没有「跳过」这一档：任何非零退出（含规范面缺失的退出码 2）都是失败的检查。
+      const ok = !failure && !timedOut && !interrupted && !signal && code === 0;
       const reason = interrupted ?? (timedOut ? 'timeout' : failure ? failure.message : signal ? `signal ${signal}` : `exit ${code}`);
-      log(`${ok ? (skipped ? 'SKIP' : 'PASS') : 'FAIL'} ${check.name} (${elapsedMs}ms; ${reason})`);
-      resolveResult({ name: check.name, ok, skipped, code, signal, interrupted, timedOut, error: failure?.message, elapsedMs });
+      log(`${ok ? 'PASS' : 'FAIL'} ${check.name} (${elapsedMs}ms; ${reason})`);
+      resolveResult({ name: check.name, ok, code, signal, interrupted, timedOut, error: failure?.message, elapsedMs });
     };
     const stop = () => {
       if (stopping || finished) return;
@@ -448,15 +444,12 @@ export async function main(args = process.argv.slice(2)) {
     return 0;
   }
   let failures = 0;
-  let skipped = 0;
   for (const check of checks) {
     const result = await runCheck(check);
     if (result.interrupted) return result.interrupted === 'SIGINT' ? 130 : 143;
-    if (result.skipped) skipped++;
     if (!result.ok) failures++;
   }
-  const tail = skipped ? ` (${skipped} skipped: 规范面缺席 — 见 scripts/lib/design-spec-source.mjs)` : '';
-  console.log(`${profile}: ${checks.length - failures}/${checks.length} checks passed${tail}`);
+  console.log(`${profile}: ${checks.length - failures}/${checks.length} checks passed`);
   return failures ? 1 : 0;
 }
 

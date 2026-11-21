@@ -72,9 +72,9 @@
 //         在 CSS 里根本不存在（陈旧例外）⇒ 红（防「豁免一条、然后面没了也没人删」）。
 //     例外清单**不在本脚本里**（与 flat-buttons 同规）：豁免 = 改规范，脚本只执行。
 //
-// 判据与术语的**规范侧**（人读条文、例外登记）在 stand-dev 插件包内
-//   <包根>/references/frontend/glass-spec.md
-// （包根定位见 scripts/lib/design-spec-source.mjs；本仓不再保留第二份拷贝）。
+// 判据与术语的**规范侧**（人读条文、例外登记）在仓内
+//   design-language/references/frontend/glass-spec.md
+// （定位见 scripts/lib/design-spec-source.mjs）。
 // 本脚本只做它机械可判的那部分；改判据要先改规范。
 //
 // 用法：
@@ -106,7 +106,7 @@ const ASK_DIALOG = join(JS_DIR, 'askDialog.js');
 const SOCIAL_SEARCH = join(JS_DIR, 'mobile', 'socialSearch.js');
 const INDEX_HTML = join(WEB, 'index.html');
 /** 规范正文（G7 的登记面清单与例外清单都在这里，脚本只读不写）。
- *  单源在 stand-dev 插件包内；本仓无第二份拷贝。 */
+ *  单源在仓内 design-language/references/frontend/。 */
 const SPEC = resolveDesignSpec('references/frontend/glass-spec.md');
 if (!SPEC) {
   console.error(`✗ glass-unify gate 不可跑 —— ${specMissingMessage('references/frontend/glass-spec.md')}`);
@@ -1091,7 +1091,7 @@ if (violations.length) {
   console.error(`        唯一模糊配方逐值 = ${PINNED_INPUT_FILTER}（幕布类允许 var(--nf-glass-scrim-blur)）。`);
   console.error('        顶部悬浮可透出面（G7）：不是挂 .nf-glass / 进成员表，就是进规范的');
   console.error('        例外清单写明理由 —— 不许半透明洗色底 + 零模糊悄悄留着。');
-  console.error('        规范条文与例外登记：stand-dev 插件 <包根>/references/frontend/glass-spec.md');
+  console.error('        规范条文与例外登记：design-language/references/frontend/glass-spec.md');
   process.exit(1);
 }
 
