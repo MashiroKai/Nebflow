@@ -32,7 +32,6 @@ import {
   rowFromRegistry,
   chainFromStoreRecord,
 } from './delegateChainStub.js';
-import { DELEGATE_API } from './delegateApi.js';
 
 /** 端点表（与 PresenceRoutes 挂载路径逐字对齐；Router("/api") 前缀）。 */
 export const CHAINS_API = {
@@ -47,6 +46,12 @@ export const CHAINS_API = {
   // N+1 重放。`?since=<上次 fingerprint>` 未变 ⇒ `{unchanged:true}`（零增量体）。
   digests: (since) =>
     since ? `/api/chain-digests?since=${encodeURIComponent(String(since))}` : '/api/chain-digests',
+  // 批量星型子代理面（手机面板卡顿修复批 2026-11-21 · 根因一）：**一次请求**拿到
+  // 多个父的子集，取代逐父 /api/delegates/<id>/children 的 N+1（修前一拍 116+ 条）。
+  // 与 `/api/chain-digests` 同一手法。应答 `{v,requested,count,children:{<id>:[…]}}`；
+  // 未在册的父**缺席**（缺席 = 无读数，空数组 = 确无子——判据与单父腿 404 同源）。
+  childBatch: (ids) =>
+    `/api/child-batch?ids=${encodeURIComponent(Array.from(ids).join(','))}`,
 };
 
 /** 行键（taskNo ‖ delegateId——ChainStore.keyFor 同口径，与 taskList.delegateRowKey 一致）。 */
@@ -190,6 +195,12 @@ const MAX_INFLIGHT = 4;
 /** 一轮刷新最多发多少条详情/子代理请求（余量交给下一轮 + 按需补拉队列）。 */
 const DETAIL_BUDGET = 24;
 const CHILD_BUDGET = 16;
+/**
+ * 批量子代理腿单请求父数上限（手机面板卡顿修复批 2026-11-21 · 根因一）：
+ * 服务端 `/api/child-batch` 的上限是 128，这里取 96 留余量（URL 长度也受控）。
+ * 超过则内部分批串行发——**绝不**退化成逐父请求。
+ */
+const CHILD_BATCH_MAX = 96;
 /** 活跃行链视图的最小重取间隔（活跃行的节点状态要新，但不必每帧都取）。 */
 const DETAIL_TTL_MS = 5000;
 /** 按需补拉的起始间隔（渲染面逐个真用到时才排队，绝不整批打点）。 */
@@ -206,6 +217,7 @@ let stormOpen = false;
 
 function backoffClassOf(url) {
   if (url.startsWith('/api/chain-digests')) return 'digests';
+  if (url.startsWith('/api/child-batch')) return 'children';
   if (url === '/api/delegates' || url === '/api/chains') return 'rows';
   if (url.startsWith('/api/chains/')) return 'chain';
   return 'children';
@@ -470,23 +482,65 @@ function projectChild(c) {
   };
 }
 
-/** 拉某父的星型子代理入镜像（fail-soft：任何失败保留旧值；404 = 父无记录 → 清空）。
- *  返回是否写入了新读数（广播判据：零增量的轮次不该触发面板重渲）。 */
-async function refreshChildren(delegateId) {
-  const url = /^(node-|dispatcher-)/.test(delegateId)
-    ? `/api/session-children/${encodeURIComponent(delegateId)}`
-    : DELEGATE_API.children(delegateId);
-  const body = await fetchJson(url);
-  if (body === RATE_LIMITED) return false; // 退避窗内：不记时刻（下一次再试，别把「限流」当「没有子」）
-  if (!body) {
-    if (!childrenMirror.has(delegateId)) childrenMirror.set(delegateId, []);
-    childrenFetchedAt.set(delegateId, Date.now());
-    return false;
+/**
+ * 批量拉多个父的星型子代理入镜像（手机面板卡顿修复批 2026-11-21 · 根因一）。
+ *
+ * 修前渲染面逐父调 [[ensureChildren]] ⇒ 逐父一条 `/children`（一拍 116+ 条），
+ * 这是诊断批实测的「5s 轮询风暴」放大器。本函数把它压成**一次** `/api/child-batch`。
+ *
+ * 契约与单父腿**逐条对齐**（渲染面零改动即可受益：读口仍是 listDelegateChildren）：
+ *   · 失败/限流 ⇒ **不写**任何父的镜像（保旧值，fail-soft 纪律）；
+ *   · 应答里**缺席**的父 ⇒ 视为「无读数」：不写、不记时刻（下一轮重试）；
+ *   · 应答里在场但空数组 ⇒ 「确无子」：写空集并记时刻（不是每次都问）；
+ *   · server 侧单请求上限 128 ⇒ 内部按 [[CHILD_BATCH_MAX]] 自动分批。
+ * 返回值 = 是否真的写入了新读数（广播判据：零增量的轮次不该触发面板重渲）。
+ *
+ * @param {Iterable<string>} ids 父会话 id 集（delegate / node / dispatcher 皆可）
+ * @returns {Promise<boolean>}
+ */
+async function refreshChildrenBatch(ids) {
+  const keys = uniq(Array.from(ids).map((id) => String(id == null ? '' : id).replace(/^team-/, '')))
+    .filter((k) => k && !childrenInflight.has(k));
+  if (!keys.length) return false;
+  const want = new Set(keys);
+  keys.forEach((k) => childrenInflight.add(k));
+  let wrote = false;
+  try {
+    for (let i = 0; i < keys.length; i += CHILD_BATCH_MAX) {
+      const chunk = keys.slice(i, i + CHILD_BATCH_MAX);
+      const body = await fetchJson(CHAINS_API.childBatch(chunk));
+      if (body === RATE_LIMITED || !body || typeof body !== 'object') continue;
+      const map = body.children && typeof body.children === 'object' ? body.children : {};
+      const now = Date.now();
+      for (const key of chunk) {
+        // Absent key = "no reading for this parent" — keep the old value, retry later.
+        if (!Object.prototype.hasOwnProperty.call(map, key)) continue;
+        const raw = map[key];
+        const kids = Array.isArray(raw) ? raw.map(projectChild) : [];
+        const prev = childrenMirror.get(key);
+        const changed =
+          !prev || prev.length !== kids.length || kids.some((k, idx) => {
+            const o = prev[idx];
+            return !o || o.taskId !== k.taskId || o.status !== k.status ||
+              o.completedAt !== k.completedAt || o.committedRevision !== k.committedRevision;
+          });
+        childrenMirror.set(key, kids);
+        childrenFetchedAt.set(key, now);
+        if (changed) wrote = true;
+      }
+    }
+  } catch (_) {
+    /* fail-soft: keep last good mirror; the next round retries */
+  } finally {
+    keys.forEach((k) => childrenInflight.delete(k));
+    if (wrote && typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent(EVENTS.DELEGATE_CHAIN_MIRROR_UPDATED));
+    }
+    // Parents the server did not return must be retried: they are exactly the
+    // `ensureChildren` queue the render face will fill again next pass.
+    void want;
   }
-  const kids = Array.isArray(body.children) ? body.children.map(projectChild) : [];
-  childrenMirror.set(delegateId, kids);
-  childrenFetchedAt.set(delegateId, Date.now());
-  return true;
+  return wrote;
 }
 
 /**
@@ -495,6 +549,7 @@ async function refreshChildren(delegateId) {
  * Project 的 node-/dispatcher- 会话（引擎侧 SubAgentTaskStore 按父会话 id 分区，见
  * <dataRoot>/subagent-tasks/node-*.json）⇒ 这些父此前永远不进镜像，终态子智能体在
  * 面板上零读数。本函数是**唯一补拉口**（渲染面仍只读 listDelegateChildren 那一个读口）：
+ *
  *   · TTL 闸门：同一父 ttlMs 内不重复请求（默认 60s；空集也记时刻——「确实没有子」
  *     不该每帧打点）；
  *   · 在飞闸门：同父并发请求只发一次；
@@ -509,15 +564,48 @@ export function ensureChildren(id, ttlMs = 60000) {
   const at = childrenFetchedAt.get(key) || 0;
   if (at && (Date.now() - at) < ttlMs) return Promise.resolve();
   if (childrenInflight.has(key)) return Promise.resolve();
+  // 🔴 手机面板卡顿修复批（2026-11-21 · 根因一）：渲染面每渲一轮都会对**每个父**
+  // 调本函数（`bgDelegateGroups` Pass 3 的递归遍历 + `bgScopeStoreChildren`）——
+  // 修前每个父各自 `fetch` 一条 `/children`，一拍 116+ 条，正是诊断批实测的
+  // 「5s 轮询风暴」。现在只**排队**，由 [[CHILD_ENSURE_GAP_MS]] 后的**一次**
+  // `/api/child-batch` 合并发出：同一渲染轮内的 N 个父 = 1 条请求。
+  //
+  // 语义保持（渲染面零改动）：返回的 Promise 仍在「该父读数落袋」时 resolve；
+  // TTL / 在飞 / fail-soft 三道闸一条不动（仍可重复调用、仍不并发重问）。
   childrenInflight.add(key);
-  return withSlot(() => refreshChildren(key))
-    .catch(() => { childrenFetchedAt.set(key, Date.now()); })
-    .then(() => {
-      childrenInflight.delete(key);
-      if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
-        window.dispatchEvent(new CustomEvent(EVENTS.DELEGATE_CHAIN_MIRROR_UPDATED));
+  childEnsureQueue.add(key);
+  const promise = new Promise((resolve) => { childEnsureWaiters.set(key, resolve); });
+  scheduleChildEnsureDrain();
+  return promise;
+}
+
+/** 渲染面驱动的批量补拉队列（见 [[ensureChildren]]）：父键集 + 逐键 resolver。 */
+const childEnsureQueue = new Set();
+const childEnsureWaiters = new Map();
+/** 合批窗口：同一渲染轮内陆续调用的 ensureChildren 并成一条请求。 */
+const CHILD_ENSURE_GAP_MS = 40;
+let childEnsureTimer = null;
+
+function scheduleChildEnsureDrain() {
+  if (childEnsureTimer) return;
+  childEnsureTimer = setTimeout(() => {
+    childEnsureTimer = null;
+    const ids = Array.from(childEnsureQueue);
+    childEnsureQueue.clear();
+    const done = () => {
+      for (const id of ids) {
+        const resolve = childEnsureWaiters.get(id);
+        childEnsureWaiters.delete(id);
+        if (resolve) resolve();
       }
-    });
+    };
+    if (!ids.length) return done();
+    // 单飞 + 并发闸：本批走 withSlot（与详情腿共用 MAX_INFLIGHT），且不与
+    // refresh() 里的子代理腿抢占同一批父（在飞集合已在 ensureChildren 入口把门）。
+    withSlot(() => refreshChildrenBatch(ids))
+      .catch(() => { for (const id of ids) childrenFetchedAt.set(id, Date.now()); })
+      .then(done, done);
+  }, CHILD_ENSURE_GAP_MS);
 }
 
 /**
@@ -603,18 +691,25 @@ async function refresh() {
   rest.sort((a, b) => (chainFetchedAt.get(a) || 0) - (chainFetchedAt.get(b) || 0));
   const batch = uniq(priority.concat(rest)).slice(0, DETAIL_BUDGET);
   // 子代理腿：活跃行优先，其余按最久未取轮转，一轮上限 CHILD_BUDGET。
+  // 🔴 手机面板卡顿修复批（2026-11-21 · 根因一）：本腿修前是**逐父一条**
+  // `/api/delegates/<id>/children`（一拍 116+ 条，与 5s 轮询叠加成风暴）——
+  // 现在整批压成**一条** `/api/child-batch`（内部按 CHILD_BATCH_MAX 分批）。
+  // 预算语义不变：仍是「一轮最多 CHILD_BUDGET 个父，活跃优先 + 最久未取轮转」。
   otherChildIds.sort((a, b) => (childrenFetchedAt.get(a) || 0) - (childrenFetchedAt.get(b) || 0));
   const childBatch = uniq(activeChildIds.concat(otherChildIds)).slice(0, CHILD_BUDGET);
-  const results = await Promise.all([
-    ...batch.map((k) => withSlot(() => refreshChain(k).catch(() => false))),
-    ...childBatch.map((id) => withSlot(() => refreshChildren(id).catch(() => false))),
+  const [chainResults, childWrote] = await Promise.all([
+    Promise.all(batch.map((k) => withSlot(() => refreshChain(k).catch(() => false)))),
+    withSlot(() => refreshChildrenBatch(childBatch).catch(() => false)),
   ]);
+  const results = chainResults;
   if (seq !== mirror.seq) return; // 刷新期间又有更新在途——广播交给最新一轮
   // 广播判据（既有契约不变：零增量的轮次不重渲面板——「未变 ⇒ 无事件」正是
   // subagent-visibility 的既有断言）。修复前 refresh 只在行面形状通过时广播且
   // 详情腿全量重写，故「有请求 ⇒ 有事件」；现在请求被预算压到 24 条，必须显式
   // 判「这一轮到底改了什么」：行变了 ∨ 摘要变了 ∨ 任一详情腿真的写了新读数。
-  if (rowsChanged || changed.size > 0 || results.some((ok) => ok === true)) dispatchMirrorUpdated();
+  if (rowsChanged || changed.size > 0 || results.some((ok) => ok === true) || childWrote === true) {
+    dispatchMirrorUpdated();
+  }
 }
 
 /** 单飞闸：同一时刻只有一轮刷新在飞；期间的新触发并成「再来一轮」（不叠加）。 */
