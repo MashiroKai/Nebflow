@@ -56,6 +56,21 @@ export function optionLabel(opt) {
   return '';
 }
 
+/** 决策选项文案（`decision.options[]` 真源形 = `{id,title,detail,media}`，见
+ *  引擎 `TodoDecision`）。对象取 `title`（旧形 label/text 兼容经 [[optionLabel]]），
+ *  裸字符串原样；解不出 ⇒ '' —— 调用方必须**跳过**空标签，绝不把对象交给
+ *  `String()` 渲染成 `[object Object]`（作者 2026-11-21 23:48 报障）。 */
+export function decisionOptionLabel(opt) {
+  return optionLabel(opt);
+}
+
+/** 决策选项的长说明（仅对象形携带；无 ⇒ ''）。渲染侧有值才附显示一行。 */
+export function decisionOptionDetail(opt) {
+  if (opt == null || typeof opt !== 'object') return '';
+  const d = typeof opt.detail === 'string' ? opt.detail : (typeof opt.description === 'string' ? opt.description : '');
+  return d.trim();
+}
+
 /** 需要回原卡片操作的题型（secret / 目录选择）——条目侧 fail-closed：
  *  宁可不作答，也不造一个写不回去的半面。 */
 function needsOriginalCard(item) {
