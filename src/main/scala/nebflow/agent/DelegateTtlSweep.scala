@@ -81,6 +81,18 @@ object DelegateTtlSweep:
       records <- IO
         .blocking(nebflow.core.delegate.DelegateRegistry.list())
         .handleErrorWith(e => logger.warn(s"[delegate-ttl] registry read failed: ${e.getMessage}").as(Nil))
+      // worktree 现场快照（孤儿行全清 ops 复核批 2026-11-21）：**一次取**，全批共用——
+      // 逐条各跑 `git worktree list` 在千条量级是上千次进程叉。快照只对「目录仍在盘上」
+      // 的记录取数（纯 os.isDir 预筛）并按仓库根去重，每个根至多一次 git 调用。
+      worktrees <- IO
+        .blocking(nebflow.core.delegate.DelegateWorktreeRegistry.Snapshot.capture(records))
+        .handleErrorWith(e =>
+          logger
+            .warn(s"[delegate-ttl] worktree snapshot failed (treating as empty): ${e.getMessage}")
+            .as(
+              nebflow.core.delegate.DelegateWorktreeRegistry.Snapshot.empty
+            )
+        )
       ref <- Ref.of[IO, Report](Report())
       _ <- records.traverse_ { rec =>
         // ① 在飞守卫（红线）：活体 actor ⇒ 零触碰。
@@ -92,8 +104,8 @@ object DelegateTtlSweep:
           case nebflow.shared.ExecutionProtection.Unprotected if live.contains(rec.id) =>
             ref.update(r => r.copy(inFlightKept = r.inFlightKept :+ rec.id))
           case nebflow.shared.ExecutionProtection.Unprotected =>
-            // ② 到期判读（单源）。
-            nebflow.core.delegate.DelegateTerminalTtl.verdict(rec, rowsById.get(rec.id), now) match
+            // ② 到期判读（单源；worktree 现场快照全批共用）。
+            nebflow.core.delegate.DelegateTerminalTtl.verdict(rec, rowsById.get(rec.id), now, worktrees) match
               case nebflow.core.delegate.DelegateTerminalTtl.InFlight => IO.unit
               case nebflow.core.delegate.DelegateTerminalTtl.Pinned =>
                 // 阶段③ 置顶（重要记录）：终态也不清——只留痕，零动作。
