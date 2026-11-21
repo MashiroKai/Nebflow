@@ -85,10 +85,16 @@ class WebSearchRaceSpec extends CatsEffectSuite:
     assertEquals(eng(1).name, "DuckDuckGo")
   }
 
-  test("P1-5: Chinese query → 360 first, CN engines next") {
+  test("P1-5: Chinese query → 360 first, real-result CN engine next") {
+    // 2026-11-22 integrity fix: slot 2 used to be Sogou — which is exactly the
+    // bug (Sogou sat in the first racing group and won every race with its
+    // 1.0 s captcha page). Anti-bot-prone engines are now partitioned behind
+    // every real-result engine, so slot 2 is WeChat (JS-rendered, but the
+    // remaining CN option; DDG follows for the global fallback).
     val eng = WebSearchTool.orderedEngines("天气预报 北京 明天 降水概率")
     assertEquals(eng.head.name, "360")
-    assertEquals(eng(1).name, "Sogou")
+    assertEquals(eng(1).name, "WeChat")
+    assert(eng.map(_.name).take(3).forall(n => n != "Sogou" && n != "Baidu"), s"order: ${eng.map(_.name)}")
   }
 
   test("P1-5: mixed query with latin majority still routes English-first (technical intent)") {
