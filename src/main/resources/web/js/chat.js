@@ -2687,7 +2687,8 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
         }); area.append(actions);
         const hint = make('div', 'ask-merge-hint', decision === 'reject' && !text.trim() ? '拒绝必须填写理由' : '选择回复后，点击下方确认发送。'); area.append(hint);
         if (history.length) area.append(make('div', 'ask-merge-hint', '操作历史：' + history.join('；')));
-        if (addFocus) { addFocus = false; area.querySelector('input[aria-label="添加分支"]')?.focus(); }
+        // 焦点回位：querySelector 给的是 Element，.focus() 只在 HTMLElement 上（js-types 闸零容忍）。
+        if (addFocus) { addFocus = false; const field = area.querySelector('input[aria-label="添加分支"]'); if (field instanceof HTMLInputElement) field.focus(); }
       }
       // 添加分支（同路径：按钮 / Enter）。空值、重复给出提示，不静默吞掉。
       function addNow() {
