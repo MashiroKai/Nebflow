@@ -44,6 +44,9 @@ export const CHECKS = [
   { name: 'noclip-floating-geometry', profiles: ['frontend'], timeoutMs: 240_000,
     argv: [process.execPath, 'tests/noclip-floating-geometry.spec.mjs'] },
   nodeCheck('design-tokens', 'check-design-tokens'),
+  // 主会话交互卡统一风格（作者裁定 B，2026-11-21）：卡族（.option-box / llm-failure-card）
+  // 卡面表面属性只许经 var(--…) 令牌承载；新造字面量卡面即红。
+  nodeCheck('interaction-card-family', 'check-interaction-card-family'),
   nodeCheck('message-style', 'check-msgstyle-single-source'),
   nodeCheck('message-item-unify', 'check-message-item-unify'),
   // notice-unify 批（2026-11-18，作者令「形成 lint 检查…统一到 2-3 种风格和类型的通知」）：

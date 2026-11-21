@@ -32,7 +32,6 @@
 .ask-merge-name { flex: 1 1 100px; overflow-wrap: anywhere; }
 .ask-merge-status, .ask-merge-hint { color: var(--st-text-dim); font-size: 12px; }
 .ask-merge-conflict { color: var(--st-mail-warn-icon); font-size: 12px; }
-.ask-merge-receipt { background: var(--nf-glass-input-bg); border: 1px solid var(--st-border); border-radius: 10px; padding: 10px; overflow-wrap: anywhere; }
 
 /* ---------- Main ---------- */
 #main {

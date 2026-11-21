@@ -73,3 +73,10 @@ against a static harness with a mocked socket; it is NOT registered in the stati
 run as part of this landing. Selection gating, add/delete/reorder, target-dependent relation rendering
 and the four light/dark screenshots are consequently NOT covered by an automated gate here — see
 `tasks.md` for the unclosed items. This change does not merge, deploy or push anything.
+
+## Amendment 2026-11-21 (author review 17:56)
+
+- **Branch field set (legal keys).** A `branches[]` entry accepts only: `name` (required), `note`, `selected`, `relations`. A relation accepts only `status` and `conflict`. Any other key is outside the contract; the card ignores it and does not render it.
+- **Status label fail-silent.** The card renders a status label only when `relations[target].status` is a non-blank string. A missing, empty, or non-string status renders no label. This supersedes the earlier "render unknown" wording in AMC-REQ-004: the card no longer shows the text 未知 for missing relations.
+- **No receipt preview.** The card does not render a receipt/answer preview. The JSON answer goes to the calling agent only.
+- **Add branch.** Add works by button and by Enter. An empty name or a duplicate shows a visible hint and keeps the typed draft. A successful add clears the draft and refocuses the input.

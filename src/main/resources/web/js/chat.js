@@ -2575,6 +2575,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
       const requestSync = () => queueMicrotask(() => { if (area.isConnected) sync(); });
       area.className = 'ask-merge';
       const history = [];
+      let addDraft = '', addError = '', addFocus = false;
       const make = (tag, cls, label) => { const el = document.createElement(tag); if (cls) el.className = cls; if (label != null) el.textContent = label; return el; };
       const button = (label, action, disabled = false) => { const b = make('button', 'option-btn', label); b.type = 'button'; b.disabled = disabled; b.onclick = action; return b; };
       function answer() {
@@ -2645,7 +2646,11 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
           };
           head.append(check, make('strong', 'ask-merge-name', branch.name));
           const relation = branch.relations[target] || {};
-          head.append(make('span', 'ask-merge-status', typeof relation.status === 'string' ? relation.status : '未知'));
+          // fail-silent（作者 11-21 17:56）：契约外 / 空值 / 缺失的关系数据不渲染标签——
+          // 不再以「未知」顶替（旧口径会把调用方传错键的分支也标成「未知」）。
+          if (typeof relation.status === 'string' && relation.status.trim()) {
+            head.append(make('span', 'ask-merge-status', relation.status));
+          }
           if (enabled('delete')) head.append(button('删除', () => { branches.splice(index, 1); record('删除：' + branch.name); draw(); sync(); }));
           row.append(head);
           if (relation.conflict) row.append(make('div', 'ask-merge-conflict', '冲突：' + relation.conflict));
@@ -2659,10 +2664,18 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
         });
         area.append(list);
         if (enabled('add')) {
-          const addRow = make('div', 'ask-merge-row'); const input = make('input', 'option-custom-input'); input.placeholder = '输入或选择分支'; input.setAttribute('aria-label', '添加分支');
+          // 添加行（作者 11-21 17:56「添加条目完全不可用」修复）：输入值存闭包 addDraft，
+          // 每次 draw() 重建 DOM 时回填，不丢字；Enter 与按钮同路径；空值 / 重复给出
+          // 可见提示（旧口径静默 return = 「点了没反应」）；成功后焦点回到输入框便于连加。
+          const addRow = make('div', 'ask-merge-row');
+          const input = make('input', 'option-custom-input');
+          input.placeholder = '输入或选择分支'; input.setAttribute('aria-label', '添加分支'); input.value = addDraft;
+          input.oninput = () => { addDraft = input.value; if (addError) { addError = ''; area.querySelector('.ask-merge-add-error')?.remove(); } };
+          input.onkeydown = e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); addNow(); } };
           const datalist = make('datalist'); datalist.id = 'ask-merge-candidates-' + qi + '-' + Math.random().toString(36).slice(2); input.setAttribute('list', datalist.id);
           (Array.isArray(config.candidates) ? config.candidates : []).filter(c => typeof c === 'string' && !branches.some(b => b.name === c)).forEach(c => { const opt = make('option'); opt.value = c; datalist.append(opt); });
-          addRow.append(input, datalist, button('添加条目', () => { const name = input.value.trim(); if (!name || branches.some(b => b.name === name)) return; branches.push({ name, note:'', selected:true, relations:{} }); record('添加：' + name); draw(); sync(); })); area.append(addRow);
+          addRow.append(input, datalist, button('添加条目', addNow)); area.append(addRow);
+          if (addError) area.append(make('div', 'ask-merge-conflict ask-merge-add-error', addError));
         }
         const comment = make('textarea', 'option-custom-input'); comment.value = text; comment.placeholder = '拒绝理由或补充意见'; comment.setAttribute('aria-label', '理由或补充意见'); comment.oninput = () => { text = comment.value; const hint = area.querySelector('.ask-merge-hint'); if (hint) hint.textContent = decision === 'reject' && !text.trim() ? '拒绝必须填写理由' : '选择回复后，点击下方确认发送。'; sync(); }; area.append(comment);
         const actions = make('div', 'ask-merge-row');
@@ -2671,8 +2684,17 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
           if (decision === value) b.classList.add('picked'); actions.append(b);
         }); area.append(actions);
         const hint = make('div', 'ask-merge-hint', decision === 'reject' && !text.trim() ? '拒绝必须填写理由' : '选择回复后，点击下方确认发送。'); area.append(hint);
-        const receipt = answer(); area.append(make('div', 'ask-merge-receipt', '回执预览：' + (decision || '未选择') + ' · ' + (receipt.branches.map(b => b.name).join('、') || '无分支') + ' → ' + target));
         if (history.length) area.append(make('div', 'ask-merge-hint', '操作历史：' + history.join('；')));
+        if (addFocus) { addFocus = false; area.querySelector('input[aria-label="添加分支"]')?.focus(); }
+      }
+      // 添加分支（同路径：按钮 / Enter）。空值、重复给出提示，不静默吞掉。
+      function addNow() {
+        const name = addDraft.trim();
+        if (!name) { addError = '请输入分支名'; addFocus = true; draw(); return; }
+        if (branches.some(b => b.name === name)) { addError = '「' + name + '」已在列表中'; addFocus = true; draw(); return; }
+        branches.push({ name, note: '', selected: true, relations: {} });
+        addDraft = ''; addError = ''; addFocus = true;
+        record('添加：' + name); draw(); sync();
       }
       draw(); wrapper.append(area); box.appendChild(wrapper); requestSync(); return;
     }
