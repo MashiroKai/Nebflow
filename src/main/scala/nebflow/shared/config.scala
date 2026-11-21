@@ -737,6 +737,33 @@ object Config:
   def NebflowHome: os.Path = PathUtil.dataRoot
   def DefaultConfigPath: os.Path = PathUtil.configJsonReadPath(NebflowHome)
 
+  /**
+   * 配置文件显式 `port` 键（双生分家批 2026-10-31，作者裁定「config 支持显式
+   * port 键并写进文档」）：读 `<dataRoot>/<configFileName>`（`nebflow.json`，
+   * dual-read 惯例经 `Config.DefaultConfigPath`）顶层的**JSON 数字** `port`。
+   *
+   * 下沉到 shared（层级红线：core→gateway 反向边，见 scripts/check-scala-layers.mjs）：
+   * gateway 的 `GatewayConfig.configFilePort` 委托此处，core 侧（AutoStartService）
+   * 直接取本函数，单一实现不另抄。
+   *
+   * 容忍纪律：文件缺失 / 空 / `{}` / 非法 JSON / 非数字（含数字字符串——circe
+   * 对 `"6199"` 这类字面宽容解码，此处显式只认 `asNumber`，与文档「整数」口径
+   * 一致）/ 越界 —— 一律 `None` 回落下一链腿，**绝不抛错**（端口门是启动前第
+   * 一道闸，配置面的故障由稍后的 `Config.loadServiceConfig` 大声报出，不在此
+   * 提前炸）。越界/零值由端口解析链的 `Port.fromInt` + 正值闸丢弃。
+   */
+  def configFilePort(): Option[Int] =
+    try
+      val path = DefaultConfigPath
+      if !os.exists(path) then None
+      else
+        val raw = os.read(path).trim
+        if raw.isEmpty || raw == "{}" then None
+        else
+          parse(raw).toOption
+            .flatMap(_.hcursor.downField("port").focus.flatMap(_.asNumber).flatMap(_.toInt))
+    catch case _: Exception => None
+
   private val envVarLogger = nebflow.shared.NebflowLogger.forName("nebflow.config")
 
   def resolveEnvVars(str: String): String =

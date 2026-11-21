@@ -32,7 +32,7 @@ const PROGRESS_ATTR = 'data-nf-progress';
  * 「内容已完整渲染但『正在打开…』悬浮不收」）：占位由 `renderProgressPane` 挂进
  * pane，而**撤除**原先没有任何出口 —— 取数成功后的渲染腿（attachmentPreview.js
  * `renderIntoPane` → fileViewers.js `renderFile` → 某个 viewer.render）只负责挂真容：
- * 多数 viewer 先清 pane（`pane.replaceChildren()` / `innerHTML=''`）顺手带走了占位，
+ * 多数 viewer 先清 pane（`pane.replaceChildren()`，或等价的整体清空）顺手带走了占位，
  * 但 **markdown viewer 不清 pane**（它只 `remove()` 自己那类 `.canvas-md-scroll`
  * 旧面，再 `pane.appendChild(mdScroller)`，见 viewers/markdown.js:1401-1424）——
  * 于是占位 `.nf-progress-pane`（height:100% 的居中盒）与正文并排同屏，

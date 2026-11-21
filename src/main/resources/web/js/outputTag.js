@@ -22,6 +22,7 @@
 // persistence.js import 本模块。utils.js 不得反向 import（无环）。
 
 import { renderMarkdownWithMath, escapeHtml, extractOutputInner } from './utils.js';
+import { setHtmlTree } from './dom.js';
 
 /** True when `text` carries ≥1 balanced `<report>...</report>` pair (fence-aware,
  *  same single implementation as the channel side). A text without any block —
@@ -52,10 +53,10 @@ export function setZeroBlockExpanded(bubble, expanded) {
   bubble.hidden = false;
   if (expanded) {
     bubble.classList.add('nf-output-raw');
-    bubble.innerHTML = '<pre class="nf-output-raw-pre">' + escapeHtml(bubble._nfZeroFull) + '</pre>';
+    setHtmlTree(bubble, '<pre class="nf-output-raw-pre">' + escapeHtml(bubble._nfZeroFull) + '</pre>');
   } else {
     bubble.classList.remove('nf-output-raw');
-    bubble.innerHTML = renderMarkdownWithMath(bubble._nfZeroFull, true, { report: true });
+    setHtmlTree(bubble, renderMarkdownWithMath(bubble._nfZeroFull, true, { report: true }));
   }
 }
 
@@ -84,7 +85,7 @@ export function applyOutputFace(bubble, fullText) {
   if (inner === null) return false;
   bubble.dataset.nfOutput = '1';
   bubble._nfOutputFull = fullText;
-  bubble.innerHTML = inner.trim() ? renderMarkdownWithMath(inner) : '';
+  setHtmlTree(bubble, inner.trim() ? renderMarkdownWithMath(inner) : '');
   bubble.hidden = !inner.trim();
   return true;
 }
@@ -98,11 +99,11 @@ export function setOutputExpanded(bubble, expanded) {
   if (expanded) {
     bubble.hidden = false;
     bubble.classList.add('nf-output-raw');
-    bubble.innerHTML = '<pre class="nf-output-raw-pre">' + escapeHtml(bubble._nfOutputFull) + '</pre>';
+    setHtmlTree(bubble, '<pre class="nf-output-raw-pre">' + escapeHtml(bubble._nfOutputFull) + '</pre>');
   } else {
     bubble.classList.remove('nf-output-raw');
     const inner = extractOutputInner(bubble._nfOutputFull);
     bubble.hidden = inner === null || !inner.trim();
-    bubble.innerHTML = inner === null || !inner.trim() ? '' : renderMarkdownWithMath(inner);
+    setHtmlTree(bubble, inner === null || !inner.trim() ? '' : renderMarkdownWithMath(inner));
   }
 }
