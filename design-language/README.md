@@ -57,9 +57,9 @@ design-language/
 
 **第二处缺口（同批，已部分收口）**：`performance-budget-spec.md`（性能设计红线，作者令 2026-11-21 11:37）
 阈值已按 perf-fixes 批 `5db03e7ec` 回填，`status: active`；无实测依据的格保持「待定」。
-**闸仍未在本分支**：实际闸 `scripts/check-perf-redlines.mjs` + `tests/perf-redlines-runtime.mjs`
-位于 `feat/panel-mobile-perf-fixes`，未并入本分支，与规范 §7.4 预定的 `check-perf-budget.mjs` 名称不同，
-待作者裁定并入或改名。**在并入前性能红线只有设计期效力，本分支不是机检判据** —— 不装作已有闸。
+**闸名已裁定（正文跟实现走）**：静态闸 `scripts/check-perf-redlines.mjs`、运行时闸
+`tests/perf-redlines-runtime.mjs`（无实例记 SKIP），实现位于 `feat/panel-mobile-perf-fixes`（`5db03e7ec`），
+**尚未并入本分支**；不另起 `check-perf-budget.mjs`。**在并入前性能红线只有设计期效力，本分支不是机检判据** —— 不装作已有闸。
 
 ## 为什么不在 `src/main/resources/seed/plugins/`（原路径）
 
