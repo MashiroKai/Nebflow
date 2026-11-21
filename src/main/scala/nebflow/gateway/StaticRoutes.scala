@@ -43,49 +43,81 @@ object StaticRoutes:
    *   2. classpath dist — the jar-packed bundle wins over disk (an assembly
    *      was a deliberate atomic packaging decision);
    *   3. disk dist — build/web-dist/index.html under the engine working dir,
-   *      USED ONLY WHEN FRESH: no file under src/main/resources/web is newer
-   *      than the dist index. This is what keeps `sbt run` hot-edit intact —
-   *      the moment a web/ source is edited (or a merge touches the tree),
-   *      the on-disk dist goes stale and the dev tree is served again until
-   *      scripts/build-web.mjs is re-run (the P1 build.sbt guard's "must not
-   *      silently serve the stale dist tree" ruling, enforced at runtime).
-   *      A missing sources dir (installed runtime) counts as fresh.
-   *   4. otherwise dev tree.
+   *      USED ONLY WHEN FRESH. Freshness is judged by a CONTENT fingerprint
+   *      (scripts/build-web.mjs --ensure: sha256 of the web/ tree vs the stamp
+   *      the last build wrote), not mtime — git checkouts touch mtimes without
+   *      changing bytes. A stale dist is rebuilt in place by [[ensureDist]]
+   *      (~2s, dev checkouts only: an installed runtime has no sources dir and
+   *      trusts the dist as-is). This closes the 2026-11-21 gap where a stale
+   *      dist silently fell back to the serial 323-file dev tree.
+   *   4. otherwise dev tree — and the boot line says why (see
+   *      [[staticSourceDescription]]) when a dist exists but could not be
+   *      refreshed (no node on PATH, build error, timeout).
    *
-   * Any filesystem surprise during the freshness walk is a conservative
-   * fallback to the dev tree (never a partial dist).
+   * `-D<lowerName>.webdist=dev` remains the explicit dev escape hatch and
+   * short-circuits everything (no rebuild attempt).
    */
   def resolveStaticSource(
     lowerName: String,
     webdistProp: Option[String],
     classpathDist: Boolean,
-    projectRoot: Option[os.Path]
+    projectRoot: Option[os.Path],
+    ensure: os.Path => Boolean = ensureDist
   ): StaticSource =
-    val devFlag = webdistProp.exists(v => Set("dev", "0", "false")(v.trim.toLowerCase))
-    if devFlag then StaticSource.DevTree
+    if devFlagSet(webdistProp) then StaticSource.DevTree
     else if classpathDist then StaticSource.BundledDist
     else
-      projectRoot.flatMap(diskDistRoot) match
+      projectRoot.flatMap(root => diskDistRoot(root, ensure)) match
         case Some(root) => StaticSource.DiskDist(root)
         case None => StaticSource.DevTree
   end resolveStaticSource
 
-  /** Disk dist root under `root`, only when it exists AND is fresh vs sources. */
-  private def diskDistRoot(root: os.Path): Option[os.Path] =
-    val index = root / "build" / "web-dist" / "index.html"
-    if os.isFile(index) && distFresh(index, root / "src" / "main" / "resources" / "web")
-    then Some(index / os.up)
-    else None
+  private def devFlagSet(webdistProp: Option[String]): Boolean =
+    webdistProp.exists(v => Set("dev", "0", "false")(v.trim.toLowerCase))
 
-  /** Dist index mtime must be >= every file under the web/ source tree. */
-  private def distFresh(index: os.Path, sources: os.Path): Boolean =
+  /**
+   * Disk dist root under `root`. With a sources dir present the dist must be
+   * fresh per `ensure` (which rebuilds a stale one); without one (installed
+   * runtime) it is served whenever it exists.
+   */
+  private def diskDistRoot(root: os.Path, ensure: os.Path => Boolean): Option[os.Path] =
+    val index = root / "build" / "web-dist" / "index.html"
+    val fresh =
+      if os.isDir(root / "src" / "main" / "resources" / "web") then ensure(root)
+      else os.isFile(index)
+    if fresh && os.isFile(index) then Some(index / os.up) else None
+  end diskDistRoot
+
+  /** How long a freshness rebuild may take before the dev tree is served instead. */
+  private val EnsureTimeoutSec: Long = 180L
+
+  /**
+   * Freshness judge (single source = scripts/build-web.mjs --ensure). Exit 0 ⇒
+   * the dist is fresh now (already fresh, or rebuilt in place). Any failure
+   * (script absent, node not on PATH, non-zero exit, timeout) ⇒ false ⇒ the
+   * caller serves the dev tree. Never throws.
+   */
+  private[gateway] def ensureDist(root: os.Path): Boolean =
+    val script = root / "scripts" / "build-web.mjs"
     try
-      if !os.isDir(sources) then true // installed runtime: no sources to go stale against
+      if !os.isFile(script) then false
       else
-        val stamp = os.mtime(index)
-        !os.walk(sources).exists(f => os.isFile(f) && os.mtime(f) > stamp)
+        // Output lands in build/web-ensure.log: a failed rebuild keeps its reason
+        // on disk instead of blocking on an unread pipe.
+        os.makeDir.all(root / "build")
+        val log = (root / "build" / "web-ensure.log").toIO
+        val proc = new java.lang.ProcessBuilder("node", script.toString, "--ensure")
+          .directory(root.toIO)
+          .redirectErrorStream(true)
+          .redirectOutput(java.lang.ProcessBuilder.Redirect.appendTo(log))
+          .start()
+        if !proc.waitFor(EnsureTimeoutSec, java.util.concurrent.TimeUnit.SECONDS) then
+          proc.destroyForcibly()
+          false
+        else
+          proc.exitValue == 0
     catch case _: Throwable => false
-  end distFresh
+  end ensureDist
 
   /**
    * Production resolution. Lazy — classpath and disk are fixed for the
@@ -116,29 +148,25 @@ object StaticRoutes:
   end staticSourceDescription
 
   /**
-   * console-load-perf 批 2026-10-21 — the silent-fallback visibility fix for the
-   * 10-20 stranding: the engine restarted 19:20 chose the dev tree because the
-   * disk dist was built at 20:05 (AFTER boot) and [[staticSource]] is a lazy
-   * val resolved once — the boot line said "dev web/ sources" with zero hint
-   * that a rebuild+restart would flip it. When the dev tree IS being fed and a
-   * disk dist EXISTS but lost the freshness race, name the cause and the fix on
-   * the boot line (a fresh dist never lands here — it would have been picked by
-   * [[resolveStaticSource]]; so this hint only ever fires for the stale case,
-   * and the intentional `-D.webdist=dev` hot-edit escape keeps its clean line).
+   * console-load-perf 批 2026-10-21 — the silent-fallback visibility fix: when the
+   * dev tree IS being fed and a disk dist EXISTS but could not be made fresh, name
+   * the cause on the boot line (the 2026-11-21 batch replaced the mtime judge with
+   * a content fingerprint + in-place rebuild, so the only remaining reason to
+   * land here is a failed rebuild). The intentional `-D.webdist=dev` hot-edit
+   * escape keeps its clean line.
    */
   private def staleDiskDistHint: String =
     try
-      val index = os.pwd / "build" / "web-dist" / "index.html"
-      if !os.isFile(index) then ""
+      val sources = os.pwd / "src" / "main" / "resources" / "web"
+      if !os.isDir(sources) then ""
       else
-        val sources = os.pwd / "src" / "main" / "resources" / "web"
-        val stale =
-          if !os.isDir(sources) then 0
-          else os.walk(sources).count(f => os.isFile(f) && os.mtime(f) > os.mtime(index))
-        if stale == 0 then ""
+        val webdistProp = sys.props
+          .get(s"${Branding.lowerName}.webdist")
+          .orElse(sys.props.get("nebflow.webdist"))
+        if devFlagSet(webdistProp) then ""
         else
-          s" — WARNING: disk dist build/web-dist is STALE ($stale web source files newer); " +
-            "run scripts/build-web.mjs then restart to activate it"
+          " — WARNING: disk dist build/web-dist is NOT FRESH and the in-place rebuild " +
+            "(scripts/build-web.mjs --ensure) failed; serving dev sources. See build/web-ensure.log"
     catch case _: Throwable => ""
   end staleDiskDistHint
 
