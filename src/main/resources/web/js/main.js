@@ -3,6 +3,8 @@
 // 的静态壳要在任何应用模块求值取节点之前填充完成（时序契约见 chatMount.js 头注）。
 import './chatMount.js';
 import { renderProviderFailureStatus } from './providerFailureStatus.js';
+import { renderLlmFailureCard, findLlmFailureCard } from './llmFailureCard.js';
+import { saveSlotPreferredModel, getAllModelRefs } from './modelPanel.js';
 import { key } from './branding.js'; // MUST be first: storage-key migration runs at module init, before state.js/i18n.js read localStorage.
 import state from './state.js';
 import { installPanelBackSwipeWire as initBackSwipe, hasBackHandler, topBackHandler } from './gesture/backSwipe.js';
@@ -1899,6 +1901,39 @@ onMessage('modelUnavailable', (msg, view) => {
     else console.warn('[modelUnavailable] no chat container; card not mounted', msg && msg.slot);
   } catch (e) {
     console.warn('[modelUnavailable] render failed', e);
+  }
+});
+
+// LLM 失败卡片（卡片批 2026-11-21）：非阻塞。llmFailure 出卡（同 agent 覆盖旧卡）；
+// llmFailureRecovered 收卡。换模型经 saveSlotPreferredModel（与设置页同一写入口）。
+onMessage('llmFailure', (msg) => {
+  try {
+    const host =
+      document.getElementById('chat-stream') ||
+      document.querySelector('.chat-stream') ||
+      document.getElementById('messages');
+    if (!host) return console.warn('[llmFailure] no chat container; card not mounted', msg && msg.agentName);
+    const stale = findLlmFailureCard(host, msg.agentName);
+    if (stale) stale.remove();
+    host.appendChild(renderLlmFailureCard(msg, {
+      saveModel: saveSlotPreferredModel,
+      modelRefs: getAllModelRefs,
+    }));
+  } catch (e) {
+    console.warn('[llmFailure] render failed', e);
+  }
+});
+
+onMessage('llmFailureRecovered', (msg) => {
+  try {
+    const host =
+      document.getElementById('chat-stream') ||
+      document.querySelector('.chat-stream') ||
+      document.getElementById('messages');
+    const card = host && findLlmFailureCard(host, msg.agentName);
+    if (card) card.remove();
+  } catch (e) {
+    console.warn('[llmFailureRecovered] collapse failed', e);
   }
 });
 
