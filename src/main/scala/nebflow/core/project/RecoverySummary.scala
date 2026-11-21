@@ -342,7 +342,8 @@ object RecoverySummary:
         DelegateVisibility.read(
           Some(rec),
           DelegateRoundLedger.currentRounds(rec.id),
-          DelegateVisibility.liveChildrenOf(rec.id)
+          DelegateVisibility.liveChildrenOf(rec.id),
+          DelegateVisibility.ownTaskStatusOf(rec)
         )
     TerminalState(
       terminal = reading.identityClosed,

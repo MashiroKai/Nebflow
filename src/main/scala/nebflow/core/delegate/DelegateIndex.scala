@@ -820,7 +820,12 @@ object DelegateIndex:
       }
       val readings = indexRows.toList.map { case (id, json) =>
         decodeRecord(json).map(r =>
-          DelegateVisibility.read(Some(r), currentRoundsInIndex(conn, id), DelegateVisibility.liveChildrenOf(id))
+          DelegateVisibility.read(
+            Some(r),
+            currentRoundsInIndex(conn, id),
+            DelegateVisibility.liveChildrenOf(id),
+            DelegateVisibility.ownTaskStatusOf(r)
+          )
         )
       }
       val history = readings.count(_.exists(_.historyWindow))
