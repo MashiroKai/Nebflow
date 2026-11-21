@@ -1,30 +1,30 @@
-/* LLM 失败卡片（样式重做 2026-11-21，作者令「结合权限卡 askuser 卡的风格」）。
-   卡面 = .option-box（askuser 卡同款：渐变/圆角 16/描边/阴影高光）；问句 = .option-q；
-   理由行 = .perm-reason + .perm-risk-badge；按钮 = .option-btn。本文件只补卡专属的三处：
-   摘要字色、状态行、换模型下拉的宽度。颜色/间距/圆角一律走既有 token，不引入裸值。 */
+/* LLM 失败卡片（风格重做 2026-11-21，作者裁定「视觉品质向 askuser 卡看齐」）。
+   卡面 / 阴影 / 按钮 / 问句 / 理由行全部复用 chat.css 既有规则（.option-box、.option-q、
+   .option-btn-row、.option-cancel、.option-confirm、.perm-reason、.perm-risk-badge），
+   本文件只补卡专属三处：摘要字色、状态行字色、换模型下拉的对齐与字体。
+   颜色与阴影一律走 token（var(--ask-*) / var(--ds-*)），不引入字面值（check-interaction-card-family 守卫）。 */
 .llm-failure-summary {
   font-size: var(--ds-fs-hint);
   color: var(--ds-text-muted);
   overflow-wrap: anywhere;
-  margin-bottom: var(--ds-space-2);
-}
-.llm-failure-actions {
-  align-items: center;
-  gap: var(--ds-space-2);
   margin-bottom: var(--ds-space-1);
-}
-.llm-failure-actions .option-btn {
-  width: auto;
-}
-.llm-failure-pick {
-  max-width: 260px;
-  min-width: 0;
-  font-size: var(--ds-fs-body);
-  color: var(--color-text);
-  padding: var(--ds-space-1h) var(--ds-space-2);
-  border-radius: var(--ds-radius-card-md);
 }
 .llm-failure-status {
   font-size: var(--ds-fs-meta);
   color: var(--ds-text-muted);
+  margin-top: var(--ds-space-2);
+}
+.llm-failure-switch {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-width: 0;
+}
+.llm-failure-pick {
+  max-width: 220px;
+  min-width: 0;
+  font-size: var(--ds-fs-body);
+  color: var(--color-text);
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  border-radius: var(--ds-radius-input);
 }
