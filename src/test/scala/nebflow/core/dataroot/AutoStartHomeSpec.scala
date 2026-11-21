@@ -155,4 +155,27 @@ class AutoStartHomeSpec extends munit.FunSuite:
       assert(cmd.contains("start"), "命令串主体不得被这次追加破坏")
     }
 
+  test("缺陷④: Windows 计划任务走 XML 逐字存参——含空格的 java 路径不被 /tr 剥引号切开"):
+    // 2026-11-21 跨机 E2E 实测（DESKTOP-V7EUCHT）：schtasks /create /tr 会把内层引号剥掉，
+    // 于是 %ProgramFiles%\Eclipse Adoptium\…\java.exe 按空白切开 ⇒ 任务建不出来
+    // （exit -2147467259）。断言 XML 面把整条命令行逐字面保留，且 Command 是全路径。
+    val spacey = "C:\\Program Files\\Eclipse Adoptium\\jdk-21.0.12.101-hotspot\\bin\\java.exe"
+    val cmd = AutoStartService.renderWindowsTaskCmd(spacey, "C:\\stand-e2e\\bin\\stand-assembly-x.jar", None)
+    val xml = AutoStartService.renderWindowsTaskXml(cmd)
+
+    assert(xml.contains("<DisallowStartIfOnBatteries>false"), "电池闸必须显式关断（否则 /run 假成功不执行）")
+    assert(xml.contains("<LogonTrigger>"), "autostart 语义 = 登录触发")
+    assert(xml.contains("\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"), "Command 必须是全路径 PS")
+    // 逐字面保参：路径与 jar 都在，且没有被切分成两个 XML 属性/节点
+    assert(xml.contains(spacey), s"含空格的 java 路径必须逐字面保留：\n$xml")
+    assert(xml.contains("stand-assembly-x.jar"), "jar 路径必须在命令行里")
+    assert(!xml.contains("&lt;"), "命令串里没有需要转义的尖括号（负控：转义过度即可疑）")
+
+  test("缺陷④: XML 参数的 XML 元字符被转义（引号/尖括号不得破标签）"):
+    val cmd = AutoStartService.renderWindowsTaskCmd("/usr/bin/java", "/opt/a&b/<c>.jar", None)
+    val xml = AutoStartService.renderWindowsTaskXml(cmd)
+    assert(xml.contains("&amp;"), "& 必须转义")
+    assert(!xml.contains("/<c>.jar"), "裸尖括号不得出现在文本节点里")
+    assert(xml.contains("&quot;"), "命令行里的引号必须转成 &quot;")
+
 end AutoStartHomeSpec

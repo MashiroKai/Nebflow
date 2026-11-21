@@ -289,21 +289,81 @@ X-GNOME-Autostart-enabled=true
     val dir = logsDir
     if !os.exists(dir) then os.makeDir.all(dir)
     val cmd = renderWindowsTaskCmd(javaBin, jar, accountHomeIfAny)
-    val createCmd =
-      Seq("schtasks", "/create", "/tn", RestartHelper.WinTaskName, "/tr", cmd, "/sc", "onlogon", "/rl", "highest", "/f")
-    val exitCode = createCmd.!
-    if exitCode == 0 then
-      OpResult(
-        ok = true,
-        "Auto-start enabled (Windows Scheduled Task)",
-        List(
-          s"  Task: ${RestartHelper.WinTaskName}",
-          s"  ${nebflow.shared.Branding.productName} will start automatically on login."
-        )
-      )
-    else OpResult(ok = false, s"Failed to create scheduled task (exit code: $exitCode)")
+    // `/tr` 是**纯字符串**接口：命令行里给再多引号，schtasks 解析 /tr 时会剥掉一层，
+    // 于是含空格的 java 路径（%ProgramFiles%\Eclipse Adoptium\…\java.exe —— 本机
+    // Windows 的默认装法）被按空白切开 ⇒ 任务建不出来（实测 exit -2147467259 /
+    // "SCHTASKS /CREATE /?"；2026-11-21 跨机 E2E 缺陷 ④）。detached-apply 面早已因
+    // 同一根因改走 XML（DetachedApply.registerWindows 注释逐字写明「会剥掉内层引号
+    // （带空格路径即碎）」），这里复用同一手法：XML 逐字面存参 + 显式关断电池闸。
+    val xmlPath = dir / s"${RestartHelper.WinTaskName}.xml"
+    val writeXml = try
+      writeWindowsTaskXml(xmlPath, renderWindowsTaskXml(cmd))
+      Right(())
+    catch case e: Exception => Left(Option(e.getMessage).getOrElse(e.toString))
+    writeXml match
+      case Left(err) => OpResult(ok = false, s"Failed to write task XML (${xmlPath}): $err")
+      case Right(_) =>
+        val createCmd =
+          Seq("schtasks", "/create", "/tn", RestartHelper.WinTaskName, "/xml", xmlPath.toString, "/f")
+        val exitCode = createCmd.!
+        if exitCode == 0 then
+          OpResult(
+            ok = true,
+            "Auto-start enabled (Windows Scheduled Task)",
+            List(
+              s"  Task: ${RestartHelper.WinTaskName}",
+              s"  ${nebflow.shared.Branding.productName} will start automatically on login."
+            )
+          )
+        else OpResult(ok = false, s"Failed to create scheduled task (exit code: $exitCode)")
 
   end enableWindows
+
+  /**
+   * 计划任务 XML（`schtasks /create /xml`）—— 唯一能**逐字面**保存带空格命令行的
+   * Windows 面（`/tr` 会剥引号）。UTF-16LE + BOM：schtasks 只认它自己写出的 LE 形态，
+   * Java 的 `UTF_16` 默认 BE BOM ⇒ 直接判 malformed（同 DetachedApply 的实测结论）。
+   *
+   * 纯函数、平台无关 ⇒ 本机（macOS）也能直测 `/tr` 面最易碎的那一段。
+   */
+  def renderWindowsTaskXml(cmd: String, psFull: String = AutoStartService.defaultPowershell): String =
+    val args = ("-NoProfile -ExecutionPolicy Bypass -Command \"" + xmlEscape(cmd) + "\"")
+    s"""<?xml version="1.0" encoding="UTF-16"?>
+       |<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+       |  <Principals>
+       |    <Principal id="Author">
+       |      <LogonType>InteractiveToken</LogonType>
+       |    </Principal>
+       |  </Principals>
+       |  <Settings>
+       |    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+       |    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+       |    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+       |    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+       |  </Settings>
+       |  <Triggers>
+       |    <LogonTrigger>
+       |      <Enabled>true</Enabled>
+       |    </LogonTrigger>
+       |  </Triggers>
+       |  <Actions Context="Author">
+       |    <Exec>
+       |      <Command>${xmlEscape(psFull)}</Command>
+       |      <Arguments>$args</Arguments>
+       |    </Exec>
+       |  </Actions>
+       |</Task>
+       |""".stripMargin
+
+  /** PowerShell 全路径（任务计划服务上下文里裸 `powershell.exe` 解析不到 ⇒ 0x80070002 假成功）。 */
+  private def defaultPowershell: String =
+    val root = sys.env.get("SystemRoot").orElse(sys.env.get("SYSTEMROOT")).getOrElse("C:\\Windows")
+    s"$root\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+
+  /** 跑步点：XML 文件落位（UTF-16LE + BOM）。 */
+  private def writeWindowsTaskXml(path: os.Path, xml: String): Unit =
+    val le = xml.getBytes(java.nio.charset.StandardCharsets.UTF_16LE)
+    os.write.over(path, Array(0xff.toByte, 0xfe.toByte) ++ le, createFolders = true)
 
   private def disableWindows(): OpResult =
     val deleteCmd = Seq("schtasks", "/delete", "/tn", RestartHelper.WinTaskName, "/f")

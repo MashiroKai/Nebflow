@@ -90,12 +90,19 @@ stand_home_isolated() { # rc 0 = 本品牌的数据根被覆盖(隔离根); rc 1
     return 0
 }
 
-stand_port_from_config() { # <root> -> 该根 nebflow.json 里的顶层 "port" 整数; 无则 rc=1
-    local _f="$1/nebflow.json" _v
-    [ -r "$_f" ] || return 1
-    _v=$(grep -o '"port"[[:space:]]*:[[:space:]]*[0-9][0-9]*' "$_f" 2>/dev/null | head -n 1 | grep -o '[0-9][0-9]*$')
-    [ -n "${_v:-}" ] || return 1
-    printf '%s\n' "$_v"
+stand_port_from_config() { # <root> -> 该根配置里的顶层 "port" 整数; 无则 rc=1
+    # 配置文件名迁移（config-single-source 2026-11-05，品牌值 = brand.conf 的
+    # configFileName = stand.json）：写入面早已是 stand.json，本读取面曾遗留旧名
+    # nebflow.json ⇒ 操作员在 stand.json 里声明 "port" 被静默忽略，隔离根于是永远
+    # 拒启（2026-11-21 跨机 E2E 缺陷 ①）。读取与 Scala 侧 PathUtil.resolveConfigJson
+    # 同序双读：canonical stand.json 优先，legacy nebflow.json 只读兜底。
+    local _root="$1" _f _v
+    for _f in "$_root/stand.json" "$_root/nebflow.json"; do
+        [ -r "$_f" ] || continue
+        _v=$(grep -o '"port"[[:space:]]*:[[:space:]]*[0-9][0-9]*' "$_f" 2>/dev/null | head -n 1 | grep -o '[0-9][0-9]*$')
+        [ -n "${_v:-}" ] && { printf '%s\n' "$_v"; return 0; }
+    done
+    return 1
 }
 
 # 端口解析 (单一实现): --port > [默认根时: 本品牌 env] > 本根配置 "port" >
@@ -117,7 +124,7 @@ stand_resolve_port() { # $@ = 子命令参数
             printf '%s\n' "$_cnf"; return 0
         fi
         echo "ERROR: refusing to inherit the brand default port ($_dflt) for data root $STAND_HOME: it is an ISOLATED root (not the default root), and an instance in an isolated root must name its own port." >&2
-        echo "       Pass --port <N> explicitly, or set the \"port\" key in $STAND_HOME/nebflow.json." >&2
+        echo "       Pass --port <N> explicitly, or set the \"port\" key in $STAND_HOME/stand.json." >&2
         [ -n "$_env" ] && echo "       (the inherited $_envname=$_env is ignored: an inherited port is not explicit)" >&2
         return 3
     fi
