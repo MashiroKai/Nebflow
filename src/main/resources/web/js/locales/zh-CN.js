@@ -1361,15 +1361,21 @@ export default {
   'settings.modelChainTitle': '模型（按会话类别）',
   'settings.modelChainDisclosureTitle': '模型（按会话类别）',
   'settings.modelChainSectionHint': '各会话类别的模型与 /model 同步。',
-  // 模型配置两模式批（2026-11-18 作者逐字：「要么全部跟随主会话 然后才是分开配置」）：
-  // unified 档的诚实读数行——只列**真的在跟随**的类别（服务端链为空的 follower），
-  // 与同节上方「已独立配置，不受主链影响」的分叉注记读同一份状态，两行不自相矛盾。
-  'settings.modelModeUnifiedNote': '{roles} 跟随主会话。',
+  // 模型设置页 switch 批（2026-11-21 作者令）：两段式按钮收成一个开关 —— 开 =
+  // 分开配置，关 = 全部跟随主会话；开关下的一行当前态文字由 model.modeState* 两键
+  // 出（修前是 settings.modelModeUnifiedNote「{roles} 跟随主会话。」整句，类别名串在
+  // 句子里，窄屏在括号中间折行；现改为「引导语 + 类别胶囊」，用 model.followsNebula
+  // 作引导语，该键随之退役）。
   'settings.modelRoleTabs': '选择会话类别',
   // /model 面板文案（modelcfg Phase 1）
   'model.title': '模型配置',
   'model.modeUnified': '全部跟随主会话',
   'model.modeSeparate': '分开配置',
+  // 模型设置页 switch 批（2026-11-21）：开关语义 + 当前态两行文案（全站开关组件
+  // .nb-toggle 无内建文案位，说明文字走本节自己的 .mp-mode-state / title）。
+  'model.modeSeparateHint': '开：各类别单独设模型；关：全部跟随主会话',
+  'model.modeStateUnified': '当前：全部跟随主会话',
+  'model.modeStateSeparate': '当前：分开配置',
   'model.mainChain': '{agent} 主链',
   'model.mainChainDesc': '所有角色默认跟随此链',
   'model.chainHead': '首选',
@@ -1395,6 +1401,9 @@ export default {
   'model.scheduleRestrictedSuffix': '{windows} 不可用',
   'model.saved': '已保存',
   'model.divergedBar': '{roles} 已独立配置，不受主链影响',
+  // 设置页分叉注记的引导语（switch 批 2026-11-21）：类别名从句子中间挪到胶囊行，
+  // 句子只留这句话（/model 面板横幅仍用上面的整句键）。
+  'model.divergedNoteLead': '已独立配置，不受主链影响',
   'model.divergedView': '查看',
   'model.seedNote': '未配置，请明确选择模型后再发起请求',
   'model.singleModelNote': '单模型：模型失效时会话进入失效态、静默等待恢复；可在子代理面板或具体对话框里切换模型',

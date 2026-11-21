@@ -188,6 +188,9 @@ async function openSettings(page, mobile) {
   await sleep(400);
   const disclosure = page.locator('#model-chain-section [data-settings-disclosure="models"]');
   if (await disclosure.count() && (await disclosure.getAttribute('aria-expanded')) !== 'true') await disclosure.click();
+  // 渐进披露（2026-11-21）：follower 卡与小模型槽只在开档渲染 ⇒ 先真点开关进分开配置。
+  await page.waitForSelector('#model-mode-switch', { state: 'attached', timeout: 15000 });
+  if ((await page.getAttribute('#model-mode-switch', 'aria-checked')) !== 'true') await page.click('#model-mode-switch');
   await page.waitForSelector('#model-chain-section-body [data-role="subagent"]', { state: 'attached', timeout: 15000 });
   await page.evaluate(() => document.getElementById('model-chain-section')?.scrollIntoView({ block: 'start' }));
   await sleep(600);

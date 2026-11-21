@@ -170,7 +170,28 @@ const MEASURE = () => {
         on: b.getAttribute('aria-pressed'), face: face(b),
       })),
     } : null,
+    // switch 批（2026-11-21）：设置页节的两段式按钮已改成一个 .nb-toggle 开关
+    // （开 = 分开配置），另一面 /model 面板的 mp-modes 两段钮不变。这条读数把
+    // 「开关是不是独一件、role/aria 契约是否齐、当前态文字是否在位」钉进 evidence。
+    modelSwitch: (() => {
+      const sw = q('#model-mode-switch');
+      if (!sw) return null;
+      const row = q('#model-chain-modes');
+      return {
+        role: sw.getAttribute('role'), checked: sw.getAttribute('aria-checked'),
+        on: sw.classList.contains('on'), cls: sw.className,
+        label: sw.getAttribute('aria-label'), title: sw.getAttribute('title'),
+        buttonsRow: row ? row.querySelectorAll('button').length : 0,
+        legacyButtons: q('#model-chain-modes .mp-mode-btn') ? 1 : 0,
+        state: q('#model-chain-mode-state')?.textContent?.trim() ?? null,
+        stateRole: q('#model-chain-mode-state')?.getAttribute('role') ?? null,
+        face: face(sw),
+      };
+    })(),
     modelRoleRows: chainBody ? chainBody.querySelectorAll('.mp-settings-role-panel').length : 0,
+    // 渐进披露（2026-11-21）：披露体开合态 + 披露体内子件数（关档应为 0 = 不渲染）。
+    foldOpen: q('#model-chain-config')?.classList.contains('open') ?? null,
+    foldChildren: q('#model-chain-config .mp-config-inner')?.children.length ?? null,
     modelRoleSelects: chainBody ? chainBody.querySelectorAll('select').length : 0,
     followNote: q('#model-chain-follow-note')?.textContent?.trim() ?? null,
     settingsHint: q('#model-chain-hint')?.textContent?.trim() ?? null,
@@ -342,12 +363,12 @@ async function main() {
       await shot(s, 'model', `d-${theme}-s4-model-default.png`, { selector: '#model-chain-section' });
       await shot(s, 'full', `d-${theme}-full.png`);
       // 分开配置模式（模式控件在场时）
-      const sep = s.page.locator('#model-chain-modes button[data-mode="separate"]');
+      const sep = s.page.locator('#model-mode-switch');
       if (await sep.count()) {
-        await sep.click();
+        if (await sep.getAttribute('aria-checked') !== 'true') await sep.click();
         await s.page.waitForTimeout(500);
         await shot(s, 'model-separate', `d-${theme}-s4-model-separate.png`, { selector: '#model-chain-section' });
-        await s.page.locator('#model-chain-modes button[data-mode="unified"]').click();
+        if (await sep.getAttribute('aria-checked') !== 'false') await sep.click();
         await s.page.waitForTimeout(400);
       }
       // 设备行退出按钮：桌面个人资料面
@@ -389,7 +410,7 @@ async function main() {
       m.fullscreenPage = m0.fullscreenPage;
       await shot(s, 'model', `m-${theme}-s4-model-default.png`, { selector: '.mobile-page[data-page="settings"] #model-chain-section' });
       // 模式切换帧序列（≤10MB GIF/MP4 素材：真实点击 + 每拍一帧）
-      const sep = s.page.locator('#model-chain-modes button[data-mode="separate"]');
+      const sep = s.page.locator('#model-mode-switch');
       if (await sep.count()) {
         modeFrames.length = 0;
         const clip = await s.page.evaluate(() => {
@@ -409,10 +430,10 @@ async function main() {
         }
         await s.page.waitForTimeout(400);
         const mSep = await s.page.evaluate(MEASURE);
-        m.modesAfterSeparate = mSep.modelModes;
+        m.modesAfterSeparate = mSep.modelSwitch;
         m.roleRowsAfterSeparate = mSep.modelRoleRows;
         await shot(s, 'model-separate', `m-${theme}-s4-model-separate.png`, { selector: '.mobile-page[data-page="settings"] #model-chain-section' });
-        await s.page.locator('#model-chain-modes button[data-mode="unified"]').click();
+        if (await sep.getAttribute('aria-checked') !== 'false') await sep.click();
         await s.page.waitForTimeout(400);
         const mUni = await s.page.evaluate(MEASURE);
         m.roleRowsAfterUnified = mUni.modelRoleRows;

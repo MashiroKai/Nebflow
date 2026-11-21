@@ -124,13 +124,50 @@ if (await disclosure.getAttribute('aria-expanded') !== 'true') await disclosure.
 await page.waitForSelector('#model-chain-section-body [data-role="Nebula"] .mp-settings-role-model', { state: 'visible', timeout: 15000 });
 await sleep(350);
 
-/* ① 注记在场 + 文案 */
+/* ── 档位（渐进披露批 2026-11-21 作者令）：分叉注记只在**开档**渲染；关档披露体收起
+ * 且清空（不是置灰——注记与 follower 卡一并不渲染）。③④ 的「槽行回显 / 清除独立配置」
+ * 必须在开档验（开关真点击）。 */
+async function enterSeparate() {
+  const sw = page.locator('#model-mode-switch');
+  if (await sw.getAttribute('aria-checked') !== 'true') {
+    await sw.click();
+    await page.waitForFunction(
+      () => document.querySelector('#model-mode-switch')?.getAttribute('aria-checked') === 'true',
+      null, { timeout: 5000 });
+  }
+  await page.waitForSelector('#model-role-select-subagent', { state: 'visible', timeout: 15000 });
+  await sleep(250);
+}
+
 const note = page.locator('#model-chain-diverged-note');
+/* ① 关档：注记零残留（渐进披露：收起 = 不渲染） */
+ok('① 关档不渲染分叉注记（披露体零子件）', await note.count() === 0);
+await enterSeparate();
+/* ① 开档：注记在场 + 文案 */
 ok('① 分叉注记在场（subagent 显式 ⇒ 设置页节点破分叉）', await note.count() === 1);
 const noteText = (await note.textContent() || '').trim();
 ok('① 注记文案含类别标签与「不受主链影响」',
   noteText.includes('subagent') && noteText.includes('已独立配置') && noteText.includes('不受主链影响'), noteText);
 ok('① 注记不把主agent行算作分叉（只报 follower 槽）', !noteText.includes('主agent') && !noteText.includes('Main agent'), noteText);
+
+/* ①-b switch 批的排版判据：引导语与类别名分成两级（引导语 1 行 + 胶囊 n 枚），
+ * 胶囊 nowrap ⇒ 窄屏折行只发生在类别之间（修前整句在括号中间折断）。 */
+const noteParts = await page.evaluate(() => {
+  const n = document.querySelector('#model-chain-diverged-note');
+  if (!n) return null;
+  const chips = [...n.querySelectorAll('.mp-note-role')];
+  return {
+    lead: n.querySelector('.mp-note-lead')?.textContent || '',
+    chips: chips.map((c) => c.textContent),
+    wrapped: chips.some((c) => c.getClientRects().length > 1 || c.getBoundingClientRect().height > 24),
+    styles: chips.map((c) => ({ ws: getComputedStyle(c).whiteSpace, br: getComputedStyle(c).borderRadius })),
+  };
+});
+ok('①-b 注记 = 引导语 + 类别胶囊（类别名不再串在句子里）',
+  !!noteParts && noteParts.lead === '已独立配置，不受主链影响' &&
+  noteParts.chips.length === 1 && noteParts.chips[0].startsWith('subagent') &&
+  noteParts.styles.every((s) => s.ws === 'nowrap') && !noteParts.wrapped,
+  JSON.stringify(noteParts));
 
 /* ② 结构纪律：纯文本、无 data-role */
 ok('② 注记零 <button>（设置页节控件面不扩）', await note.locator('button').count() === 0);
@@ -145,6 +182,11 @@ await subSelect.selectOption('');
 await page.waitForFunction(() => !document.querySelector('#model-chain-diverged-note'), null, { timeout: 10000 });
 ok('④ 清除 subagent 独立配置后注记离场', await note.count() === 0);
 ok('④ 清除走既有 PUT 通道（model:null）', sim.puts.some((p) => p.role === 'subagent' && p.model === null));
+
+/* ⑤ 切回关档 ⇒ 披露体清空，注记零残留 */
+await page.locator('#model-mode-switch').click();
+await page.waitForFunction(() => document.querySelector('#model-chain-config .mp-config-inner')?.children.length === 0, null, { timeout: 5000 });
+ok('⑤ 关档回切后披露体清空（注记不渲染）', await note.count() === 0);
 
 const NOISE = /favicon|net::ERR|WebSocket|404|ResizeObserver loop/i;
 ok('零 console error / 零 pageerror', errors.filter((e) => !NOISE.test(e)).length === 0, errors.slice(0, 3).join(' | '));
