@@ -20,7 +20,7 @@ import { permissionDetails } from './permissionDetails.js';
 import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, appendUserTextWithFences, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId, shouldFollowBottom, deviceTagHtml } from './utils.js';
 // output 块语法批（作者令 2026-10-31）：历史重放腿同 live 腿一个 output 面——
 // 平衡 <output> 对 ⇒ 正常态只渲染块内，角标展开回原文（turnGroup toggle）。
-import { applyOutputFace, hasOutputBlock } from './outputTag.js';
+import { applyOutputFace, hasOutputBlock, markZeroBlockFace } from './outputTag.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 // schedule-created-card 批（2026-11-05）：历史重放两腿与 live renderTool 共用
 // 同一个卡片行 builder（零第二套判据）。
@@ -769,6 +769,7 @@ export function restoreFromStorage(opts = {}) {
           const rootFace = m.isRoot === true;
           if (!rootFace || !applyOutputFace(bubble, m.text || '')) {
             bubble.innerHTML = renderMarkdownWithMath(m.text || '', true, rootFace ? { report: true } : undefined);
+            if (rootFace && m.text) markZeroBlockFace(bubble, m.text || '');
           }
           row.appendChild(bubble);
         }
@@ -1245,7 +1246,10 @@ function buildHistoryRow(m, i, ctx) {
           bubble.className = 'bubble ai';
           // report 面标记：升级批渲染时走 applyOutputFace（与 live/sync 两腿同面）。
           // 只对源头身份为 root 的行落标（非 root / 旧存量行逐字保留原展示）。
-          if (m.isRoot === true && hasOutputBlock(m.text || '')) bubble.dataset.nfDeferOutput = '1';
+          if (m.isRoot === true && m.text) {
+            if (hasOutputBlock(m.text)) bubble.dataset.nfDeferOutput = '1';
+            else markZeroBlockFace(bubble, m.text); // 零块 root：全文 + 角标兜底戳（零块可见性批）
+          }
           deferMd(bubble, m.text || '', true, m.isRoot === true ? { report: true } : undefined);
           row.appendChild(bubble);
         }

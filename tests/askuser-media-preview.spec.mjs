@@ -16,10 +16,10 @@
 //   C3 **视频**：单件视频面 = 消息面 flat 同款（静帧 poster + 原生控件可播放）；
 //      真 webm 字节 ⇒ `readyState ≥ 1`，点击后 `!paused`（可播放的实证）。
 //   C4 **与 label/description 共存**：媒体在上下文字在下的竖排卡；文字可见不裁。
-//   C5 **长卡下滑**：`.option-scroll` 可滚动（scrollHeight > clientHeight、滚动后
-//      scrollTop 变化），且**滚动不吞点击**——滚到底后点最后一个选项仍能选中并作答
-//      （出站 `askUserAnswer` 帧实证）；确认/取消钮常驻区外可见。
-//   C6 手机档 375×812 全屏页：同一条链（叠卡 + 展开 + 滚动 + 作答），零横向溢出。
+//   C5 **无滑动**（作者令 2026-11-21「取消滑动设计，回到无滑动、内容直接铺满」）：
+//      卡内**没有**滚动区（无 `.option-scroll`、无 overflow 滚动）；全部选项直显在卡内
+//      （卡随内容撑高，每个选项几何落在卡盒之内）；点最后一个选项仍能选中并作答（出站 `askUserAnswer`）。
+//   C6 手机档 375×812 全屏页：同一条链（叠卡 + 无滑动直显 + 作答），零横向溢出。
 //   C7 零回归：无 preview 的选项不产生任何 preview 节点；旧 `{type:'image'}` 仍是
 //      56×40 小缩略（不升级成媒体面）。
 //
@@ -154,7 +154,7 @@ const MIXED_ITEMS = [
 /** 长卡夹具：6 个媒体组选项 ⇒ 内容必然超出 `--ask-options-max-h`。 */
 const LONG_ITEMS = [
   {
-    question: '长卡下滑验收：请选一个方案（内容超高必须可滚动，且滚动后仍可点选）',
+    question: '长卡无滑动验收：请选一个方案（全部选项直接铺满，无需滚动）',
     options: [0, 1, 2, 3, 4, 5].map((i) => ({
       label: `方案 ${i + 1}`,
       description: `第 ${i + 1} 套设计说明文字`,
@@ -173,7 +173,7 @@ const LONG_ITEMS = [
 /** 叠卡裁切批夹具（2026-11-18）：6 个媒体组选项 + **长标题 / 长描述** —— 复现作者报的
  *  「手机端叠卡显示不完整」现场（选项文字换行、卡身撑到宿主横向上限）。 */
 const LONG_MEDIA_ITEMS = [{
-  question: '长卡下滑验收：请选一个方案（内容超高必须可滚动）',
+  question: '长卡无滑动验收：请选一个方案（全部选项直接铺满）',
   options: [0, 1, 2, 3, 4, 5].map((i) => ({
     label: `方案 ${i + 1}：这一档比较长的标题文字用于检验换行与裁切`,
     description: `第 ${i + 1} 套设计说明文字，这是一段较长的描述，用来把选项卡撑到自然宽度上限以复现裁切`,
@@ -232,7 +232,12 @@ test.describe('C1 旧两形态（swatch / 单图小缩略）回归', () => {
     const page = await ctx.newPage();
     await bootWithAsk(page, { items: MIXED_ITEMS });
 
-    const r = await page.evaluate(() => {
+        await page.evaluate(() => {
+      const im = document.querySelector('#chat .option-box .option-btn:nth-child(2) img.preview-img');
+      if (im) im.scrollIntoView({ block: 'center' }); // 无滑动后卡更高：懒加载缩略需进视口才拉字节
+    });
+    await page.waitForTimeout(700);
+const r = await page.evaluate(() => {
       const btns = [...document.querySelectorAll('#chat .option-box .option-btn')];
       const sw = btns[0].querySelector('.option-preview');
       const th = btns[1].querySelector('.option-preview');
@@ -446,72 +451,56 @@ test.describe('C4 媒体与文字共存：竖排卡，文字可见不裁', () =>
 
 /* ── C5 长卡下滑 + 选择可点（作者令的直接验收）──────────────────────────── */
 
-test.describe('C5 长内容下滑：容器可滚 + 滚动不吞点击', () => {
-  test('内容超高 ⇒ 容器可滚；滚到底后点最后一个选项仍能选中并作答', async ({ browser }) => {
+test.describe('C5 无滑动：内容直接铺满，无滚动区', () => {
+  test('长卡不产生滚动区；全部选项一屏直显；点最后一个选项仍可作答', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'light' });
     const page = await ctx.newPage();
     await bootWithAsk(page, { items: LONG_ITEMS, requestId: 'rid-scroll-1' });
 
     const before = await page.evaluate(() => {
-      const sc = document.querySelector('#chat .option-box .option-scroll');
-      const bar = document.querySelector('#chat .option-box .option-btn-row');
       const box = document.querySelector('#chat .option-box');
+      const opts = [...box.querySelectorAll('.option-btn:not(.opt-other)')];
+      // 无滑动：卡随内容撑高，全部选项几何落在卡盒之内（不被裁、不需卡内滚动）。
+      const bb = box.getBoundingClientRect();
+      const inView = opts.every((b) => { const r = b.getBoundingClientRect(); return r.top >= bb.top - 1 && r.bottom <= bb.bottom + 1; });
+      const bar = document.querySelector('#chat .option-box .option-btn-row');
       return {
-        present: !!sc,
-        scrollHeight: sc.scrollHeight, clientHeight: sc.clientHeight, scrollTop: sc.scrollTop,
-        overflowY: getComputedStyle(sc).overflowY,
-        boxH: +box.getBoundingClientRect().height.toFixed(1),
-        barBottomWithin: bar.getBoundingClientRect().bottom <= box.getBoundingClientRect().bottom + 1,
+        scrollRegions: document.querySelectorAll('#chat .option-box .option-scroll').length,
+        optionCount: opts.length,
+        allOptionsInViewport: inView,
         confirmVisible: (() => { const b = document.querySelector('.option-confirm').getBoundingClientRect(); return b.height > 0 && b.width > 0; })(),
-        optionCount: document.querySelectorAll('#chat .option-box .option-btn:not(.opt-other)').length,
+        barBottomWithin: bar.getBoundingClientRect().bottom <= box.getBoundingClientRect().bottom + 1,
       };
     });
-
-    expect(before.present, '滚动区在场（.option-scroll）').toBe(true);
-    expect(before.overflowY, '溢出策略 = 滚动（不是裁剪）').toBe('auto');
-    expect(before.scrollHeight, '内容高于容器（长卡成立）').toBeGreaterThan(before.clientHeight);
-    expect(before.scrollTop).toBe(0);
+    expect(before.scrollRegions, '无滚动区（.option-scroll 不存在）').toBe(0);
     expect(before.optionCount).toBe(6);
-    expect(before.confirmVisible, '确认钮常驻区外可见').toBe(true);
-    expect(before.barBottomWithin, '按钮行在卡内（不被裁）').toBe(true);
-    const scBox = await page.locator('#chat .option-box .option-scroll').boundingBox();
-    expect(before.boxH, '卡片高度 = 上限档（min(64vh,560) + 按钮行），不整页拉长').toBeLessThan(700);
-    await shot(page, 'c5-1-top');
+    expect(before.allOptionsInViewport, '全部选项在卡内直显（卡随内容撑高，无内部滑动）').toBe(true);
+    expect(before.confirmVisible, '确认钮可见').toBe(true);
+    expect(before.barBottomWithin, '按钮行在卡内').toBe(true);
+    await shot(page, 'c5-1-noscroll');
 
-    // 真实滚轮（不是 set scrollTop）：滚动可用。
-    await page.mouse.move(scBox.x + scBox.width / 2, scBox.y + scBox.height / 2);
-    await page.mouse.wheel(0, 2000);
-    await page.waitForTimeout(400);
-    const afterWheel = await page.evaluate(() => document.querySelector('#chat .option-box .option-scroll').scrollTop);
-    expect(afterWheel, '滚轮可滚动容器').toBeGreaterThan(0);
-
-    // 滚到底，点**最后一个**选项 ⇒ 选择仍可点（滚动不吞点击）。
-    await page.evaluate(() => { const sc = document.querySelector('#chat .option-box .option-scroll'); sc.scrollTop = sc.scrollHeight; });
-    await page.waitForTimeout(300);
-    await shot(page, 'c5-2-scrolled-bottom');
-    const last = page.locator('#chat .option-box .option-btn').nth(5);
-    await last.click();
+    await page.locator('#chat .option-box .option-btn').nth(5).click();
     const picked = await page.evaluate(() => {
       const btns = [...document.querySelectorAll('#chat .option-box .option-btn')];
       return btns.map((b, i) => (b.classList.contains('picked') ? i : -1)).filter((i) => i >= 0);
     });
-    expect(picked, '滚到底后点选仍生效（仅最后一个被选中）').toEqual([5]);
+    expect(picked, '点最后一个选项仍生效（仅它被选中）').toEqual([5]);
     const confirmEnabled = await page.evaluate(() => !document.querySelector('#chat .option-box .option-confirm').disabled);
-    expect(confirmEnabled, '选中后确认钮解禁 = 选择状态真的落了').toBe(true);
+    expect(confirmEnabled, '选中后确认钮解禁').toBe(true);
 
     await page.locator('#chat .option-box .option-confirm').click();
     await page.waitForTimeout(400);
     const answered = await page.evaluate(() => document.querySelector('#chat .option-box .option-answer')?.textContent || '');
     expect(answered, '作答行 = 被选中的方案').toContain('方案 6');
-    await shot(page, 'c5-3-answered');
+    await shot(page, 'c5-2-answered');
     await ctx.close();
   });
 });
 
 /* ── C6 手机档全屏页 ────────────────────────────────────────────────────── */
 
-test.describe('C6 手机档 375×812 全屏页：同一条链', () => {
-  test('叠卡 + 展开 + 下滑 + 作答；零横向溢出', async ({ browser }) => {
+test.describe('C6 手机档 375×812 全屏页：同一条链（无滑动）', () => {
+  test('叠卡 + 展开 + 直显 + 作答；零横向溢出', async ({ browser }) => {
     const ctx = await browser.newContext({
       viewport: { width: 375, height: 812 },
       isMobile: true, hasTouch: true, deviceScaleFactor: 2, colorScheme: 'light',
@@ -521,12 +510,11 @@ test.describe('C6 手机档 375×812 全屏页：同一条链', () => {
     await page.waitForFunction(() => document.body.classList.contains('mobile-layer'), null, { timeout: 20000 });
 
     const r = await page.evaluate(() => {
-      const sc = document.querySelector('#chat .option-box .option-scroll');
       const btns = [...document.querySelectorAll('#chat .option-box .option-btn:not(.opt-other)')];
       const grp = document.querySelector('#chat .option-preview-media');
       return {
         mobileLayer: document.body.classList.contains('mobile-layer'),
-        scrollable: sc.scrollHeight > sc.clientHeight,
+        scrollRegions: document.querySelectorAll('#chat .option-box .option-scroll').length,
         mediaHostRight: +grp.getBoundingClientRect().right.toFixed(1),
         viewportW: window.innerWidth,
         layerCount: grp.querySelectorAll('.pop-stack-view .media-layer').length,
@@ -535,23 +523,21 @@ test.describe('C6 手机档 375×812 全屏页：同一条链', () => {
       };
     });
     expect(r.mobileLayer, '全屏手机页（真 mobile-layer）').toBe(true);
-    expect(r.scrollable, '手机档长卡同样可滚').toBe(true);
+    expect(r.scrollRegions, '手机档同样无滚动区（无滑动）').toBe(0);
     expect(r.layerCount, '叠卡 3 层').toBe(3);
     expect(r.optionCount).toBe(6);
     expect(r.mediaHostRight, '媒体面不横向溢出视口').toBeLessThanOrEqual(r.viewportW + 1);
     expect(r.docScrollW, '页面零横向滚动').toBeLessThanOrEqual(r.viewportW + 1);
     await shot(page, 'c6-1-mobile-top');
 
-    await page.evaluate(() => { const sc = document.querySelector('#chat .option-box .option-scroll'); sc.scrollTop = sc.scrollHeight; });
-    await page.waitForTimeout(300);
-    await shot(page, 'c6-2-mobile-bottom');
+    await shot(page, 'c6-2-mobile-noscroll');
     await page.locator('#chat .option-box .option-btn').nth(5).click();
     await page.waitForTimeout(200);
     const state = await page.evaluate(() => ({
       picked: [...document.querySelectorAll('#chat .option-box .option-btn')].map((b, i) => (b.classList.contains('picked') ? i : -1)).filter((i) => i >= 0),
       confirmEnabled: !document.querySelector('#chat .option-box .option-confirm').disabled,
     }));
-    expect(state.picked, '手机档滚到底后仍可点选').toEqual([5]);
+    expect(state.picked, '手机档无滑动直接可点选').toEqual([5]);
     expect(state.confirmEnabled).toBe(true);
     await page.locator('#chat .option-box .option-confirm').click();
     await page.waitForTimeout(400);
@@ -630,7 +616,7 @@ test.describe('C8 手机全屏页：叠卡内容完整可见（无裁切）', ()
     const r = await page.evaluate(() => {
       const box = document.querySelector('#chat .option-box');
       const bubble = box.parentElement;
-      const scroll = box.querySelector('.option-scroll');
+      const scroll = box; // 无滚动区（2026-11-21）：裁剪/几何容器 = 卡盒本身
       const scs = getComputedStyle(scroll);
       // overflow:hidden 的裁剪区 = padding box（border box − border 宽）。
       const clipRight = scroll.getBoundingClientRect().right - (parseFloat(scs.borderRightWidth) || 0);
@@ -727,7 +713,7 @@ test.describe('C9 桌面零回归：提问卡宿主宽度仍与消息泡同档',
       const box = document.querySelector('#chat .option-box');
       const bubble = box.parentElement;
       const plain = document.querySelector('#chat .row .bubble:not(.ob-ghost-seat)');
-      const scroll = box.querySelector('.option-scroll');
+      const scroll = box; // 无滚动区（2026-11-21）：裁剪/几何容器 = 卡盒本身
       const scs = getComputedStyle(scroll);
       const clipRight = scroll.getBoundingClientRect().right - (parseFloat(scs.borderRightWidth) || 0);
       const host = box.querySelector('.option-preview-media');
@@ -772,7 +758,7 @@ test.describe('C10 媒体块居中：桌面居中、手机保持左轴（裁定 
   test('1440 桌面居中（左右空档相等）· 375 手机不居中且贴左轴', async ({ browser }) => {
     const probe = async (page) => page.evaluate(() => {
       const box = document.querySelector('#chat .option-box');
-      const scroll = box.querySelector('.option-scroll');
+      const scroll = box; // 无滚动区（2026-11-21）：裁剪/几何容器 = 卡盒本身
       const scs = getComputedStyle(scroll);
       const host = box.querySelector('.option-preview-media');
       const btn = host.closest('.option-btn');

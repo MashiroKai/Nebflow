@@ -84,7 +84,7 @@ function worklineLabel(rawLabel) {
 import { createMsgFooterBadge, renderDurationBadge } from './chat/durationBadges.js';
 // output 块语法批（作者令 2026-10-31）：<output> 包裹内容 = 用户可见全部——
 // 正常态只渲染块内（框外正文摘除），turn-header 角标展开见 outputTag.js。
-import { applyOutputFace } from './outputTag.js';
+import { applyOutputFace, markZeroBlockFace } from './outputTag.js';
 import { bindCollapsibleToggle } from './chat/collapsible.js';
 // 输入行为包批（2026-11-02 作者令）：busy↔idle 按钮 chrome = input/composer.js
 // 统一状态机（主会话 setBusy/clearBusy 与 canvas ask 共用同一实现）。
@@ -847,7 +847,12 @@ export function appendAiText(text, mark) {
         // that said `isRoot: true` gets the extracted body; anything else —
         // `false`, or an unstamped legacy frame — renders its full text exactly
         // as before (the tags then stay literal: no `opts.report` below).
-        const visible = target.bubble._nfIsRoot === true ? (extractOutputInner(target.bubble._nfText || '') || '') : (target.bubble._nfText || '');
+        // 零块可见性批（2026-11-21）：root 无 report 块的整条文本 = 全文可见（不吞）；
+        // 仅当文本里出现了标签但尚未配平（流式中间态）时才隐藏，免得裸标签闪现。
+        const rawStream = target.bubble._nfText || '';
+        const streamInner = target.bubble._nfIsRoot === true ? extractOutputInner(rawStream) : null;
+        const visible = target.bubble._nfIsRoot !== true ? rawStream
+          : (streamInner !== null ? streamInner : (/<\/?report>/.test(rawStream) ? '' : rawStream));
         target.bubble.hidden = !visible;
         renderStreamMarkdown(target.bubble, visible, true,
           imgKeepFor(target.bubble), false, target.mark || null);
@@ -898,7 +903,10 @@ export function finishAi(durationMs, model) {
     // 过管线（散标签转义为字面文本，防被当成 HTML 块吞文）。
     const rootFace = bubble._nfIsRoot === true;
     if (!rootFace || !applyOutputFace(bubble, activeView.stream.aiText || '')) {
+      // 零块 root（无平衡块）：全文渲染 + 复位流式期可能遗留的 hidden（零块可见性批 ①），
+      // 并盖零块戳供 turn-header 角标兜底展开（turnGroup 读它）。
       bubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '', true, rootFace ? { report: true } : undefined);
+      if (rootFace) { bubble.hidden = false; markZeroBlockFace(bubble, activeView.stream.aiText || ''); }
     }
     bubble._nfText = activeView.stream.aiText || '';
     bubble._nfRendered = true;
@@ -2465,13 +2473,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   const confirmLabel = doneLabel || t('chat.confirm');
   const saved = askSessionId ? loadAskDrafts(askSessionId) : {};
   const questionWrappers = [];
-  // askuser-media 批（2026-11-18）长内容下滑：题的正文与选项区收进**一个滚动区**
-  // （`.option-scroll`，`max-height` + `overflow-y:auto`），按钮行留在区外常驻可见。
-  // 作者令逐字：「待办的决策卡片比较长，因此要可以支持下滑查看」。
-  // 零回归：内容不超高时 `max-height` 不生效、滚动条不出现 ⇒ 短卡视觉与改前一致。
-  // 滚动不吞点击：滚动容器只接管拖拽/滚轮，`click`（= 选择）照常抵达 `.option-btn`。
-  const scrollDiv = document.createElement('div');
-  scrollDiv.className = 'option-scroll';
+  // 无滑动（作者令 2026-11-21）：题与选项直接铺进卡盒，不套滚动区；卡内容一屏直显。
 
   // --- Conditional branching helpers ---
   // The DOM mechanics (display toggle, reveal animation, hide-reset hooking)
@@ -2711,7 +2713,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
       hint.className = 'option-secret-hint';
       hint.textContent = item.ephemeral ? t('askUser.secretEphemeralHint') : t('askUser.secretHint');
       wrapper.appendChild(hint);
-      scrollDiv.appendChild(wrapper);
+      box.appendChild(wrapper);
       updateVisibility();
       return; // secret 题到此为止：下面的选项/自由输入/草稿机制整段跳过
     }
@@ -2980,12 +2982,9 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     // revealFallbackInput() 按需挂载（降级兜底，②-6）。
     if (freeInput) optsDiv.appendChild(customInput);
     wrapper.appendChild(optsDiv);
-    scrollDiv.appendChild(wrapper);
+    box.appendChild(wrapper);
     if (isMulti) syncMulti(qi); // pick up restored Other text, if any (needs the DOM in place)
   });
-
-  // 滚动区在按钮行之前入盒（题/选项可滚；取消/确认常驻可见）。
-  box.appendChild(scrollDiv);
 
   // Apply initial visibility after all questions are in DOM
   updateVisibility();
