@@ -31,6 +31,48 @@ export function hasOutputBlock(text) {
   return extractOutputInner(text) !== null;
 }
 
+/** Zero-block root face (2026-11-21 零块可见性批). A ROOT text bubble whose source
+ *  has no balanced pair renders its FULL text (作者裁定：无块内容不丢弃). It is
+ *  stamped `data-nf-zero-output` + `_nfZeroFull` so the turn-header badge — the
+ *  only expand entry for a block-less turn — can swap it to the raw source and
+ *  back. Unlike the block face, collapsing never hides the bubble: the full text
+ *  is the normal face here. */
+export function markZeroBlockFace(bubble, fullText) {
+  if (!bubble) return;
+  bubble.dataset.nfZeroOutput = '1';
+  bubble._nfZeroFull = fullText;
+  bubble.hidden = false;
+}
+
+/** Expand-face swap for a zero-block root bubble (driven by the turn-header badge,
+ *  turnGroup.js). expanded = full raw source (tags verbatim, pre-wrap);
+ *  collapsed = the normal full-text render. No-op on bubbles never stamped. */
+export function setZeroBlockExpanded(bubble, expanded) {
+  if (!bubble || bubble._nfZeroFull === undefined) return;
+  bubble.hidden = false;
+  if (expanded) {
+    bubble.classList.add('nf-output-raw');
+    bubble.innerHTML = '<pre class="nf-output-raw-pre">' + escapeHtml(bubble._nfZeroFull) + '</pre>';
+  } else {
+    bubble.classList.remove('nf-output-raw');
+    bubble.innerHTML = renderMarkdownWithMath(bubble._nfZeroFull, true, { report: true });
+  }
+}
+
+/** Quote-snapshot display text (2026-11-21 作者令「引用的内容应该去掉report块的语法，
+ *  直接显示渲染后的纯文字」). Display-side only — the stored snapshot keeps its
+ *  raw source. With ≥1 balanced block ⇒ the rendered plain text of the block
+ *  bodies (tags gone, markdown resolved to text). Without a block ⇒ the full
+ *  source text, unchanged. */
+export function displayOutputText(text) {
+  const src = String(text || '');
+  const inner = extractOutputInner(src);
+  if (inner === null) return src;
+  const html = renderMarkdownWithMath(inner, false, { cache: false });
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  return (doc.body.textContent || '').trim();
+}
+
 /** Normal-face render: tags invisible, only the wrapped content visible.
  *  Returns false when the text has no balanced pair (caller renders the full
  *  text as before — the legacy fallback). On match the bubble is stamped

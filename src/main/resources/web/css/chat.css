@@ -2678,22 +2678,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    「askuser-hybrid 表格行」段（`.option-opts .option-btn`，(0,2,0)，见本文件后段
    3117+）把选项行重皮成全宽透明行，本节要压过它，声明顺序不参与胜负。 */
 
-/* 滚动区（题文 + 选项区）：内容超高才出现滚动条（短卡零视觉变化 ⇒ 零回归）。
-   `--ask-options-max-h` 可被宿主（如待办决策卡）收小/放大；缺省 = 视口 64% 与
-   560px 取小。`overscroll-behavior: contain` = 滚到尽头不把聊天列一起带着滚。 */
-.option-scroll {
-  max-height: var(--ask-options-max-h, min(64vh, 560px));
-  overflow-y: auto;
-  overflow-x: hidden;
-  overscroll-behavior: contain;
-  /* 媒体卡的选中描边（`.option-preview-media` 的 outline-offset）不吃裁剪：
-     左右各留 2px。 */
-  padding: 2px;
-  margin: -2px;
-}
-
-/* 「其他…」自由输入行 / 选项行的既有布局不受滚动区包裹影响（wrapper 仍是块级流）。 */
-.option-scroll > .option-q-wrapper { display: block; }
+/* 无滑动（作者令 2026-11-21）：题与选项直接铺进卡盒，无滚动区。 */
 
 /* 媒体选项行 = 竖排卡（媒体在上、文字在下），整行占满（覆盖 hybrid 表格行档）。 */
 .option-opts .option-btn.has-media,
