@@ -492,19 +492,6 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
       id -> s"#$id $rest".trim
     }.toMap
 
-  /**
-   * 派发时刻链快照下发（provider-concurrency 批，2026-11-06）：pin 存在 ⇒ agentModel
-   * = 快照物化 `(preferred=链首, fallbacks=尾链)`（走 registry 同一条既有解析——
-   * 零新选择路径）；pin = None（未钉：无上限满载路径/既有构造/测试字面量）⇒ base
-   * 原值透传 = 既有行为逐字节不变。🔴 禁止把快照写回 agent.json 的 model 键——
-   * `AgentLibrary.loadFromDir` 每 turn 现读，那会把快照变成「每 turn 重算」。
-   */
-  private def agentModelWithPin(
-    base: Option[nebflow.shared.AgentModelConfig],
-    pin: Option[nebflow.llm.PinnedChain]
-  ): Option[nebflow.shared.AgentModelConfig] =
-    pin.fold(base)(p => Some(p.toAgentModelConfig))
-
   /** Full / delta / unchanged task text for this turn's reminder. */
   private def renderTasksForTurn(
     resources: SharedResources,
@@ -1150,12 +1137,15 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             // 让它们全部吃 subagent 槽链（「配置 cmdcode 实际跑 terra」的成因）。
             // 未归槽（mode 缺席/不识别）⇒ slotChainOf 返回 None ⇒ 原样走钉链/base；
             // 可读原因由 ModelRoles 单点记 WARN（兜底不许吞真信息）。组合序未动。
-            agentModel = nebflow.core.ModelRoles
-              .slotChainOf(
+            // 统一模型层（P1）：组合序只在 ModelDecision.composeAgentModel 出现一次。
+            agentModel = nebflow.llm.ModelDecision
+              .composeAgentModel(
                 stateForLlm.sessionId,
-                nebflow.core.delegate.DelegateRegistry.rawModeOf(stateForLlm.sessionId)
+                nebflow.core.delegate.DelegateRegistry.rawModeOf(stateForLlm.sessionId),
+                freshDef.model,
+                effectivePin
               )
-              .orElse(agentModelWithPin(freshDef.model, effectivePin)),
+              ._1,
             // 派发钉链剔除账本（缺陷批 2026-11-06）：spawn 时因满载被链首扫描剔出的
             // 候选连原因随请求下发——进候选账本 seeded 层。没有它，这些候选既不在链上
             // 也没有原因 ⇒ `SILENTLY EXCLUDED`（现网实证 UTSC/glm-5.3-flash）。缺省 Nil。
