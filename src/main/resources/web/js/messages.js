@@ -2042,7 +2042,10 @@ function applyBlockState(conv) {
  *  判据唯一来源：applyBlockState / onDisconnect / input 事件 / sendCurrent 共用。 */
 function syncComposerSend() {
   if (!modalEls) return;
-  modalEls.sendBtn.disabled = modalEls.input.disabled || !modalEls.input.value.trim();
+  // 与主会话统一（social-input-unify 2026-11-21）：空输入**不禁用**发送键——主会话
+  // 发送键空输入态亦不灰；空正文由 sendCurrent / sendDeviceCurrent 的 !body 闸吞掉
+  // （不出站、不产生空消息）。禁用判据仅剩输入件禁用（拉黑/断连/设备身份缺席）。
+  modalEls.sendBtn.disabled = modalEls.input.disabled;
   // ③（作者 2026-09-15「掉线了会变成灰色」）：链路态与主对话框**同族判据** ——
   // 断连 ⇒ 给本键挂 `.disconnected`（主对话框那条挂点 = `ws.js:119` 的
   // `syncSendButtonConnState`，判据同为 `!state.connected`，禁第二份判据）。

@@ -163,6 +163,7 @@ imgs[0].save(sys.argv[1], save_all=True, append_images=imgs[1:], duration=140, l
   // 主会话输入条（默认主视图）
   readings.runs.desktopMain = await readBar(page, '#input-bar');
   await shotEl(page, '#input-bar', 'main-desktop.png');
+  readings.runs.voiceMain = await voiceGif(page, '#input-bar', 'main');
   // 打开社交好友会话窗
   await page.click('#messages-btn'); await sleep(600);
   await page.click('#fm-conversations .fm-conv-row[data-conversation-id="cF"]'); await sleep(900);
@@ -177,10 +178,26 @@ imgs[0].save(sys.argv[1], save_all=True, append_images=imgs[1:], duration=140, l
   const { ctx, page } = await boot({ width: 375, height: 812 });
   readings.runs.mobileMain = await readBar(page, '#input-bar');
   await shotEl(page, '#input-bar', 'main-mobile.png');
-  await page.click('#messages-btn').catch(() => {}); await sleep(600);
-  await page.click('#fm-conversations .fm-conv-row[data-conversation-id="cF"]').catch(() => {}); await sleep(900);
-  readings.runs.mobileSocial = await readBar(page, '#fm-chat-overlay .fm-input-bar');
-  await shotEl(page, '#fm-chat-overlay .fm-input-bar', 'social-mobile.png').catch(e => errors.push(`mobile shot: ${String(e).slice(0, 120)}`));
+  // 移动端社交窗 = .mobile-page[data-page="conversation"]（.live），不是 #fm-chat-overlay
+  // （composer-input-inset-metrics.spec.mjs 同一打开路径）。
+  // 手机档进消息面 = 底部 dock 的消息键（composer-input-inset-metrics.spec.mjs 同路径）。
+  await page.locator('#mobile-dock .dock-key[data-dock="messages"]').first().click({ timeout: 15000 })
+    .catch(e => errors.push(`mobile dock: ${String(e).slice(0, 120)}`));
+  await page.waitForFunction(() => {
+    const el = document.querySelector('.mobile-page[data-page="messages"]');
+    return !!el && el.classList.contains('live');
+  }, null, { timeout: 15000 }).catch(() => errors.push('mobile messages page never went live'));
+  await sleep(500);
+  const row = page.locator('.fm-conv-row[data-conversation-id="cF"]').first();
+  await row.click({ timeout: 15000 }).catch(e => errors.push(`mobile row: ${String(e).slice(0, 120)}`));
+  await page.waitForFunction(() => {
+    const el = document.querySelector('.mobile-page[data-page="conversation"]');
+    return !!el && el.classList.contains('live');
+  }, null, { timeout: 15000 }).catch(() => errors.push('mobile conversation never went live'));
+  await sleep(700);
+  const MSEL = '.mobile-page[data-page="conversation"] .fm-input-bar';
+  readings.runs.mobileSocial = await readBar(page, MSEL);
+  await shotEl(page, MSEL, 'social-mobile.png').catch(e => errors.push(`mobile shot: ${String(e).slice(0, 120)}`));
   await ctx.close();
 }
 
