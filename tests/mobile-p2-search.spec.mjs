@@ -175,17 +175,24 @@ test('T2 main-session face: one pill title, scope retired, kind row = second fil
   const filtersDisplay = await page.locator('#search-modal .search-filters').evaluate((el) => getComputedStyle(el).display);
   expect(filtersDisplay).toBe('none');
   await expect(page.locator('#search-scope')).toBeHidden();
-  // 夹具服务端不驱动 scope —— 兜底断言：pin 腿已把 select 值钉在 current。
-  expect(await page.locator('#search-scope').inputValue()).toBe('current');
+  // 夹具服务端不驱动 scope —— 兜底断言：pin 腿已把档值钉在 current。
+  // 🔴 本条原写 `inputValue()`，在 main tip（f69c4b26f）上**已经红**：三枚筛选件
+  // 早由 `<select>` 迁成 `<button class="cfg-select">`（chatUi.js:203-205，值走
+  // JS `.value` 属性 + 自绘动作表菜单，见 chatSearch.js setFilterOptions/openToolMenu）
+  // ⇒ 它们不是表单控件，`inputValue()` 必抛。改为读 `.value` 属性（真契约）。
+  expect(await page.locator('#search-scope').evaluate((el) => el.value)).toBe('current');
 
-  // 筛选两行：第一行 = 类型·日期 tabs；第二行 = 角色行（首档「全部来源」；
-  // 「工具」档随 2026-10-30 作者令①退役——tool 行不入搜索结果）。
+  // 筛选：第一行 = 类型·日期 tabs。
   await expect(page.locator('#search-modal .search-tabs .search-tab')).toHaveCount(5);
-  const kindOptions = page.locator('#mh-search-kind option');
-  await expect(kindOptions).toHaveCount(4);
-  expect(await kindOptions.nth(0).textContent()).toBe('全部来源');
-  expect(await kindOptions.nth(1).textContent()).toBe('用户');
-  expect(await kindOptions.nth(3).textContent()).toBe('AI');
+  // 🔴 search-page-density 批（2026-11-21 作者令①「删掉『全部来源』大下拉框，
+  // 来源筛选只用 chips 一行」）：旧断言点名的角色行 select `#mh-search-kind`
+  // **整件退役**（CSS/DOM 双侧零节点），来源筛选只剩 chips 三档
+  // （全部来源/用户/助手）——本条改为断言 chips 行在场 + 三档标签。
+  await expect(page.locator('#mh-search-kind')).toHaveCount(0);
+  await expect(page.locator('#mh-search-kind-row')).toHaveCount(0);
+  const chips = page.locator('#search-filter-row #search-source-chips .search-source-chip');
+  await expect(chips).toHaveCount(3);
+  expect(await chips.allTextContents()).toEqual(['全部来源', '用户', '助手']);
 
   // 说明行已退役（同批作者令）⇒ 顶部只剩一个胶囊：可见标题节点数 = 0（面板内）。
   const visibleTitles = await page.evaluate(() => [...document.querySelectorAll('#search-modal-title')]
@@ -215,11 +222,13 @@ test('T3 status prefix「主会话」+ mark highlight + session prefix hidden + 
   const markBg = await rows.first().locator('.search-result-preview mark').first().evaluate((el) => getComputedStyle(el).backgroundColor);
   expect(markBg).toBe('rgba(91, 127, 191, 0.3)');
 
-  // 角色过滤：选「用户」→ 仅 user 行；回「全部来源」→ 复原 2 行。
-  await page.locator('#mh-search-kind').selectOption('user');
+  // 来源过滤：选「用户」→ 仅 user 行；回「全部来源」→ 复原 2 行。
+  // （search-page-density 批：角色 select `#mh-search-kind` 退役，改点 chips。）
+  const chips = page.locator('#search-filter-row .search-source-chip');
+  await chips.filter({ hasText: '用户' }).click();
   await expect(rows).toHaveCount(1, { timeout: 8000 });
   await expect(rows.first()).toHaveAttribute('data-kind', 'user');
-  await page.locator('#mh-search-kind').selectOption('');
+  await chips.filter({ hasText: '全部来源' }).click();
   await expect(rows).toHaveCount(2, { timeout: 8000 });
   expect(errors).toEqual([]);
 });

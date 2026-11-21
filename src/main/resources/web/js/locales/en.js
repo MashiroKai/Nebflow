@@ -1590,6 +1590,11 @@ export default {
   'timewheel.presetDay': 'Day 09–18',
   'timewheel.presetAfternoon': 'Afternoon 14–18',
   'timewheel.deadline': 'Due time',
+  // Date mode (search-page-density 2026-11-21): search page's Date tab wheel.
+  'timewheel.titleDate': 'Pick a date',
+  'timewheel.yearUnit': 'year',
+  'timewheel.monthUnit': 'month',
+  'timewheel.dayUnit': 'day',
 
   // Model fields in modal
   'model.idPlaceholder': 'Model ID',

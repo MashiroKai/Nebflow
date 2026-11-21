@@ -33,8 +33,14 @@ define({
     })))),
   state: () => ({ options: null, buttons: [] }),
   mount(el, ctx) {
+    // 🔴 options 必须**留读**，不能读完即删（search-page-density 批 2026-11-21 实证）：
+    // 手机层把 #search-modal 收编进页面体（navController overlayFaceByPage.search）
+    // ⇒ 整棵子树 re-parent ⇒ 本元素经历 disconnect→connect，connectedCallback 再走
+    // 一遍这里。旧写法 `OPTIONS.delete(el)` 让第二次 mount 读到 null ⇒ getSource
+    // 恒 undefined ⇒ 三个 chip 永远 aria-pressed=false、onChange 变空转发（点了没
+    // 反应）。改为留读：同一实例重挂多少次都拿得到同一份 options（WeakMap 键是元素
+    // 本身，元素被回收即随 GC 释放，无泄漏）。
     ctx.state.options = OPTIONS.get(el) || null;
-    OPTIONS.delete(el);
     const component = /** @type {HTMLElement & {sync?: (opts: {visible: boolean}) => void, unmount?: () => void}} */ (el);
     const buttons = Array.from(el.querySelectorAll('button'));
     ctx.state.buttons = buttons;
