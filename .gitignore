@@ -1,6 +1,11 @@
 # Project-local managed worktrees and temporary artifacts
 /.stand/worktrees/
 /.stand/tmp/
+# 写时复制后端的派生状态（workspace-compute R1a · M1 批 2026-11-19）：种子目录
+# `.stand/seeds/<tree>/` 与每条建树记录 `.stand/wt-backend/<name>.json` 都是本机可再生
+# 的派生数据（删掉后下一次建树自动重建），与 worktrees/ tmp/ 同类，不入库。
+/.stand/seeds/
+/.stand/wt-backend/
 
 # Build
 target/

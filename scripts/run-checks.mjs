@@ -238,6 +238,8 @@ export const CHECKS = [
       'scripts/check-js-types.mjs', 'scripts/run-checks.mjs', 'scripts/check-sdd.mjs', 'scripts/check-openspec.mjs', 'scripts/check-message-item-unify.mjs',
       // 前端设计要求批（2026-11-18）：三条新闸与它们的共享判定库同受 lint 覆盖。
       'scripts/check-ui-structure.mjs', 'scripts/check-copy-budget.mjs', 'scripts/check-button-source.mjs',
+      // 写时复制 M1 闸（2026-11-19）：新闸本体同受 lint 覆盖。
+      'scripts/check-wt-cow.mjs',
       'scripts/lib/', 'scripts/tests/'] },
   { name: 'script-tests', profiles: ['static'], timeoutMs: 120_000,
     argv: [process.execPath, '--test', ...scriptTests] },
@@ -270,6 +272,14 @@ export const CHECKS = [
   // 单测覆盖四类拒绝面；不注册则等于没有这道闸。
   { name: 'isolated-java-launch-tests', profiles: ['static'], timeoutMs: 120_000,
     argv: ['python3', '-B', 'scripts/tests/test-isolated-java-launch.py'] },
+  // 写时复制建树 M1 闸（workspace-compute R1a，作者令 2026-11-19）。envSkip：非 darwin
+  // 下 clonefile(2) 不存在，闸以退出码 2 显式 SKIP 并打印原因 —— 记 SKIP 而不是 PASS。
+  // 判据与负控口径见脚本文件头（①②③④ + 三条回退面；STAND_WT_DEGRADE 为负控开关）。
+  { name: 'wt-cow', profiles: ['static'], timeoutMs: 600_000, envSkip: true,
+    argv: [process.execPath, 'scripts/check-wt-cow.mjs'] },
+  // 写时复制后端的单元测试（种子索引、回退原因枚举、中断恢复），与 stand-wt 单测同档。
+  { name: 'stand-wt-cow-tests', profiles: ['static'], timeoutMs: 300_000, envSkip: true,
+    argv: ['python3', '-B', 'scripts/tests/test-stand-wt-cow.py'] },
   // 微信侧车单测（九个 *.test.mjs）按目录点名收集，防目录新增文件漏跑。
   { name: 'weixin-sidecar-tests', profiles: ['static'], timeoutMs: 180_000,
     argv: [process.execPath, '--test', ...weixinTests] },

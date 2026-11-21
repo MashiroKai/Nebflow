@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
-"""Manage project worktrees and audit temporary delivery artifacts."""
+"""Manage project worktrees and audit temporary delivery artifacts.
+
+`new` has two backends (`--backend native|cow`, default `native` = the historic
+behaviour). `cow` delegates population to `scripts/stand-wt-cow.py` (APFS clonefile
+seeding) and falls back to native with an explicit reason whenever equivalence cannot be
+proven; everything else in this file — branch baseline, merge-base verification, paths,
+temporary delivery dirs, the manifest contract — is unchanged and backend-independent.
+"""
 import argparse
 import datetime as dt
 import hashlib
+import importlib.util
 import os
 from pathlib import Path
 import re
@@ -17,6 +25,17 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 # Temporary artifacts carry a seven-day TTL (author ruling 2026-11-16). One named
 # constant, shared by the routine audit red and the cleaner's default window.
 TTL_DAYS = 7
+
+
+def cow_backend():
+    """Load `scripts/stand-wt-cow.py` (dash in the name ⇒ not importable by module path)."""
+    if not hasattr(cow_backend, 'module'):
+        path = Path(__file__).resolve().parent / 'stand-wt-cow.py'
+        spec = importlib.util.spec_from_file_location('stand_wt_cow', path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        cow_backend.module = module
+    return cow_backend.module
 
 
 def git(*args, cwd=None):
@@ -95,6 +114,7 @@ def main():
     parser.add_argument('--root', '--project', type=Path, help='project checkout path (default: current working directory); resolves its primary checkout')
     sub = parser.add_subparsers(dest='command', required=True)
     p = sub.add_parser('new'); p.add_argument('name', type=name); p.add_argument('--branch'); p.add_argument('--base', default='feat/base'); p.add_argument('--target', default='feat/base')
+    p.add_argument('--backend', choices=('native', 'cow'), default='native', help='worktree population backend (default: native, the historic behaviour)')
     sub.add_parser('list')
     p = sub.add_parser('audit'); p.add_argument('name', nargs='?', type=name)
     p = sub.add_parser('clean'); p.add_argument('--ttl-days', type=float, default=TTL_DAYS); p.add_argument('--apply', action='store_true'); p.add_argument('--force', action='store_true'); p.add_argument('--dry-run', action='store_true')
@@ -116,9 +136,36 @@ def main():
         if exists and args.base == 'main':
             raise ValueError('hotfix creation requires a new branch to record its main baseline')
         target.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(['git', 'worktree', 'add', str(target)] + ([branch] if exists else ['-b', branch, base]), cwd=project, check=True)
+
+        def native_add():
+            # Branch existence is re-read here, not taken from the pre-check above: a COW
+            # build that falls back may already have created the branch, and re-adding then
+            # means "check out the existing branch" rather than "-b" onto it.
+            has = subprocess.run(['git', 'show-ref', '--verify', '--quiet', 'refs/heads/' + branch], cwd=project).returncode == 0
+            subprocess.run(['git', 'worktree', 'add', str(target)] + ([branch] if has else ['-b', branch, base]), cwd=project, check=True)
+
+        cow = cow_backend()
+        if args.backend == 'cow':
+            outcome = cow.create(project, target, native_add, branch=branch, exists=exists, base_sha=base)
+        else:
+            native_add()
+            outcome = cow.Rcow('native')
+        if outcome.backend == 'cow':
+            print(f'Backend: cow tree={outcome.tree} seed={outcome.seed} elapsed={outcome.elapsed_ms}ms')
+        else:
+            print(f'Backend: native' + (f' (fallback: {outcome.reason})' if outcome.reason else ''))
         if git('merge-base', branch, base, cwd=project) != base:
             raise ValueError(f'merge-base({branch}, {args.base}) validation failed')
+        # Delivery-time verification (content, HEAD tree, index, cleanliness, exec bits,
+        # symlinks) runs for BOTH backends: the COW path is only trusted because it is checked.
+        if outcome.verified:
+            problems = []  # create() proved equivalence for this tree already
+        else:
+            problems, _ = cow.verify(project, target, git('rev-parse', f'refs/heads/{branch}^{{tree}}', cwd=project))
+        if problems:
+            cow.discard(project, target)
+            raise ValueError('post-build verification failed: ' + '; '.join(problems[:3]))
+        cow.record(project, args.name, outcome)
         print(f'Base verified: merge-base({branch}, {args.base}) = {base}')
         if args.base == 'main':
             print(f'Hotfix audit: include this line in the MR description: Hotfix-Main-Baseline: {base} (author approval required)')
@@ -129,6 +176,7 @@ def main():
         audit(project, args.name)
         print(f'Created {target}; artifacts {tmp / args.name}')
     elif args.command == 'list':
+        cow = cow_backend()
         for record in git('worktree', 'list', '--porcelain').split('\n\n'):
             fields = record.splitlines(); path = Path(fields[0][9:]); wt = path.name
             branch = next((x[7:].removeprefix('refs/heads/') for x in fields if x.startswith('branch ')), '(detached)')
@@ -137,13 +185,17 @@ def main():
                 dirty = bool(git('status', '--porcelain', cwd=path))
             except (subprocess.CalledProcessError, FileNotFoundError):
                 dirty = 'unknown'
+            # Actual backend, read from the build record; trees predating the COW backend
+            # report `unknown` (read-only — the stock of existing worktrees is not migrated).
+            backend, backend_reason = cow.backend_of(project, wt)
             directory = tmp / wt
             if directory.is_dir() and not directory.is_symlink():
                 uncommitted, committed = audit(project, wt)
                 counts = f'artifacts={uncommitted + committed} committed={committed} uncommitted={uncommitted}'
             else:
                 counts = 'artifacts=0 committed=0 uncommitted=0'
-            print(f'{wt} path={path} branch={branch} HEAD={head} dirty={dirty} {counts}')
+            reason = f' backendReason={backend_reason}' if backend_reason else ''
+            print(f'{wt} path={path} branch={branch} HEAD={head} dirty={dirty} backend={backend}{reason} {counts}')
     elif args.command == 'audit':
         dirs = [tmp / args.name] if args.name else sorted(tmp.iterdir()) if tmp.exists() else []
         for directory in dirs:
