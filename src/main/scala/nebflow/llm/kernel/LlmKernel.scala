@@ -178,50 +178,17 @@ object LlmKernel:
   /** 候选解析单点：`CandidateSource` ⇒ 有序候选链（禁隐式回退）。 */
   def candidates(registry: ProviderRegistry, source: CandidateSource): IO[List[ModelCandidate]] =
     source match
+      // 统一模型层（P1）：所有非显式分支收口到 ModelDecision，本文件不再自组合。
       case CandidateSource.SmallLlmModel =>
-        IO(nebflow.core.SchemePolicy.smallLlmModel()).flatMap(m => registry.getCandidatesForAgent(Some(m)))
+        nebflow.llm.ModelDecision.smallLlmCandidates(registry)
       case CandidateSource.NebulaChain =>
-        registry.getCandidatesForAgent(nebflow.core.SchemePolicy.nebulaChain())
+        nebflow.llm.ModelDecision.nebulaCandidates(registry)
       case CandidateSource.Slot(agentModel) =>
-        // 统一模型层（P1）：候选构造收口到 ModelDecision（与 resolveRequest 同一出口）。
         nebflow.llm.ModelDecision.candidatesOf(registry, agentModel)
       case CandidateSource.Explicit(list) =>
         IO.pure(list)
       case CandidateSource.DecisionRoute(name) =>
-        decisionRouteCandidates(registry, name)
-
-  /**
-   * decisionRoute 候选解析（`LlmAllocator.candidatesFrom` / `DelegateJudgeMachine
-   * .utilityCandidates` 的**同一模板**，2026-10-29 fail-open 根因修复批语义逐条保留）：
-   * ref 已配且处于不可用时段 ⇒ 落全局链；ref 可解 ⇒ **钉首位**＋与全局链去重；
-   * ref 不可解 / 未配 ⇒ 全链。
-   */
-  private def decisionRouteCandidates(registry: ProviderRegistry, name: String): IO[List[ModelCandidate]] =
-    registry.currentConfig.flatMap { currentConfig =>
-      val explicitRoute = currentConfig.llm.decisionRoutes
-        .flatMap(_.get(name))
-        .flatMap(_.preferred)
-        .orElse(if name == "delegate-judge" then currentConfig.judge.flatMap(_.utilityModel) else None)
-      def mainRoute = registry.getCandidatesForAgent(nebflow.core.SchemePolicy.nebulaChain())
-      explicitRoute match
-        case Some(ref) =>
-          registry.scheduleRestrictionFor(ref).flatMap {
-            case Some(_) => mainRoute
-            case None =>
-              registry.getCandidateForRef(ref).flatMap {
-                case Some(c) =>
-                  registry.getCandidates().map { chain =>
-                    val rest = chain
-                      .filterNot(r => r.providerId == c.providerId && r.model == c.model)
-                      .distinctBy(r => (r.providerId, r.model))
-                    c :: rest
-                  }
-                case None => mainRoute
-              }
-          }
-        case None => mainRoute
-      end match
-    }
+        nebflow.llm.ModelDecision.decisionRouteCandidates(registry, name)
 
   // ── K5 整链遍历单点 ──────────────────────────────────────────────────────
 

@@ -65,6 +65,56 @@ object ModelDecision:
     registry.getCandidatesForAgent(agentModel)
 
   /**
+   * 小模型分流（N1 第 4 步）：统一层按 `isAskSession` / `callType` 区分调用点。
+   * 小模型 = `SchemePolicy.smallLlmModel()`（既有选择，不改）；ask 会话与 `small-llm` 调用
+   * 走同一小模型链。非小模型（主 / 槽 / 决策）返回 None，由调用方走组合链。
+   */
+  def smallLlmRoute(ctx: RequestCtx): Option[AgentModelConfig] =
+    if ctx.isAskSession || ctx.callType.contains("small-llm") then
+      Some(nebflow.core.SchemePolicy.smallLlmModel())
+    else None
+
+  /** `CandidateSource.NebulaChain` 的候选（主链 = `SchemePolicy.nebulaChain()`，同 getCandidatesForAgent 口径）。 */
+  def nebulaCandidates(registry: ProviderRegistry): IO[List[ModelCandidate]] =
+    candidatesOf(registry, nebflow.core.SchemePolicy.nebulaChain())
+
+  /** `CandidateSource.SmallLlmModel` 的候选（与既有分支逐字同：smallLlmModel ⇒ getCandidatesForAgent）。 */
+  def smallLlmCandidates(registry: ProviderRegistry): IO[List[ModelCandidate]] =
+    IO(nebflow.core.SchemePolicy.smallLlmModel()).flatMap(m => candidatesOf(registry, Some(m)))
+
+  /**
+   * 决策路由候选（CandidateSource.DecisionRoute 的统一实现，语义逐字同既有
+   * `LlmKernel.decisionRouteCandidates`：显式 ref 可解 ⇒ 钉首位并与全局链去重；
+   * 时段受限 / 不可解 / 未配 ⇒ 全局链）。
+   */
+  def decisionRouteCandidates(registry: ProviderRegistry, name: String): IO[List[ModelCandidate]] =
+    registry.currentConfig.flatMap { currentConfig =>
+      val explicitRoute = currentConfig.llm.decisionRoutes
+        .flatMap(_.get(name))
+        .flatMap(_.preferred)
+        .orElse(if name == "delegate-judge" then currentConfig.judge.flatMap(_.utilityModel) else None)
+      def mainRoute = registry.getCandidatesForAgent(nebflow.core.SchemePolicy.nebulaChain())
+      explicitRoute match
+        case Some(ref) =>
+          registry.scheduleRestrictionFor(ref).flatMap {
+            case Some(_) => mainRoute
+            case None =>
+              registry.getCandidateForRef(ref).flatMap {
+                case Some(c) =>
+                  registry.getCandidates().map { chain =>
+                    val rest = chain
+                      .filterNot(r => r.providerId == c.providerId && r.model == c.model)
+                      .distinctBy(r => (r.providerId, r.model))
+                    c :: rest
+                  }
+                case None => mainRoute
+              }
+          }
+        case None => mainRoute
+      end match
+    }
+
+  /**
    * 请求面统一决策：用 [[composeAgentModel]] 组合出链，再经 [[candidatesOf]] 得候选；
    * 每个候选带一条 `candidate` 命中（链位次 + 所用组合依据）。
    * 行为等价 = 既有 `LlmKernel.candidates(Slot(...))` 对同一输入链的结果。
