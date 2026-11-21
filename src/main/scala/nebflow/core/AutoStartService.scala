@@ -86,7 +86,8 @@ object AutoStartService:
   def programArguments(
     javaBin: String,
     jarPath: String,
-    accountHome: Option[os.Path] = None
+    accountHome: Option[os.Path] = None,
+    port: Option[Int] = None
   ): List[String] =
     val base = bundleExecutable(jarPath) match
       case Some(exe) => List(exe, "start", "--no-browser")
@@ -100,9 +101,12 @@ object AutoStartService:
           "start",
           "--no-browser"
         )
-    accountHome match
+    val withHome = accountHome match
       case None => base
       case Some(home) => base ++ List("--home", home.toString)
+    port match
+      case None => withHome
+      case Some(p) => withHome ++ List("--port", p.toString)
 
   end programArguments
 
@@ -142,11 +146,13 @@ $argsXml
   def renderDesktopEntry(
     javaBin: String,
     jarPath: String,
-    accountHome: Option[os.Path] = None
+    accountHome: Option[os.Path] = None,
+    port: Option[Int] = None
   ): String =
     val execLine =
       s"Exec=${shellQuote(javaBin)} --add-opens java.base/java.lang=ALL-UNNAMED -jar ${shellQuote(jarPath)} start --no-browser" +
-        accountHome.map(h => s" --home ${shellQuote(h.toString)}").getOrElse("")
+        accountHome.map(h => s" --home ${shellQuote(h.toString)}").getOrElse("") +
+        port.map(p => s" --port $p").getOrElse("")
     s"""[Desktop Entry]
 Type=Application
 Name=${nebflow.shared.Branding.productName} Gateway
@@ -169,13 +175,17 @@ X-GNOME-Autostart-enabled=true
   def renderWindowsTaskCmd(
     javaBin: String,
     jarPath: String,
-    accountHome: Option[os.Path] = None
+    accountHome: Option[os.Path] = None,
+    port: Option[Int] = None
   ): String =
     val base =
       s""""$javaBin" --add-opens java.base/java.lang=ALL-UNNAMED -jar "$jarPath" start --no-browser"""
-    accountHome match
+    val withHome = accountHome match
       case None => base
       case Some(home) => base + " --home \"" + home.toString + "\""
+    port match
+      case None => withHome
+      case Some(p) => withHome + s" --port $p"
 
   private def xmlEscape(s: String): String =
     s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
@@ -195,6 +205,41 @@ X-GNOME-Autostart-enabled=true
     RootLadder.current match
       case RootLayer.Account(_, _, root) => Some(root)
       case _ => None
+
+  /**
+   * 开机自启必须钉死的两个事实（2026-11-21 跨机 E2E 缺陷 ⑤）：
+   *
+   * `accountHomeIfAny` 只覆盖**账号档**——平铺档/未登录档返回 `None`，于是隔离实例
+   * （`--home <隔离根>` 起出来的引擎）执行 `stand autostart enable` 时生成的计划任务
+   * **不带任何 home**，登录自启会静默去起**默认数据根**那一份。隔离实例最要紧的属性
+   * 就是「绝不碰默认根」，这条腿恰好反过来。
+   *
+   * 故自启命令一律钉**本进程解析出的机器层根**（隔离实例 = 它的隔离根；默认实例 =
+   * 默认根 ⇒ 与今日字节相同，不引入回归）与**本实例实际监听的端口**（同样不能靠
+   * 缺省口回落：隔离实例的缺省口会被评成品牌缺省 6138，那正是生产口）。
+   */
+  private def autostartHome: Option[os.Path] = Some(PathUtil.machineRoot)
+
+  /** 端口：与 CLI `GatewayClient.readPort` / 网关 `GatewayConfig` 同一**单一实现**
+   *  `InstanceScope.decide`（不另抄一份判定链）。隔离根拿不到合法端口（Refused）⇒
+   *  `None`，命令里就不写 `--port`，由引擎自己按同一链再判一次（绝不猜缺省口）。 */
+  private def autostartPort: Option[Int] =
+    nebflow.shared.InstanceScope.decide(
+      nebflow.shared.InstanceScope.PortInputs(
+        // 自启腿不接 CLI 的 `--port` 覆盖（该快照 private[cli]）：真正要钉住的是
+        // 「这个 home 该用哪个口」，隔离实例把它写在 config 的 port 键里即可。
+        cliPort = None,
+        envPortName = s"${nebflow.shared.Branding.envPrefix}_GATEWAY_PORT",
+        envPort = nebflow.shared.Branding.env("GATEWAY_PORT"),
+        configPort = nebflow.gateway.GatewayConfig.configFilePort(),
+        sourceName = nebflow.shared.Branding.configFileName,
+        brandDefaultPort = nebflow.shared.Defaults.brandDefaultPort,
+        root = PathUtil.dataRoot,
+        overridden = nebflow.shared.InstanceScope.liveCaller.overridden
+      )
+    ) match
+      case nebflow.shared.InstanceScope.PortVerdict.Resolved(p, _, _) => Some(p)
+      case nebflow.shared.InstanceScope.PortVerdict.Refused(_) => None
 
   def launchAgentPlist: os.Path =
     os.home / "Library" / "LaunchAgents" / s"${RestartHelper.LaunchAgentLabel}.plist"
@@ -251,7 +296,7 @@ X-GNOME-Autostart-enabled=true
     val dir = logsDir
     if !os.exists(dir) then os.makeDir.all(dir)
     val logPath = (dir / "autostart.log").toString
-    val args = programArguments(javaBin, jar, accountHomeIfAny)
+    val args = programArguments(javaBin, jar, autostartHome, autostartPort)
     val form = if isBundledApp(jar) then "app bundle executable" else "java -jar"
     val plist = renderPlist(RestartHelper.LaunchAgentLabel, args, logPath, sys.props("user.home"))
     val plistDir = launchAgentPlist / os.up
@@ -288,7 +333,7 @@ X-GNOME-Autostart-enabled=true
     val javaBin = RestartHelper.resolveJavaBin()
     val dir = logsDir
     if !os.exists(dir) then os.makeDir.all(dir)
-    val cmd = renderWindowsTaskCmd(javaBin, jar, accountHomeIfAny)
+    val cmd = renderWindowsTaskCmd(javaBin, jar, autostartHome, autostartPort)
     // `/tr` 是**纯字符串**接口：命令行里给再多引号，schtasks 解析 /tr 时会剥掉一层，
     // 于是含空格的 java 路径（%ProgramFiles%\Eclipse Adoptium\…\java.exe —— 本机
     // Windows 的默认装法）被按空白切开 ⇒ 任务建不出来（实测 exit -2147467259 /
@@ -381,7 +426,7 @@ X-GNOME-Autostart-enabled=true
 
   private def enableLinux(jar: String): OpResult =
     val javaBin = RestartHelper.resolveJavaBin()
-    val desktop = renderDesktopEntry(javaBin, jar, accountHomeIfAny)
+    val desktop = renderDesktopEntry(javaBin, jar, autostartHome, autostartPort)
     val dir = linuxAutostartFile / os.up
     if !os.exists(dir) then os.makeDir.all(dir)
     os.write.over(linuxAutostartFile, desktop)

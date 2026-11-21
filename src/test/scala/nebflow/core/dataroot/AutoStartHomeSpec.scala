@@ -178,4 +178,28 @@ class AutoStartHomeSpec extends munit.FunSuite:
     assert(!xml.contains("/<c>.jar"), "裸尖括号不得出现在文本节点里")
     assert(xml.contains("&quot;"), "命令行里的引号必须转成 &quot;")
 
+  test("缺陷⑤: 自启命令必须钉死 --home 与 --port（隔离实例绝不能被默默指回默认根）"):
+    // 2026-11-21 跨机 E2E 实测：隔离实例执行 `stand autostart enable` 时，
+    // accountHomeIfAny 在平铺/未登录档返回 None ⇒ 计划任务命令行**不带 --home**，
+    // 登录自启于是静默去起默认数据根（author 的机器上恰好没有在跑实例，否则就是
+    // 互踢）。端口同理：不带 --port 就会被评成品牌缺省 6138 = 生产口。
+    // 现约束：自启一律钉 machineRoot 与解析出的端口；本 spec 断言纯渲染面确实把
+    // 这两个事实写进了命令行（三个平台腿同一条纪律）。
+    val home = os.Path("/tmp/e2e-isolated-home")
+    val winCmd = AutoStartService.renderWindowsTaskCmd("/usr/bin/java", "/opt/a.jar", Some(home), Some(6139))
+    assert(winCmd.contains("--home \"/tmp/e2e-isolated-home\""), s"Windows 自启必须带 --home：$winCmd")
+    assert(winCmd.contains("--port 6139"), s"Windows 自启必须带 --port：$winCmd")
+
+    val args = AutoStartService.programArguments("/usr/bin/java", "/opt/a.jar", Some(home), Some(6139))
+    assert(args.contains("/tmp/e2e-isolated-home"), s"macOS plist 参数必须含 home：$args")
+    assert(args.sliding(2).exists(w => w == List("--port", "6139")), s"macOS plist 参数必须含 --port 6139：$args")
+
+    val desktop = AutoStartService.renderDesktopEntry("/usr/bin/java", "/opt/a.jar", Some(home), Some(6139))
+    assert(desktop.contains("--home '/tmp/e2e-isolated-home'"), s"Linux Exec 行必须带 --home：$desktop")
+    assert(desktop.contains("--port 6139"), s"Linux Exec 行必须带 --port：$desktop")
+
+    // 负控：默认根（与今日字节相同）仍不带 --port 覆盖时不得凭空多出该旗标
+    assert(!AutoStartService.renderDesktopEntry("/usr/bin/java", "/opt/a.jar", None).contains("--port"))
+    assert(!AutoStartService.renderWindowsTaskCmd("/usr/bin/java", "/opt/a.jar", None).contains("--port"))
+
 end AutoStartHomeSpec
