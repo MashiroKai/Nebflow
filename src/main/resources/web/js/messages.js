@@ -905,7 +905,10 @@ export function closeChat(opts) {
   // voicefix 批 腿 B：关窗路径（ESC/覆层/×）一律经本函数 ⇒ 在飞的语音听写
   // 必须同拍收敛（引擎是全局单例，不关会往已销毁的输入框里继续写字）。
   // fmStopVoice 幂等（未录音 = no-op），且须在 modalEls 清零**之前**调用。
-  if (modalEls && modalEls.stopVoice) modalEls.stopVoice();
+  // social-chat-input-unify 批：语音光球面同时注销（渲染器 pause + contextlost
+  // 解绑）—— 与 stopVoice 同拍，禁跨窗渲染上下文累积。
+  if (modalEls && modalEls.disposeComposer) modalEls.disposeComposer();
+  else if (modalEls && modalEls.stopVoice) modalEls.stopVoice();
   // 会话页头同构批：身份头滚动渐隐监听已随身份头常显批（2026-11-04）整条退役 ⇒
   // 关窗不再有渐隐解绑腿（`modalEls.unbindFade` 一并删除，见 modalEls 字面量）。
   if (modalEls) {
@@ -1755,7 +1758,7 @@ function renderChatModal(conv) {
   } else {
     document.body.appendChild(overlay);
   }
-  modalEls = { overlay, modal, flow, input, sendBtn, toast, offline, conv, quoteStrip, selectBar, selectCount, selectForward, selectForwardEach, selectForwardMerge, stopVoice: composer.stopVoice, idHead, head: header, inMain, restore: null };
+  modalEls = { overlay, modal, flow, input, sendBtn, toast, offline, conv, quoteStrip, selectBar, selectCount, selectForward, selectForwardEach, selectForwardMerge, stopVoice: composer.stopVoice, disposeComposer: composer.dispose, idHead, head: header, inMain, restore: null };
   // （渐隐解绑器 `unbindFade` 已随身份头常显批 2026-11-04 删除 —— 身份头不再有
   // 滚动监听，故 modalEls 无需解绑字段，closeChat 也没有对应的解绑腿。）
   // Fresh modal → reset history-window state (a stale older conversation's
@@ -2029,7 +2032,7 @@ function applyBlockState(conv) {
     modalEls.flow.parentNode.insertBefore(bar, modalEls.flow);
   }
   modalEls.input.disabled = blocked || noSelf || !state.connected;
-  modalEls.input.placeholder = t(noSelf ? 'messages.deviceSendUnavailable' : 'messages.inputPlaceholder');
+  modalEls.input.placeholder = t(noSelf ? 'messages.deviceSendUnavailable' : 'input.placeholder');
   syncComposerSend(); // 发送键 = 输入框可用 ∧ 输入非空（判据单源，见下）
 }
 

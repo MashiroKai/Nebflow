@@ -3269,18 +3269,22 @@ body.mobile-layer .ds-turn-btn {
    The Canvas Ask dock's input row consumes the same declaration.
    待办收件箱 UI 批（作者令 2026-11-21 ①「与 ask 的输入框样式功能一致」）：
    快速决策卡页悬浮控件带的发送键 = 同一个 ds-turn-btn 组件实例 ⇒ 收成**同一份
-   声明的第三个成员**（不再由页面 CSS 另喂一组 token）。 */
+   声明的第三个成员**（不再由页面 CSS 另喂一组 token）。
+   social-chat-input-unify 批 2026-11-21（作者令「社交对话窗口的输入框完全与主会话
+   输入框保持一致——包括语音气泡、发送按钮」）：三面 composer 的发送键同样是本声明成员。 */
 body.mobile-layer #input-bar > .ds-turn-btn,
 body.mobile-layer .ask-dock .ds-turn-btn,
-body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-answer-input > .ds-turn-btn {
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-answer-input > .ds-turn-btn,
+body.mobile-layer .fm-input-bar > .ds-turn-btn {
   --ds-turn-btn-size: 40px;
   --ds-turn-btn-icon: 18px;
 }
 /* Absolute insets use the padding box, one pixel inside the 1px border.
    Four pixels there give a symmetric 3px expansion beyond the border box.
-   Same two hosts: the hit capsule is one value, not one per surface. */
+   Same hosts: the hit capsule is one value, not one per surface. */
 body.mobile-layer #input-bar > .ds-turn-btn::after,
-body.mobile-layer .ask-dock .ds-turn-btn::after {
+body.mobile-layer .ask-dock .ds-turn-btn::after,
+body.mobile-layer .fm-input-bar > .ds-turn-btn::after {
   inset: -4px;
 }
 
@@ -3313,7 +3317,8 @@ body.mobile-layer .fm-input-bar {
      视口差异只留纵向（4px），横向两面/两档一致（两侧各让 2px）。 */
   padding: var(--ds-space-1) var(--ds-space-1h);
 }
-body.mobile-layer #mic-orb-wrap {
+body.mobile-layer #mic-orb-wrap,
+body.mobile-layer .fm-input-bar .mic-orb-wrap {
   margin: -8px 0;
 }
 
@@ -4707,14 +4712,16 @@ body.mobile-layer #attachment-preview .att-file .att-remove::after { inset: -11p
 /* ── 输入卡附件圆键：36×36 → 48 ───────────────────────────────────────
    与发送键（本文件上方 #send-btn 块，已一并升到 --mtap-lg）同档——两者是
    输入条上**全局最高频**的触控目标，36 明显偏小。图标本体同步 --micon。 */
-/* 四会话统一批 2026-11-05：三种会话窗输入条的两枚图标键（附件 `.fm-attach-btn` /
-   话筒 `.fm-mic-btn`）与主会话 `#attach-btn` **同一条规则**——同一组件族、同一
-   48 档、同一 `--micon` 图标档。改前它们停在桌面档 32/36（`.icon-btn` 底档），
-   与主会话 48 相差一整档（本批截图 + 读数）。 */
+/* 四会话统一批 2026-11-05：三种会话窗输入条的附件键与主会话 `#attach-btn`
+   **同一条规则**——同一组件族、同一 48 档、同一 `--micon` 图标档。
+   social-chat-input-unify 批（2026-11-21）：微信面语音键已改为**主会话同一枚
+   液态光球**（`.micbubble` 64×64，自己的档位见 css/input.css，不再属图标键族）
+   ⇒ 本节只余附件键，且改用**宿主选择器**命名两面的同一枚键（与上方
+   `.fm-input-bar > .ds-turn-btn` 同形态）：主会话 `#attach-btn` + 消息面
+   `.fm-input-bar > .icon-btn`（纸夹键）逐值同源，改一处两面同时变。 */
 body.mobile-layer #attach-btn,
 body.mobile-layer #quote-item-btn,
-body.mobile-layer .fm-attach-btn,
-body.mobile-layer .fm-mic-btn {
+body.mobile-layer .fm-input-bar > .icon-btn {
   width: var(--mtap-lg);
   height: var(--mtap-lg);
   min-width: var(--mtap-lg);
@@ -4722,8 +4729,7 @@ body.mobile-layer .fm-mic-btn {
 }
 body.mobile-layer #attach-btn svg,
 body.mobile-layer #quote-item-btn svg,
-body.mobile-layer .fm-attach-btn svg,
-body.mobile-layer .fm-mic-btn svg {
+body.mobile-layer .fm-input-bar > .icon-btn svg {
   width: var(--micon);
   height: var(--micon);
 }
@@ -5398,7 +5404,7 @@ body.mobile-layer :is(.bubble pre, .bubble pre code, .bubble .md code, .bubble .
      · 孤立小图标键（待办面 .tfl-icon-btn 族：一行一键、四周空白）：本体视觉
        不动，::after 外扩命中盒到 --mhit（既有解法，单点不另造）。 */
 body.mobile-layer :is(
-  .mh-search-input, .wg-search-input, #search-keyword, .ap-name-input, .cfg-input,
+  .mh-search-input, .wg-search-input, #search-keyword, .ap-name-input, .cfg-input:not(.fm-input),
   .team-empty-cta, .wg-switch-select, .plugins-card-head,
   .merged-tab, .mf-me-login, .cfg-btn, .cfg-eye-btn
 ) {

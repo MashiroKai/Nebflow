@@ -110,7 +110,7 @@ export function fmBubbleRowClass(inner) {
  * variant 'main'    —— 主输入条：填充 opts.mount（index.html 的静态壳
  *                     #input-bar）；返回 mount。字节形态 = 迁移前静态标记。
  * variant 'compact' —— fm 三面轻量输入条：返回
- *   {bar, input, micBtn, sendBtn, attachBtn?, attachInput?}（canAttach=false
+ *   {bar, input, micBtn, micWrap, sendBtn, attachBtn?, attachInput?}（canAttach=false
  *   时 attach 两件为 null）。类名/属性/子序单源在此，行为接线留在消费方
  *   （fmComposer.js：语音/附件/发送/键盘契约）。
  */
@@ -125,13 +125,35 @@ export function composer(opts = {}) {
 function compactComposer(opts) {
   const bar = document.createElement('div');
   bar.className = chatComposerClass('messages');
+  // 语音入口 = **主会话同一枚液态光球**（social-chat-input-unify 批 2026-11-21，
+  // 作者令「社交对话窗口的输入框完全与主会话输入框保持一致 —— 包括语音气泡」）。
+  // 结构逐件对齐 MAIN_COMPOSER_SHELL：`.mic-orb-wrap` 外壳（携带状态类 s-*，
+  // CSS 变量 --orb-glow/--orb-dot 从这里下传）→ `button.micbubble`（64×64 圆热区）
+  // → `canvas.orb-canvas`（WebGL 主径）+ `div.css-orb.orb`（WebGL 不可用回落）。
+  // 渲染管线**不复制**：同一个 micOrb.MicOrb 单例按 wrap 注册面（registerSurface）
+  // 驱动 —— 两面共用一套着色器/预设表/状态表（禁第二套光球）。
+  //   · `voice-static` = 主会话同款静态姿态（无 hover 拖动反馈）；本面无
+  //     `.voice-drag-hint`（拖动/回弹手势是主会话 input.js 的面 A 语义，
+  //     消息面不是回合面 ⇒ 不搬手势，只搬形态）。
+  //   · `fm-mic-btn` 保留为**宿主钩子类**（stt-disabled 全站隐藏、既有 QA 寻址、
+  //     面级 `flex-shrink/align-self` 对位）；原 lucide `mic` 图标键退役。
+  const micWrap = document.createElement('div');
+  micWrap.className = 'mic-orb-wrap voice-static';
   const micBtn = document.createElement('button');
-  micBtn.className = 'icon-btn fm-mic-btn';
+  micBtn.className = 'micbubble fm-mic-btn';
   micBtn.type = 'button';
   micBtn.title = opts.micLabel || '';
   micBtn.setAttribute('aria-label', opts.micLabel || '');
   micBtn.setAttribute('aria-pressed', 'false');
-  micBtn.appendChild(lucideIcon('mic'));
+  const orbCanvas = document.createElement('canvas');
+  orbCanvas.className = 'orb-canvas';
+  orbCanvas.setAttribute('aria-hidden', 'true');
+  const cssOrb = document.createElement('div');
+  cssOrb.className = 'css-orb orb';
+  cssOrb.setAttribute('role', 'img');
+  cssOrb.setAttribute('aria-label', opts.micLabel || '');
+  micBtn.append(orbCanvas, cssOrb);
+  micWrap.append(micBtn);
   // 输入件 = `#input` 的同档裸件（composer 统一批 2026-11-18）：主会话输入件是
   // `<textarea id="input" rows="1" placeholder=…>`，消息面此前是单行 `<input
   // type="text">` —— 元素类型/行高/自适应两条分叉。现在两件同型：可换行 textarea、
@@ -149,6 +171,12 @@ function compactComposer(opts) {
   let attachInput = null;
   if (opts.canAttach) {
     attachBtn = document.createElement('button');
+    // 附件键 = 与主会话 `#attach-btn` **同一枚裸件**（`.icon-btn` + lucide
+    // paperclip，几何/墨色/hover 全走 input.css 的 `.icon-btn` 单块）。手机档的
+    // 48 触控档由 css/mobileLayer.css 的宿主选择器 `.fm-input-bar > .icon-btn`
+    // 供（与 `.fm-input-bar > .ds-turn-btn` 同一份声明形态）——**不加**面级键名
+    // 类：`.fm-attach-btn` 在 sapphire.css 另有一套幽灵档墨色（--btn-ghost-ink），
+    // 一挂上去两面附件键取色就分叉，与「完全一致」相反。
     attachBtn.className = 'icon-btn';
     attachBtn.type = 'button';
     attachBtn.title = opts.attachLabel || '';
@@ -165,10 +193,10 @@ function compactComposer(opts) {
   sendBtn.title = opts.sendLabel || '';
   sendBtn.setAttribute('aria-label', opts.sendLabel || '');
   sendBtn.appendChild(lucideIcon('send'));
-  bar.append(micBtn, input);
+  bar.append(micWrap, input);
   if (attachBtn && attachInput) bar.append(attachBtn, attachInput);
   bar.append(sendBtn);
-  return { bar, input, micBtn, sendBtn, attachBtn, attachInput };
+  return { bar, input, micBtn, micWrap, sendBtn, attachBtn, attachInput };
 }
 
 // lucide 字形节点：全站唯一字形源的装配形态（节点装配，不写裸 innerHTML —— 组件契约 R5）。

@@ -4,23 +4,28 @@
 // 补齐，三面最终能力清单一致」）。
 //
 // 三面能力清单（本组件 = 三面**共同**能力清单，逐面零分叉）：
-//   ① 文本输入（单行 `input.cfg-input.fm-input`，maxLength 2000，IME 组字守卫）
-//   ② 语音输入（`.icon-btn.fm-mic-btn` 麦克风键 —— 点一下开 / 再点一下关，与主窗
-//      同一交互约定；识别流/双模/态机全在 voiceEngine.js 单点，本组件只接线）
+//   ① 文本输入（`textarea.cfg-input.fm-input.nf-field--bare`，maxLength 2000，IME 组字守卫）
+//   ② 语音输入（**主会话同款液态光球** `.mic-orb-wrap > button.micbubble.fm-mic-btn`
+//      —— 点一下开 / 再点一下关，与主窗同一交互约定；识别流/双模/态机全在
+//      voiceEngine.js 单点，光球渲染全在 micOrb.js 单点，本组件只接线）
 //   ③ 附件（`.icon-btn.fm-attach-btn` 纸夹键 + 隐藏 file input；挂载判据由调用方
 //      `canAttach` 单点给出——不可用面**不挂假入口**）
-//   ④ 发送（`.cfg-btn.cfg-btn-primary.fm-send-btn` 发送键 + 裸 Enter；可用态判据
-//      由调用方 `onTextChange` 单点收敛）
-//   ⑤ 停止态（录音中 = 麦克风键 `recording` / 收尾转写 `processing`，再点一次即停；
-//      本面**无** agent-busy 中断键——fm 窗是消息面不是回合面，申报见批文档）
+//   ④ 发送（`.ds-turn-btn.ds-turn-btn--send.fm-send-btn` 发送键 + 裸 Enter；可用态
+//      判据由调用方 `onTextChange` 单点收敛）
+//   ⑤ 停止态（录音中 = 光球 `s-listening` / `recording`，收尾转写 `s-processing` /
+//      `processing`，再点一次即停；本面**无** agent-busy 中断键——fm 窗是消息面
+//      不是回合面，申报见批文档）
 //
-// 与主会话输入组件的关系（申报，**结构同源、行为分层**）：结构自 chat-ui-package
-// 批（2026-11-16）起同源 —— 两面的外壳/键位结构均出自 js/chatUi.js 的 composer()
-// 工厂（主会话 variant 'main'，三面 variant 'compact'）；行为仍是两套 —— 主会话 =
-// `input.js` + `input/composer.js` 全家桶（多行 textarea、slash/mention 菜单、输入
-// 历史、busy↔idle 中断键 swap、附件条带、排队/回执面）；三面是**轻量 composer**
-// （单行 input + 四键位）。
-// 全部差异逐条列在批文档（docs/20261102_234900_fm-threeface-align__delegate-nebflow-c1142b9b.md）。
+// 与主会话输入组件的关系（social-chat-input-unify 批 2026-11-21 收口后
+// **结构 + 形态 + 交互全同源**）：结构自 chat-ui-package 批（2026-11-16）起同源
+// —— 两面的外壳/键位结构均出自 js/chatUi.js 的 composer() 工厂（主会话 variant
+// 'main'，三面 variant 'compact'）；语音入口自本批起同源 —— 不再是「lucide 图标
+// 键 vs 液态光球」两种形态，而是同一个光球 DOM 壳 + 同一条 micOrb 渲染管线。
+// 行为仍是两套（**消息面不是回合面**）：主会话 = `input.js` + `input/composer.js`
+// 全家桶（slash/mention 菜单、输入历史、busy↔idle 中断键 swap、附件条带、排队/
+// 回执面、拖动开全双工手势）；三面是**轻量 composer**（文本 + 语音 + 附件 + 发送）。
+// 全部差异逐条列在批文档（docs/20261102_234900_fm-threeface-align__delegate-nebflow-c1142b9b.md
+// + 本批功能差异清单）。
 //
 // 依赖方向：i18n / chatUi / voiceEngine / imeGuard —— 均不回指
 // messages.js（无环；voiceEngine 是既有单点，本模块禁新造第二套语音机制）。
@@ -28,6 +33,10 @@
 import { t } from '../i18n.js';
 import { composer } from '../chatUi.js';
 import { startDictation, stopDictation, sttEnabled } from '../voiceEngine.js';
+// 语音光球 = **主会话同一条渲染管线**（social-chat-input-unify 批 2026-11-21）：
+// 同一个 MicOrb 单例按 wrap 注册第二个 surface（registerSurface/setSurfaceState）。
+// 禁第二套光球：着色器/预设表/状态表/WebGL 回落全在 micOrb.js 单点。
+import { getMicOrb } from '../micOrb.js';
 // 键盘 / 自适应行高 = 主会话同一底座（composer 统一批 2026-11-18）：本文件不再
 // 自带注册 IME 守卫与 Enter 判定 —— `bindComposerKeys` 就是主会话 `input.js` 走的
 // 那一份契约（组字前置短路 → cascade → commitEnter），Shift+Enter 交还浏览器默认
@@ -70,39 +79,49 @@ export function buildFmComposer(opts) {
   //     只留字与 caret —— 与主会话 `#input` 同档，禁「框里套框」。
   // 禁第二个类名/第二份材质：换个名字再画一遍就是「第二种输入面」（check-input-surface
   // 的 I2 与 check-glass-unify 的 G1 都会红）。
-  const { bar, input, micBtn, sendBtn, attachBtn, attachInput } = composer({
+  const { bar, input, micBtn, micWrap, sendBtn, attachBtn, attachInput } = composer({
     variant: 'compact',
     micLabel: t('messages.voiceInput'),
-    placeholder: composerPlaceholder({ baseToken: 'messages.inputPlaceholder' }),
+    placeholder: composerPlaceholder({ baseToken: 'input.placeholder' }),
     sendLabel: t('messages.send'),
     attachLabel: t('dropbox.attachFile'),
     canAttach: opts.canAttach === true,
   });
 
-  // ── 语音输入（②；三面同挂 —— 设备面本批补齐，令出 2026-11-02）──────────────
-  //  形态 = 主窗既有 `.icon-btn` 族 + lucide `mic`（与纸夹同族）；位置 = 输入条
-  //  最左（微信参照稿同位）。接线复用主窗既有管线：同一 voiceEngine 识别流、同一
-  //  回调契约（onInterim 占位刷新 / onText 落终稿 / onState 态机）、同一「点一下开、
-  //  再点一下关」交互（作者 2026-08-25 21:34 令，与主窗一致）。反馈 = 主窗既有
-  //  `.icon-btn.recording`（微信绿 + voicePulse）+ 转写中 `.fm-mic-btn.processing`
-  //  （既有 sapphire）；出错 = toast 可见提示（禁 console-only）。
-  //  STT 全局停用态：`body.stt-disabled .fm-mic-btn { display:none }`（sidebar.css）
-  //  走同一枚类名收口 —— 三面同时隐藏，无需第四处判据。
+  // ── 语音输入（②；三面同挂 —— 设备面 2026-11-02 补齐）────────────────────────
+  //  形态 = **主会话同一枚液态光球**（social-chat-input-unify 批 2026-11-21，作者令
+  //  「社交对话窗口的输入框完全与主会话输入框保持一致——包括语音气泡、发送按钮」）；
+  //  位置 = 输入条最左（与主窗同位）。接线复用主窗既有管线：同一 voiceEngine 识别流、
+  //  同一回调契约（onInterim 占位刷新 / onText 落终稿 / onState 态机）、同一「点一下开、
+  //  再点一下关」交互（作者 2026-08-25 21:34 令，与主窗一致）。渲染 = 同一个 MicOrb
+  //  单例注册的**第二面**（setSurfaceState）—— 不新造渲染器，不吃主条回合面 dims
+  //  （`owned:true`：frozen/busy/offline 是回合语义，消息窗不是回合面）。
+  //  反馈 = 光球状态类（`s-listening` / `s-processing` / `s-micerr`）+ 宿主钩子类
+  //  `.fm-mic-btn` 上的 `recording`/`processing`（既有 QA 寻址面与 stt-disabled 隐藏
+  //  规则继续按它工作，零第二套状态位）。出错 = toast 可见提示（禁 console-only）。
   let voiceActive = false;
   let voiceAnchor = 0;      // 当前语音段插入锚点（字符偏移）
   let voiceInterimLen = 0;  // 当前占位 interim 文本长度
-  // micBtn 由工厂装配（形态/属性/字形单源在 chatUi.js）；反馈态类在此切换。
+  // 光球面注册：单例可能尚未挂载（voiceOrbMountable 的 configData latch 未到 /
+  // 显式 voiceOrb:false）⇒ 全部调用 null-safe（与主窗 notifyVoiceState 同一纪律）。
+  const orb = getMicOrb();
+  if (orb) orb.registerSurface(micWrap, { size: 64, owned: true });
   // 占位文案 = 全站单点 composerPlaceholder（composer 统一批 2026-11-18）：本面
   // 声明自己的 baseToken（`messages.inputPlaceholder`），语音/引用帧/附件/通用四条
   // 分支的**判据**与主会话共用同一份实现（含 mobile-layer 附件恒文案档）。本面
   // 无附件条与纯引用帧闸 ⇒ 两个上下文参数恒为默认；语音态随麦克风态机刷新。
   const refreshPlaceholder = () => {
     input.placeholder = composerPlaceholder({
-      baseToken: 'messages.inputPlaceholder',
+      baseToken: 'input.placeholder',
       voiceActive,
     });
   };
   const setMicState = (s) => {
+    // 光球态 = 唯一视觉面（`s-*` 类 + 着色器状态）；宿主钩子类 = 既有 QA/stt 寻址面。
+    const orbKey = s === 'listening' || s === 'speaking' ? 'listening'
+      : s === 'processing' ? 'processing'
+        : s === 'error' ? 'mic-error' : 'idle';
+    if (orb) orb.setSurfaceState(micWrap, orbKey);
     micBtn.classList.toggle('recording', s === 'listening' || s === 'speaking');
     micBtn.classList.toggle('processing', s === 'processing');
     micBtn.setAttribute('aria-pressed', String(s === 'listening' || s === 'speaking'));
@@ -213,5 +232,12 @@ export function buildFmComposer(opts) {
   // 提交、Shift+Enter 走浏览器默认换行 —— 与主输入条逐条同序，禁本面另写一份判定。
   bindComposerKeys(input, { onSend: () => onSend() });
 
-  return { bar, input, sendBtn, stopVoice };
+  // 关窗收敛：光球面注销（渲染器 pause、contextlost 监听解绑）—— 与 stopVoice 同拍
+  // 由宿主 closeChat 调用，零跨窗残留（渲染上下文不累积）。
+  const dispose = () => {
+    if (voiceActive) stopVoice();
+    if (orb) orb.unregisterSurface(micWrap);
+  };
+
+  return { bar, input, sendBtn, stopVoice, dispose };
 }
