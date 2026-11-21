@@ -331,15 +331,91 @@
 .set-collapse-body[hidden] { display: none; }
 .set-sub { padding: 0 var(--set-row-pad-x) var(--ds-space-2); }
 
-/* ── 模型配置两模式控件（模型配置两模式批 2026-11-18）───────────────────────
-   形态整件复用 /model 面板的 .mp-modes / .mp-mode-btn（全站唯一两模式控件；
-   modal.css 供造型）——本文件只补**设置页节内**的落位：面板头那一条
-   `margin-left: auto` 在卡内会把控件顶到右缘，本节要从左基线起排。
+/* ── 模型设置节（模型设置页 switch 批 2026-11-21 作者令）────────────────────
+   修前 = 两段式按钮（.mp-modes / .mp-mode-btn：「全部跟随主会话 / 分开配置」，
+   形态借用 /model 面板头的那一对）。修后 = 顶部**一个开关** + 一行当前态文字：
+     · 开关本体 = 全站唯一开关组件（js/toggle.js 的 .nb-toggle，造型归
+       css/sidebar.css，本文件只给落位，不重画一个开关）；
+     · 语义（移动端惯例）：开 = 分开配置，关 = 全部跟随主会话；
+     · 当前态 = 紧贴开关下的一行 .mp-mode-state（不是第二套控件）。
    左右基线 = 0：本节挂在 .set-disclosure-body 里，横向内距已由该层给足（16）。 */
-.set-modes {
-  margin: 0 0 var(--ds-space-2);
-  justify-content: flex-start;
-  align-self: stretch;
+.mp-mode-row {
+  margin: 0;
+  padding-left: 0;
+  padding-right: 0;
+  min-height: var(--set-row-h);
+}
+.mp-mode-row .set-row-label { color: var(--ds-text); }
+.mp-mode-state {
+  padding: 0 0 var(--ds-space-2);
+  margin: 0;
+  font-size: var(--ds-fs-hint);
+  line-height: var(--ds-lh-std);
+  color: var(--ds-text-muted);
+}
+
+/* 说明注记（分叉注记 / 跟随读数）：引导语一行 + 类别胶囊一行。
+   🔴 窄屏病根（作者实拍 2026-11-21）：修前整句一句到底（「kernel · 任务分发器 ·
+   node（节点） · subagent（子代理） 已独立配置，不受主链影响」），390pt 上必须在
+   括号中间折行（「node（节点） · subagent（子代」/「理）」），且引导语与类别名
+   同为一种灰、一层级。修后：引导语 .mp-note-lead（hint 档、muted）在上，类别名
+   .mp-note-role 各自 white-space: nowrap 成胶囊（只在类别之间折行），两级可分。 */
+#model-chain-section-body .mp-note-fork,
+#model-chain-section-body .mp-settings-follow-note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-2) 0;
+}
+#model-chain-section-body .mp-note-lead {
+  font-size: var(--ds-fs-hint);
+  line-height: var(--ds-lh-std);
+  color: var(--ds-text-muted);
+}
+#model-chain-section-body .mp-note-roles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ds-space-1) var(--ds-space-2);
+}
+#model-chain-section-body .mp-note-role {
+  white-space: nowrap;
+  padding: 0 var(--ds-space-2);
+  border: 1px solid var(--glass-etched-border);
+  border-radius: var(--ds-radius-chip);
+  background: var(--glass-etched-bg);
+  color: var(--ds-text);
+  font-size: var(--ds-fs-hint);
+  line-height: var(--ds-lh-std);
+}
+
+/* 类别卡节奏（switch 批）：卡内 16 内距 / 卡间 12 留白 / 标题与状态行 4 缝。
+   修前 = padding 12 + gap 8 + margin-bottom 8（三处同档 ⇒ 卡内层级与卡间留白
+   分不出来，实拍像一整块）。层级靠字号差表达：标题 title 档 600，状态行 hint 档
+   400 muted —— 不新开色与字重档。 */
+#model-chain-section-body .mp-settings-role-panel {
+  padding: var(--ds-space-4);
+  gap: var(--ds-space-1);
+  margin-bottom: var(--ds-space-3);
+}
+#model-chain-section-body .mp-settings-role-panel .mp-role-head {
+  font-size: var(--ds-fs-title);
+  line-height: var(--ds-lh-title);
+}
+#model-chain-section-body .mp-settings-role-panel .mp-note {
+  line-height: var(--ds-lh-std);
+}
+/* unified 档的跟随类别（置灰只读）：标题降为 muted、只读读数行走等宽档。
+   不给控件（不可写就不发 select），读数行只是「这一类的模型现在是什么」的可见事实。 */
+#model-chain-section-body .mp-settings-role-panel.mp-role-follow {
+  background: transparent;
+}
+#model-chain-section-body .mp-role-follow .mp-role-name { color: var(--ds-text-muted); }
+#model-chain-section-body .mp-follow-readout {
+  font: 400 var(--ds-fs-meta) var(--ds-font-mono);
+  color: var(--ds-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ── 关于卡 ──────────────────────────────────────────────────────────────── */
@@ -398,6 +474,18 @@
   body.mobile-layer .set-nav-val,
   body.mobile-layer .set-row-val,
   body.mobile-layer .set-row-hint { font-size: var(--mfs-min); }
+  /* 模型设置节（switch 批）：手机档只换算字号层，不新立第二套数值 ——
+     类别卡标题 17（--mfs-body，与手机设置页其它卡标题同档）、状态行/引导语/
+     类别胶囊/只读读数 13（--mfs-min）。层级靠「17 600 vs 13 muted」拉开。 */
+  body.mobile-layer #model-chain-section-body .mp-settings-role-panel .mp-role-head {
+    font-size: var(--mfs-body);
+  }
+  body.mobile-layer .mp-mode-state,
+  body.mobile-layer #model-chain-section-body .mp-note-lead,
+  body.mobile-layer #model-chain-section-body .mp-note-role,
+  body.mobile-layer #model-chain-section-body .mp-follow-readout {
+    font-size: var(--mfs-min);
+  }
   body.mobile-layer .set-btn { height: var(--mtap); }
   /* md 档跨视口同档（作者令 2026-11-18「这些按钮的样式 大小应该要有极致的控制
      统一的要求」）：手机层不再让动作族掉回本面横距/字号（--mpad-x 16 / 13px），

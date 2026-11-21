@@ -124,7 +124,22 @@ if (await disclosure.getAttribute('aria-expanded') !== 'true') await disclosure.
 await page.waitForSelector('#model-chain-section-body [data-role="Nebula"] .mp-settings-role-model', { state: 'visible', timeout: 15000 });
 await sleep(350);
 
-/* ① 注记在场 + 文案 */
+/* ── 档位：分叉注记在**两档**都在场（它是真相披露，不是分开配置档的附属）。 ──
+ * switch 批（2026-11-21）：默认档 unified 下四类 follower 置灰只读、不发 select，
+ * 故 ③④ 的「槽行自身回显 / 清除独立配置」必须在分开配置档验（开关真点击）。 */
+async function enterSeparate() {
+  const sw = page.locator('#model-mode-switch');
+  if (await sw.getAttribute('aria-checked') !== 'true') {
+    await sw.click();
+    await page.waitForFunction(
+      () => document.querySelector('#model-mode-switch')?.getAttribute('aria-checked') === 'true',
+      null, { timeout: 5000 });
+  }
+  await page.waitForSelector('#model-role-select-subagent', { state: 'visible', timeout: 15000 });
+  await sleep(250);
+}
+
+/* ① 注记在场 + 文案（unified 档先验一遍：两档都得说真话） */
 const note = page.locator('#model-chain-diverged-note');
 ok('① 分叉注记在场（subagent 显式 ⇒ 设置页节点破分叉）', await note.count() === 1);
 const noteText = (await note.textContent() || '').trim();
@@ -132,9 +147,31 @@ ok('① 注记文案含类别标签与「不受主链影响」',
   noteText.includes('subagent') && noteText.includes('已独立配置') && noteText.includes('不受主链影响'), noteText);
 ok('① 注记不把主agent行算作分叉（只报 follower 槽）', !noteText.includes('主agent') && !noteText.includes('Main agent'), noteText);
 
+/* ①-b switch 批的排版判据：引导语与类别名分成两级（引导语 1 行 + 胶囊 n 枚），
+ * 胶囊 nowrap ⇒ 窄屏折行只发生在类别之间（修前整句在括号中间折断）。 */
+const noteParts = await page.evaluate(() => {
+  const n = document.querySelector('#model-chain-diverged-note');
+  if (!n) return null;
+  const chips = [...n.querySelectorAll('.mp-note-role')];
+  return {
+    lead: n.querySelector('.mp-note-lead')?.textContent || '',
+    chips: chips.map((c) => c.textContent),
+    wrapped: chips.some((c) => c.getClientRects().length > 1 || c.getBoundingClientRect().height > 24),
+    styles: chips.map((c) => ({ ws: getComputedStyle(c).whiteSpace, br: getComputedStyle(c).borderRadius })),
+  };
+});
+ok('①-b 注记 = 引导语 + 类别胶囊（类别名不再串在句子里）',
+  !!noteParts && noteParts.lead === '已独立配置，不受主链影响' &&
+  noteParts.chips.length === 1 && noteParts.chips[0].startsWith('subagent') &&
+  noteParts.styles.every((s) => s.ws === 'nowrap') && !noteParts.wrapped,
+  JSON.stringify(noteParts));
+
 /* ② 结构纪律：纯文本、无 data-role */
 ok('② 注记零 <button>（设置页节控件面不扩）', await note.locator('button').count() === 0);
 ok('② 注记无 data-role（不扰五类行序断言）', await note.evaluate((el) => el.getAttribute('data-role')) === null);
+
+await enterSeparate();
+ok('②-b 分开配置档注记仍在场（两档都说真话）', await note.count() === 1);
 
 /* ③ 分叉槽行自身显示显式生效 ref（「实际生效的那一个」） */
 const subSelect = page.locator('#model-role-select-subagent');

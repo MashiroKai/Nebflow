@@ -45,7 +45,12 @@ const CHAIN = {
 const RETIRED_KEYS = [
   'model.refreshList', 'model.refreshFailed', 'model.manualInput',
   'model.manualPlaceholder', 'model.clearChain', 'model.clearChainConfirm',
+  // switch 批 2026-11-21：整句模式注记退役（类别名从句子中间挪到胶囊行，句子由
+  // model.divergedNoteLead / model.followsNebula 作引导语，当前态走 model.modeState*）。
+  'settings.modelModeUnifiedNote',
 ];
+/** switch 批新增的四个键（两侧必须对称在册）。 */
+const MODE_KEYS = ['model.modeSeparateHint', 'model.modeStateUnified', 'model.modeStateSeparate', 'model.divergedNoteLead'];
 const TITLES = { 'zh-CN': '模型（按会话类别）', en: 'Model (per session class)' };
 
 /* ─────────────── 静态服务（真 web/ 树） ─────────────── */
@@ -181,6 +186,23 @@ async function openSettings(page, { mobile }) {
   }
 }
 
+/* ─────────────── 档位：unified（默认）/ separate ─────────────── */
+/**
+ * 切到「分开配置」档（模型设置页 switch 批 2026-11-21：两段式按钮改成一个开关，
+ * 关 = 全部跟随主会话、开 = 分开配置；默认档 unified）。本 spec 的逐类可写断言
+ * 属于 separate 档，先真点开关再断言 —— 顺带把开关的乐观翻转 + setMode 一起验了。
+ */
+async function ensureSeparate(page) {
+  const sw = page.locator('#model-mode-switch');
+  if (await sw.getAttribute('aria-checked') !== 'true') {
+    await sw.click();
+    await page.waitForFunction(
+      () => document.querySelector('#model-mode-switch')?.getAttribute('aria-checked') === 'true',
+      null, { timeout: 5000 });
+  }
+  await page.waitForSelector('#small-llm-settings-row select', { state: 'visible', timeout: 15000 });
+}
+
 /* ─────────────── 单腿：断言 + 实拍 ─────────────── */
 async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = false }) {
   const tag = `${engineName}/${mobile ? 'mobile' : 'desktop'}/${theme}/${locale}`;
@@ -188,8 +210,58 @@ async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = fals
   const { ctx, page, errors, sim } = await boot(browser, { viewport, colorScheme: theme, locale, touch: mobile });
   await openSettings(page, { mobile });
 
+  // ① 模式开关（switch 批）：全站唯一开关组件，一个 role=switch 的按钮 + 一行当前态。
+  const modeSwitch = page.locator('#model-mode-switch');
+  ok(tag, '模式控件 = 一个 role=switch 的 .nb-toggle（零分段按钮残留）',
+    await modeSwitch.count() === 1 && await modeSwitch.getAttribute('role') === 'switch' &&
+    await page.locator('#model-chain-modes .mp-mode-btn').count() === 0 &&
+    await page.locator('#model-chain-modes button').count() === 1);
+  ok(tag, '默认档 = 全部跟随主会话（开关关 + 当前态文字明示）',
+    await modeSwitch.getAttribute('aria-checked') === 'false' &&
+    (await page.locator('#model-chain-mode-state').textContent() || '')
+      .includes(locale === 'zh-CN' ? '全部跟随主会话' : 'following the main session'),
+    await page.locator('#model-chain-mode-state').textContent());
+  // unified 档：五类行恒在册（行序与 /model 面板一致），仅主会话可写；其余四类
+  // 置灰只读 + 一枚实际生效模型读数 —— 「跟随主会话」这件事必须看得见。
+  const uni = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('#model-chain-section-body [data-role]')];
+    return {
+      roles: rows.map((r) => r.dataset.role),
+      selects: rows.filter((r) => r.querySelector('select')).length,
+      follow: rows.filter((r) => r.classList.contains('mp-role-follow')).length,
+      readouts: rows.map((r) => r.querySelector('.mp-follow-readout')?.textContent || '').filter(Boolean),
+    };
+  });
+  ok(tag, 'unified：五类行恒在册、仅主会话发选择器、4 类置灰只读并显示生效模型',
+    uni.roles.join(',') === 'Nebula,kernel,project-dispatcher,node,subagent' &&
+    uni.selects === 1 && uni.follow === 4 && uni.readouts.length === 4, JSON.stringify(uni));
+  ok(tag, 'unified：小模型槽不铺（「全部跟随」不得有可写例外槽）',
+    await page.locator('#small-llm-settings-row').count() === 0);
+  // ② 真点击开关 → 分开配置（乐观翻转须先于重绘：见 renderSessionModeControl 注释）
+  await ensureSeparate(page);
+  const sep = await page.evaluate(() => ({
+    roles: [...document.querySelectorAll('#model-chain-section-body .mp-settings-role-panel[data-role]')]
+      .map((r) => `${r.dataset.role}:${r.querySelector('select') ? 'SELECT' : 'NONE'}`),
+    small: document.querySelectorAll('#small-llm-settings-row select').length,
+  }));
+  ok(tag, '开关打开 = 分开配置（五类逐个可写 + 小模型槽）',
+    sep.roles.join(',') === 'Nebula:SELECT,kernel:SELECT,project-dispatcher:SELECT,node:SELECT,subagent:SELECT' &&
+    sep.small === 1, JSON.stringify(sep));
+  ok(tag, '当前态文字随档位改写',
+    (await page.locator('#model-chain-mode-state').textContent() || '')
+      .includes(locale === 'zh-CN' ? '分开配置' : 'per-class'),
+    await page.locator('#model-chain-mode-state').textContent());
+
   const small = page.locator('#small-llm-settings-row');
-  ok(tag, '通用小 LLM 设置行使用统一行令牌', await small.locator('.set-row').count() === 1);
+  // 修前这里钉的是 `#small-llm-settings-row .set-row` ——两模式批（2026-11-18）之后
+  // 小模型行由 settingsModelCard 造（与五类角色行同一个卡组件 + 同一个
+  // `.mp-add-select mp-settings-role-model` 选择器），本行不再是 set-row 行令牌，
+  // 该断言自那批起就红了（main tip f69c4b26f 上同样红）。意图保持不变：这一行
+  // 必须复用共享控件，不得自带一套样式。改钉共享卡 + 共享选择器类。
+  ok(tag, '通用小 LLM 设置行复用共享卡与共享选择器（零自带控件）',
+    await small.evaluate((el) => el.classList.contains('mp-settings-role-panel') &&
+      el.querySelectorAll('.mp-role-name').length === 1 &&
+      el.querySelectorAll('select.mp-add-select.mp-settings-role-model').length === 1));
   const smallSelect = small.locator('select');
   ok(tag, '小模型未配置提示回退主模型', (await smallSelect.locator('option').first().textContent()).includes(locale === 'zh-CN' ? '未配置（回退主模型）' : 'Not configured'));
   await smallSelect.selectOption('kimi/kimi-for-coding');
@@ -243,7 +315,7 @@ async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = fals
   ok(tag, '五类角色均有单模型选择器、继承状态和44px触控高度', roles.every((r) => r.select === 'SELECT' && r.options >= 2 && r.height >= 44 && !r.overflow), JSON.stringify(roles));
 
   // i18n 双语键：新文案在册、旧键连根拔除、两字典同长
-  const dict = await page.evaluate(async (retired) => {
+  const dict = await page.evaluate(async ({ retired, modeKeys }) => {
     const zh = (await import('/js/locales/zh-CN.js')).default;
     const en = (await import('/js/locales/en.js')).default;
     return {
@@ -251,14 +323,17 @@ async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = fals
       zhHint: zh['settings.modelChainSectionHint'], enHint: en['settings.modelChainSectionHint'],
       zhSummary: zh['settings.modelsSummary'], enSummary: en['settings.modelsSummary'],
       zhLeak: retired.filter((k) => k in zh), enLeak: retired.filter((k) => k in en),
+      zhMode: modeKeys.filter((k) => !zh[k]), enMode: modeKeys.filter((k) => !en[k]),
       zhCount: Object.keys(zh).length, enCount: Object.keys(en).length,
     };
-  }, RETIRED_KEYS);
+  }, { retired: RETIRED_KEYS, modeKeys: MODE_KEYS });
   ok(tag, 'i18n 双语标题齐', dict.zhTitle === TITLES['zh-CN'] && dict.enTitle === TITLES.en,
     `zh="${dict.zhTitle}" en="${dict.enTitle}"`);
   ok(tag, '渐进披露摘要双语键齐', dict.zhSummary === '{n} 类会话模型' && dict.enSummary === '{n} session classes',
     `zh="${dict.zhSummary}" en="${dict.enSummary}"`);
   ok(tag, 'i18n 双语说明齐', !!dict.zhHint && !!dict.enHint, `zh="${dict.zhHint}" en="${dict.enHint}"`);
+  ok(tag, 'i18n 开关档四键双语对称在册', dict.zhMode.length === 0 && dict.enMode.length === 0,
+    JSON.stringify({ zh: dict.zhMode, en: dict.enMode }));
   ok(tag, 'i18n 退役键零残留（zh/en 双向）', dict.zhLeak.length === 0 && dict.enLeak.length === 0,
     JSON.stringify({ zhLeak: dict.zhLeak, enLeak: dict.enLeak }));
   // 两字典本就有 7 键的存量差（zh 多 8 键 / en 多 1 键，与本批无关）——这里钉的
@@ -294,6 +369,7 @@ async function functionalLeg(browser) {
     viewport: { width: 1440, height: 900 }, colorScheme: 'dark',
   });
   await openSettings(page, { mobile: false });
+  await ensureSeparate(page); // 小模型槽 + 逐类选择器只在分开配置档铺出
 
   // Failed writes must restore the server value in the live select control.
   for (const role of ['Nebula', 'small-llm']) {

@@ -30,6 +30,10 @@ import { statusIcon, escapeHtml } from './utils.js';
 import { mobileSheetBack } from './mobile/popSheet.js';
 import { createDepVisibility } from './depVisibility.js';
 import { rootNameParams } from './rootName.js';
+// 模型设置页 switch 批（2026-11-21 作者令）：设置页「模型（按会话类别）」节的模式
+// 控件由两段式按钮改为**一个开关**——开关组件全站单源（toggle.js 的 .nb-toggle），
+// 这里消费 createToggle 的 DOM 形态（组件契约门禁 R5 禁裸 innerHTML，故不取字符串版）。
+import { createToggle, setToggleState } from './toggle.js';
 
 // ── Shared helpers (model refs + chain display) ────────────
 
@@ -250,7 +254,12 @@ async function fetchModelOf(role, onUpdate = () => {}) {
 }
 
 async function fetchAllRoles(onUpdate = () => {}) {
-  for (const role of [...ROLES, SMALL_LLM]) await fetchModelOf(role, onUpdate);
+  // 加载慢诊断批（2026-11-21 作者报障「这个为什么加载这么慢」）：修前 = for-await
+  // **串行**六次往返（Nebula/kernel/project-dispatcher/node/subagent/small-llm 各一次
+  // GET /api/agents/:role/model），是本节唯一的串行瀑布 —— 本机实测每次 1.8–6.2ms，
+  // 但公网隧道腿每趟要多付一整趟 RTT（实测 link.mystand.space 单请求 0.11–0.28s），
+  // 六趟串起来就是三次「点了没反应」。并行后首屏只等一趟。
+  await Promise.all([...ROLES, SMALL_LLM].map((role) => fetchModelOf(role, onUpdate)));
 }
 
 /** 台账 #937：全部角色读数失败 = 面板不可用态（未登录 / 引擎不可达）。
@@ -615,7 +624,8 @@ function settingsModelCard(title, id, status) {
   card.className = 'mp-roleblock mp-settings-role-panel';
   const label = document.createElement('label');
   label.className = 'mp-role-head mp-role-name';
-  label.htmlFor = id;
+  // 只读卡（unified 档的跟随类别）没有控件可指，不发射悬空 for。
+  if (id) label.htmlFor = id;
   label.textContent = title;
   card.appendChild(label);
   if (status) {
@@ -628,15 +638,20 @@ function settingsModelCard(title, id, status) {
 }
 
 function renderSettingsRoleSelector(container, refreshTarget = container) {
-  // 两模式（2026-11-18）：unified = 只画**一个**控件（主会话模型，覆盖全部会话
-  // 类别）；separate = 逐个类别画（修前行为）。ROLES[0] = 'Nebula'（主会话），
-  // 其余跟随类别的状态在下方 note 行里逐字列出——不是「少画了几个控件」，是
-  // 「跟随」这件事本来就不需要控件（/model 面板同口径：separate 才铺 per-role 块）。
-  const list = panelMode === 'unified' ? ROLES.slice(0, 1) : ROLES;
-  for (const role of list) {
+  // 两模式（2026-11-18）+ switch 批（2026-11-21 作者令「切到跟随就收起或置灰，
+  // 并明示跟随主会话状态」）：
+  //   separate = 五类逐个可写（修前行为，控件面逐字不变）；
+  //   unified  = 只有主会话可写，其余四类**置灰只读**（.mp-role-follow）：不给控件
+  //              （不可写的类别不发 select），改为一枚只读读数行显示该类别**实际
+  //              生效**的模型 + 状态行「跟随 {agent}」——明示「正在跟随」而不是
+  //              整行撤除（修前撤除后用户看不到任何跟随状态，只剩一行小字）。
+  // 五类行恒在册 ⇒ 行序/数量断言与 /model 面板的五类口径一致。
+  for (const role of ROLES) {
     const st = roleState.get(role);
-    const row = settingsModelCard(roleLabel(role), `model-role-select-${role}`);
+    const followOnly = panelMode === 'unified' && role !== 'Nebula';
+    const row = settingsModelCard(roleLabel(role), followOnly ? '' : `model-role-select-${role}`);
     row.dataset.role = role;
+    if (followOnly) row.classList.add('mp-role-follow');
 
     if (!st?.data) {
       const status = document.createElement('div');
@@ -667,38 +682,74 @@ function renderSettingsRoleSelector(container, refreshTarget = container) {
         ? t('model.mainChain', rootNameParams())
         : st.data.mode === 'explicit' ? t('model.independent') : t('model.followsNebula', rootNameParams());
       row.appendChild(status);
-      const select = document.createElement('select');
-      select.id = `model-role-select-${role}`;
-      select.className = 'mp-add-select mp-settings-role-model';
-      select.setAttribute('aria-label', `${roleLabel(role)} — ${t('model.addModel')}`);
-      const refs = getAllModelRefs();
-      if (role !== 'Nebula') {
-        const inherit = document.createElement('option');
-        inherit.value = '';
-        inherit.textContent = t('model.followsNebula', rootNameParams());
-        select.appendChild(inherit);
+      if (followOnly) {
+        const readout = document.createElement('div');
+        readout.className = 'mp-follow-readout';
+        readout.textContent = effective || t('model.seedNote');
+        readout.title = readout.textContent;
+        row.appendChild(readout);
+      } else {
+        const select = document.createElement('select');
+        select.id = `model-role-select-${role}`;
+        select.className = 'mp-add-select mp-settings-role-model';
+        select.setAttribute('aria-label', `${roleLabel(role)} — ${t('model.addModel')}`);
+        const refs = getAllModelRefs();
+        if (role !== 'Nebula') {
+          const inherit = document.createElement('option');
+          inherit.value = '';
+          inherit.textContent = t('model.followsNebula', rootNameParams());
+          select.appendChild(inherit);
+        }
+        for (const ref of refs) {
+          const option = document.createElement('option');
+          option.value = ref;
+          option.textContent = ref;
+          if (ref === effective && (role === 'Nebula' || st.data.mode === 'explicit')) option.selected = true;
+          select.appendChild(option);
+        }
+        if (!effective && role === 'Nebula') {
+          const placeholder = document.createElement('option');
+          placeholder.value = '';
+          placeholder.textContent = t('model.seedNote');
+          placeholder.selected = true;
+          select.insertBefore(placeholder, select.firstChild);
+        }
+        select.addEventListener('change', () => {
+          void putChain(role, select.value ? [select.value] : null);
+        });
+        row.appendChild(select);
       }
-      for (const ref of refs) {
-        const option = document.createElement('option');
-        option.value = ref;
-        option.textContent = ref;
-        if (ref === effective && (role === 'Nebula' || st.data.mode === 'explicit')) option.selected = true;
-        select.appendChild(option);
-      }
-      if (!effective && role === 'Nebula') {
-        const placeholder = document.createElement('option');
-        placeholder.value = '';
-        placeholder.textContent = t('model.seedNote');
-        placeholder.selected = true;
-        select.insertBefore(placeholder, select.firstChild);
-      }
-      select.addEventListener('change', () => {
-        void putChain(role, select.value ? [select.value] : null);
-      });
-      row.appendChild(select);
     }
     container.appendChild(row);
   }
+}
+
+/**
+ * 注记的**唯一结构**：一行引导语 + 一行类别胶囊（分叉注记与跟随读数共用）。
+ * 🔴 结构纪律：无 <button>（model-chain-slim spec 钉设置页节内控件面）、不带
+ * data-role（五类行序断言的 [data-role] 选择器不得命中它）。
+ * 为什么不再是一整句（模型设置页 switch 批 2026-11-21 作者实拍）：修前把类别名
+ * 用 ` · ` 串在句子里（「kernel · 任务分发器 · node（节点） · subagent（子代理）
+ * 已独立配置…」），390pt 窄屏上整句必须在括号中间折行（「node（节点） · subagent
+ * （子代」/「理）」），层级也只剩一种灰。分成「引导语 + 胶囊」后：胶囊各自
+ * `white-space: nowrap`，折行只发生在类别之间；引导语与类别名两个层级可分。
+ * @param {HTMLElement} note 目标节点（就地重建子件，节点本身不换）
+ * @param {string} lead 引导语（已本地化）
+ * @param {string[]} labels 类别标签（已本地化）
+ */
+function paintNoteChips(note, lead, labels) {
+  const leadEl = document.createElement('span');
+  leadEl.className = 'mp-note-lead';
+  leadEl.textContent = lead;
+  const list = document.createElement('span');
+  list.className = 'mp-note-roles';
+  for (const label of labels) {
+    const chip = document.createElement('span');
+    chip.className = 'mp-note-role';
+    chip.textContent = label;
+    list.appendChild(chip);
+  }
+  note.replaceChildren(leadEl, list);
 }
 
 /**
@@ -706,61 +757,79 @@ function renderSettingsRoleSelector(container, refreshTarget = container) {
  * 任一 follower 槽（kernel/dispatcher/node/subagent）显式独立配置时，在节首亮出
  * 「这些类别已独立配置，不受主链影响」——/model 面板已有同款横幅
  * （model.divergedBar），设置页此前缺失：作者在设置页把主链切成 cmdcode 后，
- * delegate 会话仍跑 subagent 槽钉住的旧模型（现网：IricalGpt/gpt-6.1-terra），
- * 而设置页没有任何一行点破这两层的分叉。
- * 🔴 结构纪律：纯文本注记——无 <button>（model-chain-slim spec 钉设置页节内
- * 控件面）、不带 data-role（五类行序断言的 [data-role] 选择器不得命中它）、
- * 复用面板同款 i18n 键（两字典零新键，长度差基线不动）。
+ * delegate 会话仍跑 subagent 槽钉住的旧标题模型，而设置页没有任何一行点破这两层
+ * 的分叉。文案 = 面板同款键（model.divergedBar）的词条，类别名改由胶囊列出。
  */
 function renderChainSectionDivergedNote(container) {
   const forked = forkedRoles();
-  const existing = container.querySelector('#model-chain-diverged-note');
+  const existing = /** @type {HTMLElement|null} */ (container.querySelector('#model-chain-diverged-note'));
   if (forked.length === 0) {
     existing?.remove();
     return;
   }
-  const roles = forked.map(roleLabel).join(' · ');
-  let note = /** @type {HTMLElement|null} */ (existing);
+  let note = existing;
   if (!note) {
     note = document.createElement('div');
     note.id = 'model-chain-diverged-note';
     note.className = 'mp-note mp-note-fork';
     container.insertBefore(note, container.firstChild);
   }
-  note.textContent = t('model.divergedBar', { roles });
+  paintNoteChips(note, t('model.divergedNoteLead'), forked.map(roleLabel));
 }
 
 /**
- * 设置页「模型（按会话类别）」节的两模式控件（模型配置两模式批 2026-11-18）。
- * 复用 /model 面板的同一对类（.mp-modes / .mp-mode-btn，= 全站唯一两模式控件形态）
- * + 设置页本地的落位类（.set-modes，见 settingsRows.css）——零第二套控件。
+ * 设置页「模型（按会话类别）」节的模式控件（模型设置页 switch 批 2026-11-21 作者令）。
+ * 修前 = 两段式按钮（全部跟随主会话 / 分开配置）；修后 = 顶部**一个开关** + 一行
+ * 当前态文字。语义按移动端惯例：开 = 分开配置，关 = 全部跟随主会话。
+ * 开关本体 = 全站唯一开关组件（toggle.js 的 .nb-toggle，造型归 css/sidebar.css），
+ * 本节只补落位（.mp-mode-row / .mp-mode-state，见 css/settingsRows.css）——零第二套控件。
  * 状态单点 = 本模块 panelMode（/model 面板与本节读写同一份，任一切换两面同态）。
  * @param {HTMLElement} container #model-chain-section-body
  */
 function renderSessionModeControl(container) {
-  let box = /** @type {HTMLElement|null} */ (container.querySelector('#model-chain-modes'));
-  if (!box) {
-    box = document.createElement('div');
-    box.id = 'model-chain-modes';
-    box.className = 'mp-modes set-modes';
-    box.setAttribute('role', 'group');
-    box.setAttribute('aria-label', t('settings.modelChainDisclosureTitle'));
-    for (const mode of ['unified', 'separate']) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'mp-mode-btn';
-      btn.dataset.mode = mode;
-      btn.textContent = mode === 'unified' ? t('model.modeUnified') : t('model.modeSeparate');
-      btn.addEventListener('click', () => setMode(mode));
-      box.appendChild(btn);
-    }
-    container.insertBefore(box, container.firstChild);
+  const separate = panelMode === 'separate';
+  let row = /** @type {HTMLElement|null} */ (container.querySelector('#model-chain-modes'));
+  if (!row) {
+    row = document.createElement('div');
+    row.id = 'model-chain-modes';
+    row.className = 'set-row mp-mode-row';
+    const label = document.createElement('span');
+    label.className = 'set-row-label';
+    label.textContent = t('model.modeSeparate');
+    const ctrl = document.createElement('span');
+    ctrl.className = 'set-row-ctrl';
+    const toggle = createToggle({
+      on: separate,
+      id: 'model-mode-switch',
+      label: t('model.modeSeparate'),
+      title: t('model.modeSeparateHint'),
+    });
+    // 开关 → setMode（写单一状态 + 持久化 + 两面对称重绘）。
+    // 🔴 翻转必须在 setMode **之前**（组件契约的乐观翻转：bindToggle 同序）：
+    // setMode 同步触发本节整段重绘（DOM 增删会强制一次样式重算），若把 class
+    // 翻转压到重绘里，那次重算会把「已开」当成起始值 ⇒ 180ms 过渡被吞，
+    // 开关看上去是瞬间跳过去的（实测无 transitionrun 事件）。
+    toggle.addEventListener('click', () => {
+      const next = toggle.classList.contains('on') ? 'unified' : 'separate';
+      setToggleState(toggle, next === 'separate');
+      setMode(next);
+    });
+    ctrl.appendChild(toggle);
+    row.append(label, ctrl);
+    container.insertBefore(row, container.firstChild);
   }
-  for (const btn of box.querySelectorAll('.mp-mode-btn')) {
-    const on = btn.getAttribute('data-mode') === panelMode;
-    btn.classList.toggle('on', on);
-    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  const toggle = /** @type {HTMLElement|null} */ (row.querySelector('#model-mode-switch'));
+  setToggleState(toggle, separate);
+
+  let state = /** @type {HTMLElement|null} */ (container.querySelector('#model-chain-mode-state'));
+  if (!state) {
+    state = document.createElement('div');
+    state.id = 'model-chain-mode-state';
+    state.className = 'set-row-hint mp-mode-state';
+    state.setAttribute('role', 'status');
+    container.insertBefore(state, row.nextSibling);
   }
+  state.textContent = separate ? t('model.modeStateSeparate') : t('model.modeStateUnified');
 }
 
 /**
@@ -777,16 +846,36 @@ function renderFollowSummary(container) {
   const loaded = FOLLOWER_ROLES.every((r) => roleState.get(r)?.data);
   if (panelMode !== 'unified' || !loaded) { note?.remove(); return; }
   const forked = new Set(forkedRoles());
-  const names = FOLLOWER_ROLES.filter((r) => !forked.has(r)).map(roleLabel).join(' · ');
-  if (!names) { note?.remove(); return; }
+  const names = FOLLOWER_ROLES.filter((r) => !forked.has(r)).map(roleLabel);
+  if (!names.length) { note?.remove(); return; }
   if (!note) {
     note = document.createElement('div');
     note.id = 'model-chain-follow-note';
     note.className = 'mp-note mp-settings-follow-note';
-    const anchor = container.querySelector('#model-chain-diverged-note');
+    const anchor = /** @type {HTMLElement|null} */ (container.querySelector('#model-chain-diverged-note'));
     container.insertBefore(note, anchor ? anchor.nextSibling : container.firstChild);
   }
-  note.textContent = t('settings.modelModeUnifiedNote', { roles: names });
+  // switch 批：与分叉注记同一结构（引导语 + 类别胶囊），折行只发生在类别之间。
+  paintNoteChips(note, t('model.followsNebula', rootNameParams()), names);
+}
+
+/**
+ * 节首四件的固定次序（开关行 → 当前态 → 分歧注记 → 跟随说明）。
+ * 只在**实际次序**与目标序不一致时才移动节点：`insertBefore` 即使目标本来就是
+ * 第一个子件也会先摘再插，而一次 DOM 摘挂会把正在跑的 CSS 过渡整条取消
+ * （开关的 180ms 圆钮位移因此在改前路径上永远看不见）。
+ * @param {HTMLElement} container #model-chain-section-body
+ */
+function orderSectionHead(container) {
+  const order = ['#model-chain-modes', '#model-chain-mode-state',
+    '#model-chain-diverged-note', '#model-chain-follow-note'];
+  let anchor = container.firstElementChild;
+  for (const sel of order) {
+    const el = /** @type {HTMLElement|null} */ (container.querySelector(sel));
+    if (!el) continue;
+    if (el === anchor) { anchor = anchor.nextElementSibling; continue; }
+    container.insertBefore(el, anchor);
+  }
 }
 
 function renderChainSectionBody(container) {
@@ -856,17 +945,19 @@ function renderChainSectionBody(container) {
       else if (activeSelect) current.querySelector('select')?.focus({ preventScroll: true });
     }
   }
-  // 本档不该铺的行收掉（separate → unified 时四个跟随类别行 + 小模型行在场）。
+  // 本档不该铺的行收掉（separate → unified 时小模型行离场；五类角色行恒在册，
+  // unified 档只是置灰只读，故不在此收）。
   for (const stale of [...container.querySelectorAll('.mp-settings-role-panel, #small-llm-settings-row')]) {
     const role = /** @type {HTMLElement} */ (stale).getAttribute('data-role');
     const sel = role ? `[data-role="${role}"]` : '#small-llm-settings-row';
     if (!wanted.has(sel)) /** @type {HTMLElement} */ (stale).remove();
   }
-  // 节内头三件的固定次序：模式控件 → 分歧注记 → 跟随说明（倒序搬到队首即目标序）。
-  for (const sel of ['#model-chain-follow-note', '#model-chain-diverged-note', '#model-chain-modes']) {
-    const el = container.querySelector(sel);
-    if (el) container.insertBefore(el, container.firstChild);
-  }
+  // 节内头四件的固定次序：模式开关行 → 当前态文字 → 分歧注记 → 跟随说明。
+  // 🔴 只在**次序真的不对**时才搬（switch 批 2026-11-21）：`insertBefore` 会先把节点
+  // 摘下再插入，即使它本来就在位 —— 那一次摘挂会把正在跑的 180ms 开关过渡整条
+  // 取消（实测：点开关后首帧就已是终点位、零 transitionrun）。修前每帧无条件搬一次，
+  // 于是「改前就有过渡」的开关在这条路径上永远看不见动。
+  orderSectionHead(container);
   renderSwitchGroups(list, { settings: true });
 }
 
