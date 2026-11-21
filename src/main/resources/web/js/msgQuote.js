@@ -35,6 +35,7 @@ import { showPopupMenu } from './contextMenu.js';
 // popArtifacts → msgQuote 的有意边成 SCC[3]（scripts/check-circular.mjs）。
 // reference.js 保留 makeReference 同名 re-export 作兼容面。
 import { makeReference } from './refModel.js';
+import { displayOutputText } from './outputTag.js';
 import state from './state.js';
 // 引用牌图标化批（2026-11-02 11:00 作者令）：气泡引用块与 composer chip 的「类型
 // 图标」同一实现（图片=真缩略 / 文档=.fc-icon 原图标 / 文字=引用入口图标），单点 =
@@ -115,7 +116,10 @@ function excerptOf(d) {
     // 截掉 —— 标注必须在看得见的位置（作者令「引用牌要能区分」的可读落地）。
     case 'image': return `${t('chat.quoteTypeImage')} ${quoteItemPosOf(d) ? quoteItemPosOf(d) + ' · ' : ''}${d.fileName || ''}`.trim();
     case 'file': return `${t('chat.quoteTypeFile')} ${d.fileName || ''}`.trim();
-    default: return firstLineExcerpt(d.text);
+    // 引用原文展示面（2026-11-21 作者令「引用的内容去掉 report 块语法，直接显示渲染后
+    // 的纯文字」）：有平衡 report 块 ⇒ 摘要取块内渲染纯文字（标签不现形）；无块 ⇒ 原文。
+    // 只改摘要（展示面）；fullText 快照（fullTextOf）存原文，不动。
+    default: return firstLineExcerpt(displayOutputText(d.text));
   }
 }
 
