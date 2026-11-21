@@ -32,6 +32,19 @@ class SleepPollStartupRuleSpec extends FunSuite:
     assert(rule.nonEmpty && rule.length < 800, s"single-paragraph iron rule, compact: ${rule.length} chars")
   }
 
+  test("delegate brief mandates linked-worktree manifest checks before delivery") {
+    val brief = DelegateTool.assembleBrief("[workspace] /w", None, "TASK", "")
+    val required =
+      "Before delivery, you MUST run the manifest check in the linked worktree; if MANIFEST.md is missing, do NOT deliver. A primary checkout explicitly reports SKIP."
+    assert(brief.contains(required), brief)
+    println(
+      "RENDERED_WORKTREE_BEGIN\n" + brief.substring(
+        brief.indexOf("Worktrees and temporary artifacts:"),
+        brief.indexOf("\n[report]")
+      ) + "\nRENDERED_WORKTREE_END"
+    )
+  }
+
   test("delegate brief 装配（DelegateTool.assembleBrief）：铁律在任务正文之前、纪律行之后") {
     val brief = DelegateTool.assembleBrief(
       workspaceLine = "[workspace] /tmp/ws",

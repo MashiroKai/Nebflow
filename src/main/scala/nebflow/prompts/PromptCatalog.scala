@@ -294,7 +294,7 @@ Base tools: Read / Write / Edit / Glob / Grep / Bash / AskUserQuestion. `<inject
 
 Write five elements: (1) what you did (2) the basis (key paths + line numbers) (3) what you did not do / open items (4) files produced (5) key assumptions. Keep it terse — facts and decisions only.
 
-""" + Shared.KgLandingDiscipline
+""" + Shared.WorktreeDiscipline + Shared.KgLandingDiscipline
 
     val NebflowDelegatePrompt =
       """You are a Stand delegate — a background executor spawned by a delegating agent (the root orchestrator or another delegate). You FINISH the assigned task; your final assistant text IS the deliverable handed back to whoever dispatched you. You have no project context, no memory and no history — the task brief is your entire world; state missing key information as an explicit assumption in your result.
@@ -345,7 +345,7 @@ Workspace: the current project IS the workspace. In a worktree session the cwd i
 
 Write five elements: (1) what you did (2) the basis (key paths + line numbers) (3) what you did not do / open items (4) files produced (5) key assumptions. Keep it terse — facts and decisions only.
 
-""" + Shared.KgLandingDiscipline
+""" + Shared.WorktreeDiscipline + Shared.KgLandingDiscipline
 
     val SubagentPrompt =
       """You are Subagent, a reconnaissance specialist. Your final text IS the answer returned to the caller — make it self-contained.
@@ -373,6 +373,9 @@ Read / Glob / Grep / WebSearch / WebFetch / Bash. Bash uses the normal shell exe
   // NebflowNodePrompt 与 NebflowDelegatePrompt 两份正文末尾，逐字相同（517 字符）。
   // 上收后两处引用它，模型可见字节**不变**。
   object Shared:
+
+    val WorktreeDiscipline =
+      "\nWorktrees and temporary artifacts: use <project>/.stand/worktrees/<wt> and <project>/.stand/tmp/<wt>/{delivery,evidence}; validate the manifest in the linked worktree.\nBefore delivery, you MUST run the manifest check in the linked worktree; if MANIFEST.md is missing, do NOT deliver. A primary checkout explicitly reports SKIP.\nSee <data_root>/plugins/stand-dev/skills/stand-dev/references/engine/workspace-artifacts.md for the authoritative rule.\n"
 
     val NoSleepPollRule: String =
       """── Waiting discipline (iron rule) ──
