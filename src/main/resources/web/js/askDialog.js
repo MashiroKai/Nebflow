@@ -282,6 +282,17 @@ export function createAskDialog(cfg) {
         ? { kind: 'card', key: cardKey(m.text), text: m.text, msg: m }
         : { kind: 'bubble', role: m.role, text: m.text, msg: m }));
 
+      // 回合标记（canvas ask 状态可视批 2026-11-21，作者 13:00 令）：最后一条用户问
+      // 之后挂一行「处理中 / 已回复 / 已中止 / 失败」——终态**常驻**，不随 2.6s 驻留
+      // 收回（状态行的 DONE 驻留到期即隐，正是作者「看不到已回复」的根因）。
+      // 态 = 会话内存里的 replyState（arm/settle 点写），刷新后不回放。
+      // 必须在建池/建索引**之前**插入（插入会平移 desired 下标）。
+      if (s && s.replyState) {
+        let at = -1;
+        desired.forEach((d, i) => { if (d.kind === 'bubble' && d.role === 'user') at = i; });
+        if (at >= 0) desired.splice(at + 1, 0, { kind: 'mark', state: s.replyState });
+      }
+
       // ① 认脸：已在列的卡行按载荷建池（同载荷多张卡 = 先进先出配对）。
       /** @type {Map<string, HTMLElement[]>} */
       const pool = new Map();
@@ -325,6 +336,18 @@ export function createAskDialog(cfg) {
           row.appendChild(host);
           renderWithRegistry(host, d.text, 'Card');
           node = row;
+        } else if (d.kind === 'mark') {
+          const label = {
+            working: tt('处理中…', 'Working…'),
+            replied: tt('已回复', 'Replied'),
+            stopped: tt('已中止', 'Stopped'),
+            failed: tt('失败，见上方提示', 'Failed, see the notice above'),
+          }[d.state] || '';
+          node = h('div', {
+            class: 'ask-reply-mark',
+            role: 'status',
+            'data-nf-reply-state': d.state,
+          }, [label]);
         } else {
           // glass-unify 批 2026-11-05：气泡挂唯一毛玻璃工具类 `.nf-glass`。
           // （`m.role` 是转录行原文：check-chat-ui / check-glass-unify 两处静态
@@ -446,13 +469,16 @@ export function createAskDialog(cfg) {
     /** 臂：该会话 turn 在飞 → 中断钮上位（活动会话才动 chrome；幂等）。 */
     armTurn(s) {
       s.busy = true;
+      s.replyState = 'working';
       s.lastFrameAt = Date.now();
       if (s === cfg.activeSession() && turnToggle) turnToggle.busy();
     },
     /** 收：终态（busy 清 + 中断钮让位；幂等）。 */
-    settleTurn(s) {
+    settleTurn(s, outcome = 'replied') {
       if (!s) return;
       s.busy = false;
+      // 只从「处理中」落到终态；已落终态（如先点停、后到的服务端 done）不被覆盖。
+      if (s.replyState === 'working') s.replyState = outcome;
       if (s === cfg.activeSession() && turnToggle) turnToggle.idle();
     },
     /** 用户点停：帧出口走包单点（与主会话 #stop-btn 逐字节同帧）；UI 即刻收口。 */
@@ -460,7 +486,7 @@ export function createAskDialog(cfg) {
       const s = cfg.activeSession();
       if (!s || !s.busy) return;
       requestTurnInterrupt(s.sid);
-      dlg.settleTurn(s);
+      dlg.settleTurn(s, 'stopped');
       if (dlg.isOpen()) { dlg.removeTyping(); dlg.render(); dlg.snapCol(); }
     },
 
@@ -569,7 +595,7 @@ export function createAskDialog(cfg) {
         case 'interrupted': {
           const wasBusy = entry.busy;
           if (!(entry === cfg.activeSession() && dlg.isOpen())) entry.unread = true;
-          dlg.settleTurn(entry);
+          dlg.settleTurn(entry, 'stopped');
           cfg.onPersist?.(entry);
           if (entry === cfg.activeSession()) {
             if (dlg.isOpen()) { dlg.removeTyping(); dlg.render(); const last = entry.msgs[entry.msgs.length - 1]; dlg.settleCol(wasBusy && last && last.role === 'ai' ? [last] : []); } // Partial answer, once.
@@ -580,7 +606,7 @@ export function createAskDialog(cfg) {
         case 'error': {
           // v2.1：错误不再起 sys 气泡——文本落助手气泡槽（问答面只出两族）。
           if (!(entry === cfg.activeSession() && dlg.isOpen())) entry.unread = true;
-          dlg.settleTurn(entry);
+          dlg.settleTurn(entry, 'failed');
           const last = entry.msgs[entry.msgs.length - 1];
           const errText = tt('出错了：', 'Error: ') + (msg.message || 'unknown');
           if (last && last.role === 'ai' && !last.text) last.text = errText;
