@@ -64,6 +64,7 @@ function filesFromClipboard(e) {
 export function answerAttachmentsAllowed(questions) {
   if (!Array.isArray(questions) || questions.length === 0) return false;
   if (questions.some(q => q && q.secret === true)) return false; // secret 卡 fail-closed
+  if (questions.some(q => q && q.merge)) return false; // structured answers cannot be replaced by attachments
   if (questions.some(q => q && q.dirPicker === true)) return false; // 选择面写入的卡不带
   // 至少一道开放题（无 options）——选择题卡不显示入口（修正①）。
   return questions.some(q => q && !(q.options && q.options.length > 0));

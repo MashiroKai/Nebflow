@@ -402,6 +402,49 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
     yield ()).unsafeRunSync()
   }
 
+  test("merge answer reaches the model through the real hub and answer bridge") {
+    val config = Json.obj(
+      "target" -> "main".asJson,
+      "targets" -> Json.arr("main".asJson),
+      "branches" -> Json.arr(Json.obj("name" -> "feat/a".asJson))
+    )
+    val input = JsonObject("questions" -> Json.arr(Json.obj("question" -> "Merge?".asJson, "merge" -> config)))
+    val f = setup(
+      "merge-answer",
+      AgentDef(name = "Nebula", description = "", tools = Nil),
+      depth = 0,
+      sid = "merge-root",
+      askInput = input,
+      holdTurn = true
+    )
+    val answer =
+      """{"decision":"approve","branches":[{"name":"feat/c","note":"first"},{"name":"feat/a","note":"second"}],"target":"main","text":"after tests"}"""
+    (for
+      _ <- waitFor(f.requests, _.size >= 2, "no ack")
+      _ <- waitFor(f.wsEvents, _.exists(_.hcursor.get[String]("type").toOption.contains("askUser")), "no card")
+      frames <- f.wsEvents.get
+      card = frames.filter(_.hcursor.get[String]("type").toOption.contains("askUser")).last
+      requestId = card.hcursor.get[String]("requestId").toOption.get
+      _ = assertEquals(card.hcursor.downField("items").downN(0).downField("merge").focus, Some(config))
+      _ <- pendingAsksUntil(f.hub, f.sid, _.size == 1, "no pending ask")
+      _ <- f.releaseTurn
+      _ <- f.hub ! InteractionHubCommand.Answered(
+        InteractionAnswered(requestId, f.sid, Json.obj("answers" -> Json.arr(answer.asJson)))
+      )
+      _ <- waitFor(f.requests, _.size >= 3, "answer not injected")
+      requests <- f.requests.get
+      // Text-only messages can be represented as Left; inspect both representations.
+      texts = requests.last.messages
+        .filter(_.role == nebflow.shared.MessageRole.User)
+        .flatMap(m => m.content.fold(List(_), _.collect { case nebflow.shared.ContentBlock.Text(t) => t }))
+      _ = assert(
+        texts.exists(_.endsWith(answer)),
+        s"model did not receive exact structured answer after clock prefix: $texts"
+      )
+      _ <- f.cleanup
+    yield ()).unsafeRunSync()
+  }
+
   // ============================================================
   // 2. 后台身份 root-only 拒绝：零副作用且拒绝后 turn 正常收尾
   // ============================================================

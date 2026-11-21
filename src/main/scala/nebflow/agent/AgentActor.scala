@@ -1442,6 +1442,7 @@ object AgentActor extends AgentCore with AgentSession:
         }),
         "allowOther" -> item.allowOther.asJson
       )
+      item.merge.foreach(m => base += "merge" -> m)
       item.id.foreach(id => base += "id" -> id.asJson)
       item.dependsOn.foreach { dep =>
         base += "dependsOn" -> Json.obj("ref" -> dep.ref.asJson, "equals" -> dep.equals.asJson)
