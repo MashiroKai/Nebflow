@@ -10,13 +10,19 @@
 //   G2 裁切   —— 会话流可滚到最后一条消息且**完整可读**（末条矩形落在输入条与 dock
 //                之上，且不被任何 overflow 裁剪祖先切到）。
 //   G3 真透过 —— dock/输入条玻璃背后**确有内容**且配方与 canvas 参照物逐字同值。
-//                （🔴 已知未达项：backdrop 取到的是平坦页底，见该测试内 strict 腿注）
 //                · 配方判据：dock / 输入条 / canvas 悬浮圆钮（作者参照物 .g2-fab，
 //                  canvas 页实测）三者 backdrop-filter 逐字同值 = 唯一配方令牌
 //                  --nf-glass-input-filter；底色 α 落在「透过带」（≤ .35，实底 ≥ .90）。
-//                · 像素判据（自证）：同一机位两张截图 —— dock 可见（A）与 dock 隐藏（B），
-//                  A 必须 **保留 B 的空间结构**（相关系数 > 0.3、标准差 > 1.5 ⇒ 不是实底
-//                  覆盖）且 **被平滑**（sd(A) < sd(B) ⇒ 是真模糊，不是原样透出）。
+//                · 像素判据在**严格腿 G3s**（opt-in：NEB_OVERLAY_STRICT_GLASS=1）：
+//                  判据**单源** = `scripts/glass-runtime-criteria.mjs`（与运行时闸 R1 共用，
+//                  阈值取自设计规范 §9）。不变式：**玻璃贡献只在背后样本可判时才成立** ——
+//                  背后有可辨内容（背板 edge ≥ flatEdgeMax）⇒ 该面自己的 backdrop-filter
+//                  必须改像素（Δpx ≥ effectMin）；背后平色 / 被不透明层盖住 ⇒ 该样本不可判（豁免）。
+//                  该腿**单钉能栅格化 backdrop-filter 的引擎**（channel: 'chromium'）并先自证
+//                  引擎能力 —— 默认 headless shell **整只**不栅格化 backdrop-filter，
+//                  在它上面量这条永远得 0（既有「sd≡0」假读数的真因之一，见 G3s 头注）。
+//                  （2026-11-18 复测批收口：静止态背后为空是净空 134px 的设计属性，
+//                    不是缺陷 —— 旧「sd(A) > 1.0」按数字调的写法已废。）
 //   G4 顶栏   —— 设置页是**全屏页**（不是弹窗），返回钮是**悬空玻璃钮**，内容从钮背后
 //                穿过；顶部/中部/底部三个滚动位置都无裁切（行矩形不被裁剪祖先切到）。
 //   G5 形态铁律 —— 手机端设置 = 全屏页形态（viewport 375×812；唯一 .live 页面包住整个
@@ -26,10 +32,11 @@
 // 自证检测力（拿当前坏源码当破坏样本）：
 //   红：NEB_MOBILE_WEB_ROOT=<主检出>/src/main/resources/web node node_modules/@playwright/test/cli.js test tests/mobile-overlay-glass.spec.mjs
 //   绿：node node_modules/@playwright/test/cli.js test tests/mobile-overlay-glass.spec.mjs
+//   严格腿：NEB_OVERLAY_STRICT_GLASS=1 node node_modules/@playwright/test/cli.js test tests/mobile-overlay-glass.spec.mjs
 //
 // Run: node node_modules/@playwright/test/cli.js test tests/mobile-overlay-glass.spec.mjs
 
-import { test, expect } from '@playwright/test';
+import { test, expect, chromium } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { inflateSync } from 'node:zlib';
 import { join, dirname, extname, normalize } from 'node:path';
@@ -110,6 +117,20 @@ function corr(a, b) {
   let num = 0, da = 0, db = 0;
   for (let i = 0; i < a.length; i++) { const x = a[i] - ma, y = b[i] - mb; num += x * y; da += x * x; db += y * y; }
   return num / Math.sqrt(da * db || 1);
+}
+/** 两张同尺寸 PNG 的逐通道平均绝对差（Δpx / 可见度读数）。 */
+function meanAbsDiffImg(a, b) {
+  const n = Math.min(a.data.length, b.data.length); let s = 0, c = 0;
+  for (let i = 0; i < n; i += a.ch) for (let k = 0; k < Math.min(3, a.ch); k++) { s += Math.abs(a.data[i + k] - b.data[i + k]); c++; }
+  return c ? s / c : 0;
+}
+/** 区域内水平相邻像素的亮度平均绝对差 = 背板**平整度**读数（近 0 ⇒ 平色背板）。 */
+function edgeEnergy(img, x0, y0, rw, rh) {
+  const y1 = Math.min(y0 + rh, img.height), x1 = Math.min(x0 + rw, img.width);
+  const L = (x, y) => { const i = (y * img.width + x) * img.ch; return 0.2126 * img.data[i] + 0.7152 * img.data[i + 1] + 0.0722 * img.data[i + 2]; };
+  let e = 0, n = 0;
+  for (let y = Math.max(0, y0); y < y1; y++) for (let x = Math.max(1, x0 + 1); x < x1; x++) { e += Math.abs(L(x, y) - L(x - 1, y)); n++; }
+  return e / Math.max(1, n);
 }
 /** rgba()/rgb() → [r,g,b,a]；transparent 视为 α 0。 */
 function parseColor(s) {
@@ -350,7 +371,10 @@ test('G3 true see-through: the composer glass shows real, blurred backdrop conte
   expect(behindGlass.msgsBehindComposer, 'messages must overlap the composer glass band').toBeGreaterThan(0);
   expect(behindGlass.hitDock, 'a message bubble must paint at the dock glass sampling point (content behind the glass)').toBe('fm-msg');
 
-  // ④ 不是实底覆盖（像素档）：真玻璃带与「不透明底 + 无模糊」有实质差异。
+  // ④ 旧数字腿读数**留档**（仅日志，不再断言、也不承载判据）。
+  //    这两条读数在**不栅格化 backdrop-filter 的引擎**里恒为 0 / 1.3 量级 —— 实测（复测批
+  //    2026-11-18）：@playwright/test 默认那只浏览器（headless shell）整只不栅格化
+  //    backdrop-filter。像素判据见下方「严格腿 G3s」（单钉能栅格化的引擎 + 先自证引擎能力）。
   const g2 = await page.evaluate(`(() => {
     const c = document.querySelector('.mobile-page[data-page="conversation"] .fm-input-bar').getBoundingClientRect();
     return { x: Math.round(c.left) + 200, y: Math.round(c.top) + 4, width: 90, height: 14 };
@@ -361,20 +385,150 @@ test('G3 true see-through: the composer glass shows real, blurred backdrop conte
   const shotD = await page.screenshot({ clip: g2 });
   await page.evaluate(`(() => { const c = document.querySelector('.mobile-page[data-page="conversation"] .fm-input-bar'); c.style.background = c.dataset.__b || ''; c.style.backdropFilter = c.dataset.__f || ''; c.style.webkitBackdropFilter = c.dataset.__f || ''; })()`);
   const imA = decodePng(shotA), imD = decodePng(shotD);
-  const A = lumaStats(imA, 0, 0, imA.width, imA.height, 1);
-  const D = lumaStats(imD, 0, 0, imD.width, imD.height, 1);
-  const sdA = stddev(A);
-  const absAD = mean(A.map((v, i) => Math.abs(v - D[i])));
-  // 🔴 严格腿（NEB_OVERLAY_STRICT_GLASS=1）：本批**未能满足**的那半条 ——
-  //    「玻璃带里必须留下背景的结构」= 真透过 vs 实底覆盖的像素级判据。
-  //    实测（本批修后）：输入条玻璃带 sd=0.00、dock 带 sd 只由 dock 自身墨迹贡献；
-  //    隐藏背后内容或关掉 backdrop-filter，带内像素**逐值不变** ⇒ 玻璃的 backdrop
-  //    取到的是平坦页底，不是窗内内容。缺省绿腿不承载这条；它留在这里当**复现器**，
-  //    谁修好了「真·backdrop 捕获」谁就把这半条提成默认判据（届时 strict 腿转绿）。
-  if (process.env.NEB_OVERLAY_STRICT_GLASS === '1') {
-    expect(sdA, `[strict] the glass band must keep structure from its backdrop: sd(A)=${sdA.toFixed(2)}`).toBeGreaterThan(1.0);
-    expect(absAD, `[strict] the glass band must differ from an opaque plate: meanAbs(A,D)=${absAD.toFixed(2)}`).toBeGreaterThan(3.0);
-  }
+  const sdA = stddev(lumaStats(imA, 0, 0, imA.width, imA.height, 1));
+  const absAD = meanAbsDiffImg(imA, imD);
+  console.log(`[glass-leg] rest-band sd(A)=${sdA.toFixed(2)} meanAbs(A,D)=${absAD.toFixed(2)}（旧数字腿读数，仅留档；判据见 G3s）`);
+});
+
+// ── 严格腿 G3s：真透过的**像素判据**（判据**单源**：与运行时闸 R1 共用
+//    `scripts/glass-runtime-criteria.mjs`；阈值来自references/frontend/glass-runtime-spec.md §9.2 的 ```glass-runtime-criteria 块，
+//    本文件**零阈值拷贝**）──────────────────────────────────────────────────────
+//
+// 不变式：**玻璃贡献只在背后样本可判时才成立** ——
+//   · 背后有可辨内容（背板边缘能量 ≥ flatEdgeMax）⇒ 该面**自己**的 backdrop-filter 必须改像素（Δpx ≥ effectMin）；
+//   · 背后是平色背板（模糊常量色仍得常量色）/ 该面被不透明层盖住 ⇒ 该样本**不可判** = 豁免（逐样本具名，不是阈值放宽）。
+//
+// 为什么不再写「sd(A) > 1.0 / meanAbs(A,D) > 3.0」：那是按数字调，且**在错的引擎上**调。
+//
+// 🔴 引擎前提（2026-11-18 复测批实测 —— 这是「严格腿一直红」的真因之一，不是产品缺陷）：
+//   `backdrop-filter` 只在**能栅格化它的引擎**里才改像素。`@playwright/test` 默认那只浏览器
+//   （headless shell）**整只**不栅格化 backdrop-filter：同一棵树、同一屏、同一只玻璃，
+//   默认引擎 Δpx ≡ 0；本机 full chromium（`channel: 'chromium'` —— 运行时闸 R1 用的正是这一只）
+//   同屏 Δpx = 33.15。在默认引擎上量「玻璃真不真采样」永远得 0 ⇒ 既有「玻璃纸」假红与
+//   「sd ≡ 0」假读数。故本腿：① 只跑 full chromium；② 先**自证引擎能力**（合成对照面开/关
+//   backdrop-filter 必须改像素），能力不成立就 **SKIP**（CI 档 SKIP 记 FAIL），绝不静默绿 ——
+//   这是「不能判」与「判绿」的分界线。
+test.describe('strict see-through pixel leg', () => {
+  test.skip(process.env.NEB_OVERLAY_STRICT_GLASS !== '1', 'strict 像素腿是 opt-in：设 NEB_OVERLAY_STRICT_GLASS=1');
+
+  test('G3s see-through: the composer glass really samples its backdrop whenever the sample is judgeable', async () => {
+    const { CRITERIA, glassSampleVerdict } = await import('../scripts/glass-runtime-criteria.mjs');
+    // 本腿**自起**那只 full chromium（`channel: 'chromium'`，与运行时闸 R1 同一只）——
+    // test.use({channel}) 在 describe 里不允许（会强开新 worker），而默认那只 headless shell
+    // 整只不栅格化 backdrop-filter，量不了这条判据（见本段头注）。
+    let browser = null;
+    try { browser = await chromium.launch({ channel: 'chromium' }); }
+    catch (e) {
+      const why = `full chromium（channel: 'chromium'）不可用，无法栅格化 backdrop-filter：${e.message.split('\n')[0]}`;
+      console.log(`SKIP  G3s ${why}`);
+      if (process.env.CI) expect(false, `SKIP in CI counts as FAIL: ${why}`).toBe(true);
+      test.skip(true, why);
+      return;
+    }
+    const context = await browser.newContext({ viewport: { width: 375, height: 812 }, hasTouch: true, isMobile: true, colorScheme: 'dark', locale: 'zh-CN', deviceScaleFactor: 2 });
+    try {
+      const page = await context.newPage();
+      await bootApp(page);
+
+    // ⓪ 引擎能力自证：合成对照面（高对比条纹背板 + blur 玻璃面），开/关 backdrop-filter 必须改像素。
+    await page.evaluate(() => {
+      const host = document.createElement('div');
+      host.id = 'nb-glass-cap-probe';
+      host.style.cssText = 'position:fixed;left:0;top:0;width:120px;height:60px;z-index:2147483647;pointer-events:none';
+      const back = document.createElement('div');
+      back.style.cssText = 'position:absolute;inset:0;background:repeating-linear-gradient(90deg,#000 0 6px,#fff 6px 12px)';
+      const glass = document.createElement('div');
+      glass.id = 'nb-glass-cap-probe-glass';
+      glass.style.cssText = 'position:absolute;inset:0;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)';
+      host.append(back, glass); document.body.appendChild(host);
+    });
+    await page.waitForTimeout(120);
+    const capClip = { x: 0, y: 0, width: 120, height: 60 };
+    const capOn = decodePng(await page.screenshot({ clip: capClip }));
+    await page.evaluate(() => { const g = document.getElementById('nb-glass-cap-probe-glass'); g.style.backdropFilter = 'none'; g.style.webkitBackdropFilter = 'none'; void g.offsetHeight; });
+    await page.waitForTimeout(120);
+    const capOff = decodePng(await page.screenshot({ clip: capClip }));
+    await page.evaluate(() => { document.getElementById('nb-glass-cap-probe')?.remove(); });
+    const capability = meanAbsDiffImg(capOn, capOff);
+    if (capability < CRITERIA.effectMin) {
+      const why = `引擎不栅格化 backdrop-filter（合成对照面开/关逐像素差 ${capability.toFixed(3)} < ${CRITERIA.effectMin}）⇒ 玻璃像素样本不可判`;
+      console.log(`SKIP  G3s ${why}`);
+      if (process.env.CI) expect(capability, `SKIP in CI counts as FAIL: ${why}`).toBeGreaterThanOrEqual(CRITERIA.effectMin);
+      test.skip(true, why);
+      return;
+    }
+
+    await openConversation(page);
+    const composerSel = '.mobile-page[data-page="conversation"] .fm-input-bar';
+    const band = await page.evaluate(`(() => { const c = document.querySelector(${JSON.stringify(composerSel)}).getBoundingClientRect(); return { x: Math.round(c.left) + 200, y: Math.round(c.top) + 4, width: 90, height: 14 }; })()`);
+    // settleBottom 的 1200ms「进场落底武装窗」每帧把滚动位拽回底部；用户意图事件即拆窗。
+    // 这里模拟「用户上翻读历史」—— 正是「真透过」必须成立的状态。
+    const disarm = () => page.evaluate(`(() => { for (const t of ['touchmove', 'touchstart', 'wheel', 'pointerdown']) document.dispatchEvent(new Event(t, { bubbles: true })); })()`);
+    const armAt = (d) => page.evaluate(({ d }) => { const f = document.querySelector('.mobile-page[data-page="conversation"] .fm-flow'); const max = f.scrollHeight - f.clientHeight; f.scrollTop = Math.max(0, Math.min(max, max - d)); return +f.scrollTop.toFixed(1); }, { d });
+    const hitAtBand = () => page.evaluate(({ x, y }) => { const c = document.querySelector('.mobile-page[data-page="conversation"] .fm-input-bar'); const p = c.style.visibility; c.style.visibility = 'hidden'; void c.offsetHeight; const h = document.elementFromPoint(x, y); c.style.visibility = p; void c.offsetHeight; return h ? (h.closest('.fm-msg') ? 'fm-msg' : h.tagName.toLowerCase() + (h.id ? '#' + h.id : '')) : null; }, { x: band.x + 45, y: band.y + 7 });
+    const setComposer = (props) => page.evaluate(({ p, sel }) => {
+      const c = document.querySelector(sel);
+      c.dataset.__sp = c.dataset.__sp || JSON.stringify({ f: c.style.backdropFilter, w: c.style.webkitBackdropFilter, v: c.style.visibility });
+      Object.assign(c.style, p);
+      void c.offsetHeight;                    // 强制布局：样式变更后 backdrop 根必须重建（否则合成层留旧 backdrop）
+    }, { p: props, sel: composerSel });
+    const restoreComposer = () => page.evaluate((sel) => { const c = document.querySelector(sel); const s = JSON.parse(c.dataset.__sp || '{}'); c.style.backdropFilter = s.f || ''; c.style.webkitBackdropFilter = s.w || ''; c.style.visibility = s.v || ''; void c.offsetHeight; }, composerSel);
+    const shot = async () => decodePng(await page.screenshot({ clip: band }));
+    /** 藏起玻璃面 ⇒ 量它**背后**的背板平整度（平色背板 ⇒ 该样本不可判）。 */
+    const backdropNow = async () => { await setComposer({ visibility: 'hidden' }); await page.waitForTimeout(90); const im = await shot(); await restoreComposer(); return edgeEnergy(im, 0, 0, im.width, im.height); };
+
+    // ① 扫滚动位，找**背后可辨**的样本（可判样本才承载判据）；找不到 ⇒ 判据前提不成立 ⇒ 红。
+    const trials = [];
+    let sample = null;
+    for (const d of [90, 60, 140, 300, 200, 40, 20, 420, 560]) {
+      await disarm();
+      const top = await armAt(d);
+      await page.waitForTimeout(70);
+      const hit = await hitAtBand();
+      const edge = await backdropNow();
+      trials.push({ offsetFromBottom: d, scrollTop: top, hit, backdropEdge: +edge.toFixed(2) });
+      if (hit === 'fm-msg' && edge >= CRITERIA.flatEdgeMax) { sample = { d, hit, backdropEdge: edge }; break; }
+    }
+    expect(sample, `[strict] 必须能装配出一个「背后有可辨内容」的可判样本（扫位读数：${JSON.stringify(trials)}）`).not.toBeNull();
+
+    // ② 在可判样本上取三条读数：Δpx（本相 vs 只摘该面自身 backdrop-filter）、可见度（本相 vs 藏起该面）、背板 edge
+    await disarm(); await armAt(sample.d); await page.waitForTimeout(70);
+    const glass = await shot();
+    await setComposer({ backdropFilter: 'none', webkitBackdropFilter: 'none' }); await page.waitForTimeout(90);
+    const noGlass = await shot();
+    await restoreComposer();
+    await setComposer({ visibility: 'hidden' }); await page.waitForTimeout(90);
+    const hidden = await shot();
+    await restoreComposer();
+    const deltaPx = meanAbsDiffImg(glass, noGlass);
+    const visibleDelta = meanAbsDiffImg(glass, hidden);
+    const bandEdge = edgeEnergy(hidden, 0, 0, hidden.width, hidden.height);
+    const v = glassSampleVerdict({ deltaPx, backdropEdge: bandEdge, cover: { visibleDelta, occluders: [] } });
+    const sdArmed = stddev(lumaStats(glass, 0, 0, glass.width, glass.height, 1));
+    console.log(`[strict] 引擎能力 Δpx=${capability.toFixed(2)}；armed sample offset=${sample.d}px hit=${sample.hit} Δpx=${deltaPx.toFixed(3)} 背板edge=${bandEdge.toFixed(2)} 可见度=${visibleDelta.toFixed(3)} sd(A)=${sdArmed.toFixed(2)} ⇒ ${v.status}；扫位 ${JSON.stringify(trials)}`);
+    expect(v.judgeable, `[strict] 该样本必须可判（背后已有可辨内容）：Δpx=${deltaPx.toFixed(3)} 背板edge=${bandEdge.toFixed(2)} — ${v.reason}`).toBe(true);
+    expect(v.ok, `[strict] 玻璃必须真采到背板：Δpx=${deltaPx.toFixed(3)}（effectMin=${CRITERIA.effectMin}）— ${v.reason}`).toBe(true);
+
+    // ③ 静止态留档：净空 134px ⇒ 背后为空 ⇒ 平色背板 ⇒ 不可判（设计属性，非缺陷）。它必须**不红**
+    //    （要么真采样、要么豁免），但不得被当成缺陷追。
+    await disarm(); await armAt(0); await page.waitForTimeout(70);
+    const restGlass = await shot();
+    await setComposer({ backdropFilter: 'none', webkitBackdropFilter: 'none' }); await page.waitForTimeout(90);
+    const restNoGlass = await shot();
+    await restoreComposer();
+    await setComposer({ visibility: 'hidden' }); await page.waitForTimeout(90);
+    const restHidden = await shot();
+    await restoreComposer();
+    const restEdge = edgeEnergy(restHidden, 0, 0, restHidden.width, restHidden.height);
+    const restDelta = meanAbsDiffImg(restGlass, restNoGlass);
+    const restV = glassSampleVerdict({ deltaPx: restDelta, backdropEdge: restEdge, cover: { visibleDelta: meanAbsDiffImg(restGlass, restHidden), occluders: [] } });
+    console.log(`[strict] rest sample Δpx=${restDelta.toFixed(3)} 背板edge=${restEdge.toFixed(2)} ⇒ ${restV.status}（净空设计所定：静止态背后为空）`);
+    expect(restV.ok, `[strict] 静止态样本不得判红（背后为空是净空设计属性）：${restV.status} — ${restV.reason}`).toBe(true);
+    } finally {
+      await context.close();
+      await browser.close();
+    }
+  });
 });
 
 test('G4 settings top bar: floating glass back button, content passes behind it, no truncation at top/middle/bottom', async ({ page }) => {
