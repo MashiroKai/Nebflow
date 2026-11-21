@@ -33,11 +33,15 @@
   transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
 }
 .tw-trigger:hover { background: var(--glass-control-bg-hover); }
-.tw-trigger:focus-visible,
+/* 焦点与「展开态」拆开（focus-ring-unify 批 2026-11-22）：原先两条选择器共用
+   一条规则，于是那圈焦点光晕（box-shadow 0 0 0 2px）会顺带落在没被聚焦的
+   `.open` 上。现在焦点只有全站统一的 outline 环，`.open` 只留它的描边。 */
+.tw-trigger:focus-visible {
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
+}
 .tw-trigger.open {
-  outline: none;
   border-color: rgb(var(--sapphire) / 0.6);
-  box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.12);
 }
 .tw-trigger svg {
   width: 13px;
@@ -194,7 +198,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   cursor: grab;
 }
 .tw-col:active { cursor: grabbing; }
-.tw-col:focus-visible { box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.35); }
+.tw-col:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 .tw-col-date { width: 104px; }
 .tw-strip {
   position: absolute;
@@ -344,8 +348,9 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   outline: none;
 }
 .tw-in:focus {
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
   border-color: rgb(var(--sapphire) / 0.6);
-  box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.12);
 }
 .tw-in.err {
   border-color: color-mix(in srgb, var(--status-error-icon) 55%, transparent);

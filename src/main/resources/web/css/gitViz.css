@@ -81,7 +81,7 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
 @media (hover: hover) {
   .project-gitviz-btn:hover { background: rgb(var(--sapphire) / 0.24); }
 }
-.project-gitviz-btn:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.7); outline-offset: 1px; }
+.project-gitviz-btn:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 .project-gitviz-btn svg { width: var(--ds-space-3); height: var(--ds-space-3); display: block; }
 
 /* ══ ① 顶部：贡献热力图 ══════════════════════════════════════════════ */
@@ -257,7 +257,7 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
 .gitviz-row:hover { background: rgb(var(--sapphire) / 0.07); }
 .gitviz-row.is-selected { background: rgb(var(--sapphire) / 0.14); }
 .gitviz-row.is-hot { background: rgb(var(--sapphire) / 0.1); }
-.gitviz-row:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.7); outline-offset: -2px; }
+.gitviz-row:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 .gitviz-row > input[type='checkbox'] { flex: 0 0 auto; margin: 0; accent-color: rgb(var(--sapphire) / 1); }
 .gitviz-subject {
   flex: 1 1 auto;
@@ -348,7 +348,7 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
   font: inherit;
   font-size: var(--ds-fs-meta);
 }
-.gitviz-note:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: -1px; }
+.gitviz-note:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 .gitviz-forward {
   display: flex;
@@ -377,7 +377,7 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
 }
 .gitviz-btn:hover:not(:disabled) { background: rgb(var(--sapphire) / 0.24); }
 .gitviz-btn:disabled { opacity: 0.45; cursor: default; }
-.gitviz-btn:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.7); outline-offset: 1px; }
+.gitviz-btn:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 .gitviz-forward-hint { color: var(--color-text-muted); font-size: var(--ds-fs-meta); }
 .gitviz-note-io {
   color: var(--color-text-muted);

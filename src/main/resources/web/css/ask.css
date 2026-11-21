@@ -230,7 +230,7 @@ nf-ask-dock { display: contents; }
 }
 .selection-ask-btn[hidden] { display: none; }
 .selection-ask-btn:hover { border-color: var(--ds-text-muted); }
-.selection-ask-btn:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.7); outline-offset: 1px; }
+.selection-ask-btn:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 .ask-dock.selection-dock {
   position: fixed;
@@ -976,7 +976,7 @@ body.mobile-layer .note-body textarea { font-size: var(--ds-fs-mobile-sub); } /*
 }
 /* 可点（仅两段时挂 role=button）——键盘可达性靠 tabIndex，焦点框沿用既有平台默认。 */
 .ask-user-source[role="button"] { cursor: pointer; }
-.ask-user-source[role="button"]:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.ask-user-source[role="button"]:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 /* 窄屏允许段间折行；各段仍使用桌面上限和省略规则。 */
 @media (max-width: 520px) {
   .ask-user-source { flex-wrap: wrap; white-space: normal; }

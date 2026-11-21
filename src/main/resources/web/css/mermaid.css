@@ -118,8 +118,8 @@ body > [id^='dnf-mermaid-svg-'] {
 }
 .nf-figure-open:focus-visible {
   opacity: 1;
-  outline: 2px solid rgb(var(--sapphire) / 0.7);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 /* 触摸档（无 hover 的设备）：角标常显 —— 手机上「悬停才出现」等于不存在。 */
 @media (hover: none) {

@@ -6033,8 +6033,8 @@ body.mobile-layer .tfl-menu-row .lucide-chevron-right {
 }
 body.mobile-layer .tfl-menu-row:active { opacity: 0.6; }
 body.mobile-layer .tfl-menu-row:focus-visible {
-  outline: 2px solid var(--ds-focus-ring);
-  outline-offset: -2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 /* 危险项（删除类）：红字走既有语义色令牌（base.css 亮/暗两档） */
 body.mobile-layer .tfl-menu-row.is-danger,

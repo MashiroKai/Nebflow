@@ -91,16 +91,16 @@
   /* canvas-button-unify 收口（2026-11-18）：lt-btn / viewer-retry-btn 归位（同上） */
   .lt-btn, .viewer-retry-btn
 ):focus-visible {
-  outline: var(--btn-ring-w) solid var(--btn-ring);
-  outline-offset: var(--btn-ring-offset);
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* ②c ID 承载族的焦点环（同 ②b 的拆分理由） */
 #perception-btn:focus-visible,
 #reminder-btn:focus-visible,
 #agent-avatar-btn:focus-visible {
-  outline: var(--btn-ring-w) solid var(--btn-ring);
-  outline-offset: var(--btn-ring-offset);
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* ── ③ 禁用态：补「无 disabled 定义」的族 ───────────────────────────────────

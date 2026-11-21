@@ -69,8 +69,9 @@
 }
 
 .project-link-btn:focus-visible {
-  outline: var(--btn-ring-w) solid var(--btn-ring);
-  outline-offset: var(--btn-ring-offset); border-radius: var(--ds-radius-badge); }
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
+  border-radius: var(--ds-radius-badge); }
 
 .project-open-btn {
   flex: 0 0 auto;
@@ -106,7 +107,6 @@
   --dropdown-icon-column: 24px;
   --dropdown-check-column: 20px;
   --dropdown-hover: rgb(var(--sapphire) / 0.15);
-  --dropdown-focus: rgb(var(--sapphire));
   position: fixed; z-index: 10000; min-width: var(--dropdown-min-width); padding: 4px;
   max-width: calc(100vw - 16px); max-height: calc(100vh - 16px);
   overflow-y: auto; box-sizing: border-box;
@@ -120,7 +120,7 @@
   color: var(--color-frame-text); text-align: left; cursor: pointer;
 }
 .project-open-menu button[aria-checked="true"], .project-open-menu button:hover, .project-open-menu button:focus-visible { background: var(--dropdown-hover); }
-.project-open-menu button:focus-visible { outline: 2px solid var(--dropdown-focus); outline-offset: -2px; }
+.project-open-menu button:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 /* 取消加载按钮（unmount-console 面板批 2026-11-02）：卡片头部显式人工卸载入口
    （原 .project-archive-btn 面位回归，类名随语义更替）。尺寸/形态对齐
@@ -143,8 +143,8 @@
 }
 .project-unmount-btn svg { width: 15px; height: 15px; }
 .project-unmount-btn:focus-visible {
-  outline: var(--btn-ring-w) solid var(--btn-ring);
-  outline-offset: var(--btn-ring-offset); }
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 /* ── Flow Map 就地视图（同标签页切换，projectTab.openFlowMapInPlace）────────── */
 
@@ -378,8 +378,8 @@
 
 
 .proj-create-fab:focus-visible {
-  outline: var(--btn-ring-w) solid var(--btn-ring);
-  outline-offset: var(--btn-ring-offset);
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
   opacity: 1;
 }
 
@@ -417,8 +417,8 @@
 }
 
 .proj-flowmap-fab:focus-visible {
-  outline: var(--btn-ring-w) solid var(--btn-ring);
-  outline-offset: var(--btn-ring-offset);
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
   opacity: 1;
 }
 
@@ -853,8 +853,8 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .delegate-chain-v
 }
 
 .project-desc-edit-btn:focus-visible {
-  outline: var(--btn-ring-w) solid var(--btn-ring);
-  outline-offset: var(--btn-ring-offset); }
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 .project-desc-editor {
   display: flex;
   flex-direction: column;
@@ -884,7 +884,7 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .delegate-chain-v
   transition: color 150ms ease;
 }
 .project-desc-cancel:hover { color: var(--color-text); }
-.project-desc-cancel:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); border-radius: var(--ds-radius-chip); }
+.project-desc-cancel:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); border-radius: var(--ds-radius-chip); }
 
 /* ── 减动效降级（🔴 本文件首个 `prefers-reduced-motion` 块；取证 §E 实测本文件此前无覆盖）──
    降级后语义仍完整（§F-3）：

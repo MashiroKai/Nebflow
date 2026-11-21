@@ -602,8 +602,8 @@
   background: rgb(var(--sapphire) / 0.16);
 }
 .reminder-repeat-seg button:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.5);
-  outline-offset: 1px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* ── Repeat badge on task rows (recurring only; one-shot shows none) ──── */
@@ -925,8 +925,8 @@ nf-sched-card { display: contents; }
 .schedule-card-btn.is-primary { border-color: rgb(var(--sapphire) / 0.5); color: rgb(var(--sapphire)); }
 .schedule-card-btn.is-danger { border-color: var(--status-error-icon); color: var(--status-error-icon); }
 .schedule-card-btn:focus-visible {
-  outline: var(--ds-focus-width) solid var(--btn-focus-ring);
-  outline-offset: var(--ds-border-width);
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* 原地编辑 / 取消确认（不跳页、不开模态） */
