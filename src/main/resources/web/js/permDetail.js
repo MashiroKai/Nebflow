@@ -161,15 +161,15 @@ export function callBodyOf(toolName, input, detail) {
  * 不再是卡外的一个新框。`opts.before` 给出插入锚点（卡里的问句行），
  * 缺省追加到末尾。
  *
- * 互斥分工（每条事实恰一处）：横幅已经承载的档位/要点不再复述 —— 两个判据由
- * **生产横幅的那一处**（chat.js / persistence.js）如实传入，本模块不猜：
- *   `opts.dangerShown` 档位（「危险操作」等文字 + 语义色底）已在横幅上
+ * 互斥分工（每条事实恰一处）：横幅已经承载的要点不再复述 —— 判据由**生产横幅的那一处**
+ * （chat.js / persistence.js）如实传入，本模块不猜：
  *   `opts.labelShown`  命中的规则人话标签已在横幅上（横幅文案含 `{detail}` 时）
+ * 权限卡不显示风险分档（作者第 4 轮裁定）：档位只由横幅的语义色/文字承载。
  *
  * @param {HTMLElement} host
  * @param {ReturnType<typeof permDetailFrom>} detail
  * @param {(key: string, params?: Record<string, string|number>) => string} t
- * @param {{ level?: number, before?: Element|null, dangerShown?: boolean, labelShown?: boolean }} [opts]
+ * @param {{ before?: Element|null, labelShown?: boolean }} [opts]
  */
 export function renderPermDetail(host, detail, t, opts = {}) {
   if (!host || !detail) return null;
@@ -178,11 +178,6 @@ export function renderPermDetail(host, detail, t, opts = {}) {
   const reason = detail.reason;
   const scope = detail.scope;
   if (!hasCommand && !reason && !scope) return null;
-  // 档位取二者先到者：`reason.level` 是判定闸自己给的档（载荷里恒在），`opts.level`
-  // 是帧上的 dangerLevel 投影。手机层实测只有前者（横幅因此不出现）——若只看 opts，
-  // 手机上的风险徽标会凭空消失，判定就丢了一处可见性。
-  const level = Number(reason && reason.level) || Number(opts.level) || 0;
-  const dangerShown = opts.dangerShown === true;
   const labelShown = opts.labelShown === true;
   const before = opts.before || null;
 
@@ -234,18 +229,12 @@ export function renderPermDetail(host, detail, t, opts = {}) {
 
   // ② 判定（主信息：风险档 + 标签，置于命令之下、作用域之上）：闸名 + 规则 id（次要字色）。**不是**「理由」—— 理由（档位 +
   //    人话标签）已经由卡首横幅承载，这里只补「这话是谁判的」，不复述结论。
-  //    无横幅的腿（手机层实测 / 历史行无 dangerLevel）必须自足：档位徽标与标签
-  //    就落回这一行，仍然各一次。
+  //    无横幅的腿（手机层实测 / 历史行无 dangerLevel）必须自足：标签落回这一行。
+  //    风险分档（L1/L2…）不在权限卡上显示（作者第 4 轮裁定）。
   if (reason) {
     const row = document.createElement('div');
     row.className = 'perm-reason';
     const labelText = typeof reason.label === 'string' ? reason.label : '';
-    if (!dangerShown && level > 0) {
-      const lv = document.createElement('span');
-      lv.className = 'perm-risk-badge lv-' + level;
-      lv.textContent = t('perm.detail.level', { level });
-      row.appendChild(lv);
-    }
     if (!labelShown) {
       const lb = document.createElement('span');
       lb.className = 'perm-reason-label';

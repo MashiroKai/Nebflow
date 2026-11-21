@@ -4269,17 +4269,6 @@ body:not(.mobile-layer) .option-preview-media {
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.perm-risk-badge {
-  flex: 0 0 auto;
-  padding: 0 var(--ds-space-1);
-  border: 1px solid currentColor;
-  border-radius: var(--ds-radius-chip);
-  font-size: var(--ds-fs-meta);
-  line-height: 1.6;
-}
-.perm-risk-badge.lv-1 { color: var(--color-warning); }
-.perm-risk-badge.lv-2,
-.perm-risk-badge.lv-3 { color: var(--status-error-icon); }
 .perm-reason-gate,
 .perm-reason-rule {
   font-size: var(--ds-fs-meta);

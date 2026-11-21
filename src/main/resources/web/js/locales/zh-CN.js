@@ -1871,7 +1871,6 @@ export default {
   'perm.detail.target': '目标路径',
   'perm.detail.gate': '闸',
   'perm.detail.rule': '规则',
-  'perm.detail.level': '风险档 L{level}',
   'perm.detail.remoteExec': '（对端下发 remote-exec）',
   'perm.detail.noRule': '该闸的固定确认项（无命中规则）',
   'chat.copied': '已复制！',

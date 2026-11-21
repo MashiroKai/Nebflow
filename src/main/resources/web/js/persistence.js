@@ -976,7 +976,7 @@ export function restoreFromStorage(opts = {}) {
       });
       box.appendChild(optsDiv);
       bubble.appendChild(box);
-      renderPermDetail(box, histDetail, t, { level, before: q, dangerShown: !!dInfo, labelShown: level >= 2 && !!(histDetail.reason && (histDetail.reason.label || histDetail.reason.levelLabel)) });
+      renderPermDetail(box, histDetail, t, { before: q, labelShown: level >= 2 && !!(histDetail.reason && (histDetail.reason.label || histDetail.reason.levelLabel)) });
     } else if (m.type === 'ask') {
       // Ask question (user side)
       const qRow = document.createElement('div');
@@ -1484,7 +1484,7 @@ function buildHistoryRow(m, i, ctx) {
       });
       box.appendChild(optsDiv);
       bubble.appendChild(box);
-      renderPermDetail(box, histDetail, t, { level, before: q, dangerShown: !!dInfo, labelShown: level >= 2 && !!(histDetail.reason && (histDetail.reason.label || histDetail.reason.levelLabel)) });
+      renderPermDetail(box, histDetail, t, { before: q, labelShown: level >= 2 && !!(histDetail.reason && (histDetail.reason.label || histDetail.reason.levelLabel)) });
     } else if (m.type === 'ask') {
       // Ask question (user side)
       const qRow = document.createElement('div');
