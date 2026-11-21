@@ -16,6 +16,8 @@ import { cleanupCardIframes } from './cardRegistry.js';
 // quote-message 一期：引用条随视图生命周期（切会话 = saveDraft/restoreDraft 往返，
 // chat-message ref 在 pendingAttachments 里随草稿同存同取；strip 显隐在此单点同步）。
 import { renderQuoteStrip } from './msgQuote.js';
+// 程序化写值唯一入口（输入框显示缺陷批 2026-11-21，见 js/input/composer.js ⑥）。
+import { setComposerText } from './input/autosize.js';
 
 // ── Active view (set by ws.js before handler dispatch) ──────────────────
 // Module-level mutable binding. ES module imports are live: when
@@ -285,14 +287,16 @@ export class ChatView {
   restoreDraft(sessionId) {
     if (!this.dom.input) return;
     const draft = this.inputDrafts[sessionId];
+    // 程序化回填走唯一入口（输入框显示缺陷批 2026-11-21）：改前这里只写
+    // `value` + `style.height='auto'` —— 塌陷后没有任何调用点再量高 ⇒ 多行草稿
+    // 装进 1 行高的框（20 行草稿实测可见 7–8%），且光标落末尾而 scrollTop 留在
+    // 旧值 ⇒ 用户看到「中间一段、没有完全显示」。入口把 写值/量高/锚定 一次做完。
+    setComposerText(this.dom.input, draft ? (draft.text || '') : '');
     if (draft) {
-      this.dom.input.value = draft.text || '';
       this.pendingAttachments = draft.attachments || [];
     } else {
-      this.dom.input.value = '';
       this.pendingAttachments = [];
     }
-    this.dom.input.style.height = 'auto';
     // Render attachment preview for restored image/file attachments
     if (this.dom.attPreview) this.dom.attPreview.innerHTML = '';
     // quote-message 一期：引用 chip 随新会话草稿复原/清空（数据单点 = pendingAttachments；

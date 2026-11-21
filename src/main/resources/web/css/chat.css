@@ -4328,18 +4328,11 @@ body:not(.mobile-layer) .option-preview-media {
   }
 }
 
-.permission-payload { min-width: 0; max-width: 100%; margin: var(--ds-space-2) 0; }
-.permission-payload-text {
-  max-height: 18rem;
-  overflow: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  padding: var(--ds-space-2);
-  background: var(--glass-etched-bg);
-  border: 1px solid var(--sapphire-edge);
-  border-radius: var(--ds-radius-badge);
-  font-size: var(--ds-fs-hint);
-  color: var(--color-frame-text);
+/* 「请求载荷，非文件实际 diff」一行说明（Edit 的 -/+ 正文上方，唯一的说明性行）。 */
+.perm-cmd-note {
+  margin-bottom: var(--ds-space-1);
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-text-muted);
 }
 
 /* Inline code for showing command/file detail in permission prompt */

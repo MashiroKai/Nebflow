@@ -6,6 +6,7 @@ import { sendWs } from '../ws.js';
 import { escapeHtml } from '../utils.js';
 import { t } from '../i18n.js';
 import { enterAskMode, enterSkillMode } from './inputModes.js';
+import { setComposerText } from './composer.js';
 
 // ---------- Slash Commands ----------
 /* SEALED / 封存待启用 (author ruling 2026-08-29 22:56): the /slash command
@@ -211,8 +212,9 @@ export function setSlashHighlight(index) {
 export function pickSlashCommand(index) {
   if (index < 0 || index >= activeView.slashMatches.length) return;
   const cmd = activeView.slashMatches[index].cmd;
-  activeView.dom.input.value = '';
-  activeView.dom.input.style.height = 'auto';
+  // 程序化清空走唯一入口（输入框显示缺陷批 2026-11-21）：清空也要量高，
+  // 否则上一版草稿留下的 200px 空盒会在界面上留一块空白。
+  setComposerText(activeView.dom.input, '');
   closeSlashDropdown();
   activeView.dom.input.focus();
   if (slashCommands[cmd] && slashCommands[cmd].run) slashCommands[cmd].run();

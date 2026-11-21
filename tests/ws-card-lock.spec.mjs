@@ -128,9 +128,9 @@ test('permission payload is reviewable for object input', async ({ browser }) =>
   await expect(page.locator('#chat')).toContainText('printf "complete command"');
   await page.evaluate(() => window.__renderPermInput('Write', { file_path: '/tmp/out', content: '第一行\n' + 'x'.repeat(1500) }));
   await expect(page.locator('#chat')).toContainText('/tmp/out');
-  await expect(page.locator('#chat')).toContainText('1510 bytes');
-  await page.locator('.permission-payload summary').click();
-  await expect(page.locator('.permission-payload details')).toHaveAttribute('open', '');
+  // 瘦身批（2026-11-21）：Write 正文只一份（内容原文在 .perm-cmd；无第二完整区 / <details> 复刻）
+  await expect(page.locator('#chat .perm-cmd')).toContainText('第一行');
+  await expect(page.locator('#chat .permission-payload, #chat details')).toHaveCount(0);
   await page.evaluate(() => window.__renderPermFallback('Bash', { command: 'printf fallback' }));
   await expect(page.locator('.global-perm-toast')).toContainText('printf fallback');
   await page.context().close();
