@@ -160,6 +160,25 @@ object DelegateVisibility:
     childFileUnreadable = false
   )
 
+  /** 取消墓碑派生豁免词（收口面修复 2026-11-21）：自身任务行已是终态 `cancelled`。 */
+  val CancelledTaskStatus: String = "cancelled"
+
+  /**
+   * 自身任务行状态现读（收口面修复 2026-11-21）：身份的任务行与其派发会话同档，
+   * 位于 `<dataRoot>/subagent-tasks/<parentSessionId>.json`，`taskId == 身份 id`。
+   * 缺档 / 不可解 / 无该行 ⇒ `None`（保守：不触发任何豁免）。纯读，零写盘。
+   */
+  def ownTaskStatusOf(rec: DelegateRegistry.Record): Option[String] =
+    try
+      val p = childTaskFile(rec.parentSessionId)
+      if !os.exists(p) then None
+      else
+        io.circe.parser
+          .decode[List[SubAgentTask]](os.read(p))
+          .toOption
+          .flatMap(_.find(_.taskId == rec.id).map(_.status))
+    catch case _: Throwable => None
+
   /**
    * 纯派生单点（全部输入现读给定；零盘面副作用——spec 可直驱）。
    *
@@ -167,20 +186,28 @@ object DelegateVisibility:
    * 后当前轮回到未结算 ⇒ 身份自动回活动窗，**零旗写盘**即可复现「复活即回现役」的既有语义。
    * 轮次台账在场时**取代**存量归档旗（旧世界的原语是「开轮时摘旗」，本批零写盘复现同义）；
    * 台账缺席（旧记录形态）才读存量旗，863 条在盘旧记录的既有读数因此原样保留。
+   *
+   * `ownTaskStatus`（收口面修复 2026-11-21）：自身任务行状态。取消墓碑在案 ∧ 自身任务行已是
+   * 终态 `cancelled` ⇒ **不计为活标记**（墓碑是「取消已落定」的事实，不是「仍在飞」）。
+   * 墓碑记录本身**原样保留**——续命守卫（SessionResumption）、Mail 守卫（MailTool）、
+   * 完成债守卫（CompletionDebtStore）与 requiresManual 仍按 `cancelRequestedAt` 拒绝复活。
+   * 豁免只改读数，不写盘，不摘墓碑。
    */
   def read(
     record: Option[DelegateRegistry.Record],
     rounds: List[DelegateRoundLedger.RoundRow],
-    children: LiveChildren
+    children: LiveChildren,
+    ownTaskStatus: Option[String] = None
   ): Reading =
     record match
       case None => Empty
       case Some(rec) =>
+        val cancelSettled = ownTaskStatus.contains(CancelledTaskStatus)
         val marks = List(
           Option.when(rec.frozenSince.isDefined)(FrozenMark),
           Option.when(rec.standbySince.isDefined)(StandbyMark),
           Option.when(rec.restartInterruptedAt.isDefined)(RestartInterruptedMark),
-          Option.when(rec.cancelRequestedAt.isDefined)(CancelRequestedMark)
+          Option.when(rec.cancelRequestedAt.isDefined && !cancelSettled)(CancelRequestedMark)
         ).flatten
         val legacy = rec.archivedAt
         val roundRows = rounds.filter(_.kind == DelegateRoundLedger.KindRound)
@@ -216,7 +243,14 @@ object DelegateVisibility:
 
   /** 现读派生（注册记录 + 轮次台账 + 子项档；永不抛——读面故障 = 保守未收口）。 */
   def readOf(id: String): Reading =
-    try read(DelegateRegistry.find(id), DelegateRoundLedger.currentRounds(id), liveChildrenOf(id))
+    try
+      val rec = DelegateRegistry.find(id)
+      read(
+        rec,
+        DelegateRoundLedger.currentRounds(id),
+        liveChildrenOf(id),
+        rec.flatMap(r => ownTaskStatusOf(r))
+      )
     catch
       case _: Throwable =>
         logger.warn(s"[delegate-visibility] read failed for '$id' — treating as open (conservative)")
@@ -227,7 +261,7 @@ object DelegateVisibility:
 
   /** 记录级现读判读（已持记录时免二次读盘）。 */
   def settledOf(rec: DelegateRegistry.Record): Boolean =
-    try read(Some(rec), DelegateRoundLedger.currentRounds(rec.id), liveChildrenOf(rec.id)).settled
+    try read(Some(rec), DelegateRoundLedger.currentRounds(rec.id), liveChildrenOf(rec.id), ownTaskStatusOf(rec)).settled
     catch case _: Throwable => false
 
 end DelegateVisibility
