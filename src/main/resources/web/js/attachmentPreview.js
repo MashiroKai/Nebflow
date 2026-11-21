@@ -135,6 +135,11 @@ async function looksTextual(blob) {
 async function renderIntoPane(paneEl, itemType, ctx) {
   const { renderFile } = await import('./fileViewers.js');
   await renderFile(paneEl, { itemType, absPath: null, ...ctx });
+  // 进度占位的撤除兜底（card-visible-reconcile 批 2026-11-21，作者 11:41 报障）：
+  // 真容已挂 = 占位的使命结束。占位自身的 MutationObserver 是主路径（真容一出现
+  // 即撤，不依赖 viewer 是否清 pane），此处是渲染单点上的显式兜底 —— viewer 若在
+  // 微任务/布局之外后置挂真容、或观察器被环境禁用，仍不许留下转圈。
+  dismissProgressPane(paneEl);
 }
 
 /** @returns {Promise<'ok'|'failed'>} */
@@ -317,7 +322,7 @@ export function canFetchLocalBytes(path) {
 // 进度环 / 可见失败 / 终态注记三件的**单点**已抽到叶子模块 `progressPane.js`
 // （pop-optimistic-canvas 批 2026-11-18）——Pop 文件卡的乐观打开腿与附件预览腿
 // import **同一份**实现（禁第二套环体系）。类名/数据读数面逐字节不变。
-import { renderProgressPane, renderProgressFailure, renderProgressNote } from './progressPane.js';
+import { renderProgressPane, renderProgressFailure, renderProgressNote, dismissProgressPane } from './progressPane.js';
 
 // 乐观打开腿的默认取数超时（ms）：超过即判「超时」并出可读原因 + 重试键
 // （zip/被黑洞吞掉的连接不再永远转圈）。0 = 不设。

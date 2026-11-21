@@ -14,6 +14,10 @@ import { t } from './i18n.js';
 // 唯一接线点。shared.js 不 import 本模块（无环：本文件静态 import 是单向边，
 // viewers/* 也都已静态 import shared.js）。
 import { observeBottomClearance } from './viewers/shared.js';
+// 进度占位撤除单点（card-visible-reconcile 批 2026-11-21）：renderFile 是全体
+// viewer 的唯一渲染入口 ⇒ 占位解除挂在这里（叶子模块，无环：progressPane 只
+// import i18n）。
+import { dismissProgressPane } from './progressPane.js';
 import codeViewer, { jsonViewer, csvViewer } from './viewers/monaco.js';
 import markdownViewer from './viewers/markdown.js';
 import textReaderViewer from './viewers/textReader.js';
@@ -177,6 +181,18 @@ export async function renderFile(pane, ctx) {
   } catch (err) {
     console.warn('Viewer error:', err);
     renderViewerError(pane, ctx, err);
+  }
+  // 进度占位撤除（card-visible-reconcile 批 2026-11-21，作者 11:41 报障「内容已
+  // 完整渲染但『正在打开…』悬浮不收」）：本函数是**所有** viewer 的唯一渲染入口
+  // （Pop 文件卡 / 附件预览 / 普通打开全走这里），故占位的解除挂在这里而不是各个
+  // viewer 里 —— markdown viewer 正是那个「不清 pane、只 appendChild」的腿
+  //（viewers/markdown.js:1401-1424），修前占位与正文并排同屏、转圈永不收。
+  // 成功与失败两路都撤：失败态由 renderViewerError 自己清 pane（语义等价），
+  // 成功路必须有显式出口。占位实例自身的 MutationObserver 是主路径，这里是兜底。
+  try {
+    dismissProgressPane(pane);
+  } catch (err) {
+    console.warn('Progress pane dismiss unavailable:', err);
   }
   // 底部浮钮让位（canvas 正文底部遮挡修复批 2026-11-05）：渲染完成后实测本 pane
   // 底部浮钮带高度 ⇒ 写 --canvas-bottom-clearance 供滚动面末尾垫消费（含错误态

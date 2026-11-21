@@ -199,6 +199,12 @@ const cardProbe = (page) => page.evaluate(() => {
     lastChildIsAi: !!(last && last.classList && last.classList.contains('ai')),
     cardBeforeLast: !!(row && col && row !== last),
     dockOpen: dock ? !dock.classList.contains('closed') : false,
+    // 可见性读数（C6c 用）：修前 C6 只断言卡「在列内」，而实际缺陷正是「卡在
+    // 列内但不可见」——空白 iframe（opacity:0 + srcdoc 被剥）与真容在 DOM 上同形。
+    iframeOpacity: iframe ? getComputedStyle(iframe).opacity : null,
+    srcdocLen: iframe && iframe.getAttribute('srcdoc') ? iframe.getAttribute('srcdoc').length : 0,
+    iframeInDoc: iframe ? iframe.isConnected : false,
+    colScrollH: col ? Math.round(col.scrollHeight) : 0,
   };
 });
 
@@ -289,7 +295,56 @@ try {
     const p2 = await cardProbe(page);
     ok('C6 done 定稿（整列重渲）后卡仍在列内', p2.rowPresent && p2.iframePresent, JSON.stringify(p2));
     ok('C6b 定稿后末元素 = ai 泡（卡不占末位）', p2.lastChildIsAi, JSON.stringify(p2));
+    // C6c/C6d 是 2026-11-21 现场（同一份 HTML 两张卡一败一成）暴露的**结构性盲区**：
+    // 修前 C6 只问「卡在不在列内」，而真缺陷是「卡在列内但看不见」——done 触发整列
+    // 重渲时 cleanupCardIframes 剥掉 srcdoc 并断开观察者，重建出的 iframe 停在
+    // 未挂载态（chat.css:4072 opacity:0、高度 150px 默认盒），DOM 上仍是一张卡行
+    // ⇒ C6 绿、用户看不到。故补两条**可见性**断言（同一语境、同一拍）：
+    //   C6c 定稿后 iframe 仍是挂载态（opacity:1 且 srcdoc 非空且仍在文档内）；
+    //   C6d 定稿不塌缩列高（卡高度仍在，列 scrollHeight 不因重渲掉回占位高）。
+    ok('C6c 定稿后卡 iframe 仍是挂载态（opacity:1 且 srcdoc 非空）——「卡在列内但空白」必红',
+      p2.iframeInDoc && p2.iframeOpacity === '1' && p2.srcdocLen > 0,
+      JSON.stringify({ opacity: p2.iframeOpacity, srcdocLen: p2.srcdocLen, inDoc: p2.iframeInDoc }));
+    ok('C6d 定稿不塌缩列高（卡真容高度仍在，不是退回 150px 占位盒）',
+      p2.iframeH > 190, JSON.stringify({ iframeH: p2.iframeH, colScrollH: p2.colScrollH }));
 
+    // C6e —— **根因锚**（card-visible-reconcile 批 2026-11-21，本批唯一决定性命中）。
+    // 上述 C6c/C6d 只在「卡比视口高 + 卡被甩出视口」时才会红（现场形态），小语料下
+    // 修前也是绿的 ⇒ 单靠它们防不住回归。真正的缺陷机制是**节点身份**：修前每拍
+    // done 都整列重建，卡 iframe 是**新节点**（浏览上下文从零重建、srcdoc 重新排队、
+    // 3s 兜底才恢复）。故直接钉节点身份：把 done 前后同一张卡的 iframe 用 WeakRef
+    // 记账，定稿后必须是**同一个节点仍然存活且在文档内** —— 与视口/卡高/时机全部
+    // 无关，修前必红（重建 ⇒ 新对象）、修后必绿（复用 ⇒ 同一对象）。这同时是
+    // 「已渲染的卡不被丢掉」这一用户可感知承诺的机器判据。
+    const identity = await page.evaluate(() => {
+      const f = document.querySelector('.ask-dock .ask-card-row iframe.html-card-iframe');
+      if (!f) return { ok: false, why: 'no iframe' };
+      /** @type {any} */ (window).__cardRef = new WeakRef(f);
+      /** @type {any} */ (window).__cardStamp = f;
+      return { ok: true };
+    });
+    wsSend({ type: 'textDelta', sessionId: sid, delta: '再来一段。' });
+    await sleep(120);
+    wsSend({ type: 'done', sessionId: sid });
+    await sleep(500);
+    const sameNode = await page.evaluate(() => {
+      const now = document.querySelector('.ask-dock .ask-card-row iframe.html-card-iframe');
+      const ref = /** @type {any} */ (window).__cardRef;
+      const prev = ref && ref.deref ? ref.deref() : null;
+      return {
+        present: !!now,
+        same: !!(now && prev && now === prev),
+        sameAsStamp: !!(now && now === /** @type {any} */ (window).__cardStamp),
+        inDoc: !!(now && now.isConnected),
+        srcdocLen: now && now.getAttribute('srcdoc') ? now.getAttribute('srcdoc').length : 0,
+        opacity: now ? getComputedStyle(now).opacity : null,
+      };
+    });
+    ok('C6e 定稿复用同一卡 iframe 节点（不是整列重建换新节点 —— 根因锚，视口无关）',
+      identity.ok && sameNode.present && sameNode.same && sameNode.sameAsStamp && sameNode.inDoc,
+      JSON.stringify(sameNode));
+    ok('C6f 复用节点上已渲染的内容未丢（srcdoc 非空，无需等 3s 兜底重挂）',
+      sameNode.srcdocLen > 0, JSON.stringify({ srcdocLen: sameNode.srcdocLen, opacity: sameNode.opacity }));
     // C7 非卡工具帧仍透明
     wsSend({ type: 'toolEnd', sessionId: sid, label: 'Pop', summary: 'x', content: '___POP_JSON___{"kind":"file"}', isError: false });
     await sleep(250);

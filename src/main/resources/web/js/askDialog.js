@@ -133,6 +133,24 @@ function setMarkdownHtml(node, text, streaming) {
  * @property {string} [panelClass] 面板类（缺省 'ask-dock'）
  */
 
+/** 卡行身份键（card-visible-reconcile 批 2026-11-21）：卡行的身份 = **载荷本身**
+ *  ——同一份 `___<AGENT>_HTML___` 载荷重渲时复用同一个卡行节点（保住已挂载的
+ *  iframe 文档），不同载荷/新增卡才建新行。键 = 长度 + FNV-1a 32 位 + 首 24 字
+ *  （碰撞面只在「同长同哈希同首段」同时成立，且退化为复用而非错配内容——
+ *  复用前仍按 key 全等匹配，故错配只会表现为卡不刷新，不会串内容）。
+ *  @param {string} text */
+function cardKey(text) {
+  const s = typeof text === 'string' ? text : String(text || '');
+  let hash = 0x811c9dc5;
+  // 全量走一遍（卡载荷 ~11KB；重渲频率 = 每帧一拍，成本可忽略）：只采样会让
+  // 「改了中间几个字」的两份载荷误配成同一张卡。
+  for (let i = 0; i < s.length; i++) {
+    hash ^= s.charCodeAt(i);
+    hash = (hash + ((hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24))) >>> 0;
+  }
+  return s.length + ':' + hash.toString(36) + ':' + s.slice(0, 24);
+}
+
 /**
  * 造一份 Ask 对话框实例（DOM 只建一次；wire() 只绑一次）。
  * @param {AskDialogCfg} cfg
@@ -237,35 +255,111 @@ export function createAskDialog(cfg) {
     },
 
     // ── 转录渲染 ──────────────────────────────────────────────────────────
+    // 卡行增量化（card-visible-reconcile 批 2026-11-21，现场 = 同一份 HTML 两张卡
+    // 一败一成）：修前本函数**整列清空重建**（cleanupCardIframes + textContent=''
+    // + 逐行重建）。卡一旦在列内，每一拍整列重渲就是一次「摘掉已挂载的卡 iframe
+    // 再重新排队挂载」：`_nfCleanup` 剥掉 srcdoc 并断开观察者（cardRegistry:582-591），
+    // 新 iframe 回到未挂载态（chat.css:4072 opacity:0、高度只有 150px 默认盒），
+    // 只能靠 IntersectionObserver 或 3s 兜底 timer 重新挂上（cardRegistry:565-597）。
+    // 于是 done 收口那一刻卡是**空白 150px**、且列高随之塌缩（实测 2439→984），
+    // 滚动位跳动把卡甩到视口外 604px —— 用户看到的就是「没有卡」。
+    //
+    // 根因层修法（不是加超时补丁）：卡行的**身份 = 载荷**。重渲时对同一份载荷
+    // 复用已在列的卡行节点，**不摘除、不移动**（实测：iframe 节点一旦被移出/
+    // 移动到别的父节点，浏览器就重建其浏览上下文并重跑文档脚本 ——
+    // probe_iframe_survive/reorder 的哨兵探针），因此只有「原地不动」能保住已渲染
+    // 的卡；也只对**真正被移出**的卡行调 cleanupCardIframes 释放 browsing context
+    // （原释放契约不放松：泄漏面仍是每张 2–10MB 的独立上下文）。
     render() {
       const s = cfg.activeSession();
-      // 卡 iframe 释放（渲染单源的硬契约）：整列清空/重建前必须让每张卡的
-      // IntersectionObserver 松开并丢掉 srcdoc，否则独立 browsing context（每张
-      // 2–10MB）会被观察者钉住永不回收（cardRegistry.cleanupCardIframes 头注）。
-      cleanupCardIframes(col);
-      col.textContent = '';
-      if (!s) return;
       // v2.1 显示面减法：只出 user/ai 两族——sys（回执/状态噪声类）转录仍存但永不呈现。
-      const vis = s.msgs.filter((m) => m.role !== 'sys');
-      vis.forEach((m) => {
+      const vis = s ? s.msgs.filter((m) => m.role !== 'sys') : [];
+      const desired = vis.map((m) => (m.role === 'card'
         // card-tool-revive 批（2026-11-18 作者裁定②）——卡载荷行：ask 面**唯一**的
         // iframe 落点。渲染腿 = cardRegistry.renderWithRegistry（哨兵解析 + 沙箱
         // `allow-scripts allow-same-origin` iframe + 主题注入，与主会话卡行同一单源），
         // 本函数只给宿主节点与行几何；卡行不参与气泡族（不进 askBubbleClass）。
-        if (m.role === 'card') {
+        ? { kind: 'card', key: cardKey(m.text), text: m.text, msg: m }
+        : { kind: 'bubble', role: m.role, text: m.text, msg: m }));
+
+      // 回合标记（canvas ask 状态可视批 2026-11-21，作者 13:00 令）：最后一条用户问
+      // 之后挂一行「处理中 / 已回复 / 已中止 / 失败」——终态**常驻**，不随 2.6s 驻留
+      // 收回（状态行的 DONE 驻留到期即隐，正是作者「看不到已回复」的根因）。
+      // 态 = 会话内存里的 replyState（arm/settle 点写），刷新后不回放。
+      // 必须在建池/建索引**之前**插入（插入会平移 desired 下标）。
+      if (s && s.replyState) {
+        let at = -1;
+        desired.forEach((d, i) => { if (d.kind === 'bubble' && d.role === 'user') at = i; });
+        if (at >= 0) desired.splice(at + 1, 0, { kind: 'mark', state: s.replyState });
+      }
+
+      // ① 认脸：已在列的卡行按载荷建池（同载荷多张卡 = 先进先出配对）。
+      /** @type {Map<string, HTMLElement[]>} */
+      const pool = new Map();
+      const existing = Array.from(col.children);
+      for (const node of existing) {
+        if (!node.classList || !node.classList.contains('ask-card-row')) continue;
+        const k = node.dataset ? node.dataset.nfCardKey || '' : '';
+        if (!pool.has(k)) pool.set(k, []);
+        /** @type {HTMLElement[]} */ (pool.get(k)).push(/** @type {HTMLElement} */ (node));
+      }
+      /** @type {Map<number, Element>} */
+      const keep = new Map();
+      desired.forEach((d, i) => {
+        if (d.kind !== 'card') return;
+        const q = pool.get(d.key);
+        if (q && q.length) keep.set(i, q.shift());
+      });
+      const kept = new Set(keep.values());
+
+      // ② 只移出**没被复用**的节点；卡行被真移出时才释放其 browsing context。
+      for (const node of existing) {
+        if (kept.has(node)) continue;
+        node.remove();
+        try { cleanupCardIframes(/** @type {HTMLElement} */ (node)); } catch { /* 释放失败不阻断渲染 */ }
+      }
+
+      // ③ 原地补齐：ref 恒指向「下一个被复用的卡行」（或 null = 尾插）。复用节点
+      //    从不移动 ⇒ 其 iframe 文档、srcdoc、观察者、已量出的高度全部保持。
+      /** @type {Element|null} */
+      let ref = col.firstElementChild;
+      for (let i = 0; i < desired.length; i++) {
+        const keptNode = keep.get(i);
+        if (keptNode) { ref = keptNode.nextElementSibling; continue; }
+        const d = desired[i];
+        /** @type {Element} */
+        let node;
+        if (d.kind === 'card') {
           const row = h('div', { class: 'ask-card-row' });
+          if (row.dataset) row.dataset.nfCardKey = d.key;
           const host = h('div', { class: 'ask-card-host' });
           row.appendChild(host);
-          col.appendChild(row);
-          renderWithRegistry(host, m.text, 'Card');
-          return;
+          renderWithRegistry(host, d.text, 'Card');
+          node = row;
+        } else if (d.kind === 'mark') {
+          const label = {
+            working: tt('处理中…', 'Working…'),
+            replied: tt('已回复', 'Replied'),
+            stopped: tt('已中止', 'Stopped'),
+            failed: tt('失败，见上方提示', 'Failed, see the notice above'),
+          }[d.state] || '';
+          node = h('div', {
+            class: 'ask-reply-mark',
+            role: 'status',
+            'data-nf-reply-state': d.state,
+          }, [label]);
+        } else {
+          // glass-unify 批 2026-11-05：气泡挂唯一毛玻璃工具类 `.nf-glass`。
+          // （`m.role` 是转录行原文：check-chat-ui / check-glass-unify 两处静态
+          //  守卫锚定这条唯一落点，故行对象按原名 `m` 传下来。）
+          const m = d.msg;
+          const b = h('div', { class: askBubbleClass(m.role) });
+          if (m.role === 'user') b.textContent = m.text;
+          else setMarkdownHtml(b, m.text, false); // 唯一 HTML 落点见 setMarkdownHtml
+          node = b;
         }
-        // glass-unify 批 2026-11-05：气泡挂唯一毛玻璃工具类 `.nf-glass`。
-        const b = h('div', { class: askBubbleClass(m.role) });
-        if (m.role === 'user') b.textContent = m.text;
-        else setMarkdownHtml(b, m.text, false); // 唯一 HTML 落点见 setMarkdownHtml
-        col.appendChild(b);
-      });
+        col.insertBefore(node, ref);
+      }
       // 落列后的跟随/计数由调用点经 settleCol/snapCol 单点决定（本函数只建 DOM）。
     },
 
@@ -375,13 +469,16 @@ export function createAskDialog(cfg) {
     /** 臂：该会话 turn 在飞 → 中断钮上位（活动会话才动 chrome；幂等）。 */
     armTurn(s) {
       s.busy = true;
+      s.replyState = 'working';
       s.lastFrameAt = Date.now();
       if (s === cfg.activeSession() && turnToggle) turnToggle.busy();
     },
     /** 收：终态（busy 清 + 中断钮让位；幂等）。 */
-    settleTurn(s) {
+    settleTurn(s, outcome = 'replied') {
       if (!s) return;
       s.busy = false;
+      // 只从「处理中」落到终态；已落终态（如先点停、后到的服务端 done）不被覆盖。
+      if (s.replyState === 'working') s.replyState = outcome;
       if (s === cfg.activeSession() && turnToggle) turnToggle.idle();
     },
     /** 用户点停：帧出口走包单点（与主会话 #stop-btn 逐字节同帧）；UI 即刻收口。 */
@@ -389,7 +486,7 @@ export function createAskDialog(cfg) {
       const s = cfg.activeSession();
       if (!s || !s.busy) return;
       requestTurnInterrupt(s.sid);
-      dlg.settleTurn(s);
+      dlg.settleTurn(s, 'stopped');
       if (dlg.isOpen()) { dlg.removeTyping(); dlg.render(); dlg.snapCol(); }
     },
 
@@ -498,7 +595,7 @@ export function createAskDialog(cfg) {
         case 'interrupted': {
           const wasBusy = entry.busy;
           if (!(entry === cfg.activeSession() && dlg.isOpen())) entry.unread = true;
-          dlg.settleTurn(entry);
+          dlg.settleTurn(entry, 'stopped');
           cfg.onPersist?.(entry);
           if (entry === cfg.activeSession()) {
             if (dlg.isOpen()) { dlg.removeTyping(); dlg.render(); const last = entry.msgs[entry.msgs.length - 1]; dlg.settleCol(wasBusy && last && last.role === 'ai' ? [last] : []); } // Partial answer, once.
@@ -509,7 +606,7 @@ export function createAskDialog(cfg) {
         case 'error': {
           // v2.1：错误不再起 sys 气泡——文本落助手气泡槽（问答面只出两族）。
           if (!(entry === cfg.activeSession() && dlg.isOpen())) entry.unread = true;
-          dlg.settleTurn(entry);
+          dlg.settleTurn(entry, 'failed');
           const last = entry.msgs[entry.msgs.length - 1];
           const errText = tt('出错了：', 'Error: ') + (msg.message || 'unknown');
           if (last && last.role === 'ai' && !last.text) last.text = errText;

@@ -642,6 +642,18 @@ body.mobile-layer .note-dock .ds-resize-handle {
 .ask-card-row { width: 100%; }
 .ask-card-host { width: 100%; }
 
+/* 回合标记（canvas ask 状态可视批 2026-11-21）：最后一条用户问下方的常驻一行
+ * 「处理中 / 已回复 / 已中止 / 失败」。右贴（与用户气泡同侧）、小字、弱色，不抢正文。 */
+.ask-reply-mark {
+  align-self: flex-end;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-text-muted, #888);
+  margin: 2px 4px 6px 0;
+}
+.ask-reply-mark[data-nf-reply-state="working"] { color: var(--color-primary, #5e6ad2); }
+.ask-reply-mark[data-nf-reply-state="failed"] { color: var(--color-error, #d0342c); }
+
 /* ═══ 会话地址行（ask-mail 批 2026-11-16）═══════════════════════════════════
  * ask 会话的 Mail 可达地址（`ask:<sessionId>`）常驻面板头部右贴：编排方经
  * Mail 向该地址续聊（双向通道的门牌）。形态 = chat.css `.ask-mail-addr` /

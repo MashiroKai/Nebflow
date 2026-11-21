@@ -19,7 +19,41 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const PROGRESS_RING_R = 18;
 const PROGRESS_RING_C = 2 * Math.PI * PROGRESS_RING_R;
 
-/** @typedef {{ setProgress: (loaded: number, total: number) => void }} ProgressHandle */
+/** @typedef {{ setProgress: (loaded: number, total: number) => void, dismiss: () => void }} ProgressHandle */
+
+/** 占位面的读数面标记（唯一认脸口径：本模块产出的占位 = 带 data-nf-progress 的
+ *  那个元素）。查占位/撤占位一律走它，禁按类名第二套判断。 */
+const PROGRESS_ATTR = 'data-nf-progress';
+
+/**
+ * 撤除本 pane 上的进度占位（幂等；`renderProgressPane` 之后任何时刻可调）。
+ *
+ * 为什么这是一个独立出口（card-visible-reconcile 批 2026-11-21，作者 11:41 报障
+ * 「内容已完整渲染但『正在打开…』悬浮不收」）：占位由 `renderProgressPane` 挂进
+ * pane，而**撤除**原先没有任何出口 —— 取数成功后的渲染腿（attachmentPreview.js
+ * `renderIntoPane` → fileViewers.js `renderFile` → 某个 viewer.render）只负责挂真容：
+ * 多数 viewer 先清 pane（`pane.replaceChildren()` / `innerHTML=''`）顺手带走了占位，
+ * 但 **markdown viewer 不清 pane**（它只 `remove()` 自己那类 `.canvas-md-scroll`
+ * 旧面，再 `pane.appendChild(mdScroller)`，见 viewers/markdown.js:1401-1424）——
+ * 于是占位 `.nf-progress-pane`（height:100% 的居中盒）与正文并排同屏，
+ * 转圈永不收。根因不是「某个 viewer 漏了一行」，而是**占位的生命周期没有挂钩
+ * 到「真容出现」这个事实**：撤除既不在占位的所有者里，也不在渲染单点里。
+ *
+ * 故本函数是撤除的**单点**，三个调用面共用：① 占位自身的 MutationObserver
+ * （真容一出现即撤 —— 不依赖任何 viewer 的返回值）；② fileViewers.renderFile
+ * （渲染单点显式挂钩，兜住「渲染完成但观察器不可用」）；③ 失败/注记面板
+ * （它们 `replaceChildren` 连带撤掉占位，语义等价）。
+ * @param {HTMLElement|null|undefined} paneEl
+ */
+export function dismissProgressPane(paneEl) {
+  if (!paneEl || !paneEl.querySelectorAll) return;
+  paneEl.querySelectorAll(`:scope > [${PROGRESS_ATTR}]`).forEach((n) => n.remove());
+}
+
+/** 该 pane 上是否还有占位（诊断/兜底判据用）。 */
+export function hasProgressPane(paneEl) {
+  return !!(paneEl && paneEl.querySelector && paneEl.querySelector(`:scope > [${PROGRESS_ATTR}]`));
+}
 
 /**
  * 档3 进度面板：百分比环（Content-Length 可得）或转圈（不可得）。
@@ -33,7 +67,7 @@ export function renderProgressPane(paneEl, label) {
   paneEl.replaceChildren();   // 组件契约 R5：新文件禁裸 innerHTML 赋值
   const wrap = document.createElement('div');
   wrap.className = 'nf-progress-pane';
-  wrap.setAttribute('data-nf-progress', 'indeterminate');
+  wrap.setAttribute(PROGRESS_ATTR, 'indeterminate');
   const svg = document.createElementNS(SVG_NS, 'svg');
   svg.setAttribute('class', 'nf-progress-ring');
   svg.setAttribute('viewBox', '0 0 44 44');
@@ -59,20 +93,42 @@ export function renderProgressPane(paneEl, label) {
   lab.textContent = label;
   wrap.append(svg, spinner, pct, lab);
   paneEl.appendChild(wrap);
+
+  // 挂钩「真容出现」这个事实（作者 11:41 报障的根因层修法）：占位自己盯着 pane，
+  // 一旦出现**不是占位**的元素子节点（renderFile 的任一 viewer 挂出的真容，
+  // 或是失败/注记面板），立刻撤除自己 —— 不依赖 viewer 记得清 pane、也不依赖
+  // 渲染 promise 的解析时机（渲染腿卡住时占位也照撤，绝不「内容已出还转圈」）。
+  /** @type {MutationObserver|null} */
+  let obs = null;
+  const stopWatch = () => { if (obs) { obs.disconnect(); obs = null; } };
+  const reconcile = () => {
+    if (!wrap.isConnected) { stopWatch(); return; }
+    const realContent = Array.from(paneEl.children).some(
+      (n) => n !== wrap && !n.hasAttribute(PROGRESS_ATTR),
+    );
+    if (realContent) { stopWatch(); wrap.remove(); }
+  };
+  if (typeof MutationObserver === 'function') {
+    obs = new MutationObserver(reconcile);
+    obs.observe(paneEl, { childList: true });
+  }
+
   return {
     /** @param {number} loaded @param {number} total */
     setProgress(loaded, total) {
       if (!wrap.isConnected) return;
       if (total > 0) {
-        wrap.setAttribute('data-nf-progress', 'determinate');
+        wrap.setAttribute(PROGRESS_ATTR, 'determinate');
         const p = Math.max(0, Math.min(100, Math.round((loaded / total) * 100)));
         fg.style.strokeDashoffset = String(PROGRESS_RING_C * (1 - p / 100));
         pct.textContent = `${p}%`;
         wrap.setAttribute('data-nf-pct', String(p));
       } else {
-        wrap.setAttribute('data-nf-progress', 'indeterminate');
+        wrap.setAttribute(PROGRESS_ATTR, 'indeterminate');
       }
     },
+    /** 显式撤除（渲染单点/兜底路径用；幂等）。 */
+    dismiss() { stopWatch(); if (wrap.isConnected) wrap.remove(); },
   };
 }
 
