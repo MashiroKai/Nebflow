@@ -232,35 +232,7 @@ export function renderPermDetail(host, detail, t, opts = {}) {
     else decide();
   }
 
-  // ② 作用域：**一行**轻量键值（设备 / 工作目录 / 目标路径），不装边框盒子。
-  //    目标路径**只在这里**出现一次（正文块不再重复印）。
-  if (scope) {
-    const row = document.createElement('div');
-    row.className = 'perm-scope';
-    const pairs = [];
-    if (typeof scope.device === 'string' && scope.device) {
-      pairs.push(['perm.detail.device', scope.device + (scope.remoteExec ? ' ' + t('perm.detail.remoteExec') : '')]);
-    }
-    if (typeof scope.cwd === 'string' && scope.cwd) pairs.push(['perm.detail.cwd', scope.cwd]);
-    if (typeof scope.target === 'string' && scope.target) pairs.push(['perm.detail.target', scope.target]);
-    for (const [k, v] of pairs) {
-      const item = document.createElement('span');
-      item.className = 'perm-scope-item';
-      const kEl = document.createElement('span');
-      kEl.className = 'perm-scope-key';
-      kEl.textContent = t(k);
-      const vEl = document.createElement('span');
-      vEl.className = 'perm-scope-val';
-      // span 而非 <code>：`.bubble.ai code` 带行内淡底，作用域值要的是「一行字」不是 chip。
-      vEl.textContent = v;
-      item.appendChild(kEl);
-      item.appendChild(vEl);
-      row.appendChild(item);
-    }
-    if (row.firstChild) frag.appendChild(row);
-  }
-
-  // ③ 判定出处：闸名 + 规则 id（次要字色）。**不是**「理由」—— 理由（档位 +
+  // ② 判定（主信息：风险档 + 标签，置于命令之下、作用域之上）：闸名 + 规则 id（次要字色）。**不是**「理由」—— 理由（档位 +
   //    人话标签）已经由卡首横幅承载，这里只补「这话是谁判的」，不复述结论。
   //    无横幅的腿（手机层实测 / 历史行无 dangerLevel）必须自足：档位徽标与标签
   //    就落回这一行，仍然各一次。
@@ -300,6 +272,34 @@ export function renderPermDetail(host, detail, t, opts = {}) {
         meta.appendChild(r);
       }
       row.appendChild(meta);
+    }
+    if (row.firstChild) frag.appendChild(row);
+  }
+
+  // ③ 作用域（细节小字，置于理由行之下）：**一行**轻量键值（设备 / 工作目录 / 目标路径），不装边框盒子。
+  //    目标路径**只在这里**出现一次（正文块不再重复印）。
+  if (scope) {
+    const row = document.createElement('div');
+    row.className = 'perm-scope';
+    const pairs = [];
+    if (typeof scope.device === 'string' && scope.device) {
+      pairs.push(['perm.detail.device', scope.device + (scope.remoteExec ? ' ' + t('perm.detail.remoteExec') : '')]);
+    }
+    if (typeof scope.cwd === 'string' && scope.cwd) pairs.push(['perm.detail.cwd', scope.cwd]);
+    if (typeof scope.target === 'string' && scope.target) pairs.push(['perm.detail.target', scope.target]);
+    for (const [k, v] of pairs) {
+      const item = document.createElement('span');
+      item.className = 'perm-scope-item';
+      const kEl = document.createElement('span');
+      kEl.className = 'perm-scope-key';
+      kEl.textContent = t(k);
+      const vEl = document.createElement('span');
+      vEl.className = 'perm-scope-val';
+      // span 而非 <code>：`.bubble.ai code` 带行内淡底，作用域值要的是「一行字」不是 chip。
+      vEl.textContent = v;
+      item.appendChild(kEl);
+      item.appendChild(vEl);
+      row.appendChild(item);
     }
     if (row.firstChild) frag.appendChild(row);
   }

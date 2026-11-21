@@ -1,61 +1,106 @@
 package nebflow.llm
 
-import java.util.concurrent.ConcurrentHashMap
-
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.shared.FallbackExhaustedError
 
 /**
- * LlmFailureCard —— LLM 失败卡片的**非阻塞**运行时（卡片批 2026-11-21）。
+ * LlmFailureCard —— LLM 失败卡片的**非阻塞**运行时（卡片批 2026-11-21；聚合键改造 2026-11-21 第 3 轮）。
  *
  * 与 [[nebflow.core.model.ModelUnavailableCard]]（阻塞式 raiseAndAwait，等用户答复才
  * 放行）不同：本运行时**发帧即返回**，调用方（引擎重试 / 冻结）不等待用户。
- *   - 失败（LLM 类，即 `AgentError.llmClass == true`）⇒ `llmFailure` 帧（卡片出现：错误摘要 +
- *     「等待恢复」+「换模型」）；同一 agent 的失败态登记进内存表。
- *   - 恢复（同一 agent 的下一次 LLM 调用成功）⇒ `llmFailureRecovered` 帧（卡片自动收起），
- *     表项移除。仅当表内确有该 agent 的失败态时才发，避免每次成功调用都刷帧。
+ *
+ * 聚合键 = **层级 + 模型**（作者第 3 轮裁定）：失败是模型层 / 层级级事件，不是代理级事件。
+ * 同层级、同模型的多个代理失败只出**一张**卡，卡上列出受影响的代理。
+ *   - 层级 `layer`：`root`（深度 0 的主代理）/ `team`（团队成员，无 replyTo、由父发消息驱动）/
+ *     `subtask`（委派子任务）。
+ *   - 模型 `modelRef`：链上首个候选（`providerId/model`）；无链信息时取代理自身的首选模型。
+ *   - 失败 ⇒ `llmFailure` 帧（整组快照：层级 / 模型 / 受影响代理列表 / 最新摘要）。
+ *   - 恢复：组内某代理下一次成功调用 ⇒ 从组内移除该代理；组仍有成员 ⇒ 再发一帧 `llmFailure`
+ *     收窄代理列表；组清空 ⇒ `llmFailureRecovered` 帧收卡。
  *
  * 纯状态 + 帧构造，无 IO：WS 发送点（AgentProcessing）负责把帧送出去。
- * 表以 agent 名为键（同一 agent 同一时刻至多一张卡，多次失败覆盖为最新摘要）。
  */
 object LlmFailureCard:
 
-  private val active = new ConcurrentHashMap[String, Json]()
+  /** 组内单个失败代理。 */
+  final case class Member(agent: String, summary: String, failureClass: String)
 
-  def failureFrame(sessionId: String, agentName: String, summary: String, failureClass: String): Json =
+  private final case class Group(layer: String, modelRef: String, members: Vector[Member])
+
+  private val lock = new Object
+  // 键 = (layer, modelRef)
+  private var groups: Map[(String, String), Group] = Map.empty
+
+  /** 层级判定（单点）：深度 0 = 根；无 replyTo 且有父 = 团队成员；其余 = 子任务。 */
+  def layerOf(depth: Int, teamMember: Boolean): String =
+    if depth <= 0 then "root" else if teamMember then "team" else "subtask"
+
+  /** 模型判定（单点）：链穷尽时取链上首个候选；否则取代理首选；都没有给空串。 */
+  def modelRefOf(error: Throwable, preferred: Option[String]): String = error match
+    case f: FallbackExhaustedError =>
+      f.attempts.headOption.map(a => s"${a.providerId}/${a.model}").orElse(preferred).getOrElse("")
+    case _ => preferred.getOrElse("")
+
+  private def groupFrame(sessionId: String, g: Group): Json =
+    val last = g.members.last
     Json.obj(
       "type" -> "llmFailure".asJson,
       "sessionId" -> sessionId.asJson,
-      "agentName" -> agentName.asJson,
-      "summary" -> summary.asJson,
-      "failureClass" -> failureClass.asJson,
+      "layer" -> g.layer.asJson,
+      "modelRef" -> g.modelRef.asJson,
+      "agents" -> g.members.map(_.agent).asJson,
+      "summary" -> last.summary.asJson,
+      "failureClass" -> last.failureClass.asJson,
       "waitable" -> true.asJson,
       "switchable" -> true.asJson
     )
 
-  def recoveredFrame(sessionId: String, agentName: String): Json =
+  /** 单代理视角的失败帧（组快照；便于单测直接断言）。 */
+  def failureFrame(sessionId: String, agentName: String, summary: String, failureClass: String,
+                   layer: String = "root", modelRef: String = ""): Json =
+    groupFrame(sessionId, Group(layer, modelRef, Vector(Member(agentName, summary, failureClass))))
+
+  private def recoveredFrame(sessionId: String, layer: String, modelRef: String, agentName: String): Json =
     Json.obj(
       "type" -> "llmFailureRecovered".asJson,
       "sessionId" -> sessionId.asJson,
+      "layer" -> layer.asJson,
+      "modelRef" -> modelRef.asJson,
       "agentName" -> agentName.asJson
     )
 
-  /** 登记一次 LLM 类失败并返回应发出的 `llmFailure` 帧。 */
-  def recordFailure(sessionId: String, agentName: String, summary: String, failureClass: String): Json =
-    val frame = failureFrame(sessionId, agentName, summary, failureClass)
-    active.put(agentName, frame)
-    frame
+  /** 登记一次 LLM 类失败并返回应发出的 `llmFailure` 组快照帧。 */
+  def recordFailure(sessionId: String, agentName: String, summary: String, failureClass: String,
+                    layer: String = "root", modelRef: String = ""): Json =
+    lock.synchronized {
+      val key = (layer, modelRef)
+      val existing = groups.get(key).map(_.members.filterNot(_.agent == agentName)).getOrElse(Vector.empty)
+      val g = Group(layer, modelRef, existing :+ Member(agentName, summary, failureClass))
+      groups = groups.updated(key, g)
+      groupFrame(sessionId, g)
+    }
 
   /**
-   * 同一 agent 成功调用后调用：若表内有其失败态 ⇒ 移除并返回 `llmFailureRecovered` 帧；
-   * 否则 None（不刷帧）。
+   * 同一代理成功调用后调用：若其在某组内 ⇒ 移出该组；组清空则返回 `llmFailureRecovered`
+   * 收卡，组仍有成员则返回收窄后的 `llmFailure` 快照；不在任何组内 ⇒ None（不刷帧）。
    */
   def recordSuccess(sessionId: String, agentName: String): Option[Json] =
-    Option(active.remove(agentName)).map(_ => recoveredFrame(sessionId, agentName))
+    lock.synchronized {
+      groups.collectFirst { case (k, g) if g.members.exists(_.agent == agentName) => (k, g) }.map { case (k, g) =>
+        val remaining = g.members.filterNot(_.agent == agentName)
+        if remaining.isEmpty then
+          groups = groups - k
+          recoveredFrame(sessionId, g.layer, g.modelRef, agentName)
+        else
+          val ng = g.copy(members = remaining)
+          groups = groups.updated(k, ng)
+          groupFrame(sessionId, ng)
+      }
+    }
 
-  /** 诊断用：当前处于失败态的 agent 名。 */
+  /** 诊断用：当前处于失败态的代理名。 */
   def activeAgents: Set[String] =
-    import scala.jdk.CollectionConverters.*
-    active.keySet().asScala.toSet
+    lock.synchronized(groups.values.flatMap(_.members.map(_.agent)).toSet)
 
 end LlmFailureCard

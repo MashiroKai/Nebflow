@@ -430,7 +430,9 @@ private[agent] object AgentProcessing:
                          sid,
                          agentDef.name,
                          Option(error.getMessage).getOrElse("unknown").take(300),
-                         errCls.reason.toString
+                         errCls.reason.toString,
+                         LlmFailureCard.layerOf(depth, replyTo.isEmpty && parentRef.isDefined),
+                         LlmFailureCard.modelRefOf(error, agentDef.model.flatMap(_.preferred))
                        )
                      )
                      .handleErrorWith(_ => IO.unit)
@@ -521,7 +523,9 @@ private[agent] object AgentProcessing:
                           sid,
                           agentDef.name,
                           Option(error.getMessage).getOrElse("unknown").take(300),
-                          errCls.reason.toString
+                          errCls.reason.toString,
+                          LlmFailureCard.layerOf(depth, replyTo.isEmpty && parentRef.isDefined),
+                          LlmFailureCard.modelRefOf(error, agentDef.model.flatMap(_.preferred))
                         )
                       )
                       .handleErrorWith(_ => IO.unit)

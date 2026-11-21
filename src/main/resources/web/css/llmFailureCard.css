@@ -1,18 +1,67 @@
-/* LLM 失败卡片（风格重做 2026-11-21，作者裁定「视觉品质向 askuser 卡看齐」）。
+/* LLM 失败卡片（风格重做 2026-11-21；第 3 轮 2026-11-21：图标化压缩、大字置顶）。
    卡面 / 阴影 / 按钮 / 问句 / 理由行全部复用 chat.css 既有规则（.option-box、.option-q、
    .option-btn-row、.option-cancel、.option-confirm、.perm-reason、.perm-risk-badge），
-   本文件只补卡专属三处：摘要字色、状态行字色、换模型下拉的对齐与字体。
-   颜色与阴影一律走 token（var(--ask-*) / var(--ds-*)），不引入字面值（check-interaction-card-family 守卫）。 */
+   本文件只补卡专属部件：标题图标、层级标签、代理行、摘要、状态、换模型下拉。
+   颜色一律走 token（var(--…)），尺寸用 em（图标随字号走），不引入字面量（check-interaction-card-family 守卫）。 */
+.llm-failure-ico {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  flex: 0 0 auto;
+  vertical-align: -0.125em;
+}
+.llm-failure-ico-title {
+  color: var(--ask-green-deep);
+  margin-right: var(--ds-space-1h);
+}
+.llm-failure-title {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.llm-failure-reason {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-text-muted);
+}
+.llm-failure-layer {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  color: var(--ds-text-muted);
+}
+.llm-failure-agents,
 .llm-failure-summary {
   font-size: var(--ds-fs-hint);
   color: var(--ds-text-muted);
-  overflow-wrap: anywhere;
-  margin-bottom: var(--ds-space-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.llm-failure-agents {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  margin-top: var(--ds-space-1);
+}
+.llm-failure-summary {
+  margin-top: var(--ds-space-1);
 }
 .llm-failure-status {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1);
   font-size: var(--ds-fs-meta);
   color: var(--ds-text-muted);
   margin-top: var(--ds-space-2);
+}
+.llm-failure-spin {
+  animation: spin 1s linear infinite;
 }
 .llm-failure-switch {
   display: flex;
@@ -21,10 +70,13 @@
   min-width: 0;
 }
 .llm-failure-pick {
-  max-width: 220px;
+  max-width: 200px;
   min-width: 0;
   font-size: var(--ds-fs-body);
   color: var(--color-text);
   padding: var(--ds-space-1h) var(--ds-space-2);
   border-radius: var(--ds-radius-input);
+}
+@media (prefers-reduced-motion: reduce) {
+  .llm-failure-spin { animation: none; }
 }
