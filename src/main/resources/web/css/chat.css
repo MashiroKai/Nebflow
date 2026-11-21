@@ -2,6 +2,11 @@
 .ask-merge { display: grid; gap: 10px; min-width: 0; }
 .ask-merge-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .ask-merge-row .option-custom-input { flex: 1 1 140px; min-width: 0; width: auto; margin: 0; }
+/* 目标下拉框（作者 11-21 19:4x 送审前裁切修）：原生 select 被 nf-select 包裹，伸缩规则只落在
+   内部 select 上，包裹层按 shrink-to-fit 收成 ~99px，值文本被裁成「…at/base」。把包裹层本身
+   提为伸缩项，让触发面吃满剩余宽度；值文本的省略号策略沿用 dropdown.css 的 .nf-select-val。 */
+.ask-merge-row > .nf-select { flex: 1 1 160px; min-width: 0; max-width: 100%; }
+.ask-merge-row > .nf-select > .nf-select-trigger { width: 100%; }
 .ask-merge-row .option-btn { width: auto; margin: 0; }
 .ask-merge-list { display: grid; gap: 8px; }
 .ask-merge-item { display: grid; gap: 8px; border: 1px solid var(--st-border); border-radius: 10px; padding: 10px; }
@@ -32,7 +37,6 @@
 .ask-merge-name { flex: 1 1 100px; overflow-wrap: anywhere; }
 .ask-merge-status, .ask-merge-hint { color: var(--st-text-dim); font-size: 12px; }
 .ask-merge-conflict { color: var(--st-mail-warn-icon); font-size: 12px; }
-.ask-merge-receipt { background: var(--nf-glass-input-bg); border: 1px solid var(--st-border); border-radius: 10px; padding: 10px; overflow-wrap: anywhere; }
 
 /* ---------- Main ---------- */
 #main {
