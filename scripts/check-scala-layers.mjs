@@ -14,7 +14,7 @@
 //
 // 为什么不能是纯 import 正则(Scala 侧不健全,Phase 5 评审实测三缺口):
 //   (a) Scala 3 通配 `import nebflow.p.*` 与 `import nebflow.p.{A,B}`;
-//   (b) 无 import 语句的 FQN 裸引用(core→gateway 的 FlowTreeActor / tools/types /
+//   (b) 无 import 语句的 FQN 裸引用(core→gateway 的 ProjectActor / tools/types /
 //       FileRefs 均如此,import-only 门禁会对真实存在的边报假绿);
 //   (c) 字符串/注释假阳性(RestartHelper 的 "com.nebflow.gateway" 是启动标签,
 //       行为面,不得计入;logger 名、sys-props 键同理)。故先剥注释与字符串再扫,

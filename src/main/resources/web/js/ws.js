@@ -1687,8 +1687,7 @@ export function connect() {
       // nodeSessionId = "team-<sessionId>". Convert them to standard chat
       // events (agentTextDelta → textDelta, etc. - same as the flow/delegate
       // branches below) and route them to the popup ChatView. The popup is
-      // registered under the BARE sessionId (openStepPopup keys team popups
-      // with the unprefixed sid from /api/teams/mounted), so strip the
+      // registered under the BARE sessionId, so strip the
       // prefix before converting/looking up. Must NOT fall through to the
       // flow interceptor below - its ensureStepView would key on the
       // prefixed id and never match the popup.

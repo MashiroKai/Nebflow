@@ -2954,13 +2954,6 @@ private[gateway] object PresenceRoutes:
   // (GET/PUT /agents/:name/model), which reads agent.json directly through
   // `SchemePolicy`.
 
-  // (团队功能删除批 team-feature-deletion-20261104 阶段 2) `buildMountedTeamsJson`
-  // 曾在此（原 :2701-2745）：为 GET /api/teams/mounted 拼「已挂团队 + agent 磁贴
-  // 状态 + 团队任务」的响应体。路由与它的唯一调用方一并删除，故整段移除；
-  // 它读的团队会话登记表（listMountedTeams / isBusy）本体已在阶段 3 随团队面删除，
-  // 故此处只是失去本消费者。判定见
-  // reports-evidence/team-feature-deletion/stage2/README.md §B。
-
   // ── Flow editor helpers ──────────────────────────────────
 
   private def isValidFlowName(name: String): Boolean =

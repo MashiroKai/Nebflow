@@ -1420,13 +1420,9 @@ class WebSocketRoutes(
                       )
                       activeMeta <- sessionStore.getActiveMeta
                       agentName = activeMeta.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
-                      // ⑦ (2026-08-24): 原为「WS connect 即恢复已挂团队」——挂在
-                      // initFlowTree → 树 actor 的 restoreTeams 上。团队功能删除批
-                      // 阶段 1 已断掉 initFlowTree（见 :490 注），此处**只保留** root
-                      // agent 的确保（ensureRootAgent 幂等，冷启 spawn / 热路径原样返回）；
-                      // 团队恢复腿随之不存在。/api/teams/mounted 在阶段 1 的中间态见
-                      // reports-evidence/team-feature-deletion/stage1/README.md §4；
-                      // 该路由本身已在阶段 2 退役（见 PresenceRoutes 同位墓碑注）。
+                      // ⑦ (2026-08-24) 的「WS connect 即恢复已挂团队」腿已随团队面删除
+                      // （团队功能删除批阶段 1），此处**只保留** root agent 的确保
+                      // （ensureRootAgent 幂等，冷启 spawn / 热路径原样返回）。
                       _ <- activeMeta.traverse_(meta =>
                         ensureRootAgent(meta.id).void.handleErrorWith(e =>
                           logger.warn(s"WS-connect root agent ensure failed for session ${meta.id}: ${e.getMessage}")
