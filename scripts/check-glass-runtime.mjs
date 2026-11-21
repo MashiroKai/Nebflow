@@ -65,6 +65,10 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join, extname, normalize, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+// 判据与阈值**单源**（复测批 2026-11-18 收口）：严格腿
+// （tests/mobile-overlay-glass.spec.mjs 的 NEB_OVERLAY_STRICT_GLASS）与本闸的 R1
+// 共用这一份实现；阈值来自设计规范 §9 的机器可读块。本文件不再自带任何数字拷贝。
+import { CRITERIA, glassSampleVerdict, alphaOf as criteriaAlphaOf, SPEC_PATH } from './glass-runtime-criteria.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const argOf = (f, d = null) => { const i = process.argv.indexOf(f); return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : d; };
@@ -75,10 +79,8 @@ const WEB = ROOT_ARG
 const JSON_OUT = process.argv.includes('--json');
 const INVENTORY = process.argv.includes('--inventory');
 const THEMES = (argOf('--themes', 'dark,light') || '').split(',').filter(Boolean);
-const EFFECT_MIN = 3.0;    // 面内平均绝对像素差 ≥ 此值 ⇒ 模糊真的在改像素
-const INERT_MAX = 1.0;     // < 此值 ⇒ 声明了玻璃但一个像素都没动
-const FLAT_EDGE_MAX = 2.0; // 藏起该面后、其盒内背板的边缘能量 < 此值 ⇒ 平色背板，不做生效判定
-const DEGRADE_MIN_ALPHA = 0.9; // 降级档底不透明度下限
+// 阈值全部来自设计规范（见文件头 import）：本闸**零数字**。
+const { effectMin: EFFECT_MIN, inertMax: INERT_MAX, flatEdgeMax: FLAT_EDGE_MAX, occluderMinAlpha: OCCLUDER_MIN_ALPHA, degradeMinAlpha: DEGRADE_MIN_ALPHA } = CRITERIA;
 
 if (!existsSync(join(WEB, 'index.html'))) {
   console.error(`装配错误：${WEB}/index.html 不存在（--root 指向 web 树）`);
@@ -90,7 +92,7 @@ if (!existsSync(join(WEB, 'index.html'))) {
 // `desktop-canvas-header-under-panel-backdrop-root` 已**撤除** —— 真缺陷已修，
 // 不再需要豁免。修法 = 把壳的模糊从 `#canvas-panel` 挪到 `#canvas-panel::before`
 // （伪元素不是表头的祖先 ⇒ 不切断；见 css/split.css「材质层重排」注 +
-// glass-spec.md §9）。该条的反证（坏源码直跑必须报红）见批证据目录
+// references/frontend/glass-runtime-spec.md §9）。该条的反证（坏源码直跑必须报红）见批证据目录
 // `~/<evidence-root>/glass-desktop-header-20261118/`：改前树直跑 exit 1
 //（R2 × 6 条 violation 指 `#canvas-panel`），改后树 exit 0。
 // 注意：本闸的 desktop-canvas 腿自本批起渲染正文并把首行滚到表头之下 —— 空面板的
@@ -349,7 +351,8 @@ let engine = '';
 try { browser = await chromium.launch({ channel: 'chromium' }); engine = 'chromium(full) ' + browser.version(); }
 catch { try { browser = await chromium.launch(); engine = 'chromium(headless-shell) ' + browser.version(); } catch (e) { console.error('装配错误：无可用浏览器 ' + e.message); process.exit(2); } }
 
-const report = { ok: true, web: WEB, engine, scenes: {}, violations: [], exceptions: [] };
+const report = { ok: true, web: WEB, engine, criteria: CRITERIA, criteriaSource: SPEC_PATH, scenes: {}, violations: [], exceptions: [], exemptions: [] };
+const allExemptions = [];
 const addViolation = (rule, v) => { report.ok = false; report.violations.push({ rule, ...v }); };
 const exceptFor = (v) => NAMED_EXCEPTIONS.find((x) => x.rules.includes(v.rule) && x.match(v));
 const exceptionHits = new Map();
@@ -373,26 +376,77 @@ for (const theme of THEMES) {
       await page.waitForTimeout(150);
 
       const rows = [];
+      const exemptions = [];
       for (const s of surfaces) {
         const box = { x: s.rect.x * 2 + 2, y: s.rect.y * 2 + 2, w: s.rect.w * 2 - 4, h: s.rect.h * 2 - 4 };
         const diff = await meanAbsDiff(page, baseline, off, box);
-        // 平色背板判据：藏起该面自己，量它盒内背板的边缘能量
+        // 遮挡实测：该面盒内取样点是否被压在其上、不透明的元素盖住（身份 + 几何）
+        const coverProbe = await page.evaluate(({ gid, occluderMinAlpha }) => {
+          const el = document.querySelector(`[data-gr-idx="${gid}"]`);
+          if (!el) return { covered: false, samples: 0, occluders: [] };
+          const r = el.getBoundingClientRect();
+          const key = (n) => n.tagName.toLowerCase() + (n.id ? '#' + n.id : '') + (typeof n.className === 'string' && n.className.trim() ? '.' + n.className.trim().split(/\s+/).slice(0, 2).join('.') : '');
+          const alpha = (v) => {
+            const m = String(v).match(/^rgba?\(([^)]*)\)$/i);
+            if (!m) { const h = String(v).match(/^#([0-9a-f]{8})$/i); return h ? parseInt(h[1].slice(6, 8), 16) / 255 : 1; }
+            const parts = m[1].split(/[,/]/).map((t) => t.trim()).filter(Boolean);
+            return parts.length >= 4 ? parseFloat(parts[3]) : 1;
+          };
+          const pts = [];
+          for (const fx of [0.15, 0.5, 0.85]) for (const fy of [0.2, 0.5, 0.8]) pts.push([r.x + r.width * fx, r.y + r.height * fy]);
+          const occl = new Map();
+          let coveredPts = 0;
+          for (const [x, y] of pts) {
+            const stack = document.elementsFromPoint(x, y);
+            const at = stack.indexOf(el);
+            const above = at >= 0 ? stack.slice(0, at) : stack;
+            let hit = null;
+            for (const a of above) {
+              if (a === el || el.contains(a)) continue;      // 该面自己的子件不算遮挡
+              const cs = getComputedStyle(a);
+              const al = alpha(cs.backgroundColor);
+              if (al >= occluderMinAlpha || (cs.backgroundImage && cs.backgroundImage !== 'none')) {
+                const q = a.getBoundingClientRect();
+                hit = { sel: key(a), alpha: +al.toFixed(3), bg: cs.backgroundColor, rect: [+q.x.toFixed(1), +q.y.toFixed(1), +q.width.toFixed(1), +q.height.toFixed(1)] };
+                break;
+              }
+            }
+            if (hit) { coveredPts++; if (!occl.has(hit.sel)) occl.set(hit.sel, hit); }
+          }
+          return { covered: pts.length > 0 && coveredPts === pts.length, samples: pts.length, coveredPts, occluders: [...occl.values()] };
+        }, { gid: s.gid, occluderMinAlpha: OCCLUDER_MIN_ALPHA });
+        // 藏起该面自己：量背板平整度（证据），并保留该面可见度读数
         await page.evaluate((gid) => { const e = document.querySelector(`[data-gr-idx="${gid}"]`); if (e) e.style.visibility = 'hidden'; }, s.gid);
         await page.waitForTimeout(40);
         const bgShot = await page.screenshot({ animations: 'disabled' });
         const bgStats = await regionStats(page, bgShot.toString('base64'), box);
         await page.evaluate((gid) => { const e = document.querySelector(`[data-gr-idx="${gid}"]`); if (e) e.style.visibility = ''; }, s.gid);
         const backdropEdge = bgStats ? bgStats.edge : null;
-        const flat = backdropEdge == null || backdropEdge < FLAT_EDGE_MAX;
-        const verdict = diff === null ? 'n/a' : diff >= EFFECT_MIN ? 'effective' : diff < INERT_MAX ? 'inert' : 'weak';
+        // 该面**可见度**实测：藏起该面后盒内逐像素差（≈0 ⇒ 它的贡献到不了最终画面 ⇒ 被不透明层盖住）
+        const visibleDelta = await meanAbsDiff(page, baseline, bgShot, box);
+        const cover = {
+          visibleDelta, occluders: coverProbe.occluders,
+          covered: coverProbe.covered, samples: coverProbe.samples, coveredPts: coverProbe.coveredPts,
+        };
+        const v = glassSampleVerdict({ deltaPx: diff, backdropEdge, cover });
         const row = {
           scene: sceneName, theme, key: s.key, path: s.path, pe: s.pe, gid: s.gid,
           rect: s.rect, backdropFilter: s.backdropFilter, background: s.background, alpha: s.alpha,
-          diff, backdropEdge, verdict, flat, rootCauses: s.rootCauses,
+          diff, backdropEdge, visibleDelta, cover, verdict: v.status, flat: !v.judgeable, judgeable: v.judgeable, reason: v.reason,
+          rootCauses: s.rootCauses,
         };
         rows.push(row);
-        if (!flat && (verdict === 'inert' || verdict === 'weak')) {
-          routeViolation('R1', { scene: sceneName, theme, sel: s.key, path: s.path, detail: `声明 ${s.backdropFilter} 但摘掉它只改了 ${diff} 个像素/通道（< ${EFFECT_MIN}）；藏起该面后其盒内背板边缘 ${backdropEdge}（≥ ${FLAT_EDGE_MAX}，非平色）⇒ 背板有内容却糊不动 = 玻璃纸`, root: s.rootCauses });
+        if (v.judgeable && !v.ok) {
+          routeViolation('R1', {
+            scene: sceneName, theme, sel: s.key, path: s.path, detail: v.reason,
+            root: s.rootCauses,
+            evidence: { deltaPx: diff, backdropEdge, visibleDelta, cover },
+          });
+        }
+        if (!v.judgeable) {
+          // 不可判样本**逐条具名记录**（元素 + Δpx 原值 + 背板平整度 / 遮挡元素身份与几何）——
+          // 豁免只对这里列出的样本成立，不是阈值放宽。
+          exemptions.push({ scene: sceneName, theme, sel: s.key, pe: s.pe || null, status: v.status, deltaPx: diff, backdropEdge, visibleDelta, cover, reason: v.reason, rect: s.rect });
         }
         if (s.rootCauses.length) {
           routeViolation('R2', { scene: sceneName, theme, sel: s.key, detail: '祖先链上有 backdrop root 触发点', root: s.rootCauses });
@@ -402,12 +456,7 @@ for (const theme of THEMES) {
       // R3 降级档一致性：给页面加 html.no-backdrop，逐面读 computed 底
       await page.evaluate(() => document.documentElement.classList.add('no-backdrop'));
       await page.waitForTimeout(200);
-      const alphaOf = (v) => {
-        const m = String(v).match(/^rgba?\(([^)]*)\)$/i);
-        if (!m) { const h = String(v).match(/^#([0-9a-f]{8})$/i); return h ? parseInt(h[1].slice(6, 8), 16) / 255 : 1; }
-        const parts = m[1].split(/[,/]/).map((t) => t.trim()).filter(Boolean);
-        return parts.length >= 4 ? parseFloat(parts[3]) : 1;
-      };
+      const alphaOf = criteriaAlphaOf;
       for (const r of rows) {
         if (r.alpha < 0.05 || r.alpha >= DEGRADE_MIN_ALPHA) continue; // 纯渐隐面 / 本相已不透明 ⇒ 不在此列
         const got = await page.evaluate(({ gid, pe }) => {
@@ -420,7 +469,8 @@ for (const theme of THEMES) {
           routeViolation('R3', { scene: sceneName, theme, sel: r.key, detail: `降级（html.no-backdrop）下底仍是 α=${alphaOf(got.background).toFixed(3)}（${got.background}）= 无模糊引擎里的玻璃纸`, root: [] });
         }
       }
-      report.scenes[`${theme}/${sceneName}`] = { surfaces: rows.length, rows, errors };
+      report.scenes[`${theme}/${sceneName}`] = { surfaces: rows.length, rows, exemptions, errors };
+      allExemptions.push(...exemptions);
     } finally {
       await context.close();
     }
@@ -431,6 +481,7 @@ await browser.close();
 
 const total = Object.values(report.scenes).reduce((s, v) => s + v.surfaces, 0);
 report.exceptions = NAMED_EXCEPTIONS.map((x) => ({ id: x.id, hits: exceptionHits.get(x.id) || 0, reason: x.reason }));
+report.exemptions = allExemptions;
 const staleExceptions = report.exceptions.filter((x) => x.hits === 0);
 
 // ── 输出 ──────────────────────────────────────────────────────────────────
@@ -441,37 +492,50 @@ if (JSON_OUT) {
 
 if (INVENTORY) {
   console.log(`# 全站玻璃面清点（静态根 ${WEB} · ${engine}）`);
-  console.log(`# 判定：Δpx = 摘掉该面 backdrop-filter 的盒内逐像素差；背板edge = 藏起该面后盒内背板边缘能量（<${FLAT_EDGE_MAX} ⇒ 平色背板，n/a）`);
+  console.log(`# 判据单源：${SPEC_PATH}`);
+  console.log(`# 判定：Δpx = **该面自己**开/关自身 backdrop-filter 的盒内逐像素差；背板edge = 藏起该面后盒内背板边缘能量（<${FLAT_EDGE_MAX} ⇒ 平色背板）；可见度 = 藏起该面后盒内逐像素差（<${INERT_MAX} ⇒ 该面被不透明层完全盖住）`);
   for (const [k, v] of Object.entries(report.scenes)) {
     console.log(`\n== ${k} ==  面 ${v.surfaces} 个`);
-    console.log('| 选择器 | 伪元素 | 盒(x,y,w,h) | backdrop-filter | source bg | α | Δpx | 背板edge | 运行时判定 | 祖先 backdrop-root |');
-    console.log('|---|---|---|---|---|---|---|---|---|---|');
+    console.log('| 选择器 | 伪元素 | 盒(x,y,w,h) | backdrop-filter | source bg | α | Δpx(同面) | 背板edge | 可见度 | 运行时判定 | 祖先 backdrop-root |');
+    console.log('|---|---|---|---|---|---|---|---|---|---|---|');
     for (const r of v.rows) {
-      console.log(`| \`${r.key}\` | ${r.pe || '—'} | ${r.rect.x},${r.rect.y},${r.rect.w},${r.rect.h} | ${r.backdropFilter} | ${r.background} | ${r.alpha.toFixed(2)} | ${r.diff} | ${r.backdropEdge} | ${r.flat ? 'n/a(平色背板)' : r.verdict} | ${r.rootCauses.length ? r.rootCauses.map((x) => `${x.sel}: ${x.flags.join(',')}`).join(' · ') : '—'} |`);
+      console.log(`| \`${r.key}\` | ${r.pe || '—'} | ${r.rect.x},${r.rect.y},${r.rect.w},${r.rect.h} | ${r.backdropFilter} | ${r.background} | ${r.alpha.toFixed(2)} | ${r.diff} | ${r.backdropEdge} | ${r.visibleDelta} | ${r.judgeable ? r.verdict : `豁免(${r.verdict})`} | ${r.rootCauses.length ? r.rootCauses.map((x) => `${x.sel}: ${x.flags.join(',')}`).join(' · ') : '—'} |`);
     }
   }
-  console.log(`\n违规 ${report.violations.length} · 具名例外命中 ${report.exceptions.filter((x) => x.hits > 0).map((x) => `${x.id}×${x.hits}`).join(', ') || '无'}`);
+  console.log(`\n违规 ${report.violations.length} · 具名例外命中 ${report.exceptions.filter((x) => x.hits > 0).map((x) => `${x.id}×${x.hits}`).join(', ') || '无'} · 不可判样本（豁免，逐条具名）${report.exemptions.length}`);
   for (const v of report.violations) console.log(`  [${v.rule}] ${v.scene}/${v.theme} ${v.sel} — ${v.detail}`);
   for (const x of report.exceptions) console.log(`  例外 ${x.id} 命中 ${x.hits}`);
+  for (const e of report.exemptions) console.log(`  豁免 ${e.scene}/${e.theme} ${e.sel}${e.pe || ''} [${e.status}] Δpx=${e.deltaPx} 背板edge=${e.backdropEdge} 可见度=${e.visibleDelta} — ${e.reason}`);
   process.exit(0);
 }
 
 if (!report.ok) {
   console.error('✗ glass-runtime gate FAILED');
-  console.error(`  场景 ${Object.keys(report.scenes).length} · 玻璃面 ${total} · 违规 ${report.violations.length} · 例外命中 ${report.exceptions.reduce((s, x) => s + x.hits, 0)}`);
+  console.error(`  场景 ${Object.keys(report.scenes).length} · 玻璃面 ${total} · 违规 ${report.violations.length} · 例外命中 ${report.exceptions.reduce((s, x) => s + x.hits, 0)} · 不可判样本 ${report.exemptions.length}`);
   for (const v of report.violations) {
     console.error(`  [${v.rule}] ${v.scene}/${v.theme}  ${v.sel}`);
     console.error(`      ${v.detail}`);
     for (const r of v.root ?? []) console.error(`      祖先 ${r.sel}  ${r.flags.join(' | ')}`);
   }
-  console.error('\n处置：R1 = 让这一族的 backdrop-filter 真的采样到背板（把挡在它前面的 backdrop root（祖先的 filter / will-change:opacity / opacity<1 / backdrop-filter）撤掉，或把材质层挪到 root 之外）；');
+  console.error('\n处置：R1 = 让这一族的 backdrop-filter 真的采样到背板（把挡在它前面的 backdrop root（祖先的 filter / will-change:opacity / opacity<1 / backdrop-filter）撤掉，或把材质层挪到 root 之外）；只有在「该面可见 + 背后背板非平色」时 R1 才成立，否则该样本按不可判豁免并逐条具名。');
   console.error('      R2 = 玻璃面的祖先链上不许新建 backdrop root（这是 R1 红时的根因行）；');
   console.error('      R3 = 降级档（html.no-backdrop / @supports not）必须回落到不透明实底 —— α .16 底只在模糊能采样时才是玻璃。');
-  console.error('      配方本体与单源纪律见 css/glass.css + scripts/check-glass-unify.mjs。');
+  console.error('      配方本体与单源纪律见 css/glass.css + scripts/check-glass-unify.mjs；判据与阈值单源见 scripts/glass-runtime-criteria.mjs。');
   process.exit(1);
 }
 if (staleExceptions.length) {
   console.warn(`⚠ glass-runtime gate passed，但具名例外未命中（陈旧？复核后删除）：${staleExceptions.map((x) => x.id).join(', ')}`);
 }
-console.log(`✓ glass-runtime gate passed — 场景 ${Object.keys(report.scenes).length} · 玻璃面 ${total} 全部真采样（摘掉 backdrop-filter 均改变像素）· 祖先链无 backdrop root · 降级档全不透明 · 具名例外命中 ${report.exceptions.reduce((s, x) => s + x.hits, 0)}`);
+const judged = total - report.exemptions.length;
+console.log(`✓ glass-runtime gate passed — 场景 ${Object.keys(report.scenes).length} · 玻璃面 ${total}（可判 ${judged} 全部真采样；不可判样本 ${report.exemptions.length} 逐条具名豁免）· 祖先链无 backdrop root · 降级档全不透明 · 具名例外命中 ${report.exceptions.reduce((s, x) => s + x.hits, 0)}`);
+// 豁免**逐条自证**：即使门禁绿，也把每一个不可判样本的元素 + Δpx 原值 + 背板读数 / 遮挡身份打出来，
+// 免得「绿」掩盖「豁免吞掉了真凶」。豁免不是阈值放宽，是实测不可判。
+for (const e of report.exemptions) {
+  const why = e.status === 'covered'
+    ? `可见度=${e.visibleDelta} < ${INERT_MAX}（藏起它不改像素）⇒ 被不透明层盖住` + ((e.cover && e.cover.occluders && e.cover.occluders.length) ? `；遮挡 ${e.cover.occluders.map((o) => `${o.sel} (α=${o.alpha}, box ${o.rect.join(',')})`).join(' · ')}` : '')
+    : e.status === 'flat-backdrop'
+      ? `背板edge=${e.backdropEdge} < ${FLAT_EDGE_MAX}（平色背板）`
+      : e.reason;
+  console.log(`  · 豁免 ${e.scene}/${e.theme} ${e.sel}${e.pe || ''} [${e.status}] Δpx=${e.deltaPx} — ${why}`);
+}
 process.exit(0);
