@@ -4,6 +4,7 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import munit.CatsEffectSuite
 import nebflow.shared.*
+import nebflow.llm.kernel.LlmKernel
 
 import scala.concurrent.duration.*
 
@@ -107,6 +108,43 @@ class ModelDecisionGoldenMatrixSpec extends CatsEffectSuite:
         assertEquals(ModelDecision.smallLlmRoute(ModelDecision.RequestCtx(None, callType = Some("small-llm"))),
           Some(nebflow.core.SchemePolicy.smallLlmModel()))
         assertEquals(ModelDecision.smallLlmRoute(ModelDecision.RequestCtx(None)), None)
+    }
+  }
+
+  test("G-small-kernel N1 第4步调用点：LlmKernel.candidates(SmallLlmModel) == 旧直调 getCandidatesForAgent(smallLlmModel)") {
+    withTempDataRoot { root =>
+      writeAgent(root, nebflow.core.SchemePolicy.NebulaName, "b/m1")
+      for
+        r <- regWith(cfgWith())
+        legacy <- r.getCandidatesForAgent(Some(nebflow.core.SchemePolicy.smallLlmModel()))
+        viaKernel <- LlmKernel.candidates(r, LlmKernel.CandidateSource.SmallLlmModel)
+      yield assertEquals(keys(viaKernel), keys(legacy))
+    }
+  }
+
+  test("G-ctx 来源→RequestCtx 推导（§2.2 步骤3）：SmallLlmModel 推导出 small-llm 分流点，其余无额外上下文") {
+    import LlmKernel.CandidateSource as S
+    val small = ModelDecision.ctxOf(S.SmallLlmModel)
+    assertEquals(small.callType, Some("small-llm"))
+    assertEquals(small.source, Some(S.SmallLlmModel))
+    assertEquals(ModelDecision.ctxOf(S.NebulaChain).callType, None)
+    assertEquals(ModelDecision.ctxOf(S.NebulaChain).source, Some(S.NebulaChain))
+    assertEquals(ModelDecision.smallLlmRoute(small), Some(nebflow.core.SchemePolicy.smallLlmModel()))
+    IO.unit
+  }
+
+  test("G-resolve resolveSource == LlmKernel.candidates（K7 单点委托）：SmallLlmModel 与 NebulaChain 与旧直调逐项相等") {
+    withTempDataRoot { root =>
+      writeAgent(root, nebflow.core.SchemePolicy.NebulaName, "b/m1")
+      for
+        r <- regWith(cfgWith())
+        viaKernelS <- LlmKernel.candidates(r, LlmKernel.CandidateSource.SmallLlmModel)
+        viaResolveS <- ModelDecision.resolveSource(r, LlmKernel.CandidateSource.SmallLlmModel)
+        viaKernelN <- LlmKernel.candidates(r, LlmKernel.CandidateSource.NebulaChain)
+        legacyN <- r.getCandidatesForAgent(nebflow.core.SchemePolicy.nebulaChain())
+      yield
+        assertEquals(keys(viaResolveS), keys(viaKernelS))
+        assertEquals(keys(viaKernelN), keys(legacyN))
     }
   }
 

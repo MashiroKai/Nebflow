@@ -2,6 +2,7 @@ package nebflow.llm
 
 import cats.effect.{IO, Ref}
 import nebflow.core.ModelRoles
+import nebflow.llm.kernel.LlmKernel
 import nebflow.shared.AgentModelConfig
 
 /**
@@ -22,14 +23,45 @@ import nebflow.shared.AgentModelConfig
  */
 object ModelDecision:
 
-  /** 请求上下文。`isAskSession` / `callType` 进统一层；P1 只承载，不改链选择。 */
+  /**
+   * 请求上下文。`source` = 显式来源枚举（K7：必需语义、由 [[ctxOf]] 推导填充，调用方不自选）；
+   * `isAskSession` / `callType` 进统一层，供小模型分流 [[smallLlmRoute]] 区分调用点。
+   */
   final case class RequestCtx(
     sessionId: Option[String],
     delegateMode: Option[String] = None,
     isAskSession: Boolean = false,
     callType: Option[String] = None,
-    pinnedChain: Option[PinnedChain] = None
+    pinnedChain: Option[PinnedChain] = None,
+    source: Option[LlmKernel.CandidateSource] = None
   )
+
+  /**
+   * 由显式来源推导请求上下文（§2.2 步骤 3：枚举退化为 RequestCtx 字段，由 resolve 内部推导）。
+   * SmallLlmModel ⇒ callType=small-llm（小模型分流点）；其余来源无额外上下文。
+   */
+  def ctxOf(source: LlmKernel.CandidateSource): RequestCtx = source match
+    case LlmKernel.CandidateSource.SmallLlmModel =>
+      RequestCtx(None, callType = Some("small-llm"), source = Some(source))
+    case other => RequestCtx(None, source = Some(other))
+
+  /**
+   * K7 候选解析的唯一实现（`LlmKernel.candidates` 委托至此）：来源 ⇒ RequestCtx ⇒ 候选链。
+   * 小模型经 [[smallLlmRoute]] 分流（N1 第 4 步接入的真实调用点）。
+   */
+  def resolveSource(registry: ProviderRegistry, source: LlmKernel.CandidateSource): IO[List[ModelCandidate]] =
+    val ctx = ctxOf(source)
+    source match
+      case LlmKernel.CandidateSource.SmallLlmModel =>
+        IO(smallLlmRoute(ctx)).flatMap(m => candidatesOf(registry, m))
+      case LlmKernel.CandidateSource.NebulaChain =>
+        nebulaCandidates(registry)
+      case LlmKernel.CandidateSource.Slot(agentModel) =>
+        candidatesOf(registry, agentModel)
+      case LlmKernel.CandidateSource.Explicit(list) =>
+        IO.pure(list)
+      case LlmKernel.CandidateSource.DecisionRoute(name) =>
+        decisionRouteCandidates(registry, name)
 
   /** 一步命中依据（trace 元素）。 */
   final case class Hit(step: String, detail: String)

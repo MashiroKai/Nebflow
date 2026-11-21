@@ -176,19 +176,9 @@ object LlmKernel:
   // ── K7 候选解析单点 ──────────────────────────────────────────────────────
 
   /** 候选解析单点：`CandidateSource` ⇒ 有序候选链（禁隐式回退）。 */
+  // 统一模型层（P1）：唯一实现在 ModelDecision.resolveSource，本文件不再自组合。
   def candidates(registry: ProviderRegistry, source: CandidateSource): IO[List[ModelCandidate]] =
-    source match
-      // 统一模型层（P1）：所有非显式分支收口到 ModelDecision，本文件不再自组合。
-      case CandidateSource.SmallLlmModel =>
-        nebflow.llm.ModelDecision.smallLlmCandidates(registry)
-      case CandidateSource.NebulaChain =>
-        nebflow.llm.ModelDecision.nebulaCandidates(registry)
-      case CandidateSource.Slot(agentModel) =>
-        nebflow.llm.ModelDecision.candidatesOf(registry, agentModel)
-      case CandidateSource.Explicit(list) =>
-        IO.pure(list)
-      case CandidateSource.DecisionRoute(name) =>
-        nebflow.llm.ModelDecision.decisionRouteCandidates(registry, name)
+    nebflow.llm.ModelDecision.resolveSource(registry, source)
 
   // ── K5 整链遍历单点 ──────────────────────────────────────────────────────
 
