@@ -1430,21 +1430,11 @@ body.mobile-layer .mh-search-head-ic {
   color: var(--color-frame-text-muted);
 }
 body.mobile-layer .mh-search-head-ic svg { width: 15px; height: 15px; }
-/* 角色行：类型·日期 tabs 之下第二筛选行（v3.6 筛选两行口径）。 */
-body.mobile-layer #mh-search-kind-row {
-  display: flex;
-  align-items: center;
-  height: 32px;
-}
-body.mobile-layer #mh-search-kind {
-  width: 100%;
-  height: 30px;
-  font-size: var(--mfs-min);
-  border-radius: var(--ds-radius-input);
-}
-/* F 批 2026-11-17（下拉统一）：select 被 .nf-select 包裹后，本行的填充职责
-   （width:100% 于 flex 行）上移到包裹层。 */
-body.mobile-layer #mh-search-kind-row .nf-select { flex: 1; min-width: 0; }
+/* 🔴 角色行整件退役（search-page-density 批 2026-11-21 作者令①）：
+   `#mh-search-kind-row` / `#mh-search-kind`（「全部来源」大下拉框）与来源 chips
+   行功能重复 —— 作者令「删掉下拉框，来源筛选只用小标签 chips……保留一行」。
+   DOM 由 js/mobile/searchFace.js 同批删除（**不是 display:none**），故这里不留
+   任何规则：无 DOM 即无死样式。chips 的落位/紧凑档见本段末「来源筛选行」。 */
 /* 🔴 三点入口批（2026-11-05 作者令「把搜索和搜索聊天记录结合，把胶囊的内容改为
    搜索聊天记录……下面的文字不要」）：页面名胶囊（`.mobile-page-title` = 「搜索聊天
    记录」）是本页**唯一**标题 ⇒ 面板头那枚重复标题整块退场。
@@ -1462,6 +1452,117 @@ body.mobile-layer #search-modal .search-result {
   padding: var(--ds-space-2) var(--ds-space-inline-x);
   margin-bottom: var(--ds-space-1h);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   🔴 搜索页空间瘦身（search-page-density 批 2026-11-21）
+
+   作者报障逐字：「搜索界面空间设计太浪费，功能与内容重复，要给内容可视空间让路。」
+   四条需求 → 本块的落点（原则只有一条：内容可视空间最大化）：
+
+     ① 去重复：来源筛选只剩 chips 一行（大下拉框 `#mh-search-kind-row` 整件退役，
+        DOM 已由 searchFace.js 删除 —— 这里零规则 = 零死样式）；
+     ② 同行化：「选择文件」钮不再独占一行，与 chips 同一行（右端紧凑钮）；
+     ③ 打开钮紧凑化：「打开所选文件 (N)」不再占位成一行 —— 未选中不出现，
+        选中后以**底部悬浮条**形态浮在结果之上（零布局高度）；
+     ④ 计数行压缩：`主会话 · N 条结果` 收到最小字号单行，内距贴到底。
+
+   改前竖向开销（390×844 实测，见批报告）：关键词行 + tabs 32 + 下拉行 40 + chips 34
+   + 计数 20 + 选择文件 46 + 打开所选 46 ≈ 再吃掉一个小屏的一屏内容的一半；改后
+   只剩 关键词行 + tabs 32 + 筛选行 34 + 计数 16。
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* 落位锚：③ 的悬浮条与手机层日期滚轮都以内容面为坐标系（收编页面化后
+   #search-modal 是 position:static 的流内件 ⇒ 这里给它一个相对锚）。 */
+body.mobile-layer #search-modal { position: relative; }
+
+/* ① / ② 关键词行下的一切都收一档内距：tabs 与筛选行之间不再各吃一份 12px。 */
+body.mobile-layer #search-modal .search-controls {
+  padding: var(--ds-space-1h) var(--ds-space-4) var(--ds-space-half);
+  gap: 4px;
+}
+
+/* ② 来源 chips 行 = 唯一筛选行（chips 左端 + 「选择文件」右端紧凑钮）。 */
+body.mobile-layer #search-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+}
+body.mobile-layer #search-filter-row .search-source-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 var(--ds-space-2);
+  font-size: var(--mfs-min);
+  line-height: 1;
+  position: relative;
+  flex: none;
+}
+/* 触控热区：30px 视觉高 → 44px 命中盒（::before 外扩，与站内圆钮族同一手法；
+   纵向外扩 7px 不压上下行，横向各 2px 不吞相邻 chip 的间隙）。 */
+body.mobile-layer #search-filter-row .search-source-chip::before,
+body.mobile-layer #search-filter-row #search-select-files::before {
+  content: '';
+  position: absolute;
+  inset: -7px -2px;
+}
+body.mobile-layer #search-filter-row #search-select-files {
+  flex: none;
+  margin: 0 0 0 auto;   /* 同行右端（作者令②：与来源 chips 同一行） */
+  min-height: 30px;
+  height: 30px;
+  padding: 0 var(--ds-space-2);
+  font-size: var(--mfs-min);
+  line-height: 1;
+  position: relative;
+  border-radius: var(--ds-radius-pill);
+}
+
+/* ④ 计数行压缩：字号**不动**（沿用桌面 meta 档 11px —— 加粗反而违背「压缩」），
+   只把内距/行高收到最小：'主会话 · N 条结果' 一行贴着筛选行，不再各吃 4px。 */
+body.mobile-layer #search-modal #search-status {
+  padding: var(--ds-space-half) var(--ds-space-4);
+  line-height: 1.25;
+}
+
+/* ③ 「打开所选文件 (N)」= 底部悬浮条（待办收件箱批的悬浮控件同一条设计语言：
+   胶囊 + 唯一毛玻璃材质 + 浮影；未选中时 DOM 上 hidden ⇒ 不占位、不出现）。
+   零布局高度：absolute 浮在结果流之上，不给 #search-results 让位（只在它出现
+   时给结果流补一个底部内距，最后一行不被条压住）。 */
+body.mobile-layer #search-modal #search-open-selected-files {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--mobile-dock-top) + var(--ds-space-3));
+  transform: translateX(-50%);
+  margin: 0;
+  z-index: 15;
+  /* min-height 不是 height：胶囊随内容长高、不设上限 ⇒ 不会裁切（noclip 铁律 9）。 */
+  min-height: 38px;
+  padding: 0 var(--ds-space-4);
+  border-radius: var(--ds-radius-pill);
+  font-size: var(--ds-fs-hint);
+  white-space: nowrap;
+  box-shadow: var(--cv-shadow), 0 8px 20px rgba(0, 0, 0, 0.16);
+  animation: searchFloatIn 0.18s cubic-bezier(0.32, 0.72, 0, 1);
+}
+body.mobile-layer #search-modal #search-open-selected-files[hidden] { display: none; }
+/* 触控热区：38px 视觉高 → 44px 命中盒（纵向各外扩 3px）。 */
+body.mobile-layer #search-modal #search-open-selected-files::before {
+  content: '';
+  position: absolute;
+  inset: -3px 0;
+}
+@keyframes searchFloatIn {
+  from { opacity: 0; transform: translate(-50%, 10px) scale(0.96); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+body.mobile-layer #search-modal:has(#search-open-selected-files:not([hidden])) #search-results {
+  padding-bottom: calc(var(--mobile-dock-top) + 56px);
+}
+
+
+
 /* 登录墙卡：内容面宽安全边距。 */
 body.mobile-layer .nebflow-login-modal {
   max-width: calc(100vw - 24px);
@@ -4534,13 +4635,13 @@ body.mobile-layer #usage-dashboard .ud-colormode {
    此处不再重复声明，视觉单源一处）。 */
 
 /* 搜索范围 chips / 类型选择：30px → 44（胶囊形态保持）。 */
-body.mobile-layer .mh-scope-chip,
-body.mobile-layer #mh-search-kind {
+body.mobile-layer .mh-scope-chip {
   min-height: var(--mtap);
   padding-left: var(--mpad-x);
   padding-right: var(--mpad-x);
 }
-body.mobile-layer #mh-search-kind-row { height: auto; }
+/* `#mh-search-kind` / `#mh-search-kind-row` 的 44 档随角色行整件退役
+   （search-page-density 批 2026-11-21 作者令①）——DOM 已删，规则同时摘除。 */
 
 /* 搜索结果行：44 触控行 + 8px 纵向内距。 */
 body.mobile-layer .mh-sr-row {

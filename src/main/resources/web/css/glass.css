@@ -236,6 +236,28 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .flowmap-nav-bar,
   background: var(--nf-glass-input-bg);
 }
 
+/* ── 次级浮层 = 压不透档（search-page-density 批 2026-11-21 作者令②）──────────
+   作者报障逐字：「次级弹层（下拉/浮层）的毛玻璃要处理层级与不透明度：要么提高
+   不透明底色保证可读，要么弹层展开时遮罩下层内容」+ 截图证据（搜索面板的「月」
+   下拉压在日历数字上，数字穿透叠字不可读）。
+   根因不是层级：这两面都是**开在主浮件之上**的次级浮层，而它们吃的是唯一材质的
+   半透底（`--nf-glass-input-bg`，α .16）—— 底下还有一层半透的主浮件，两层半透
+   叠加后下层内容仍然参与合成。
+   处置（作者给的第一支：提高不透明底色）= 取唯一材质的**压不透档**
+   `--nf-glass-bg-hover`（亮 #ffffff / 暗 #181c26fa，G3-H 钉死的同一枚令牌）：
+   底色不再让下层内容参与合成，模糊配方与成员表身份都不动（零第二套材质）。
+   成员：
+     · `.cal-pill-listbox` —— 日历的年/月列表（桌面；手机层由滚轮取代但仍常驻
+       在册，防回退）；
+     · `.search-filter-menu` —— 搜索面板筛选三 select 的动作表菜单
+       （js/chatSearch.js openToolMenu 挂类，桌面 `<body>` 直挂）。
+   移动端同族处置 = 滚轮面板 + 幕布遮罩（见 css/mobileLayer.css 的
+   `.search-wheel-sheet`：面板取同一枚压不透底 + `.nf-glass-scrim` 幕布）。 */
+.cal-pill-listbox,
+.search-filter-menu {
+  background: var(--nf-glass-bg-hover);
+}
+
 /* 按钮组：**一份实现、两个消费族**（canvas-button-unify 批 2026-11-18）。
    作者令：Canvas 的按钮组要用与手机待办右上角那组**同一份实现**，不是照抄外观。
      · 手机待办组 = .ta-cluster > .ta-pill（容器吃玻璃）> .ta-pill-btn（自身零材质）

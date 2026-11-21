@@ -589,6 +589,26 @@
 }
 .search-filters .cfg-select { width: auto; font-size: var(--ds-fs-hint); }
 #search-go { margin-left: auto; }
+/* ── 来源筛选行（search-page-density 批 2026-11-21 作者令①②）──────────────
+   来源 chips 与「选择文件」钮共用一行。桌面端本行只装 chips —— 几何与改前
+   逐值一致（改前 chips 直接是 .search-controls 的列内子件，chips 行本身就带
+   `margin-top`；现在多一层行容器，只是把同一组 chips 包成横向 flex 行）。
+   手机层由 mobileLayer.css 接管（chips 紧凑档 + 「选择文件」钮同行右端）。 */
+#search-filter-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-width: 0;
+}
+#search-filter-row[hidden] { display: none; }
+/* chips 自带 width:100% + margin-top（chat.css #491 段）——行容器接管填充职责后
+   这两项归零，否则行内会出现一条空白竖带（chat.css 本批不动，故在此覆盖）。 */
+#search-filter-row #search-source-chips {
+  width: auto;
+  margin-top: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+}
 /* ── 会话内独立搜索（3(b) 会话内独立搜索批 2026-11-06 作者令）─────────────────
    会话档（overlay 挂 data-conv-scope="1"）只搜当前会话 ⇒ 范围/agent 两枚 select
    语义不存在（「全部会话/主会话/按 agent 筛」是 agent 会话面的词汇）⇒ 折叠。
@@ -751,7 +771,17 @@
   max-height: 180px;
   overflow-y: auto;
   min-width: 72px;
-  background: var(--glass-bg);
+  /* ── 次级浮层可读性（search-page-density 批 2026-11-21 作者令②）──────────
+     作者报障逐字：「月份下拉是半透明毛玻璃，下层日历数字透出来叠在一起完全
+     不可读」。层级没错（z30 压在日历之上），缺的是**不透明底色**：本面原取
+     `--glass-bg`（α .16，与唯一材质同一份半透底），浮层下半截压着日历数字 ⇒
+     两层半透叠加 = 数字穿透叠字。
+     处置 = 「提高不透明底色」这一支（作者给的两个选项之一）⇒ 底色取唯一材质
+     的**压不透档** `--nf-glass-bg-hover`。
+     🔴 底色声明**不在这里**：材质值归 css/glass.css（本文件在 glass.css 之前
+     加载，同特异度写在这里会被 `.nf-glass` 的底色覆盖 —— 2026-11-21 实证）。
+     本条只留几何；同族判据见 glass.css「次级浮层压不透档」块。 */
+  background: var(--nf-glass-bg-hover);
   border: 1px solid var(--glass-border);
   border-radius: var(--ds-radius-button);
   padding: var(--ds-space-1);

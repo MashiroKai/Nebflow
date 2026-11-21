@@ -9,7 +9,9 @@
 //     Enter 选）、选项表重建后 trigger 脸跟、禁用态镜像、optgroup 分组头；
 //   · Playwright 兼容契约：收编后 selectOption 仍直打原生 select（回归面 ——
 //     全站十余个既有 spec 靠它活）；
-//   · 手机层：搜索面板 #mh-search-kind 触发钮点开动作表形态选项单、点选落值；
+//   · 手机层：设置页 #cfg-thinking-effort 触发钮点开动作表形态选项单、点选落值
+//     （原样本 = 搜索面板 #mh-search-kind，search-page-density 批 2026-11-21
+//     作者令①「删掉『全部来源』大下拉框」后整件退役 ⇒ 换宿主，能力断言不变）；
 //     #search-scope（手机层被 CSS 藏）不被包裹 —— isHidden 语义不动。
 //
 // Run: node tests/select-unify-f.spec.mjs
@@ -281,32 +283,59 @@ try {
     await page.waitForSelector('#search-modal', { timeout: 8000 });
     await sleep(400);
 
-    const mFace = await page.evaluate(READ_FACE('mh-search-kind'));
-    ok('M1 手机搜索类型下拉被收编（包裹 / 蒙层 / trigger 可见）',
+    // 🔴 search-page-density 批（2026-11-21 作者令①「删掉『全部来源』大下拉框」）：
+    // 手机搜索面板的收编样本 `#mh-search-kind` **整件退役**（DOM/CSS 双侧零节点）
+    // ⇒ 手机腿换宿主：设置页 `#cfg-thinking-effort`（手机层同一个收编器，仍是
+    // 「原生 select → 动作表形态选项单」这条链；样本换、能力断言一字不动）。
+    // 设置页在手机层是真页面：走 navController 的页面栈推入（与
+    // tests/mobile-workbench-account-chat.spec.mjs:115-117 同法），
+    // 这样 trigger 才在栈顶页里可点（不是被搜索页压住的死面）。
+    await page.evaluate(async () => {
+      const nav = await import('/js/mobile/navController.js');
+      nav.goHome();
+      nav.dockTo('workbench');
+      nav.pushPage('settings');
+    });
+    await page.waitForFunction(() => {
+      const sel = document.getElementById('cfg-thinking-effort');
+      const trg = sel && sel.closest('.nf-select')?.querySelector('.nf-select-trigger');
+      return !!trg && trg.getBoundingClientRect().height > 0;
+    }, null, { timeout: 15000 });
+    await sleep(400);
+
+    // 退役确认（作者令①的可执行判据，落在本 spec 里防回潮）。
+    ok('M0 手机搜索面板角色下拉整件退役（#mh-search-kind / -row 零节点）',
+      await page.evaluate(() => !document.getElementById('mh-search-kind') && !document.getElementById('mh-search-kind-row')),
+      'chips 三档接管来源筛选（见 tests/search-page-density.spec.mjs M1）');
+
+    const mFace = await page.evaluate(READ_FACE('cfg-thinking-effort'));
+    ok('M1 手机层下拉被收编（包裹 / 蒙层透明 + 指针穿透 / trigger 可见）',
       mFace && mFace.wrapped && mFace.opacity === '0' && mFace.pe === 'none' && mFace.triggerVisible,
       JSON.stringify(mFace));
 
-    await page.locator('.nf-select:has(#mh-search-kind) .nf-select-trigger').click();
+    await page.locator('.nf-select:has(#cfg-thinking-effort) .nf-select-trigger').click();
     await page.waitForSelector('.nf-select-menu', { timeout: 5000 });
     await sleep(250);
     await page.screenshot({ path: join(OUT, 'mobile-menu-open.png') });
     const mPick = await page.evaluate(`(() => {
       const menu = document.querySelector('.nf-select-menu');
       const sheetForm = menu && menu.classList.contains('fm-context-menu');
+      const sel = document.getElementById('cfg-thinking-effort');
+      const want = [...sel.options].find(o => o.value !== sel.value);
       const opt = menu && [...menu.querySelectorAll('.nf-select-opt')].find(b => {
-        const sel = document.getElementById('mh-search-kind');
-        return b.textContent.replace('✓','') === [...sel.options].find(o => o.value === 'user').textContent;
+        const cur = menu.querySelector('.nf-select-opt.is-cur');
+        return b !== cur && b.textContent.replace('✓','') === (want ? want.textContent : '');
       });
       if (opt) opt.click();
-      return { sheetForm, clicked: !!opt };
+      return { sheetForm, clicked: !!opt, want: want ? want.value : null };
     })()`);
     await sleep(250);
     const mAfter = await page.evaluate(`(() => ({
-      value: document.getElementById('mh-search-kind').value,
+      value: document.getElementById('cfg-thinking-effort').value,
       menuGone: !document.querySelector('.nf-select-menu'),
     }))()`);
-    ok('M2 手机点选落值（动作表形态 fm-context-menu / 点 user ⇒ 值落 / 单收）',
-      mPick.sheetForm && mPick.clicked && mAfter.value === 'user' && mAfter.menuGone,
+    ok('M2 手机点选落值（动作表形态 fm-context-menu / 点选 ⇒ 值落 / 单收）',
+      mPick.sheetForm && mPick.clicked && mAfter.value === mPick.want && mAfter.menuGone,
       JSON.stringify({ pick: mPick, after: mAfter }));
 
     // M3 藏在 .search-filters（display:none 行）里的 #search-scope：整行连同

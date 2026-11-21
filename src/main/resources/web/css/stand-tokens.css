@@ -511,9 +511,19 @@ html[data-theme="dark"] {
   --nf-glass-shadow: inset 0 1px 0 0 #ffffff40, 0 2px 8px #0000000a, 0 8px 24px #0000000f;
   /* 幕布（纯模糊遮罩层，无玻璃面：灯箱底/语音遮罩）——
      它不是毛玻璃形态，是「把背景压下去」的工具，故单列 token 且不参与
-     .nf-glass。值恒为深色低 α，不随亮暗翻面。 */
+     .nf-glass。值恒为深色低 α，不随亮暗翻面。
+     🔴 2026-11-21（search-page-density 批，作者报障「次级弹层毛玻璃可读性」）：
+     本值原为裸长度 `8px`，而它唯一的消费点是 `backdrop-filter: var(...)`
+     （css/glass.css 的 `.nf-glass-scrim`）—— `backdrop-filter: 8px` 是**非法值**，
+     整条声明被浏览器静默丢弃 ⇒ `.nf-glass-scrim` 从出生起就没有模糊过，只是
+     「一层 14% 深色薄膜」。该面在批前零产品消费者（灯箱/语音遮罩自己写的是别的
+     类），所以一直没被看见；本批的日期滚轮幕布是第一个消费者，实测
+     computedStyle.backdropFilter = 'none' 抓出来的。
+     修正 = 把单源值改写成它作为 `backdrop-filter` 值应有的形态 `blur(8px)`
+     （半径 8 逐字不变，只是补上函数外壳）；CSS 侧的声明形状不动，
+     check-glass-unify G2 白名单读的是声明值 `var(--nf-glass-scrim-blur)`，零影响。 */
   --nf-glass-scrim: #0f121824;
-  --nf-glass-scrim-blur: 8px;
+  --nf-glass-scrim-blur: blur(8px);
 }
 
 html[data-theme="dark"] {

@@ -1541,6 +1541,12 @@ export default {
   'timewheel.presetDay': '白天 09–18',
   'timewheel.presetAfternoon': '午后 14–18',
   'timewheel.deadline': '截止时间',
+  // 日期档（search-page-density 批 2026-11-21）：搜索页「日期」tab 的滚轮标题与三列
+  // 单位 —— 与时段/单点档同一份组件，文案按「滚动这一列选什么」直译。
+  'timewheel.titleDate': '选择日期',
+  'timewheel.yearUnit': '年',
+  'timewheel.monthUnit': '月',
+  'timewheel.dayUnit': '日',
 
   // Model fields in modal
   'model.idPlaceholder': '模型 ID',
