@@ -202,7 +202,7 @@ import { initMessages } from './messages.js';
 // 与手机常驻条同一引擎 js/socialSearchCore.js）；随好友门控同拍装配。
 import { initPanelSearch } from './panelSearch.js';
 import { collapseTurn, failTurn } from './turnGroup.js';
-import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
+import { initCanvas, restoreTabs, closeCanvas, openCanvas, restoreOwnSeatDraft } from './canvas.js';
 import { initAskDock } from './askDock.js';
 // canvas-inline-diff-review（2026-11-16）：ask_edit/ask_write 直接落盘的 canvas
 // 审阅页签（原文档内联 diff 逐块/全量接受拒绝）。
@@ -4832,6 +4832,8 @@ restoreQueue();
 // 是智能体入口的继任默认页。restoreTabs 异步语义不变（F1, 2026-08-30）。
 restoreTabs().then((restored) => {
   if (!restored) openPlugins();
+  // 打开页签：只恢复本页签自己的失权草稿（按页签隔离；无草稿即空操作）。
+  restoreOwnSeatDraft();
 });
 // Auto-restore is triggered from sessionList handler (needs activeSessionId)
 initScheduledTask();
