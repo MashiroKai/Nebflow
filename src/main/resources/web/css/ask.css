@@ -1009,6 +1009,6 @@ body.mobile-layer .ask-user-source { flex-wrap: wrap; white-space: normal; max-w
 }
 .ask-msg-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .ask-msg-img {
-  max-width: 220px; max-height: 220px; width: auto; height: auto; border-radius: 10px; display: block;
+  max-width: 220px; width: auto; height: auto; border-radius: 10px; display: block;
   border: 1px solid var(--color-border, rgba(128,128,128,0.35));
 }

@@ -175,7 +175,7 @@
         },
         {
           "path": "src/test/scala/nebflow/core/ask/AskBashExecutionSpec.scala",
-          "name": "Ask cwd uses only its registered file directory"
+          "name": "Ask cwd is the workspace root (read scope, 2026-11-23) and falls back to the file directory without one"
         },
         {
           "path": "src/test/scala/nebflow/core/ask/AskBashExecutionSpec.scala",
