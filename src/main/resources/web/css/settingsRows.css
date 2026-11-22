@@ -37,7 +37,6 @@
 .sp-panel-group { display: flex; flex-direction: column; gap: var(--set-group-gap); }
 .sp-panel-group > h2 { margin: 0; font-size: var(--ds-fs-meta); color: var(--ds-text-muted); }
 .sp-panel-group[data-panel-group="models"] { order: 2; }
-.sp-panel-group[data-panel-group="runtime"] { order: 3; }
 .sp-panel-group[data-panel-group="advanced"] { order: 4; }
 .sp-panel-group[data-panel-group="about"] { order: 5; }
 
@@ -64,6 +63,18 @@
 
 /* ── 行网格 ────────────────────────────────────────────────────────────── */
 .set-group { display: flex; flex-direction: column; }
+/* 通用块（通用 + 运行时融合，作者令 2026-11-22 18:51）：同一张卡内的多组之间，
+   画与行间分隔线同款的内缩细线（组间 = 同卡内的分组边界，不是新卡）。 */
+#settings-content .sp-panel-group[data-panel-group="general"] > .set-card > * + * { position: relative; }
+#settings-content .sp-panel-group[data-panel-group="general"] > .set-card > * + *::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: calc(var(--set-row-pad-x) + var(--set-icon-box) + var(--set-row-gap));
+  right: var(--set-row-pad-x);
+  height: 1px;
+  background: var(--ds-border-hairline);
+}
 
 .set-nav,
 .set-row {
