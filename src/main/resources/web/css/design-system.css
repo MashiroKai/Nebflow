@@ -53,14 +53,20 @@
   --ds-accent-ink: rgb(var(--brand-green));     /* 开关 ON / 圆钮实心 */
   /* 焦点色锚 = 全站唯一 `--nf-focus-ring`（css/keyboard.css）；原 `--ds-focus-ring`
      别名已收编（focus-ring-unify 批 2026-11-22），0 引用由 check-focus-ring.mjs F6 钉住。 */
-  /* 词条引用字色（term-system-v2 词条视觉面批 2026-11-05，作者令「词条被使用
-     的时候，应该是一个蓝色的文字」）：语义角色 = 「词条」这一实体的字色。
-     值 = 蓝族 ink 双档（stand-tokens.css 的 --term-link-ink；亮 70 99 156 /
-     暗 sapphire-glow），本层只做一拍别名，零字面量。消费点 =
-     split.css a.nf-wikilink.nf-wikilink-term / a.nf-term。对比度实测见
-     tests/_term-face-harness.mjs（**阅读面合成底**实测：亮 5.76:1 / 暗 6.52:1，
-     两侧均 ≥ 正文门槛 4.5:1；数字由 harness 每次跑打印，不手填）。 */
-  --ds-link-term: rgb(var(--term-link-ink));
+  /* 可点击标记字色（ask-ref-marks-green 批 2026-11-22，作者更正令原话：
+     「ask引用做错了 需要回退 我说的是这种 可点击的下划线标记 现在是紫色
+     在暗色模式下可见性很差」）：语义角色 = canvas 文档面所有**可点击下划线
+     标记**的字色（文档链接 / 手写词条引用 / 正文裸词自动链 / 词条索引条目）。
+     值 = 仓内既有成功绿双档 `--status-success-icon`（base.css：亮 #2e7d32 /
+     暗 #66bb6a）——「与已绿标记同族」，且双档实测均 ≥ 正文门槛 4.5:1
+     （亮 4.6:1 / 暗 7.5:1，tests/ask-ref-marks-shots.mjs 真截图像素打印）。
+     为什么不用品牌绿 `--color-primary`（#07c160，原 nf-wikilink 值）：亮档
+     实测仅 2.21:1，当字色不合格（它本用于按钮底/描边）。
+     前身 = 蓝族 `rgb(var(--term-link-ink))`（term-system-v2 2026-11-05 作者令
+     「词条被使用的时候，应该是一个蓝色的文字」；该作者令由 11-22 更正令
+     取代本文件消费面，`--term-link-ink` 仍供 mobile-todo-apple.css 待办
+     快捷钮）。本层只做一拍别名，零字面量。 */
+  --ds-link-term: var(--status-success-icon);
   --ds-danger-icon: var(--status-error-icon);
   --ds-warn-icon: var(--status-warn-icon);
   --ds-success-icon: var(--status-success-icon);
