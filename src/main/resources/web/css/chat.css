@@ -1199,6 +1199,11 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   justify-content: space-between;
   padding: var(--ds-row-pad);
   gap: var(--ds-space-2);
+  /* 圆角标准批（作者令 2026-11-22 08:03「我说了要圆角的框」「落为标准」；规范
+     focus-ring-spec.md §2.6）：后台任务行不再是方角造型件 —— 6px = --ds-radius-chip
+     档，焦点环随 border-radius 走。行间 hairline 仍是既有 `border-bottom` 写法（1px 线
+     在 6px 行角处转弯，肉眼不显）；不换定位伪元素的原因见 diffView.css 同批注记。 */
+  border-radius: var(--ds-radius-chip);
   border-bottom: var(--ds-border-width) solid var(--ds-border-hairline);
   transition: background var(--ds-dur-hover) var(--ds-ease-std);
 }
@@ -2889,7 +2894,6 @@ body:not(.mobile-layer) .option-preview-media {
 .ask-attachments-wrap .ask-att-thumb:focus-visible {
   outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
   outline-offset: calc(var(--nf-focus-ring-w) * -1);
-  border-radius: var(--ds-radius-input);
 }
 /* 卡内文件 chip：可点档（role=button）光标 + 键盘焦点环；高度放 auto（降级态
    原因档/重试键要折行）。基座 28px 档仍是下限（min-height）。 */
@@ -2920,6 +2924,7 @@ body:not(.mobile-layer) .option-preview-media {
   color: var(--ds-warn-icon);
 }
 .att-file .ask-att-retry {
+  border-radius: var(--ds-radius-chip); /* 圆角标准批 2026-11-22（作者令「要圆角的框」「落为标准」· 规范 §2.6）：F7 判据下的环基座。 */
   border: none;
   background: none;
   font-family: inherit;
@@ -3831,6 +3836,7 @@ body:not(.mobile-layer) .option-preview-media {
    of truncating (long summaries stay fully readable — no ellipsis); the
    leading ✻ phrase (v1-designed copy) is back as the first segment. */
 .turn-header {
+  border-radius: var(--ds-radius-chip); /* 圆角标准批 2026-11-22（作者令「要圆角的框」「落为标准」· 规范 §2.6）：F7 判据下的环基座。 */
   display: flex;
   align-items: center;
   gap: var(--ds-space-1);
@@ -3850,7 +3856,8 @@ body:not(.mobile-layer) .option-preview-media {
 .turn-header:focus-visible {
   outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
   outline-offset: calc(var(--nf-focus-ring-w) * -1);
-  border-radius: var(--ds-radius-badge);
+  /* round2：环规则不再改圆角（环半径 = 组件半径，规范 §2.6）；原 4px badge 档已并入
+     组件自身的 --ds-radius-chip。 */
 }
 .turn-header .nf-chevron { flex-shrink: 0; transition: transform 0.2s ease; }
 /* expanded affordance: the chevron turns to point down (2026-10-03 demo) */
@@ -4253,6 +4260,7 @@ body:not(.mobile-layer) .option-preview-media {
    高度上限 = 6 行正文 + 上内距；折叠态**不留**底部内距 —— 滚动容器的裁切边在
    padding 边，留着的话第 7 行会在那 10px 里露出半个字。 */
 .bubble.ai pre.perm-cmd {
+  border-radius: var(--ds-radius-chip); /* 圆角标准批 2026-11-22（作者令「要圆角的框」「落为标准」· 规范 §2.6）：F7 判据下的环基座。 */
   --perm-cmd-lines: 6;
   max-height: calc(var(--perm-cmd-lines) * 1.4em + var(--ds-space-2));
   padding-bottom: 0;
@@ -5633,7 +5641,8 @@ body:not(.mobile-layer) .option-preview-media {
 .file-card:active { transform: scale(0.985); }
 /* Pop 引用入口沿用 footer 小图标语言，不改变文件卡主体几何。 */
 .file-card .fc-quote-btn { margin-left: auto; flex: 0 0 auto; }
-.option-box .ask-att-question-card { cursor: pointer; max-width: 100%; }
+.option-box .ask-att-question-card {
+  border-radius: var(--ds-radius-chip); /* 圆角标准批 2026-11-22（作者令「要圆角的框」「落为标准」· 规范 §2.6）：F7 判据下的环基座。 */ cursor: pointer; max-width: 100%; }
 .option-box .ask-att-question-card:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 /* 问面文件卡降级态（⑤a「原因 + 动作」）：卡内可换行容纳原因档 + 重试键；
    不可用 = 虚线描边（与缩略/chip 面同档语义）。 */
@@ -6412,7 +6421,6 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
 .ap-pane .ap-avatar-box:focus-visible {
   outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
   outline-offset: calc(var(--nf-focus-ring-w) * -1);
-  border-radius: var(--ds-radius-xl);
 }
 .ap-pane .ap-avatar-img {
   width: 72px;

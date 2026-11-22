@@ -56,6 +56,7 @@
 /* AGENTS.md entry — a text affordance, not another icon button: the row
    already carries the label, so the action reads as a link. */
 .project-link-btn {
+  border-radius: var(--ds-radius-chip); /* 圆角标准批 2026-11-22（作者令「要圆角的框」「落为标准」· 规范 §2.6）：F7 判据下的环基座。 */
   border: none;
   background: transparent;
   padding: 0;
@@ -71,7 +72,7 @@
 .project-link-btn:focus-visible {
   outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
   outline-offset: calc(var(--nf-focus-ring-w) * -1);
-  border-radius: var(--ds-radius-badge); }
+  /* round2：环规则不再改圆角（环半径 = 组件半径，§2.6）。 */ }
 
 .project-open-btn {
   flex: 0 0 auto;
@@ -875,6 +876,8 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .delegate-chain-v
 }
 .project-desc-save { font-size: var(--ds-fs-hint); padding: var(--ds-space-1h) 14px; }
 .project-desc-cancel {
+  /* 圆角标准批（2026-11-22；§2.6）：文字按钮同属可交互件标准档。 */
+  border-radius: var(--ds-radius-chip);
   border: none;
   background: transparent;
   padding: var(--ds-space-1h) var(--ds-space-2);
@@ -884,7 +887,10 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .delegate-chain-v
   transition: color 150ms ease;
 }
 .project-desc-cancel:hover { color: var(--color-text); }
-.project-desc-cancel:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); border-radius: var(--ds-radius-chip); }
+.project-desc-cancel:focus-visible {
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
+}
 
 /* ── 减动效降级（🔴 本文件首个 `prefers-reduced-motion` 块；取证 §E 实测本文件此前无覆盖）──
    降级后语义仍完整（§F-3）：

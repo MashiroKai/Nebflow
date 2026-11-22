@@ -92,9 +92,14 @@
   background: var(--ds-border-hairline);
 }
 
-/* 可点进行（唯一形态）：整行是按钮。 */
+/* 可点进行（唯一形态）：整行是按钮。
+   圆角标准批（作者令 2026-11-22 08:03；规范 focus-ring-spec.md §2.6）：行不再方角
+   —— 6px = --ds-radius-chip 档，焦点环随 border-radius 走。组内行间分隔线本来就是
+   内缩 ::before（见上），圆角不破线；组卡（.set-card 16px）仍是容器圆角，行圆角在
+   卡内读作可点行而非独立卡。 */
 .set-nav {
   width: 100%;
+  border-radius: var(--ds-radius-chip);
   border: none;
   background: transparent;
   font-family: inherit;
@@ -302,6 +307,10 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--ds-space-2);
+  /* 圆角标准批（作者令 2026-11-22 08:03；§2.6）：本行此前既不在方角登记里、
+     运行时实测计算圆角 0px（P-5 首跑即命中）—— 正是「靠登记维持方角」会漏掉的
+     那一类。现与 .set-nav 同档取 6px。 */
+  border-radius: var(--ds-radius-chip);
   border: 0;
   background: transparent;
   color: var(--ds-text);

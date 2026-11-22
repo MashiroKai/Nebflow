@@ -964,6 +964,7 @@
   color: var(--cv-hint-color);
 }
 .fm-panel-close {
+  border-radius: var(--ds-radius-chip); /* 圆角标准批 2026-11-22（作者令「要圆角的框」「落为标准」· 规范 §2.6）：F7 判据下的环基座。 */
   margin-left: auto; border: none; background: transparent; cursor: pointer;
   font: 400 var(--ds-fs-callout)/1 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted);
   opacity: 0.5; padding: var(--ds-space-half) var(--ds-space-1); transition: opacity 0.15s;
@@ -971,7 +972,7 @@
 }
 .fm-panel-close svg { width: 12px; height: 12px; display: block; }
 .fm-panel-close:hover { opacity: 1; }
-.fm-panel-close:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); border-radius: var(--ds-radius-badge); }
+.fm-panel-close:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); } /* round2：环规则不再改圆角（环半径 = 组件半径，§2.6） */
 .fm-panel-body {
   flex: 1; overflow-y: auto; padding: var(--ds-space-3) 14px;
   scrollbar-width: thin; scrollbar-color: var(--color-frame-border) transparent;
@@ -1137,6 +1138,7 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .fm-detail-close {
+  border-radius: var(--ds-radius-chip); /* 圆角标准批 2026-11-22（作者令「要圆角的框」「落为标准」· 规范 §2.6）：F7 判据下的环基座。 */
   margin-left: auto; flex: 0 0 auto; border: none; background: transparent; cursor: pointer;
   font: 400 var(--ds-fs-callout)/1 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted);
   opacity: 0.5; padding: var(--ds-space-half) var(--ds-space-1); transition: opacity 0.15s;
@@ -1144,7 +1146,7 @@
 }
 .fm-detail-close svg { width: 12px; height: 12px; display: block; }
 .fm-detail-close:hover { opacity: 1; }
-.fm-detail-close:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); border-radius: var(--ds-radius-badge); }
+.fm-detail-close:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); } /* round2：环规则不再改圆角（环半径 = 组件半径，§2.6） */
 .fm-detail-body {
   flex: 1; min-height: 0; overflow-y: auto; padding: var(--ds-space-3) 14px;
   display: flex; flex-direction: column; /* 卡内唯一竖向滚动容器（2026-09-11 滚动一体化批） */

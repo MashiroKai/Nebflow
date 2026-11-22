@@ -218,6 +218,11 @@
   align-items: center;
   gap: var(--ds-space-1);
   padding: var(--ds-space-1) var(--ds-space-2);
+  /* 圆角标准批（作者令 2026-11-22 08:03「我说了要圆角的框」「落为标准」；规范
+     design-language/references/frontend/focus-ring-spec.md §2.6）：行族不再是方角
+     造型件 —— 6px = --ds-radius-chip 档；焦点环随 border-radius 走（outline 自动贴
+     行角）。同一批废除了 scripts/focus-ring-exemptions.json 的方角登记豁免机制。 */
+  border-radius: var(--ds-radius-chip);
   cursor: pointer;
   user-select: none;
   font-size: var(--ds-fs-hint);
@@ -3072,7 +3077,6 @@ body.mobile-layer .canvas-video-viewer {
 .canvas-video-stage:focus-visible {
   outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
   outline-offset: calc(var(--nf-focus-ring-w) * -1);
-  border-radius: var(--ds-radius-input);
 }
 
 /* ── 自研控件条（流内；永不压在画面像素上）────────────────────────────────
@@ -3963,7 +3967,8 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 }
 .document-term-summary { margin-top: 8px; white-space: pre-wrap; line-height: 1.5; }
 .document-term-meta, .document-term-path { margin-top: 8px; font-size: 12px; opacity: .8; }
-.document-term-open { margin-top: 12px; cursor: pointer; }
+.document-term-open {
+  border-radius: var(--ds-radius-chip); /* 圆角标准批 2026-11-22（作者令「要圆角的框」「落为标准」· 规范 §2.6）：F7 判据下的环基座。 */ margin-top: 12px; cursor: pointer; }
 .document-term-open:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 /* 词条点击释义弹层：桌面/触屏均为小弹层，固定在 body 顶层避免滚动容器裁剪。 */

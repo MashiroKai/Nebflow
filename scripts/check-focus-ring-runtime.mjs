@@ -167,6 +167,7 @@ const MEASURE = `(idx, mode) => {
     outlineColor: cs.outlineColor,
     outlineOffset: cs.outlineOffset,
     bg: cs.backgroundColor,
+    borderRadius: cs.borderRadius,
     rect: { x: r.x, y: r.y, w: r.width, h: r.height },
   };
 }`;
@@ -267,6 +268,7 @@ for (const theme of THEMES) {
         focusVisible: m.focusVisible, focused: m.focused,
         outlineStyle: m.outlineStyle, outlineWidth: m.outlineWidth,
         outlineColor: m.outlineColor, outlineOffset: m.outlineOffset,
+        borderRadius: m.borderRadius,
         rect: m.rect, diffPixels: diff.count,
         diffPixelsCore: diff.pixels.filter((p) => p.delta >= 20).length,
       };
@@ -321,6 +323,29 @@ for (const theme of THEMES) {
       // 两者只要有一项 < 阈值就进 deviation 表（显式标注），不静默通过。
       const analytic = ringColor ? contrast(ringColor, SPEC_BASIS[theme]) : null;
       row.measured.cAnalytic = analytic;
+      // P-5 圆角标准（作者令 2026-11-22 08:03「我说了要圆角的框」「落为标准」；规范 §2.6）：
+      // 判**计算样式**，不判 CSS 文本 —— 这才是「元素实际有没有圆角」的权威读数（静态闸
+      // 只做近似级联）。方角登记豁免机制已废除：方角件在这里直接红。
+      // 放行：胶囊/圆形（50% / ≥999px）、短边 <12px 的微格（≤4px，防 6px 被钳成圆点）。
+      const radiusState = (() => {
+        const raw = String(m.borderRadius || '').trim();
+        if (/50%/.test(raw)) return { kind: 'circle', px: null };
+        const nums = raw.split(/\s+/).map((v) => {
+          const mm = /^([\d.]+)px$/.exec(v);
+          return mm ? Number(mm[1]) : (/^50%$/.test(v) ? 999 : null);
+        });
+        if (nums.some((n) => n != null && n >= 999)) return { kind: 'pill', px: null };
+        if (nums.some((n) => n == null)) return { kind: 'unknown', px: null };
+        const px = Math.min(...nums.filter((n) => n != null));
+        const shortSide = Math.min(m.rect.w, m.rect.h);
+        return { kind: px >= 6 ? 'standard' : (shortSide < 12 && px <= 4 ? 'micro' : 'square'), px, shortSide };
+      })();
+      row.p5 = {
+        radius: m.borderRadius,
+        kind: radiusState.kind,
+        px: radiusState.px ?? null,
+        shortSide: radiusState.shortSide ?? null,
+      };
       row.P = {
         exempt,
         p1: exempt ? null : (geometryOk && diff.count > 0 && m.focused),
@@ -343,6 +368,13 @@ for (const theme of THEMES) {
         p3: exempt || unstable || fullRepaint ? null : (insetOk && outOfBox === 0 && diff.count > 0),
         p3Detail: { offset, outOfBox, diffPixels: diff.count, geometryUnstable: unstable, fullRepaint },
         p4: t.glassAncestor && !exempt ? (geometryOk && diff.count > 0) : null,
+        p5: exempt || radiusState.kind === 'unknown' ? null : radiusState.kind !== 'square',
+        p5Detail: {
+          borderRadius: m.borderRadius,
+          kind: radiusState.kind,
+          standardPx: 6,
+          note: radiusState.kind === 'micro' ? '微格（短边 <12px）按 §2.6 取 2px 档' : null,
+        },
       };
       if (row.P.p2Detail.surfaceBelowFloor) {
         deviations.push({
@@ -377,6 +409,10 @@ for (const theme of THEMES) {
       if (row.P.p4 === false) {
         findings.push(`P-4 ${tag} — 玻璃祖先 ${t.glassAncestor} 内未画出指示器（diff=${diff.count}）`);
       }
+      if (row.P.p5 === false) {
+        findings.push(`P-5 ${tag} — 计算圆角 ${m.borderRadius}（${radiusState.kind}）< 标准档 6px：`
+          + '方角件的焦点环也是方的（规范 §2.6；方角登记机制已废除，请改组件圆角）');
+      }
     }
   }
   await session.close();
@@ -394,6 +430,17 @@ const summary = {
   p3Fail: rows.filter((r) => r.P.p3 === false).length,
   p4Samples: rows.filter((r) => r.P.p4 != null).length,
   p4Fail: rows.filter((r) => r.P.p4 === false).length,
+  p5Samples: rows.filter((r) => r.P.p5 != null).length,
+  p5Fail: rows.filter((r) => r.P.p5 === false).length,
+  p5Micro: rows.filter((r) => r.P.p5Detail && r.P.p5Detail.kind === 'micro').length,
+  p5RadiusKinds: (() => {
+    const out = {};
+    for (const r of rows) {
+      const k = (r.p5 && r.p5.kind) || 'n/a';
+      out[k] = (out[k] || 0) + 1;
+    }
+    return out;
+  })(),
   subThree: rows.filter((r) => r.P.subThreeAnnotated).length,
   surfaceBelowFloor: deviations.length,
   cAdjacentRange: (() => {
@@ -442,7 +489,8 @@ if (notPainted.length) {
   for (const s of notPainted.slice(0, 8)) console.log(`  - ${s}`);
 }
 console.log(`\nP-1 失败 ${summary.p1Fail} · P-2 失败 ${summary.p2Fail} · P-3 失败 ${summary.p3Fail}`
-  + ` · P-4 样本 ${summary.p4Samples}（失败 ${summary.p4Fail}）`);
+  + ` · P-4 样本 ${summary.p4Samples}（失败 ${summary.p4Fail}）`
+  + ` · P-5 样本 ${summary.p5Samples}（失败 ${summary.p5Fail}，微格放行 ${summary.p5Micro}）`);
 console.log(`* = 「环对相邻像素」实测 <3:1，已在读数里逐件标注（${summary.subThree} 件）`);
 console.log(`承载面实测低于门槛的偏差 ${summary.surfaceBelowFloor} 件（读数 deviations 段；亮档产品底比纯白深，作者批的 2.53:1 是纯白基准）`);
 if (findings.length) {
@@ -450,5 +498,5 @@ if (findings.length) {
   for (const f of findings) console.error(`  ${f}`);
   process.exit(1);
 }
-console.log('focus-ring-runtime: OK — 指示器可见、内缩、不越界、玻璃弹层内可读（P-1–P-4 绿）');
+console.log('focus-ring-runtime: OK — 指示器可见、内缩、不越界、玻璃弹层内可读、环件为圆角件（P-1–P-5 绿）');
 process.exit(0);

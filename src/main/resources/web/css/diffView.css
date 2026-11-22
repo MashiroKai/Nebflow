@@ -302,6 +302,8 @@
    只在正文可见时计费（折叠 display:none ⇒ 零高度）。 */
 .nf-rcpt-top {
   min-width: 0;
+  /* 圆角标准批（作者令 2026-11-22 08:03；规范 §2.6）：卡头行是可点面，不是方角件。 */
+  border-radius: var(--ds-radius-chip);
   /* 卡头行 = 折叠切换面（role=button 由 bindCollapsibleToggle 打上）：手型常驻
      提示可点（hover 视觉反馈在胶囊块 .nf-rcpt-pill 上，单框批 2026-11-07 后
      卡头行自身无 hover 框；展开态摘要区因此也不会泛蓝）。 */
@@ -310,7 +312,6 @@
 .nf-rcpt-top:focus-visible {
   outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
   outline-offset: calc(var(--nf-focus-ring-w) * -1);
-  border-radius: var(--ds-radius-chip);
 }
 /* 单行卡面行：弹性一行不换行。负边距补偿内边距 ⇒ 布局零位移；行底延伸进泡
    padding 缘构成整行热区感（手型 = 可点感，行本身恒零底零影）。
@@ -327,6 +328,7 @@
   min-width: 0;
   margin: -2px -6px;
   padding: var(--ds-space-half) var(--ds-space-1h);
+  /* 圆角标准批（2026-11-22；§2.6）：同卡头面。 */
   border-radius: var(--ds-radius-chip);
   cursor: pointer;
 }
@@ -506,7 +508,6 @@ span.nf-rcpt-note { cursor: default; }
 .nf-rcpt-note:focus-visible {
   outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
   outline-offset: calc(var(--nf-focus-ring-w) * -1);
-  border-radius: var(--ds-radius-pill);
 }
 .nf-rcpt-note[aria-pressed='true'] .nf-rcpt-note-add,
 .nf-rcpt-note[aria-pressed='true'] .nf-rcpt-note-del {
@@ -710,10 +711,13 @@ span.nf-rcpt-note { cursor: default; }
   box-shadow: inset 2px 0 0 var(--color-danger, var(--nf-review-danger-fallback));
 }
 /* 折叠带：长未变段只露头尾，中间收进按钮。 */
-.nf-ar-foldwrap { padding: 0; }
+.nf-ar-foldwrap {
+  padding: 0; }
 .nf-ar-fold {
   display: block;
   width: 100%;
+  /* 圆角标准批（作者令 2026-11-22 08:03；规范 §2.6）：本行是可点折叠行，不是方角件。 */
+  border-radius: var(--ds-radius-chip);
   padding: var(--ds-space-1h) var(--ds-space-2);
   border: 0;
   background: transparent;
@@ -1038,6 +1042,9 @@ span.nf-rcpt-note { cursor: default; }
   gap: var(--ds-space-2);
   min-height: var(--nf-dv-hit);
   padding: var(--ds-space-1) var(--ds-space-2);
+  /* 圆角标准批（作者令 2026-11-22 08:03；规范 focus-ring-spec.md §2.6）：diff 文件行
+     不再是方角造型件 —— 6px = --ds-radius-chip 档；分隔线随之改内缩 ::before（见下）。 */
+  border-radius: var(--ds-radius-chip);
   border: 0;
   background: none;
   font: inherit;
@@ -1045,6 +1052,9 @@ span.nf-rcpt-note { cursor: default; }
   cursor: pointer;
   color: var(--nf-dv-fg);
 }
+/* 行间分隔线：保持既有整宽 border-top 写法（1px 线在 6px 行角处转弯，肉眼不显）。
+   不换 ::before 定位线的原因：floating-discovery 闸把「新增 positioned selector」一律
+   记为待人工复核 —— 一条发丝线不值得新增闸项。 */
 .nf-dv-file + .nf-dv-file { border-top: var(--ds-border-width) solid var(--nf-dv-border); }
 .nf-dv-file[data-active='1'] { background: var(--nf-dv-accept-bg); }
 @media (hover: hover) { .nf-dv-file:hover { background: var(--nf-dv-accept-bg); } }

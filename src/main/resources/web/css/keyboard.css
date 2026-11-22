@@ -47,20 +47,20 @@
 
 /* 组件把 outline 压成 none 却没补环的既有面（nav.css:61/291、sidebar.css:764/987、
    modal.css:130/147/604/724/1307/1558 一族）——这里统一补回来。 */
+/* round2 清理：`.cfg-card-head-btn` / `.save-btn` 是旧类（sidebar.css 的「旧类清零」批后
+   DOM 里已无此名，js/html 全树 0 处）—— 留着会让 F7 追一个不存在的件的圆角。 */
 .activity-btn:focus-visible,
 .nav-agent:focus-visible,
-.cfg-card-head-btn:focus-visible,
 .explorer-action-btn:focus-visible,
 .explorer-folder-btn:focus-visible,
 .panel-toggle-btn:focus-visible,
 .icon-btn:focus-visible,
-.save-btn:focus-visible,
 #send-btn:focus-visible,
 #search-btn:focus-visible,
 #sidebar-toggle:focus-visible,
 #canvas-toggle-btn:focus-visible,
 #deck-fab:focus-visible {
-  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
   outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
@@ -73,9 +73,11 @@
    （那里键盘态是内缩压灰环，仍然可见、仍然键盘可达）。 */
 
 /* 程序化焦点落点（对话流容器 / 画布面板）：环走内描边，避免被父级
-   overflow 裁掉。 */
+   overflow 裁掉。容器是透明面（零底色/零边），圆角只决定**环的形状** ——
+   圆角标准批（2026-11-22；规范 §2.6）：立一条基座声明，环随 6px 档走。 */
+.nf-nav-stop { border-radius: var(--ds-radius-chip); }
 .nf-nav-stop:focus-visible {
-  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
   outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 

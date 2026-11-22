@@ -1242,7 +1242,7 @@
   color: var(--ds-text-muted);
   background: var(--ds-control-bg-hover);
   border: none;
-  border-radius: var(--ds-radius-badge);
+  border-radius: var(--ds-radius-chip); /* 圆角标准批 2026-11-22（作者令「要圆角的框」「落为标准」· 规范 §2.6）：F7 判据下的环基座。 */
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;

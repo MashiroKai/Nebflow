@@ -1,8 +1,9 @@
 {
   "_why": "焦点环统一批（focus-ring-unify 2026-11-22）的具名豁免表。判据不是「有没有写 outline:none」，而是「键盘聚焦时该元素有没有**别的**可见聚焦视觉 / 或它根本不是控件」——只有这两类才允许无环；纯删环一律走 keyboard.css 的 :focus-visible 兜底。每条必须写理由，理由短于 8 字 = 台账红（F5）。",
-  "_consumedBy": "scripts/check-focus-ring.mjs F4/F5（本表 = 无环焦点规则的具名豁免 + §2.6 方角造型件登记）；scripts/keyboard-check.mjs ⑬（同表复核 :focus 侧零反馈面）",
+  "_consumedBy": "scripts/check-focus-ring.mjs F4/F5（本表 = 无环焦点规则的具名豁免）；scripts/check-focus-ring-runtime.mjs（豁免件按 exempt 记录，不判 P-1/P-5）；scripts/keyboard-check.mjs ⑬（同表复核 :focus 侧零反馈面）",
   "_baseline": 4,
   "_baselineWhy": "本批登记数 = 4（实施批基线；改前 5 条里有 4 条是「靠光晕代环」的历史豁免，光晕退役后它们改由统一环覆盖，故删除。F5 钉住「只许减不许增」）。",
+  "_shapeWhy": "round2（2026-11-22 作者令「我说了要圆角的框」「落为标准」）废除了 squareCorners 方角登记段：本表只承载「无环」豁免，圆角不再靠登记。可交互件的圆角判据改由**几何规则**承担（规范 §2.6：标准档 6–10px；胶囊/圆形 999px/50%；短边 < 12px 的微格 2px），静态闸 F7 与运行时闸 P-5 各自核对，脚本内零硬编码豁免。",
   "exemptions": [
     {
       "file": "css/sidebar.css",
@@ -23,44 +24,6 @@
       "file": "css/keyboard.css",
       "selector": ".nf-trap-root:focus, .nf-trap-root:focus-visible",
       "reason": "焦点陷阱宿主本身不是控件（它是「盒子」）：用户 Tab 的是它里面的东西，给宿主画环等于画两层。"
-    }
-  ],
-  "squareCorners": [
-    {
-      "file": "css/split.css",
-      "selector": ".explorer-item",
-      "radius": "0",
-      "reason": "文件树行：整行命中面、行与行紧贴成列，圆角会把连续树列切成一串胶囊；方角是造型语义（行 ≠ 卡片）。"
-    },
-    {
-      "file": "css/diffView.css",
-      "selector": ".nf-dv-file",
-      "radius": "0",
-      "reason": "diff 文件行：同上，行族不带圆角；相邻行共用分隔线，圆角会破线。"
-    },
-    {
-      "file": "css/settingsRows.css",
-      "selector": ".set-nav",
-      "radius": "0",
-      "reason": "设置导航行：iOS 行族（整行按钮、组内首尾由容器给圆角），行本体必须方。"
-    },
-    {
-      "file": "css/chat.css",
-      "selector": ".bg-task-row",
-      "radius": "0",
-      "reason": "后台任务行：面板内行族，与 .set-nav 同口径（作者令 2026-11-03 ⑤「非常非常低调」）。"
-    },
-    {
-      "file": "css/usage.css",
-      "selector": ".ud-cell",
-      "radius": "2px (--ds-radius-thin)",
-      "reason": "统计/日历表格格：格子间距 1px，6px 圆角会把格子读成独立 chip，破坏表格语义。"
-    },
-    {
-      "file": "css/todo-face.css",
-      "selector": ".tfl-row",
-      "radius": "4px (--ds-radius-badge)",
-      "reason": "待办行：既有行族取 badge 档 4px（design-system 令牌账本既定档），高于方角、低于 6px，具名保留。"
     }
   ]
 }

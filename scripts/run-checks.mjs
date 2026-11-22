@@ -215,7 +215,9 @@ export const CHECKS = [
   // 一条规则 + 一个色源（--nf-focus-ring #9ca3af · 内缩 2px · 禁光晕）。静态腿判「源码
   // 写的是不是那一条」（F1–F6，含别名收编 0 引用与豁免台账只减）；运行时腿判「屏幕画出来
   // 的是不是那一条」（P-1–P-4，差分像素 + 对比读数 + 玻璃弹层内可读）。规范正文 =
-  // design-language/references/frontend/focus-ring-spec.md。
+  // design-language/references/frontend/focus-ring-spec.md。round2（2026-11-22 作者令
+  // 「我说了要圆角的框」/「落为标准」）：静态腿加 F7（圆角标准 + 方角登记机制废除）与
+  // F8（焦点规则不得改圆角），运行时腿加 P-5（计算圆角 ≥6px，微格/胶囊档放行）。
   nodeCheck('focus-ring', 'check-focus-ring', ['static', 'frontend']),
   { name: 'focus-ring-runtime', profiles: ['frontend'], timeoutMs: 600_000,
     argv: [process.execPath, 'scripts/check-focus-ring-runtime.mjs'] },
