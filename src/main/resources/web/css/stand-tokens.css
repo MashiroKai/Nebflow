@@ -255,6 +255,12 @@ html[data-theme="dark"] {
    作者令原话：「词条被使用的时候，应该是一个蓝色的文字」。消费点 =
    split.css `a.nf-wikilink.nf-wikilink-term` / `a.nf-term`（经 design-system.css
    的 `--ds-link-term` 语义别名），不直接在规则里写色值。
+   **2026-11-22 消费面变更**（ask-ref-marks-green 批，作者更正令原话：「ask引用
+   做错了 需要回退 我说的是这种 可点击的下划线标记 现在是紫色 在暗色模式下可见性
+   很差」）：canvas 文档面的可点击下划线标记（文档链接 / 手写词条 / 裸词自动链 /
+   词条索引条目）已统一改绿，`--ds-link-term` 因此改指向 `--status-success-icon`，
+   不再消费本 token；本 token 值不动，现由 mobile-todo-apple.css 待办快捷钮
+   （.ta-quick-fab，蓝语义）消费。
 
    为什么亮档要单独出生一枚加深值：蓝族母色 `--sapphire`（91 127 191，
    sapphire.css 单源）落在正文阅读面上只有 4.01:1（vs 白）—— 正文文本色的

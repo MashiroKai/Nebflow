@@ -3798,9 +3798,17 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="markdown"] .canvas-find-togg
 mark.nf-find-hit { background: rgba(255, 213, 0, 0.45); color: inherit; border-radius: var(--ds-radius-thin); }
 mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border-radius: var(--ds-radius-thin); }
 
-/* ── Wikilinks (rendered markdown) ──────────────────────────────── */
+/* ── Wikilinks (rendered markdown) ────────────────────────────────
+   可点击下划线标记统一绿（ask-ref-marks-green 批 2026-11-22，作者更正令原话：
+   「ask引用做错了 需要回退 我说的是这种 可点击的下划线标记 现在是紫色 在暗色
+   模式下可见性很差」）。四类可点击标记 = 文档链接（本规则）/ 手写词条引用
+   （下条）/ 正文裸词自动链 / 词条索引条目 —— 全部取同一枚 `--ds-link-term`
+   （design-system.css → base.css `--status-success-icon` 双档绿）；本规则原值
+   `--color-primary` #07c160 亮档实测仅 2.21:1（浅底当字色不合格），收敛到同族
+   绿后亮 4.6:1 / 暗 7.5:1；同一文档里不再并存两种绿。未解析短形
+   （a.nf-wikilink-unresolved）保持中性灰 —— 它不是可点目标，不该冒充绿。 */
 .canvas-md-viewer a.nf-wikilink {
-  color: var(--color-primary, #07c160);
+  color: var(--ds-link-term);
   text-decoration: none;
   border-bottom: 1px dashed currentColor;
   cursor: pointer;
@@ -4116,34 +4124,41 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
    2026-11-05：文档名归词条索引块，气泡只剩词条名 + 定义）。 */
 .nf-term-tip .td:empty { display: none; }
 
-/* 词条引用的视觉面（term-system-v2 词条视觉面批 2026-11-05）────────────
-   作者令原话：「词条被使用的时候，应该是一个蓝色的文字，然后不需要显示文档名。
-   在目前基础上把文字变蓝色然后去掉括号里的文档就行。」
-   ① 蓝色：字色 = `--ds-link-term`（design-system.css 语义别名 → stand-tokens.css
-      蓝族 ink 双档）。亮 70 99 156 / 暗 sapphire-glow，阅读面合成底实测
-      5.76:1 / 6.52:1（tests/_term-face-harness.mjs 打印），正文门槛 4.5:1。
+/* 可点击标记的视觉面 —— 手写词条引用 / 正文裸词自动链 ────────────────────
+   沿革：term-system-v2（2026-11-05）作者令「词条被使用的时候，应该是一个蓝色的
+   文字…」→ 本批 2026-11-22 作者更正令：「ask引用做错了 需要回退 我说的是这种
+   可点击的下划线标记 现在是紫色 在暗色模式下可见性很差」。字色因此从蓝族
+   `--term-link-ink` 改绿（「蓝」那条令的消费面由本条取代；蓝 token 仍供
+   mobile-todo-apple.css 待办快捷钮，语义不同不动）。
+   ① 字色：`--ds-link-term`（design-system.css 一拍别名 → base.css
+      --status-success-icon 双档绿：亮 #2e7d32 / 暗 #66bb6a），与文档链接标记
+      **同一枚绿**（作者令「统一改绿」）。双档实测亮 4.6:1 / 暗 7.5:1
+      （tests/ask-ref-marks-shots.mjs 真截图像素，正文门槛 4.5:1）。
       **规则里零裸色值** —— 改色改令牌，不改本块。
    ② 可点击信号保留且仍分两档（原 F3/B5-1 的「信号 vs 提示」层级不丢，只把
-      区分从字色挪到底纹强度，因为字色已由作者统一定为蓝）：手写引用 = 底纹
-      55% 蓝（信号）；正文裸词自动链 = 底纹 30% 蓝（提示，密度高一个量级）。
-      悬停两档都收成实色 = 可点确认。
-   未解析短形引用（兜底腿 .nf-wikilink-unresolved + .nf-wikilink-term）同样取
-   蓝色：hover 能出泡就说明「这是词条」，词条面不该有两种字色。 */
+      区分从字色挪到底纹强度，因为字色已由作者统一）：手写引用 = 底纹 55%
+      （信号）；正文裸词自动链 = 底纹 30%（提示，密度高一个量级）。底纹色 =
+      `currentColor` 同源（color-mix 出 α，同 cards.css 用法）—— 字色改绿则
+      底纹同步绿，不留蓝线配绿字。悬停两档都收成实色 = 可点确认。
+   未解析短形引用：纯未解析的普通文档链接（只有 .nf-wikilink-unresolved，无 term
+   类）保持中性灰 —— 灰 = 「不是可点目标」；而带 term 类的短形未解析引用仍取词条
+   色（term-system-v2 F3 既有裁定：hover 能出泡就说明「这是词条」，词条面不该有
+   两种字色），故它随本批同源改绿，非本批新增行为。 */
 a.nf-wikilink.nf-wikilink-term {
   color: var(--ds-link-term);
-  /* 底纹 = 既有 .nf-wikilink 的 border-bottom 通道（虚线改点线 + 换蓝），
+  /* 底纹 = 既有 .nf-wikilink 的 border-bottom 通道（虚线改点线 + 同源 currentColor），
      不再叠一条 text-decoration —— 两条底纹会在词条上叠成双线。 */
-  border-bottom: 1px dotted rgb(var(--term-link-ink) / 0.55);
+  border-bottom: 1px dotted color-mix(in srgb, currentColor 55%, transparent);
   text-decoration: none;
   text-underline-offset: 3px;
 }
 a.nf-wikilink.nf-wikilink-term:hover { border-bottom-color: currentColor; filter: none; }
 
-/* 正文裸词识别（B5-1）：同一枚字色（同一实体同一 token —— 两种蓝会教出两种
+/* 正文裸词识别（B5-1）：同一枚字色（同一实体同一 token —— 两种绿会教出两种
    含义），底纹压到 30% 保持「提示」轻量。 */
 a.nf-term {
   color: var(--ds-link-term);
-  border-bottom: 1px dotted rgb(var(--term-link-ink) / 0.3);
+  border-bottom: 1px dotted color-mix(in srgb, currentColor 30%, transparent);
   text-decoration: none;
   cursor: pointer;
 }
@@ -4183,10 +4198,11 @@ a.nf-term:hover { border-bottom-color: currentColor; }
   min-width: 0;
 }
 /* 条目 = 词条名（可点，跳它所在的文档并落到定义段）+ 所在文档名（暗一档）。
-   条目名与正文里的词条同色（同一实体同一 token），底纹同手写引用档。 */
+   条目名与正文里的词条同色（同一实体同一 token —— 2026-11-22 起该 token =
+   成功绿双档），底纹同手写引用档（currentColor 同源，字色改则底纹同步）。 */
 .canvas-md-viewer .nf-term-index .nf-term-index-term {
   color: var(--ds-link-term);
-  border-bottom: 1px dotted rgb(var(--term-link-ink) / 0.55);
+  border-bottom: 1px dotted color-mix(in srgb, currentColor 55%, transparent);
   text-decoration: none;
   overflow-wrap: anywhere;
 }
