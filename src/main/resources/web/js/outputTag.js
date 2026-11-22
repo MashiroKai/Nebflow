@@ -18,6 +18,10 @@
 // utils.js 转义为字面文本，不炸不吞。平衡闸 = utils.js `_outputTagsBalancedOn`
 // （单点，`extractOutputInner` 复用之）。
 //
+// 两相渲染面（report-filter-gap 批 2026-11-22）：历史回放/上滑分页都先落纯文本
+// 再 rAF 升级——第一相文本必须由 [[outputFirstPaintText]] 收口，否则升级批落地
+// 前（手机端可很长）气泡暴露 `<report>` 源语法。
+//
 // 依赖方向：本模块只 import utils.js（单向）；turnGroup.js / chat.js /
 // persistence.js import 本模块。utils.js 不得反向 import（无环）。
 
@@ -58,6 +62,24 @@ export function setZeroBlockExpanded(bubble, expanded) {
     bubble.classList.remove('nf-output-raw');
     setHtmlTree(bubble, renderMarkdownWithMath(bubble._nfZeroFull, true, { report: true }));
   }
+}
+
+/** First-paint text for the two-phase history render (作者报障 2026-11-22 09:04
+ *  「消息气泡退化为原 md report 块」). persistence.js 的历史回放腿与上滑分页腿
+ *  都是**两相**渲染：先 `textContent = 源文本`（成本低，先让行有内容），再经
+ *  rAF 升级批换成 markdown/摘除面。第一相此前吐的是**源文本**——于是 root 面
+ *  含平衡 `<report>` 块的气泡，在升级批落地前看到的就是「裸标签 + 未渲染
+ *  markdown」的原报告块；手机端这一窗口可以被拉得很长（后台标签 rAF 挂起 /
+ *  长历史跨数百帧 / 分页批与手势抢帧），作者实拍正是这一相。
+ *
+ *  修法 = 第一相就同终相：root 面（`opts.report`）且有平衡块 ⇒ 只显块内正文
+ *  （标签零暴露）；无块 / 非 root ⇒ 源文本原样（与终相同相——零块全文可见是
+ *  裁定，不是降级）。纯函数、绝不抛。 */
+export function outputFirstPaintText(text, opts) {
+  const src = String(text == null ? '' : text);
+  if (!(opts && opts.report)) return src;
+  const inner = extractOutputInner(src);
+  return inner === null ? src : inner;
 }
 
 /** Quote-snapshot display text (2026-11-21 作者令「引用的内容应该去掉report块的语法，

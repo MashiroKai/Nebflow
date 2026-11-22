@@ -19,7 +19,7 @@ import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, appendUserTextWithFences, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId, shouldFollowBottom, deviceTagHtml } from './utils.js';
 // output 块语法批（作者令 2026-10-31）：历史重放腿同 live 腿一个 output 面——
 // 平衡 <output> 对 ⇒ 正常态只渲染块内，角标展开回原文（turnGroup toggle）。
-import { applyOutputFace, hasOutputBlock, markZeroBlockFace } from './outputTag.js';
+import { applyOutputFace, hasOutputBlock, markZeroBlockFace, outputFirstPaintText } from './outputTag.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 // schedule-created-card 批（2026-11-05）：历史重放两腿与 live renderTool 共用
 // 同一个卡片行 builder（零第二套判据）。
@@ -1623,8 +1623,11 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
    *  block visibility batch passes `{ report: true }` for root-source rows only,
    *  so the transparent face reads blocks for root and leaves tags literal for
    *  every other session. */
+  // 第一相（textContent 纯文本）同样按该 opts 收口（outputTag.outputFirstPaintText）：
+  // 升级批落地前气泡也绝不暴露 `<report>` 源语法（作者 2026-11-22 09:04 报障实证
+  // —— 手机端这一窗口可观且可长）。
   const deferMd = (el, text, parseVoice = true, opts) => {
-    el.textContent = text;
+    el.textContent = outputFirstPaintText(text, opts);
     pendingRenders.push({ el, text, parseVoice, opts });
   };
   const rowCtx = { msgs, fragment, deferMd, chatEl: chat, ownerSessionId, skip: false };
@@ -1673,8 +1676,12 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       try {
         // report 块可见性批：root 源行优先走摘除面（只显块内；角标展开在
         // turnGroup），无平衡块则按 `opts.report` 过透明面（散标签字面化）。
-        if (el.dataset && el.dataset.nfDeferOutput === '1') applyOutputFace(el, text);
-        else el.innerHTML = renderMarkdownWithMath(text, parseVoice, opts);
+        // 摘除面拒收（无平衡块）⇒ 必须落到透明面：留成第一相纯文本 = 气泡永久
+        // 停在「裸标签 + 未渲染 markdown」态（report-filter-gap 批，作者 11-22 报障）。
+        // 短路由 && 承担：未标记行不调摘除面，标记行拒收时同一处赋值回落（不新增
+        // 第二处裸 innerHTML 赋值点——component-contract R5「只许减不许增」）。
+        const faced = el.dataset && el.dataset.nfDeferOutput === '1' && applyOutputFace(el, text);
+        if (!faced) el.innerHTML = renderMarkdownWithMath(text, parseVoice, opts);
       } catch (e) {
         el.textContent = text; // 回落纯文本（renderer 自身另有永不抛护栏，双保险）
       }
@@ -1754,7 +1761,14 @@ export async function mountHistoryPageChunked(msgs, opts = {}, hooks = {}) {
     const pendingToolBodies = [];
     const ctx = {
       msgs, fragment: container,
-      deferMd: (el, text, parseVoice = true) => { el.textContent = text; pendingRenders.push({ el, text, parseVoice }); },
+      // 🔴 四参必须齐（report-filter-gap 批 2026-11-22）：本腿此前把行渲染点传来的
+      // 第 4 参 `opts` 就地丢掉 ⇒ 上滑分页腿的 root 行既拿不到 `{report:true}`
+      // 透明面（散标签按 HTML 元素吞掉块内 markdown），第一相又吐源文本 ⇒ 分页
+      // 页里的 root report 气泡显示为裸标签 + 未渲染 markdown。与同步腿同一收口。
+      deferMd: (el, text, parseVoice = true, opts) => {
+        el.textContent = outputFirstPaintText(text, opts);
+        pendingRenders.push({ el, text, parseVoice, opts });
+      },
       chatEl: activeView.dom.chat,
       ownerSessionId,
       skip: false,
@@ -1783,8 +1797,10 @@ export async function mountHistoryPageChunked(msgs, opts = {}, hooks = {}) {
     for (const j of pendingRenders) jobs.push(() => {
       // report 块可见性批：标记泡走摘除面（与 upgradeBatch 同处置）；其余按行
       // 自己的 opts 过透明面（root 源行 = `{report:true}`，非 root = 无选项）。
-      if (j.el.dataset && j.el.dataset.nfDeferOutput === '1') applyOutputFace(j.el, j.text);
-      else j.el.innerHTML = renderMarkdownWithMath(j.text, j.parseVoice, j.opts);
+      // 摘除面拒收 ⇒ 同一处赋值回落透明面（不得留在第一相纯文本态；report-filter-gap
+      // 批）。短路由 && 承担，赋值点仍只有一处（component-contract R5 零新增）。
+      const faced = j.el.dataset && j.el.dataset.nfDeferOutput === '1' && applyOutputFace(j.el, j.text);
+      if (!faced) j.el.innerHTML = renderMarkdownWithMath(j.text, j.parseVoice, j.opts);
     });
     for (let ji = 0; ji < jobs.length; ji += MOUNT_UPGRADE_BATCH) {
       const end = Math.min(ji + MOUNT_UPGRADE_BATCH, jobs.length);
