@@ -1331,6 +1331,13 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 /* 零正文终轮行（footer-leak 批 2026-11-22）：无正文的 AI 终轮只余徽章，整行收起——
    不留空泡壳、不留行距空白、不上胶囊。DOM 保留（turnGroup 读 terminal/nfPhrase）。 */
 .row.row-empty-final { display: none; }
+/* footer 只跟「回复内容」走（作者令 2026-11-23「没有回复的内容，不用footer」）：
+   root 零块气泡（data-nf-zero-output ＝ 无 report 块的过程叙述，已折进角标）所在行
+   不渲染消息 footer（时间/复制键）——无回复内容的回合（纯过程 / 零块 / 折叠）整枚
+   不显 footer，点开角标看过程也不出现。DOM 保留（turnGroup 仍读 .duration-badge 的
+   phrase / data-ts 判 done）；有 report 块的消息（data-nf-output）不受影响，混合回合
+   只在其 report 块消息上保留 footer。 */
+#chat .row:has(> .bubble[data-nf-zero-output]) > .duration-badge { display: none; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
 /* ---------- Message copy button ----------
