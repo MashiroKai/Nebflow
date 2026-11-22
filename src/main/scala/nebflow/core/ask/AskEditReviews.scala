@@ -280,35 +280,127 @@ object AskEditReviews:
   /** 在列审阅态（askState 回放面）。 */
   def reviewFor(sid: String): Option[AskEditReview] = store.get(sid)
 
-  /** 过期判锚：盘上内容是否仍等于审阅 current（不等 = 审阅期间被外部改动）。 */
-  private def diskMatches(review: AskEditReview): Option[String] =
+  private def readDisk(path: String): String =
+    new String(Files.readAllBytes(Path.of(path)), StandardCharsets.UTF_8)
+
+  /**
+   * 外部改动吸收（rebase）：agent 块 = diff(base, cur)；外部改动 = diff(cur, disk)。
+   * 外部改动与任一 agent 块（cur 侧）重叠 ⇒ 无法安全分离 ⇒ Left（显式冲突，不覆盖）；
+   * 否则把外部改动平移到 base 坐标施加到 base 上得新基线 base'（= 原基线 + 外部改动），
+   * 于是 diff(base', disk) 只剩 agent 块：拒绝只撤 agent 块，外部改动行保留。
+   */
+  private[ask] def rebaseOnExternal(base: String, cur: String, disk: String): Either[String, String] =
+    val bL = splitLines(base)
+    val cL = splitLines(cur)
+    val dL = splitLines(disk)
+    // agent 块：(cur 侧起, cur 侧长, base 侧起, base 侧长)
+    val agent = diff(bL.asJava, cL.asJava).getDeltas.asScala.toList
+      .sortBy(_.getSource.getPosition)
+      .map(d => (d.getTarget.getPosition, d.getTarget.size(), d.getSource.getPosition, d.getSource.size()))
+    val ext = diff(cL.asJava, dL.asJava).getDeltas.asScala.toList.sortBy(_.getSource.getPosition)
+    // cur 索引 → base 索引（仅在 agent 块之间的等同段内有效；调用方已排除重叠）。
+    def mapIdx(p: Int): Int =
+      agent.filter { case (cp, ct, _, _) => cp + ct <= p }.lastOption match
+        case Some((cp, ct, bp, bs)) => p + (bp + bs) - (cp + ct)
+        case None => p
+    def clashes(ep: Int, es: Int): Boolean =
+      agent.exists { case (cp, ct, _, _) =>
+        val aEnd = cp + ct
+        val eEnd = ep + es
+        if es == 0 then cp < ep && ep < aEnd
+        else if ct == 0 then ep < cp && cp < eEnd
+        else ep < aEnd && cp < eEnd
+      }
+    if ext.exists(d => clashes(d.getSource.getPosition, d.getSource.size())) then
+      Left(
+        "file changed during review and the external edit overlaps a pending block — " +
+          "cannot separate it safely; dismiss the review to keep the on-disk state, or resolve the file manually"
+      )
+    else
+      val edits = ext
+        .map { d =>
+          val ep = d.getSource.getPosition
+          val es = d.getSource.size()
+          val dp = d.getTarget.getPosition
+          val ds = d.getTarget.size()
+          (mapIdx(ep), es, dL.slice(dp, dp + ds))
+        }
+        .sortBy(e => -e._1)
+      val out = edits.foldLeft(bL) { case (acc, (bs, bl, repl)) =>
+        acc.slice(0, bs) ++ repl ++ acc.slice(bs + bl, acc.length)
+      }
+      Right(out.mkString(detectLineSep(base)))
+
+  /**
+   * 盘上现文同步（零写盘）：盘上 == currentText ⇒ 原样；否则吸收外部改动（见
+   * rebaseOnExternal）并把 currentText 换成盘上现文、入账。
+   */
+  private def resyncLocked(sid: String, review: AskEditReview): Either[String, AskEditReview] =
     try
-      val disk = new String(Files.readAllBytes(Path.of(review.path)), StandardCharsets.UTF_8)
-      if disk == review.currentText then None
+      val disk = readDisk(review.path)
+      if disk == review.currentText then Right(review)
       else
-        Some(
-          s"file changed since the review began (stale) — the action was NOT applied to avoid overwriting. " +
-            s"Retry once the file settles, dismiss the review to keep the on-disk state, or ask again: ${review.path}"
-        )
+        rebaseOnExternal(review.baseText, review.currentText, disk).map { nb =>
+          val u = review.copy(baseText = nb, currentText = disk, updatedAt = System.currentTimeMillis())
+          store.update(sid, u)
+          u
+        }
     catch
       case NonFatal(e) =>
-        Some(s"could not read ${review.path} (${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)})")
+        Left(s"could not read ${review.path} (${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)})")
+
+  /**
+   * 动作前置（一律先同步盘上，零写盘）：
+   *   · 整体动作（hunkId=None）⇒ 用同步后的审阅；
+   *   · 逐块动作 ⇒ 按**内容**（base 侧 + cur 侧文本对）把旧块映射到同步后的块 id；
+   *     同步后找不到或不唯一 ⇒ 显式拒绝（要求在新块表上重选），绝不猜。
+   * 同步后无块 ⇒ None（审阅已了结）。
+   */
+  private def freshReview(
+    sid: String,
+    review0: AskEditReview,
+    hunkId: Option[String]
+  ): Either[String, Option[(AskEditReview, Option[String])]] =
+    resyncLocked(sid, review0).flatMap { r =>
+      if r.hunks.isEmpty then Right(None)
+      else
+        hunkId match
+          case None => Right(Some((r, None)))
+          case Some(hid) =>
+            review0.hunks.find(_.id == hid) match
+              case None => Right(Some((r, Some(hid))))   // 交由调用方报「无此块」
+              case Some(old) =>
+                val oldCur = splitLines(review0.currentText)
+                val oldBase = splitLines(review0.baseText)
+                val newCur = splitLines(r.currentText)
+                val newBase = splitLines(r.baseText)
+                def sig(h: AskEditHunk, base: List[String], cur: List[String]) =
+                  (base.slice(h.oldStart, h.oldStart + h.oldCount), cur.slice(h.newStart, h.newStart + h.newCount))
+                val want = sig(old, oldBase, oldCur)
+                val found = r.hunks.filter(h => sig(h, newBase, newCur) == want)
+                found match
+                  case List(h) => Right(Some((r, Some(h.id))))
+                  case _ => Left("file changed during review — the block list was refreshed from disk; pick the block again")
+    }
 
   /**
    * 全部/逐块接受：hunkId=None 全收（清账零写盘）；Some(h)=该块标记已审
    * （基线前移，零写盘）。接受前同验盘上 == current——接受动作对过期审阅
-   * 也必须显式冲突（不静默盖章一个已不成立的 diff）。
+   * 先同步盘上（freshReview）：过期审阅不再冲突，而是吸收外部改动后按新块表操作。
    */
   def accept(sid: String, hunkId: Option[String]): IO[Either[String, ResolveResult]] =
     IO.blocking {
       lockOf(sid).synchronized {
         store.get(sid) match
           case None => Left("accept failed: no pending review for this session")
-          case Some(review) =>
-            diskMatches(review) match
-              case Some(why) => Left(why)
-              case None =>
-                hunkId match
+          case Some(review0) =>
+            freshReview(sid, review0, hunkId) match
+              case Left(why) => Left(why)
+              case Right(None) =>
+                store.remove(sid)
+                Right(ResolveResult.Cleared(review0.path))
+              case Right(Some((review, hid))) =>
+                hid match
                   case None =>
                     store.remove(sid)
                     Right(ResolveResult.Cleared(review.path))
@@ -336,19 +428,22 @@ object AskEditReviews:
 
   /**
    * 全部/逐块拒绝：hunkId=None 整体回退（回写 baseText）；Some(h)=回写
-   * 「current 去掉该块」。写前同验盘上 == current——不等即显式 stale 拒，
-   * 绝不覆盖外部改动。
+   * 「current 去掉该块」。写前先同步盘上（freshReview）：外部改动已并入基线，
+   * 拒绝只撤审阅块，外部改动行保留；与审阅块重叠的外部改动显式拒绝（绝不覆盖）。
    */
   def reject(sid: String, hunkId: Option[String]): IO[Either[String, ResolveResult]] =
     IO.blocking {
       lockOf(sid).synchronized {
         store.get(sid) match
           case None => Left("reject failed: no pending review for this session")
-          case Some(review) =>
-            diskMatches(review) match
-              case Some(why) => Left(why)
-              case None =>
-                hunkId match
+          case Some(review0) =>
+            freshReview(sid, review0, hunkId) match
+              case Left(why) => Left(why)
+              case Right(None) =>
+                store.remove(sid)
+                Right(ResolveResult.Cleared(review0.path))
+              case Right(Some((review, hid))) =>
+                hid match
                   case None =>
                     try
                       writeAtomic(Path.of(review.path), review.baseText, detectLineSep(review.baseText))
@@ -390,10 +485,10 @@ object AskEditReviews:
   end reject
 
   /**
-   * resync（审阅期间文件被外部改动后的「重试」= 重拉盘上 + 重算 diff，零写盘）：
-   * 盘上 == currentText ⇒ 原样返回（Kept）；不等 ⇒ currentText 换成盘上现文、
-   * baseText 原样保留（diff 按原基线重算，外部改动以块的形式可见、可审）。
-   * 不静默盖章：resync 只更新审阅视图，不做接受/拒绝。盘上回到基线 ⇒ 无差异 ⇒ 了结（Cleared）。
+   * resync（审阅期间文件被外部改动后的「重试」= 重拉盘上 + 吸收外部改动 + 重算
+   * 块表，零写盘）：盘上 == currentText ⇒ 原样（Kept）；否则外部改动并入基线
+   * （见 rebaseOnExternal），agent 块原样保留可审；无块 ⇒ 了结（Cleared）。
+   * 外部改动与 agent 块重叠 ⇒ 显式 Left（不覆盖、不猜）。
    */
   def resync(sid: String): IO[Either[String, ResolveResult]] =
     IO.blocking {
@@ -401,20 +496,12 @@ object AskEditReviews:
         store.get(sid) match
           case None => Left("resync failed: no pending review for this session")
           case Some(review) =>
-            try
-              val disk = new String(Files.readAllBytes(Path.of(review.path)), StandardCharsets.UTF_8)
-              if disk == review.currentText then Right(ResolveResult.Kept(review))
-              else
-                val updated = review.copy(currentText = disk, updatedAt = System.currentTimeMillis())
-                if updated.hunks.isEmpty then
-                  store.remove(sid)
-                  Right(ResolveResult.Cleared(review.path))
-                else
-                  store.update(sid, updated)
-                  Right(ResolveResult.Kept(updated))
-            catch
-              case NonFatal(e) =>
-                Left(s"could not read ${review.path} (${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)})")
+            resyncLocked(sid, review).flatMap { r =>
+              if r.hunks.isEmpty then
+                store.remove(sid)
+                Right(ResolveResult.Cleared(r.path))
+              else Right(ResolveResult.Kept(r))
+            }
       }
     }
 
