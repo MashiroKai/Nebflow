@@ -272,7 +272,7 @@ try {
       expanded: lastFaced.textContent.includes('<report>') && lastFaced.textContent.includes(outer),
     };
   }, OUTER_DETAIL);
-  ok(r4.headers === 2, `R4 header 计数（=${r4.headers}：过程轮 + output-only 轮各一；纯文本旧轮不立）`);
+  ok(r4.headers === 3, `R4 header 计数（=${r4.headers}：过程轮 + 零块纯文本轮（折进角标）+ output-only 轮各一；非 root 轮不立）`);
   ok(r4.state === 'done-expanded' && r4.expanded === true, 'R4 零过程行 output 轮角标展开 = 原文全量现形');
 
   // ── R5 管线透明面（root 面传 `opts.report`；非 root 面不传 = 改造前缺省）──

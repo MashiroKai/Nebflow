@@ -1251,7 +1251,7 @@ function buildHistoryRow(m, i, ctx) {
           // 只对源头身份为 root 的行落标（非 root / 旧存量行逐字保留原展示）。
           if (m.isRoot === true && m.text) {
             if (hasOutputBlock(m.text)) bubble.dataset.nfDeferOutput = '1';
-            else markZeroBlockFace(bubble, m.text); // 零块 root：全文 + 角标兜底戳（零块可见性批）
+            else markZeroBlockFace(bubble, m.text); // 零块 root：折进角标（戳 + hidden；角标展开见原文）
           }
           deferMd(bubble, m.text || '', true, m.isRoot === true ? { report: true } : undefined);
           row.appendChild(bubble);

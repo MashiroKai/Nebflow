@@ -69,19 +69,20 @@ test.describe('零块 root 可见性 + 引用剥块', () => {
     await bootChat(page, { history: history() });
     await page.waitForTimeout(600);
 
+    // Z1（裁定 C）：零块 root 过程叙述默认折进角标 ⇒ 气泡 hidden、不占高度；内容保留在 DOM。
     const z1 = await page.evaluate(() => {
       const zero = document.querySelector('#chat .bubble.ai[data-nf-zero-output="1"]');
       return {
         found: !!zero,
-        visible: !!zero && !zero.hidden && zero.getBoundingClientRect().height > 0,
-        fullShown: !!zero && zero.textContent.includes('一个字不摘') && zero.textContent.includes('第二段'),
+        folded: !!zero && zero.hidden === true && zero.getBoundingClientRect().height === 0,
+        kept: !!zero && zero.textContent.includes('一个字不摘') && zero.textContent.includes('第二段'),
         tagsAbsent: !!zero && !zero.textContent.includes('<report>'),
       };
     });
     expect(z1.found, 'root 零块气泡盖零块戳').toBe(true);
-    expect(z1.visible, 'root 零块气泡可见（不空泡、不隐藏）').toBe(true);
-    expect(z1.fullShown, 'root 零块全文照常可见').toBe(true);
-    await shot(page, 'z1-zero-collapsed');
+    expect(z1.folded, 'root 零块过程叙述默认折进角标（hidden，零高度）').toBe(true);
+    expect(z1.kept, '折叠不丢内容（DOM 保留全文）').toBe(true);
+    await shot(page, 'z1-zero-folded');
 
     // Z2：角标展开 ⇒ 原文（标签原样）；再点收回全文。
     const hdrOk = await page.evaluate(clickTurnHeaderOf, ZERO_SEL);
@@ -101,8 +102,8 @@ test.describe('零块 root 可见性 + 引用剥块', () => {
       const b = document.querySelector('#chat .bubble.ai[data-nf-zero-output="1"]');
       return { raw: b.classList.contains('nf-output-raw'), visible: !b.hidden && b.textContent.includes('一个字不摘') };
     });
-    expect(z2b.raw, '再点收回 ⇒ 全文正常态').toBe(false);
-    expect(z2b.visible).toBe(true);
+    expect(z2b.raw, '再点收回 ⇒ 折叠（非原文态）').toBe(false);
+    expect(z2b.visible, '再点收回 ⇒ 重新折进角标（hidden）').toBe(false);
 
     // Z3：有块 root 轮正常态只显块内（零回归）。
     const z3 = await page.evaluate(() => {
@@ -123,6 +124,31 @@ test.describe('零块 root 可见性 + 引用剥块', () => {
     expect(z4.noOut, '非 root 不盖块戳').toBe(true);
     expect(z4.visible).toBe(true);
     await shot(page, 'z3-mixed-normal');
+  });
+
+  test('Z6：零块轮无过程行 ⇒ 仍立角标（唯一展开入口），角标展开见原文', async ({ page }) => {
+    const now = Date.now();
+    const lone = [
+      ...historyFixture(2, { lastRole: 'user' }),
+      { type: 'ai', text: ZERO_TEXT, terminal: true, durationMs: 500, model: 'stub-x', isRoot: true, timestamp: now - 3000 },
+    ];
+    await bootChat(page, { history: lone });
+    await page.waitForTimeout(600);
+    const z6a = await page.evaluate(() => {
+      const b = document.querySelector('#chat .bubble.ai[data-nf-zero-output="1"]');
+      return { found: !!b, folded: !!b && b.hidden === true };
+    });
+    expect(z6a.found, '零块轮气泡盖零块戳').toBe(true);
+    expect(z6a.folded, '无过程行的零块轮也默认折叠').toBe(true);
+    const hdrOk = await page.evaluate(clickTurnHeaderOf, ZERO_SEL);
+    expect(hdrOk, '无过程行的零块轮仍立 turn-header 角标').toBe(true);
+    await page.waitForTimeout(300);
+    const z6b = await page.evaluate(() => {
+      const b = document.querySelector('#chat .bubble.ai[data-nf-zero-output="1"]');
+      return { visible: !!b && !b.hidden && b.textContent.includes('一个字不摘') };
+    });
+    expect(z6b.visible, '角标展开后零块原文可见').toBe(true);
+    await shot(page, 'z6-lone-zero-expanded');
   });
 
   test('Z5：引用原文剥块 —— 有块 ⇒ 摘要为块内纯文字；无块 ⇒ 原文', async ({ page }) => {

@@ -847,8 +847,8 @@ export function appendAiText(text, mark) {
         // that said `isRoot: true` gets the extracted body; anything else —
         // `false`, or an unstamped legacy frame — renders its full text exactly
         // as before (the tags then stay literal: no `opts.report` below).
-        // 零块可见性批（2026-11-21）：root 无 report 块的整条文本 = 全文可见（不吞）；
-        // 仅当文本里出现了标签但尚未配平（流式中间态）时才隐藏，免得裸标签闪现。
+        // 流式期：root 无 report 块的文本先照常流出（不吞）；仅当出现了标签但尚未配平
+        // （流式中间态）时才隐藏，免得裸标签闪现。终态（finishAi）零块 root 折进角标。
         const rawStream = target.bubble._nfText || '';
         const streamInner = target.bubble._nfIsRoot === true ? extractOutputInner(rawStream) : null;
         const visible = target.bubble._nfIsRoot !== true ? rawStream
@@ -903,10 +903,10 @@ export function finishAi(durationMs, model) {
     // 过管线（散标签转义为字面文本，防被当成 HTML 块吞文）。
     const rootFace = bubble._nfIsRoot === true;
     if (!rootFace || !applyOutputFace(bubble, activeView.stream.aiText || '')) {
-      // 零块 root（无平衡块）：全文渲染 + 复位流式期可能遗留的 hidden（零块可见性批 ①），
-      // 并盖零块戳供 turn-header 角标兜底展开（turnGroup 读它）。
+      // 零块 root（无平衡块）：过程叙述 ⇒ 盖零块戳并**折进角标**（markZeroBlockFace 置
+      // hidden；turn-header 角标展开见原文，turnGroup 读戳）。非 root 逐字不变。
       bubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '', true, rootFace ? { report: true } : undefined);
-      if (rootFace) { bubble.hidden = false; markZeroBlockFace(bubble, activeView.stream.aiText || ''); }
+      if (rootFace) markZeroBlockFace(bubble, activeView.stream.aiText || '');
     }
     bubble._nfText = activeView.stream.aiText || '';
     bubble._nfRendered = true;
