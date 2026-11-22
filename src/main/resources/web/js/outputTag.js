@@ -36,30 +36,34 @@ export function hasOutputBlock(text) {
   return extractOutputInner(text) !== null;
 }
 
-/** Zero-block root face (2026-11-21 零块可见性批). A ROOT text bubble whose source
- *  has no balanced pair renders its FULL text (作者裁定：无块内容不丢弃). It is
- *  stamped `data-nf-zero-output` + `_nfZeroFull` so the turn-header badge — the
- *  only expand entry for a block-less turn — can swap it to the raw source and
- *  back. Unlike the block face, collapsing never hides the bubble: the full text
- *  is the normal face here. */
+/** Zero-block root face (作者令 2026-11-22 裁定 C，修订 2026-11-21 零块可见性批).
+ *  A ROOT text bubble whose source has no balanced pair is a process narration —
+ *  the report-block design (openspec report-block-visibility) says outside text
+ *  folds into the turn badge. It is therefore stamped `data-nf-zero-output` +
+ *  `_nfZeroFull` and FOLDED by default (`hidden`); the turn-header badge — the
+ *  only expand entry for a block-less turn — unfolds it (full text / raw source)
+ *  and folds it back. Content is kept, never dropped. */
 export function markZeroBlockFace(bubble, fullText) {
   if (!bubble) return;
   bubble.dataset.nfZeroOutput = '1';
   bubble._nfZeroFull = fullText;
-  bubble.hidden = false;
+  bubble.classList.remove('nf-output-raw');
+  bubble.hidden = true;
 }
 
-/** Expand-face swap for a zero-block root bubble (driven by the turn-header badge,
- *  turnGroup.js). expanded = full raw source (tags verbatim, pre-wrap);
- *  collapsed = the normal full-text render. No-op on bubbles never stamped. */
+/** Fold/unfold swap for a zero-block root bubble (driven by the turn-header badge,
+ *  turnGroup.js). expanded = visible, full raw source (tags verbatim, pre-wrap);
+ *  collapsed = folded (hidden), content rendered for the next expand. No-op on
+ *  bubbles never stamped. */
 export function setZeroBlockExpanded(bubble, expanded) {
   if (!bubble || bubble._nfZeroFull === undefined) return;
-  bubble.hidden = false;
   if (expanded) {
+    bubble.hidden = false;
     bubble.classList.add('nf-output-raw');
     setHtmlTree(bubble, '<pre class="nf-output-raw-pre">' + escapeHtml(bubble._nfZeroFull) + '</pre>');
   } else {
     bubble.classList.remove('nf-output-raw');
+    bubble.hidden = true;
     setHtmlTree(bubble, renderMarkdownWithMath(bubble._nfZeroFull, true, { report: true }));
   }
 }
@@ -104,7 +108,6 @@ export function applyReplayFace(bubble, text, { root, streaming, cache }) {
   }
   if (applyOutputFace(bubble, src)) return true;
   bubble.innerHTML = renderMarkdownWithMath(src, true, { report: true, cache });
-  bubble.hidden = false;
   markZeroBlockFace(bubble, src);
   return true;
 }

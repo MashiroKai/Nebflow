@@ -158,7 +158,7 @@ function isTuckableRow(row) {
  *  set at row-build time). Such a turn gets a header even with zero tuckable
  *  rows: the badge is the ONLY expand entry to the raw full text. */
 function rowHasOutputFace(row) {
-  return !!(row.querySelector && row.querySelector('.bubble[data-nf-output], .bubble[data-nf-defer-output]'));
+  return !!(row.querySelector && row.querySelector('.bubble[data-nf-output], .bubble[data-nf-defer-output], .bubble[data-nf-zero-output]'));
 }
 
 /** Swap every output-faced bubble in `rows` to the expanded (raw full text,
