@@ -152,7 +152,9 @@ try {
     ok('F1 consoleSuperseded 旗标在场', superseded === true);
     ok('F1 毛玻璃：overlay takeover-blur 类在场', await overlay.evaluate(el => el.classList.contains('takeover-blur')));
     const blur = await overlay.evaluate(el => getComputedStyle(el).backdropFilter || getComputedStyle(el).webkitBackdropFilter);
-    ok('F1 毛玻璃：backdrop-filter blur(24px) 同源 --cv-blur', /blur\(24px\)/.test(blur || ''), blur || '');
+    // 毛玻璃口径（2026-11-21 作者令 f0d89037d「幕布成员」）：值只读 --nf-glass-scrim-blur 单源（现 blur(8px)）。
+    const scrimBlur = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--nf-glass-scrim-blur').trim());
+    ok('F1 毛玻璃：backdrop-filter 与 --nf-glass-scrim-blur 单源一致', !!scrimBlur && (blur || '').includes(scrimBlur), `${blur || ''} vs ${scrimBlur}`);
     // 卡片家族批（作者 16:05 令）：面板 = .nfc 实色家族卡（官网 auth 域 DNA 逐值：
     // 白底 #fff / 边 #e5e7eb / radius 18 / 宽 384 / 阴影两档）+ 官方字标双档。
     const card = await box.evaluate(el => {
@@ -179,6 +181,10 @@ try {
       titleSt.size === '21px' && titleSt.weight === '600' && titleSt.color === 'rgb(17, 24, 39)', JSON.stringify(titleSt));
     // 按钮语 = g2 药丸族（接管/入场同族批作者令②）：药丸形态（radius 999）+
     // 非透明填充（次级白玻璃 / 主动作墨玻璃各自 token 底），旧「无底无框 chip」退役。
+    // 圆角口径（2026-11-22 作者令「圆角落标准」ffdc565ae）：次级 .g2-pill 保持药丸 999px；
+    // 主动作 .g2-pill-primary 改为 --ds-radius-chip（design-system.css，现值 6px）。
+    const chipR = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--ds-radius-chip').trim());
+    const expectRadius = { 'takeover-exit': '999px', 'takeover-retake': `${parseFloat(chipR) || 6}px` };
     for (const [id, expectClass] of [['takeover-exit', 'g2-pill'], ['takeover-retake', 'g2-pill-primary']]) {
       const btn = page.locator('#' + id);
       const st = await btn.evaluate(el => ({
@@ -186,8 +192,8 @@ try {
         radius: getComputedStyle(el).borderRadius,
         bg: getComputedStyle(el).backgroundColor,
       }));
-      ok(`F1 药丸形态（#${id} radius 999px + 类 ${expectClass}）`,
-        st.cls.includes(expectClass) && st.radius === '999px', JSON.stringify(st));
+      ok(`F1 按钮圆角（#${id} radius ${expectRadius[id]} = 现行标准 + 类 ${expectClass}）`,
+        st.cls.includes(expectClass) && st.radius === expectRadius[id], JSON.stringify(st));
       ok(`F1 药丸有底（#${id} 非透明填充，chip 退役）`,
         st.bg !== 'rgba(0, 0, 0, 0)' && st.bg !== 'transparent', st.bg);
     }
