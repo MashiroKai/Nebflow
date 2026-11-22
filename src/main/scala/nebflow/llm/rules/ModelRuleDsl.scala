@@ -65,7 +65,7 @@ object ModelRuleDsl:
   /** 动作：新 agent actor 超并发去处（仅派发时，约束 A）。 */
   final case class OverflowAct(ref: String, line: Int) extends Clause:
     def kind: String = "overflow"
-  /** 动作：该时段不可用的模式（`provider/*` 或 `provider/model`）。 */
+  /** 动作：该时段不可用的模式（provider 通配，或精确 `provider/model`）。 */
   final case class Unavailable(patterns: List[String], line: Int) extends Clause:
     def kind: String = "unavailable"
   /** 动作：计划性冻结；None = 全部模型（`*`）。 */
@@ -382,7 +382,7 @@ object ModelRuleDsl:
   ):
     def noRuleHit: Boolean = matched.isEmpty
 
-  /** 模式匹配：`*` 全部；`p/*` 同 provider；否则精确 `provider/model`。 */
+  /** 模式匹配：`*` 全部；provider 通配（末尾星号）同 provider；否则精确 `provider/model`。 */
   def patternMatches(pattern: String, ref: String): Boolean =
     if pattern == "*" then true
     else if pattern.endsWith("/*") then ref.startsWith(pattern.dropRight(1))
@@ -391,8 +391,8 @@ object ModelRuleDsl:
   private def matchesRule(r: Rule, s: Session, call: String, weekday: Int, minute: Int): Boolean =
     r.clauses.forall {
       case w: When => coversCell(w, weekday, minute)
-      case Level(vs, _) => s.level.exists(vs.contains)
-      case Slot(vs, _) => s.slot.exists(vs.contains)
+      case Level(vs, _) => s.level.exists(x => vs.contains(x))
+      case Slot(vs, _) => s.slot.exists(x => vs.contains(x))
       case Call(vs, _) => vs.contains(call)
       case _ => true
     }

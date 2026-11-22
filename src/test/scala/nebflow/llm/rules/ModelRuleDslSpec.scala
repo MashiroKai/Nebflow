@@ -315,9 +315,9 @@ rule 白天转便宜模型 { priority 50 when time 18:00..23:00 level team switc
     val s = scriptOf(Ex2)
     val json = diagramJson(s)
     assert(json.startsWith("{\"nodes\":["), clue(json))
-    assertEquals("\"id\":".r.findAllIn(json).length, 5) // 5 节点（边只带 from/to/kind，不带 id）
-    assertEquals("\"from\":".r.findAllIn(json).length, 4)
-    assertEquals("\"srcLine\":".r.findAllIn(json).length, 5)
+    assertEquals("\"id\":".r.findAllIn(json).size, 5) // 5 节点（边只带 from/to/kind，不带 id）
+    assertEquals("\"from\":".r.findAllIn(json).size, 4)
+    assertEquals("\"srcLine\":".r.findAllIn(json).size, 5)
     assert(json.contains("\"srcLine\":6"), clue(json))
     assert(json.contains("\"kind\":\"overflow\""), clue(json))
   }
