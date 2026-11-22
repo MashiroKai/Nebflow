@@ -4769,6 +4769,7 @@ body.mobile-layer #attachment-preview .att-file .att-remove::after { inset: -11p
    48 档、同一 `--micon` 图标档。改前它们停在桌面档 32/36（`.icon-btn` 底档），
    与主会话 48 相差一整档（本批截图 + 读数）。 */
 body.mobile-layer #attach-btn,
+body.mobile-layer .ask-attach,
 body.mobile-layer #quote-item-btn,
 body.mobile-layer .fm-attach-btn,
 body.mobile-layer .fm-mic-btn {
@@ -4778,6 +4779,7 @@ body.mobile-layer .fm-mic-btn {
   min-height: var(--mtap-lg);
 }
 body.mobile-layer #attach-btn svg,
+body.mobile-layer .ask-attach svg,
 body.mobile-layer #quote-item-btn svg,
 body.mobile-layer .fm-attach-btn svg,
 body.mobile-layer .fm-mic-btn svg {

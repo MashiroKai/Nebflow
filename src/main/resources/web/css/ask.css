@@ -986,13 +986,10 @@ body.mobile-layer .ask-user-source { flex-wrap: wrap; white-space: normal; max-w
 /* ═══ 附图（ask 附图批 2026-11-22）═══════════════════════════════════════════
  * 输入条附件钮（文本框之前的圆形图标钮）+ 待发件缩略条（输入条之上）+ 用户气泡
  * 内的图片行。材质/输入条外壳仍归次级输入框模板（nf-glass），本段只定附图件的几何。 */
-.ask-attach {
-  flex: none; display: inline-flex; align-items: center; justify-content: center;
-  width: 28px; height: 28px; margin: 0 2px; padding: 0; border: none; border-radius: 50%;
-  background: transparent; color: var(--color-text-muted, #888); cursor: pointer;
-}
-.ask-attach:hover { color: var(--color-text, inherit); }
-.ask-attach:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
+/* 附件钮（UI 小修 2026-11，作者令「ask canvas的附件按钮尺寸和位置应该和主会话保持一致」）：
+   零本地形态——元素挂主会话同一组件类 `.icon-btn`（36/手机 48 档、图标档、hover 玻璃、
+   焦点环全部单源于 input.css / keyboard.css / mobileLayer.css 的 `.icon-btn` 族），
+   位置次序 = 文本框之后、发送钮之前（js/askDialog.js）。`.ask-attach` 仅为身份钩子，本文件零规则。 */
 .ask-media-strip {
   display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px 6px;
 }
