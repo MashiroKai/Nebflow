@@ -23,9 +23,12 @@ object DesktopPolicy:
   /** 应用名允许字符：字母数字、空格、点、加号、下划线、连字符；1–80 位。禁路径与引号字符。 */
   private val AppNamePattern = "^[A-Za-z0-9 .+_-]{1,80}$".r
 
-  /** 观测动词身份判据：Nebula 根，或非 kernel 形态的 delegate 会话（同 browser-verbs-p0 口径）。 */
+  /**
+   * 工具内身份基本校验（插件分发裁定后收窄，同 browser-verbs-p0 BrowserPolicy.callerAllowed）：
+   * 挂载 computer-use 插件即授权（授权判据在 AgentSessionExecution 的挂载腿）；此处只拒绝无会话身份的直调。
+   */
   def callerAllowed(isNebulaRoot: Boolean, sessionId: Option[String]): Boolean =
-    isNebulaRoot || sessionId.exists(_.startsWith("delegate-"))
+    isNebulaRoot || sessionId.exists(_.trim.nonEmpty)
 
   /** 应用名形状校验；非法返回 None。 */
   def validAppName(raw: String): Option[String] =

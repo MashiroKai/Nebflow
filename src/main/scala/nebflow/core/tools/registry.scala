@@ -214,7 +214,8 @@ object ToolRegistry:
     // 实现登记于此（执行查表用），默认工具面无名字；授权 = 项目派发挂载 browser-use 插件
     // （插件 `org.nebflow/engine-tools` 声明 → PluginMcpManager 前缀来源 → buildAllowedToolSet
     // 挂载腿）。builtinToolNames 过滤之（不进前端内建清单）。
-    val pluginEngine: Map[String, Tool] = BrowserPluginTools.All
+    // desktop-observe-p0 同裁定：桌面六动词经 computer-use 插件挂载，同登记于此。
+    val pluginEngine: Map[String, Tool] = BrowserPluginTools.All ++ DesktopPluginTools.All
     // imagegen 双层批（2026-10-24）+ 功能开放批（2026-10-30 作者令「直接开放
     // 出来」，缺省编入）：编译期 seal 门控保留为应急开关——显式 `STAND_IMAGEGEN=0`
     // 构建（ImageGenSeal.CompiledIn=false，final val 常量折叠）本注册整段消失；
@@ -246,7 +247,10 @@ object ToolRegistry:
 
   /** Builtin tool names (non-MCP), used by frontend to build configurable tool list. */
   def builtinToolNames: List[String] =
-    tools.asScala.keys.filterNot(n => n.startsWith("mcp__") || BrowserVerbNames.All.contains(n)).toList.sorted
+    tools.asScala.keys.filterNot(n => n.startsWith("mcp__") || pluginEngineNames.contains(n)).toList.sorted
+
+  /** 插件分发的引擎工具名（不进内建清单）。 */
+  private val pluginEngineNames: Set[String] = (BrowserVerbNames.All ++ DesktopVerbNames.All).toSet
 
   /**
    * 面判定（P0-1 / P-M1，2026-09-20）：该注册名对应的实例是否为**外部工具**

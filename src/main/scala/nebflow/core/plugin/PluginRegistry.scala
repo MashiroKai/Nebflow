@@ -110,18 +110,32 @@ object PluginRegistry:
    * 的防声明逃逸语义）。授权 = 项目派发挂载该插件（PluginMcpManager.acquire 产出的
    * `plugin_<p>_engine` 前缀来源），不进 agent 默认工具面。
    */
-  val EngineToolWhitelist: Set[String] = nebflow.core.tools.BrowserVerbNames.All.toSet
+  /**
+   * 按插件分域的引擎工具表（单点）：插件名 → 允许它声明的引擎工具集。授权按**挂载的那个插件**
+   * 逐个落地——挂载 browser-use 只得浏览器九动词，挂载 computer-use 只得桌面六动词，互不串授。
+   */
+  val EngineToolsByPlugin: Map[String, Set[String]] = Map(
+    "browser-use" -> nebflow.core.tools.BrowserVerbNames.All.toSet,
+    "computer-use" -> nebflow.core.tools.DesktopVerbNames.All.toSet
+  )
+
+  /** 全部引擎工具名（并集；仅作参考，授权一律经 [[engineGrantFor]] 按插件）。 */
+  val EngineToolWhitelist: Set[String] = EngineToolsByPlugin.values.flatten.toSet
 
   /** 引擎工具前缀来源的保留服务名（serverId = `plugin_<p>_engine`，无子进程）。 */
   val EngineServerName: String = "engine"
 
   /**
-   * 挂载态授权判据（单点，纯函数）：会话的 plugin 前缀来源含 `plugin_<p>_engine` ⇒ 授予
-   * EngineToolWhitelist；否则空集（未挂载 ⇒ 默认工具面无引擎工具名）。
+   * 挂载态授权判据（单点，纯函数）：会话的 plugin 前缀来源含 `plugin_<p>_engine` ⇒ 授予该插件
+   * 在 [[EngineToolsByPlugin]] 中的工具集；未挂载 ⇒ 空集（默认工具面无引擎工具名）。
    */
   def engineGrantFor(pluginServerIds: List[String]): Set[String] =
-    if pluginServerIds.exists(_.endsWith("_" + EngineServerName)) then EngineToolWhitelist
-    else Set.empty[String]
+    val suffix = "_" + EngineServerName
+    pluginServerIds.iterator
+      .filter(_.endsWith(suffix))
+      .flatMap(id => EngineToolsByPlugin.get(id.stripPrefix("plugin_").stripSuffix(suffix)))
+      .flatten
+      .toSet
 
   /**
    * §5.2 canonical manifest $schema（Agent Plugins 1.0.0）。缺失/非 canonical
@@ -922,10 +936,12 @@ object PluginRegistry:
       engineTools =
         c.downField("extensions").downField("org.nebflow/engine-tools").as[List[String]] match
           case Right(ts) =>
-            val illegal = ts.filterNot(EngineToolWhitelist.contains)
+            // 按本插件的分域表校验（越界 = 声明了别的插件的工具名 或 未登记名）
+            val allowed = EngineToolsByPlugin.getOrElse(pname, Set.empty[String])
+            val illegal = ts.filterNot(allowed.contains)
             if illegal.nonEmpty then
-              warnings += s"org.nebflow/engine-tools requests non-whitelisted engine tool(s): ${illegal.mkString(", ")} — dropped (ENGINE_TOOL_ILLEGAL)"
-            ts.filter(EngineToolWhitelist.contains)
+              warnings += s"org.nebflow/engine-tools requests non-whitelisted engine tool(s) for '$pname': ${illegal.mkString(", ")} — dropped (ENGINE_TOOL_ILLEGAL)"
+            ts.filter(allowed.contains)
           case Left(_) => Nil
 
       // org.nebflow/viewers.json（canvas-media 批 2026-10-05，OD-3=K-1）：manifest

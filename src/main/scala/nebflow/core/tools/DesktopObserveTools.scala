@@ -11,9 +11,10 @@ import nebflow.core.desktop.{DesktopObserve, DesktopPolicy}
  * desktop_list_apps / desktop_list_windows / desktop_screenshot / desktop_clipboard_read /
  * desktop_open（后台启动） / desktop_displays。执行体 = nebflow.core.desktop.DesktopObserve。
  *
- * 授权面（单点，B 形态，同 browser-verbs-p0）：名字进 AgentCore.RootExclusiveTools（防声明
- * 逃逸）+ 挂载面 = AgentSessionExecution.buildAllowedToolSet 尾段 DesktopObserveTools 腿
- * （Nebula 根 / 非 kernel 形态 delegate 会话）。工具内侧双保险：DesktopPolicy.callerAllowed。
+ * 授权面（插件分发裁定，作者 2026-11-22）：六动词**不在** builtins 与 RootExclusiveTools；
+ * 由 seed 插件 computer-use 的 `org.nebflow/engine-tools` 声明经 PluginMcpManager 前缀来源
+ * （`plugin_computer-use_engine`）挂载授予，按插件查表 PluginRegistry.EngineToolsByPlugin。
+ * 工具内侧仅做身份基本校验：DesktopPolicy.callerAllowed（挂载即授权）。
  *
  * 宿主保护：名单命中（nebflow/nebula/stand/sbt/java/openjdk）的应用/窗口在清单里剔除；
  * 指名宿主应用的截图与启动 → HOST-PROTECTED，不发起任何系统调用。
@@ -199,7 +200,19 @@ object DesktopDisplaysTool extends DesktopVerbTool:
   override def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     guarded(ctx)(DesktopObserve.displays)
 
-/** 观测动词名单（单点）：AgentCore 的防声明逃逸集与挂载腿共用。 */
+/** 插件分发的桌面工具实现登记（computer-use 插件挂载后可用；不进 builtins 默认面）。 */
+object DesktopPluginTools:
+  val All: Map[String, Tool] =
+    List[Tool](
+      DesktopListAppsTool,
+      DesktopListWindowsTool,
+      DesktopScreenshotTool,
+      DesktopClipboardReadTool,
+      DesktopOpenTool,
+      DesktopDisplaysTool
+    ).map(t => t.name -> t).toMap
+
+/** 桌面观测动词名单（单点）：插件白名单（PluginRegistry.EngineToolsByPlugin）与测试共用。 */
 object DesktopVerbNames:
   val All: List[String] = List(
     DesktopListAppsTool.Name,

@@ -3,15 +3,16 @@ package nebflow.core.desktop
 import munit.FunSuite
 
 import nebflow.agent.AgentCore
-import nebflow.core.tools.{DesktopVerbNames, ToolRegistry}
+import nebflow.core.plugin.PluginRegistry
+import nebflow.core.tools.{BrowserVerbNames, DesktopVerbNames, ToolRegistry}
 
 /**
- * desktop-observe-p0 契约（观测半边，写类不做）。
+ * desktop-observe-p0 契约（观测半边，写类不做；插件分发裁定 2026-11-22）。
  *
  * 钉死：
- *  1. 纯策略：宿主拒绝名单（子串、大小写不敏感）、身份判据、应用名/区域解析、窗口与进程行解析、剪贴板截断。
- *  2. 注册面：六动词进 TOOL_MAP；名单单点与注册表一致；不含任何写类名字。
- *  3. 授权面：六动词进 RootExclusiveTools（防声明逃逸）；挂载集 = DesktopObserveTools。
+ *  1. 纯策略：宿主拒绝名单（子串、大小写不敏感）、工具内基本身份校验、应用名/区域解析、窗口与进程行解析、剪贴板截断。
+ *  2. 注册面：六动词登记于插件分发表（pluginEngine）；名单单点与注册表一致；不含任何写类名字。
+ *  3. 授权面（插件分发）：默认面不授能；挂载 computer-use ⇒ 六动词；挂载 browser-use 不串授；声明按插件分域。
  */
 class DesktopObserveSpec extends FunSuite:
 
@@ -45,12 +46,12 @@ class DesktopObserveSpec extends FunSuite:
     assertEquals(DesktopPolicy.validAppName("a" * 81), None)
   }
 
-  test("身份判据单点：Nebula 根或 delegate- 会话放行，其余 fail-closed") {
+  test("工具内基本身份校验：Nebula 根或有会话身份放行（挂载即授权），无身份直调 fail-closed") {
     assert(DesktopPolicy.callerAllowed(isNebulaRoot = true, sessionId = None))
     assert(DesktopPolicy.callerAllowed(isNebulaRoot = false, sessionId = Some("delegate-abc")))
-    assert(!DesktopPolicy.callerAllowed(isNebulaRoot = false, sessionId = Some("ask-gv-1")))
-    assert(!DesktopPolicy.callerAllowed(isNebulaRoot = false, sessionId = Some("node-7")))
+    assert(DesktopPolicy.callerAllowed(isNebulaRoot = false, sessionId = Some("node-7")))
     assert(!DesktopPolicy.callerAllowed(isNebulaRoot = false, sessionId = None))
+    assert(!DesktopPolicy.callerAllowed(isNebulaRoot = false, sessionId = Some("  ")))
   }
 
   test("区域解析：x,y,w,h 整数，w/h 必须为正；负 x/y 合法（副屏左侧）") {
@@ -99,13 +100,31 @@ class DesktopObserveSpec extends FunSuite:
     }
   }
 
-  // ══════════ 3. 授权面 ══════════
+  // ══════════ 3. 授权面（插件分发，作者 2026-11-22）══════════
 
-  test("防声明逃逸：六动词在 RootExclusiveTools，插件/agent 声明不授能") {
-    six.foreach(n => assert(AgentCore.RootExclusiveTools.contains(n), s"$n missing from RootExclusiveTools"))
+  test("默认面不授能：六动词不在 RootExclusiveTools、不在内建清单（builtinToolNames）") {
+    six.foreach(n => assert(!AgentCore.RootExclusiveTools.contains(n), s"$n leaked into RootExclusiveTools"))
+    six.foreach(n => assert(!ToolRegistry.builtinToolNames.contains(n), s"$n leaked into builtin face"))
   }
 
-  test("挂载集 = DesktopObserveTools（单点）") {
-    assertEquals(AgentCore.DesktopObserveTools, six)
+  test("挂载态：挂载 computer-use（plugin_computer-use_engine）⇒ 六动词全授予") {
+    assertEquals(PluginRegistry.engineGrantFor(List("plugin_computer-use_engine")), six)
+  }
+
+  test("未挂载态：无引擎前缀来源 ⇒ 空集") {
+    assertEquals(PluginRegistry.engineGrantFor(Nil), Set.empty[String])
+    assertEquals(PluginRegistry.engineGrantFor(List("plugin_x_playwright")), Set.empty[String])
+  }
+
+  test("不串授：仅挂载 browser-use 时桌面六动词一个不授；仅挂载 computer-use 时浏览器九动词一个不授") {
+    val browserOnly = PluginRegistry.engineGrantFor(List("plugin_browser-use_engine"))
+    assert(browserOnly.intersect(six).isEmpty, "browser-use mount must not grant desktop verbs")
+    val desktopOnly = PluginRegistry.engineGrantFor(List("plugin_computer-use_engine"))
+    assert(desktopOnly.intersect(BrowserVerbNames.All.toSet).isEmpty, "computer-use mount must not grant browser verbs")
+  }
+
+  test("声明校验按插件分域：computer-use 不得声明浏览器动词，反之亦然") {
+    assertEquals(PluginRegistry.EngineToolsByPlugin("computer-use"), six)
+    assert(PluginRegistry.EngineToolsByPlugin("computer-use").intersect(BrowserVerbNames.All.toSet).isEmpty)
   }
 end DesktopObserveSpec

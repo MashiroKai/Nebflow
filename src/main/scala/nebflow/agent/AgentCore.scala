@@ -297,29 +297,13 @@ object AgentCore:
     // GenerateImage（imagegen 双层批 2026-10-24，调试状态）：Nebula 专属生图件——
     // 同享本集【防声明逃逸】通道（真实授能 = RootOrchestrationTools 单点；编译期
     // seal 关时经 imageGenSealedStrip 从交付面剥除且本集条目随之不可达）。
-    "GenerateImage",
-    // desktop-observe-p0（2026-11-22）：桌面观测六动词——同【防声明逃逸】通道：插件/agent.json
-    // 声明（含 "*"）对一切非授权身份不授能。真实授能 = DesktopVerbNames 单点 + buildAllowedToolSet
-    // 尾段 desktopGrant 腿（Nebula 根 / 非 kernel delegate 会话）。
-    "desktop_list_apps",
-    "desktop_list_windows",
-    "desktop_screenshot",
-    "desktop_clipboard_read",
-    "desktop_open",
-    "desktop_displays"
+    "GenerateImage"
   )
 
-  // 浏览器动词面（browser-verbs-p0 裁定变更，作者 2026-11-22「BU 和 CU 的能力都通过插件来分发，
-  // 不落 agent 直接的默认工具面」）：九动词不在 RootExclusiveTools、无机制固定授能单点。
-  // 授权 = 项目派发挂载 browser-use 插件，经 AgentSessionExecution.buildAllowedToolSet 的
-  // `pluginEngineGrant` 腿（前缀来源 `plugin_<p>_engine`；EngineToolWhitelist 限定）。
-
-  /**
-   * 桌面观测动词面授能单点（desktop-observe-p0，2026-11-22）。挂载判据在 buildAllowedToolSet
-   * 尾段：`isRoot` 或非 kernel 形态 delegate 会话（与 browser-verbs-p0 同口径）。本集条目同时在
-   * RootExclusiveTools 中（防声明逃逸）；工具内侧身份闸（DesktopPolicy.callerAllowed）双保险。
-   */
-  val DesktopObserveTools: Set[String] = nebflow.core.tools.DesktopVerbNames.All.toSet
+  // 观测/浏览器动词面（作者 2026-11-22「BU 和 CU 的能力都通过插件来分发，不落 agent 直接的默认
+  // 工具面」）：浏览器九动词与桌面六动词均**不在** RootExclusiveTools、无机制固定授能单点。
+  // 授权 = 项目派发挂载对应插件（browser-use / computer-use），经 AgentSessionExecution.buildAllowedToolSet
+  // 的 `pluginEngineGrant` 腿（前缀来源 `plugin_<p>_engine`；PluginRegistry.engineGrantFor 按插件查表）。
 
   /**
    * dream 的 MemoryNote 准入例外（2026-09-05 作者签准，修订 2026-08-31 裁定①）：
