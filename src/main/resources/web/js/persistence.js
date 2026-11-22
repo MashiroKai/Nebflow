@@ -758,6 +758,9 @@ export function restoreFromStorage(opts = {}) {
       if (m.text || isTurnTerminal || hasDuration) {
         const row = document.createElement('div');
         row.className = 'row ai';
+        // 零正文终轮行（footer-leak 批 2026-11-22）：无气泡、仅余徽章 ⇒ 整行收起
+        // （display:none，DOM 保留：turnGroup 仍读 terminal/nfPhrase 判 done）。
+        if (!m.text) row.classList.add('row-empty-final');
         if (m.text) {
           const bubble = document.createElement('div');
           bubble.className = 'bubble ai';
@@ -1233,6 +1236,8 @@ function buildHistoryRow(m, i, ctx) {
       if (m.text || isTurnTerminal || hasDuration) {
         const row = document.createElement('div');
         row.className = 'row ai';
+        // 零正文终轮行（footer-leak 批 2026-11-22）：同上，收起整行、DOM 保留。
+        if (!m.text) row.classList.add('row-empty-final');
         if (m.text) {
           // quote-message 一期：助手文本行挂 id + 右键（复制 + 引用）。
           row.dataset.msgId = historyMsgId(i);

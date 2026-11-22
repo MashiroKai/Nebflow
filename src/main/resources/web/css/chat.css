@@ -1328,6 +1328,9 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .row.tool { justify-content: flex-start; }
 .row.error { justify-content: center; }
 .row.notice { justify-content: center; }
+/* 零正文终轮行（footer-leak 批 2026-11-22）：无正文的 AI 终轮只余徽章，整行收起——
+   不留空泡壳、不留行距空白、不上胶囊。DOM 保留（turnGroup 读 terminal/nfPhrase）。 */
+.row.row-empty-final { display: none; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
 /* ---------- Message copy button ----------
