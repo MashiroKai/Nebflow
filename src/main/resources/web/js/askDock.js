@@ -115,7 +115,8 @@ import { define } from './component.js';
 // 流式/提交/中断/贴底跟随）抽成共用件 askDialog.js —— canvas 档与选区档各自 new 一份
 // 实例（同一实现、两份座位/绑定），本文件只留画布侧脚手架（入口钮/记事本/可见性闸/
 // 座位/会话账与落盘/拖拽改尺寸/画布专属帧）。
-import { createAskDialog, svgNode } from './askDialog.js';
+import { svgNode } from './askDialog.js';
+import { createAskPanel } from './askPanel.js';
 // canvas-inline-diff-review（2026-11-16）：diff 审阅退出会话问答路径（提案 diff
 // 卡整体退役），ask_edit/ask_write 的直接落盘审阅态由 askEditReview 模块在 canvas
 // 审阅页签呈现——本模块只把 askEdit* 帧路由过去，不再自持任何审阅态。
@@ -224,7 +225,9 @@ let wired = false; // 元素级监听/观察器已绑（节点复用 ⇒ 只绑�
 // 抽取批（2026-11-18）：气泡列贴底跟随 latch / 胶囊 / typing / 中断状态机实例
 // 全部随「Ask 对话框内核」搬进 askDialog.js —— 本文件经 dlg.* 驱动（同一条腿，
 // 只是所有者换成了对话框实例）。
-/** @type {ReturnType<typeof createAskDialog>|null} */
+/** 门面句柄（askPanel.js）：开/收/是否开着一律经它；内核实例 = askFace.dialog。 */
+let askFace = null;
+/** @type {ReturnType<typeof createAskPanel>['dialog']|null} */
 let dlg = null;
 let currentFile = ''; // absPath of the active file entry ('' = 非文件卡)
 let inited = false;
@@ -448,7 +451,7 @@ function buildFab() {
  *   <button class="ask-stop ds-turn-btn ds-turn-btn--stop">
  */
 function buildDialog() {
-  dlg = createAskDialog({
+  askFace = createAskPanel({ dialog: {
     tt,
     panelClass: 'ask-dock',
     placeholder: tt('针对这份文件提问…', 'Ask about this file…'),
@@ -481,7 +484,8 @@ function buildDialog() {
     onUnread: () => syncUnreadDot(),
     onPersist: (s) => persistSession(s),
     onStateExtra: (msg) => consumeAskState(msg),
-  });
+  } });
+  dlg = askFace.dialog;
   // 状态行（状态可见性与失败上报批）：面板自己的独立一行，坐落在 `.ask-colwrap`
   // 与输入条之间（与记事本 `.note-status` 同一处方）；DOM 归本文件造，槽位用的是
   // 内核已暴露的输入条引用——不在内核里再添一套状态展示。
@@ -1390,7 +1394,7 @@ function syncSeat() {
 
 // ── 开合（作者令⑧：transform-origin 锚定按钮圆心，开合同一曲线）───────────
 
-function isOpen() { return !!dlg && dlg.isOpen(); }
+function isOpen() { return !!askFace && askFace.isOpen(); }
 
 // ── FAB 通知点（作者令 2026-10-29「三修②」：绿点=未读通知，无未读不显示）──
 // 旧口径「has-sess = 会话有过消息 → 紫点常显」退役。未读判定单点：AI/注入帧
@@ -1416,7 +1420,7 @@ async function open() {
   if (!s) return;
   s.unread = false; // 打开即读：通知点熄灭（ask 三修 2026-10-29 未读语义）
   restoreSize(el.askSurface); // 持久化缺陷批：尺寸偏好与记事本同一条恢复腿
-  dlg.openDom();
+  askFace.open();
   el.fab.classList.add('open');
   el.fab.classList.remove('pulse');
   dlg.render();
@@ -1432,7 +1436,7 @@ async function open() {
 /** 组件方法 close()：收起对话框（原型 close() 的对外契约，签名不变）。 */
 function close() {
   if (!el) return;
-  dlg.closeDom();
+  askFace.close();
   el.fab.classList.remove('open');
   syncTurnStatus(); // 收起即隐状态行（isOpen() 参与判定，收起点零残留）
   renderHandoff(); // ask-scope 批：收起即隐转交状态行（同一条判定腿）

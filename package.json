@@ -28,7 +28,8 @@
     "visual:promote": "node scripts/visual-baseline.mjs --promote --i-reviewed",
     "visual:check": "node scripts/visual-baseline.mjs --check",
     "visual:list": "node scripts/visual-baseline.mjs --list",
-    "check:dropdown-single-control": "node scripts/check-dropdown-single-control.mjs"
+    "check:dropdown-single-control": "node scripts/check-dropdown-single-control.mjs",
+    "check:askpanel-facade": "node scripts/check-askpanel-facade.mjs && node --test tests/askpanel-facade.test.mjs"
   },
   "devDependencies": {
     "@eslint/js": "9.39.1",
