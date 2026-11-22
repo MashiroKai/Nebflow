@@ -927,6 +927,12 @@ export function finishAi(durationMs, model) {
     // animation class even if the CSS rule were ever narrowed.
     if (firstPaint && !bubble._nfStreamed && activeView.motionEnabled()) bubble.classList.add('nf-pop');
     const ts = Date.now();
+    // 零正文终轮行（footer-leak 批 2026-11-22）：空正文 ⇒ 收起整行（空泡壳 + 徽章
+    // 不上屏），DOM 保留供 turnGroup 读 terminal/nfPhrase；与回放腿 row-empty-final 同口径。
+    if (!activeView.stream.aiText) {
+      const emptyRow = bubble.closest('.row');
+      if (emptyRow) emptyRow.classList.add('row-empty-final');
+    }
     // quote-message 一期（spec §2.1/§2.5）：助手文本行挂 id + 右键（复制 + 引用）。
     // 挂点在终态收口（finishAi）——流式期行是中间面，id 与菜单在这里一次成形。
     {
