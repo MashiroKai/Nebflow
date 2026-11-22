@@ -48,6 +48,10 @@ export const CHECKS = [
   // 卡面表面属性只许经 var(--…) 令牌承载；新造字面量卡面即红。与 check-component-contract
   // 判据不重叠（本闸只读 CSS 卡面声明，不看 JS DOM 写法）。
   nodeCheck('interaction-card-family', 'check-interaction-card-family'),
+  // LLM 失败卡「点按消失」接线静态闸（2026-11-22）+ Chromium 手机视口三态 spec。
+  nodeCheck('llm-failure-dismiss', 'check-llm-failure-dismiss'),
+  { name: 'llm-failure-card-dismiss', profiles: ['frontend'], timeoutMs: 180_000,
+    argv: [process.execPath, 'tests/llm-failure-card-dismiss.spec.mjs'] },
   // 双档令牌镜像闸（2026-11-21）：base.css 的亮/暗显式档 ≡ 媒体暗档，逐令牌；与卡族闸同档。
   nodeCheck('theme-token-mirror', 'check-theme-token-mirror'),
   nodeCheck('message-style', 'check-msgstyle-single-source'),

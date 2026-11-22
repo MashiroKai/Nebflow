@@ -24,8 +24,10 @@ ${CSS.map((c) => `<link rel="stylesheet" href="/css/${c}">`).join('\n')}
 </head><body style="background:#f4f5f7;margin:0;padding:12px">
 <div id="chat" style="width:358px;display:flex;flex-direction:column;gap:12px"></div>
 <script type="module">
-import { renderLlmFailureCard, createLlmDismissStore, llmFailureKey } from '/js/llmFailureCard.js';
-window.__store = createLlmDismissStore();
+import * as F from '/js/llmFailureCard.js';
+const { renderLlmFailureCard, llmFailureKey } = F;
+// 负对照（修复前树）无 dismiss store 导出：退化为空实现，使用例失败落在行为面而非模块加载面。
+window.__store = F.createLlmDismissStore ? F.createLlmDismissStore() : { has: () => false, add() {}, clear() {}, size: () => 0 };
 window.__saveOk = true;
 window.__deps = {
   saveModel: async () => { if (!window.__saveOk) throw new Error('boom'); },
