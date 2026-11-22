@@ -82,6 +82,33 @@ export function outputFirstPaintText(text, opts) {
   return inner === null ? src : inner;
 }
 
+/** In-flight replay face (report-filter-gap 追加批 2026-11-22). The reconnect
+ *  replay (chat/historyReplay.js) and the sidebar popup replay (sidebar.js) rebuild
+ *  a text bubble synchronously from the in-flight buffer. Their identity comes from
+ *  the server-stamped frame mark carried by state.sessionTextIdentity (or the
+ *  pendingRestore payload) — `root !== true` ⇒ returns false and the caller keeps
+ *  its legacy full-text render bit-identical. Root ⇒ the same report face as the
+ *  main legs: streaming = extracted block body (partial tags hidden, cursor kept);
+ *  terminal = applyOutputFace, zero-block = full text + zero-block stamp. The bubble
+ *  is stamped `_nfIsRoot` so later live frames keep the report face. */
+export function applyReplayFace(bubble, text, { root, streaming, cache }) {
+  if (root !== true) return false;
+  bubble._nfIsRoot = true;
+  const src = String(text || '');
+  if (streaming) {
+    const partial = extractOutputInner(src) === null && /<\/?report>/.test(src);
+    const vis = partial ? '' : outputFirstPaintText(src, { report: true });
+    bubble.hidden = !vis.trim();
+    bubble.innerHTML = renderMarkdownWithMath(vis, true, { report: true, stream: true }) + '<span class="cursor"></span>';
+    return true;
+  }
+  if (applyOutputFace(bubble, src)) return true;
+  bubble.innerHTML = renderMarkdownWithMath(src, true, { report: true, cache });
+  bubble.hidden = false;
+  markZeroBlockFace(bubble, src);
+  return true;
+}
+
 /** Quote-snapshot display text (2026-11-21 作者令「引用的内容应该去掉report块的语法，
  *  直接显示渲染后的纯文字」). Display-side only — the stored snapshot keeps its
  *  raw source. With ≥1 balanced block ⇒ the rendered plain text of the block
