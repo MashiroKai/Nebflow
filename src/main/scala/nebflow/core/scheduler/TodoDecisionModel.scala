@@ -124,9 +124,72 @@ case class TodoDecision(
   allowOther: Boolean = false,
   secret: Boolean = false,
   /** 决策截止墙钟（epoch ms）；None = 无截止。 */
-  expiresAt: Option[Long] = None
+  expiresAt: Option[Long] = None,
+  /**
+   * 作答真源（期 1，2026-11-22 待办决策统一批）：None = 未作答。挂在 decision 之下，
+   * 缺键回 None ⇒ 存量决策行零迁移。完成门控以此为准（未答不可完成）。
+   */
+  answer: Option[DecisionAnswer] = None
 )
 
 object TodoDecision:
   given Configuration = Configuration.default.withDefaults
   given Codec[TodoDecision] = ConfiguredCodec.derived
+
+/**
+ * 一次作答（结构化事实，不是聊天文本）。
+ *
+ * - `selectedOptionIds`：所选选项 id（单选恒 ≤1 条，多选 ≥1 条）；
+ * - `otherText`：自由文本（仅 `allowOther=true` 时可有）；
+ * - `answeredAt`：作答墙钟（epoch ms）；
+ * - `via`：作答来源面（`"mobile"` | `"desktop"` | `"api"`，读侧容忍）。
+ *
+ * 全字段带默认值（缺键回默认，与本模型纪律一致）。
+ */
+case class DecisionAnswer(
+  selectedOptionIds: List[String] = Nil,
+  otherText: Option[String] = None,
+  answeredAt: Long = 0L,
+  via: String = ""
+)
+
+object DecisionAnswer:
+  given Configuration = Configuration.default.withDefaults
+  given Codec[DecisionAnswer] = ConfiguredCodec.derived
+
+/**
+ * 作答校验（纯函数，单测可钉）。拒绝带**可读错误码**，客户端据码渲染而非弹串。
+ *
+ * 规则：secret 题本期禁作答（照移动端 `needsOriginalCard` 的 fail-closed 口径）；
+ * 已过 `expiresAt` 拒；选项 id 必须属于 options；单选恒 ≤1；`allowOther=false`
+ * 时禁自由文本；选与填至少其一。
+ */
+object DecisionAnswerRules:
+  val CodeSecret: String = "decision_secret_unsupported"
+  val CodeExpired: String = "decision_expired"
+  val CodeEmpty: String = "decision_answer_empty"
+  val CodeUnknownOption: String = "decision_option_unknown"
+  val CodeSingleChoice: String = "decision_single_choice"
+  val CodeOtherNotAllowed: String = "decision_other_not_allowed"
+  /** 完成门控：未作答的决策待办不可完成。 */
+  val CodeUnanswered: String = "decision_unanswered"
+
+  def validate(
+    d: TodoDecision,
+    selected: List[String],
+    otherText: Option[String],
+    nowMs: Long,
+    via: String
+  ): Either[(String, String), DecisionAnswer] =
+    val other = otherText.map(_.trim).filter(_.nonEmpty)
+    val ids = selected.map(_.trim).filter(_.nonEmpty).distinct
+    val known = d.options.map(_.id).toSet
+    if d.secret then Left(CodeSecret -> "这是敏感决策题，本期不支持在待办里作答（请走原始会话）。")
+    else if d.expiresAt.exists(_ < nowMs) then Left(CodeExpired -> "决策已过截止时间，不能再作答。")
+    else if ids.isEmpty && other.isEmpty then Left(CodeEmpty -> "请选择一个选项或填写文字后再提交。")
+    else if ids.exists(id => !known.contains(id)) then
+      Left(CodeUnknownOption -> s"所选选项不属于本决策：${ids.filterNot(known.contains).mkString(", ")}。")
+    else if !d.multiSelect && ids.size > 1 then Left(CodeSingleChoice -> "单选题只能选择一个选项。")
+    else if other.nonEmpty && !d.allowOther then
+      Left(CodeOtherNotAllowed -> "本决策不接受自由文本作答。")
+    else Right(DecisionAnswer(ids, other, nowMs, via))

@@ -920,9 +920,15 @@ function buildList(root, section, nav) {
         check.disabled = true;
         check.setAttribute('aria-label', t('askUser.pendingTitle'));
       }
+      // 期 0 止血：未作答的决策待办不暴露完成（先作答再完成；后端完成门控同口径）。
+      const gated = !askRow && !!it.decision && !it.decision.answer;
+      if (gated) {
+        check.disabled = true;
+        check.setAttribute('aria-label', t('todoapple.answerFirst'));
+      }
       check.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (askRow) return;
+        if (askRow || gated) return;
         todoStore.completeItem(it.id);
       });
       row.appendChild(check);
@@ -958,27 +964,58 @@ function buildList(root, section, nav) {
         });
         itemsBox.append(row, detail);
       } else if (it.decision) {
-        // 旧「决策待办」行（服务端带 decision 的普通待办）：保留既有只读折叠面
-        // （本轮不接线；问句条目的作答接线见上支）。
+        // 决策待办行（期 2 接线）：选项可选；「提交作答」走 answerTodoDecision 帧写真源。
+        // 已作答 ⇒ 选项只读并回显所选；secret 题本期禁用（fail-closed，同 needsOriginalCard）。
         bodyBtn.setAttribute('aria-expanded', 'false');
         const detail = el('div', 'ta-decision-detail');
         detail.hidden = true;
         elIn(detail, 'div', 'ta-decision-question', String(it.decision.question || ''));
-        const options = Array.isArray(it.decision.options) ? it.decision.options : [];
-        options.forEach((option) => {
+        const dec = it.decision;
+        const answered = !!dec.answer;
+        const secretBlocked = !!dec.secret;
+        const multi = !!dec.multiSelect;
+        const options = Array.isArray(dec.options) ? dec.options : [];
+        const picks = new Set();
+        const answeredIds = new Set(answered && Array.isArray(dec.answer.selectedOptionIds) ? dec.answer.selectedOptionIds : []);
+        const errLine = el('div', 'ta-decision-error');
+        errLine.setAttribute('role', 'alert');
+        const submit = el('button', 'ta-decision-submit', t('todoapple.answerSubmit'));
+        submit.type = 'button';
+        options.forEach((option, i) => {
           // 选项真源形 = {id,title,detail,media}：取 title（有 detail 附一行），
           // 解不出标签的选项跳过；全部为空 ⇒ 不渲染任何选项行（不落 [object Object]）。
           const text = decisionOptionLabel(option);
           if (!text) return;
           const label = elIn(detail, 'label', 'ta-decision-option');
           const input = document.createElement('input');
-          input.type = it.decision.multiSelect ? 'checkbox' : 'radio';
-          input.disabled = true;
+          input.type = multi ? 'checkbox' : 'radio';
+          input.name = `dec-${it.id}`;
+          input.disabled = answered || secretBlocked;
+          input.checked = answeredIds.has(option.id);
+          input.addEventListener('change', () => {
+            if (!multi) picks.clear();
+            if (input.checked) picks.add(i); else picks.delete(i);
+          });
           label.appendChild(input);
           elIn(label, 'span', '', text);
           const sub = decisionOptionDetail(option);
           if (sub) elIn(label, 'span', 'ta-decision-option-detail', sub);
         });
+        if (secretBlocked) errLine.textContent = t('todoapple.answerSecretBlocked');
+        submit.disabled = answered || secretBlocked;
+        submit.addEventListener('click', async () => {
+          const ids = [...picks].sort((a, b) => a - b).map((i) => options[i] && options[i].id).filter(Boolean);
+          if (!ids.length || submit.disabled) return;
+          submit.disabled = true;
+          errLine.textContent = '';
+          const res = await todoStore.answerItem(it.id, { selectedOptionIds: ids, via: 'mobile' });
+          if (!res.ok) {
+            errLine.textContent = `${t('todoapple.answerRejected')}：${res.message || res.code || ''}`;
+            submit.disabled = false;
+          }
+          // 成功：answeredHandler 以后端 task 真值回写 ⇒ 重渲染后行内已作答态。
+        });
+        detail.append(errLine, submit);
         bodyBtn.addEventListener('click', () => {
           detail.hidden = !detail.hidden;
           bodyBtn.setAttribute('aria-expanded', String(!detail.hidden));
@@ -1527,6 +1564,21 @@ function buildQuick(root, section) {
     if (!item || !text || answerSend.disabled) return;
     answerSend.disabled = true;
     answerError.textContent = '';
+    // ① 作答写真源（answerTodoDecision 帧，期 1）：失败 ⇒ 不投递、不划卡，给出码。
+    let ans = { ok: true };
+    if (item.decision) {
+      const opts = Array.isArray(item.decision.options) ? item.decision.options : [];
+      const ids = [...selectedSet(item.id)].sort((a, b) => a - b)
+        .map((i) => opts[i] && opts[i].id).filter(Boolean);
+      ans = await todoStore.answerItem(item.id, { selectedOptionIds: ids, otherText: typed || undefined, via: 'mobile' });
+      if (!ans.ok) {
+        answerSend.disabled = false;
+        answerError.textContent = `${t('todoapple.answerRejected')}：${ans.message || ans.code || ''}`;
+        card.dataset.qdAnswerLast = JSON.stringify({ itemId: item.id, ok: false, code: ans.code || '', sent: text, typed, picked });
+        return;
+      }
+    }
+    // ② 投递给 agent（既有出口 sendTodoReply；投递 ≠ 作答，失败不回滚作答）。
     /** @type {{ok:boolean, mode?:string, reason?:string, sessionId?:string}} */
     let res = { ok: false, reason: 'import' };
     try {
@@ -1544,7 +1596,9 @@ function buildQuick(root, section) {
     } else if (res.reason !== 'empty') {
       answerError.textContent = t('todoapple.replyFailed');
     }
-    card.dataset.qdAnswerLast = JSON.stringify({ itemId: item.id, ...res, sent: text, typed, picked });
+    card.dataset.qdAnswerLast = JSON.stringify({ itemId: item.id, ok: true, ...res, sent: text, typed, picked });
+    // ③ 作答即完成（期 2 编排）：作答已落库 + 已投递 ⇒ 划卡离场并销账（保持滑卡体验）。
+    if (res.ok && item.decision) exitAndComplete(item);
   };
 
 
@@ -1563,9 +1617,9 @@ function buildQuick(root, section) {
    *  动效：卡片带 `data-qd-done="exit"`（CSS 打勾 + 卡片右移淡出，token 时长），
    *  落定才写 store（读作「划卡离场后销账」，不是瞬时消失）。 */
   let doneBusy = false;
-  actDone.addEventListener('click', () => {
-    const item = cardItem();
-    if (!item || doneBusy) return;
+  /** 划卡离场 + 销账（完成按钮与「作答即完成」共用同一条离场链）。 */
+  const exitAndComplete = (item) => {
+    if (doneBusy) return;
     doneBusy = true;
     actDone.disabled = true;
     const finish = () => {
@@ -1579,6 +1633,16 @@ function buildQuick(root, section) {
     if (reduceMotion() || card.hidden) { finish(); return; }
     card.dataset.qdDone = 'exit';
     qdTimer = setTimeout(() => { qdTimer = null; finish(); }, QUICK_DECISION_MOTION.exitMs);
+  };
+  actDone.addEventListener('click', () => {
+    const item = cardItem();
+    if (!item || doneBusy) return;
+    // 期 0 止血：决策待办未作答不允许完成——引导先作答（后端完成门控同口径）。
+    if (item.decision && !item.decision.answer) {
+      answerError.textContent = t('todoapple.answerFirst');
+      return;
+    }
+    exitAndComplete(item);
   });
 
   /** ② 旗标循环（0→1→2→3→0，与详情页旗标键同一语义）。 */
