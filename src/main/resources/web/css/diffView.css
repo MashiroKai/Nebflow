@@ -811,14 +811,28 @@ span.nf-rcpt-note { cursor: default; }
    focus `2px rgb(var(--sapphire)/0.5)` / 动效 0.18s 标准缓动（= glass.css §③
    圆钮级浮件档与 `.canvas-zoom-btn` 的同一档）。底色保留语义 tint（`.canvas-*`
    的选中档本就是「胶囊底 + 语义字」）。 */
-.nf-dv .cm-deletedChunk { padding-left: 0; }
+/* 渲染修复（2026-11-22 手机 diff 批）：逐块钮不再以 48px 流内行插在删除块上方（单行改动
+   块被撑成 76px、正文被挤压）。改为同块右侧浮层：块最小高 = 一颗钮高（48），钮垂直居中于
+   块内、贴右；删除行右侧预留钮宽，正文折行让位于钮，不被遮。
+   左缘对齐：删除/改动行的 8px 内边距（theme.js）去掉，与未改行共用同一左缘（6px）。 */
+.nf-dv .cm-deletedChunk {
+  padding-left: 6px;
+  /* 预留 = 两颗钮（min-width 72）+ 钮间距 + 贴右内缩 + 钮与正文间距 */
+  padding-right: calc(2 * 72px + var(--ds-space-1h, 6px) + var(--ds-space-2, 8px) * 2);
+  min-height: var(--nf-dv-ctl-size);
+}
+.nf-dv .cm-deletedChunk .cm-deletedText,
+.nf-dv .cm-insertedLine,
+.nf-dv .cm-deletedLine { padding-left: 0; }
 .nf-dv .cm-deletedChunk .cm-chunkButtons {
-  position: static;
-  inset-inline-end: auto;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  inset-inline-end: var(--ds-space-2, 8px);
   display: flex;
   align-items: center;
-  gap: var(--ds-space-1h);
-  padding: var(--ds-space-1) var(--ds-space-2);
+  gap: var(--ds-space-1h, 6px);
+  padding: 0;
   background: none;
 }
 .nf-dv .cm-deletedChunk .cm-chunkButtons button,
