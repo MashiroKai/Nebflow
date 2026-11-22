@@ -58,7 +58,32 @@ sbt test                                  # full suite: ~2000+ cases, expect rou
 sbt "testOnly nebflow.core.BrandingSpec"  # directed run — fast inner loop
 ```
 
-Tests execute sequentially (`Test / parallelExecution := false`) because suites share some global state — don't re-enable parallelism casually. Scope with `testOnly <package>.<SpecName>` for iteration; run the full suite before opening a PR.
+Tests execute sequentially (`Test / parallelExecution := false`) because suites share some global state — don't re-enable parallelism casually. Scope with `testOnly <package>.<SpecName>`; the full suite is **not** a per-branch condition any more (see the staged gates below).
+
+### Test gates by state (author ruling, revised 2026-11-22)
+
+Suite breadth is staged by state, never by branch. A green branch proves only the branch's own tree; the defects that matter at merge time — symbol/route/token collisions, duplicated single sources, conflicting defaults — exist only in the merged tree. So the merged tree is pinned by a cheap smoke, while the full suite runs on an auditable cadence instead. The authoritative text is the installed `stand-dev` plugin's `skills/stand-dev/references/engine/merge-pipeline.md` ("Test and verification gates"); this section is the repository-side summary and wins where it is more concrete.
+
+| Gate | When | What runs |
+|---|---|---|
+| Branch gate | Every `feat/*` / `bug/*` branch before it is offered for merge | `sbt compile` (or `make compile`) + directed `testOnly` covering the touched scope + `make fmt-check` + `sbt "scalafix --check"` + `npm run check:static` (design/static legs: focus-ring F7/F8, flat-buttons, glass, input-surface, panel-unify, ui-structure, copy-budget, button-source, mobile-dock-float, test-hermetic, SDD) |
+| Merge gate | Immediately after each `--no-ff` merge into `feat/base` | `sbt compile` on the merged `feat/base` tree + `testOnly` for the touched scope, recorded in the merge commit message as `merge gate: compile PASS; testOnly <scope> PASS; tree <sha>` |
+| Full gate | Every 100 accumulated merges; always before a deployment; always before a release/beta line update | Full `sbt test` (serial, ~35–40 min) plus the browser legs the release procedure requires |
+
+Do not run the full suite on a feature branch. Do not defer a merge gate past the next merge: a red merge gate blocks further merges — fix forward through a normal branch or revert that merge commit.
+
+Counter (git-authored — no hand-kept counter file):
+
+```bash
+# merges since the last witnessed full gate (counts every merge, so it errs toward triggering early)
+git rev-list --count --merges "$(git tag --list 'fullgate-[0-9]*' --sort=-v:refname | head -1)^..feat/base"
+# audit the witnessed gates
+git for-each-ref refs/tags/fullgate-* --format='%(refname:short) %(objectname:short) %(contents:subject)'
+```
+
+The chain starts at the `fullgate-000` anchor tag on the commit that introduced this rule (2026-11-22). At 100, run the full gate on `feat/base` and witness a green run with `git tag -a fullgate-<NNN>-<YYYYMMDD> -m "<date, JDK, command, exit, counts, evidence path, merge range>"`. A red full gate blocks merges; localize the break by block search (test the 25-merge block boundaries in a separate worktree, then bisect inside the identified block), never by repeated whole-suite guesses. Never rewrite or delete an existing `fullgate-*` tag.
+
+Staging changes suite width and frequency only, not acceptance: author word-for-word review, real-application full-shell evidence (screenshots, geometry/numeric assertions, motion recordings) and isolated-instance smoke for a changed surface stay mandatory, and no green gate of any kind is acceptance.
 
 ### Frontend (Playwright)
 

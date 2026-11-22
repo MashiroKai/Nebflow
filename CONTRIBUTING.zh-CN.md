@@ -44,7 +44,32 @@ sbt test                                  # 全量：约 2000+ 用例，预计 3
 sbt "testOnly nebflow.core.BrandingSpec"  # 定向运行——快速迭代
 ```
 
-测试串行执行（`Test / parallelExecution := false`），因为各 suite 共享部分全局状态——不要随意重新开启并行。迭代时用 `testOnly <package>.<SpecName>` 定向跑；开 PR 前跑全量。
+测试串行执行（`Test / parallelExecution := false`），因为各 suite 共享部分全局状态——不要随意重新开启并行。迭代时用 `testOnly <package>.<SpecName>` 定向跑；**全量 suite 已不再是逐支条件**（见下方分级门槛）。
+
+### 分级测试门槛（作者裁定，本次修订 2026-11-22）
+
+测试广度按合并状态分级，不按分支分级。分支绿只证明分支自己的树；真正在合并态才出现的是符号/路由/令牌撞车、单源重复、默认值冲突这类问题。「分支对不代表合并对」——所以合并树用一次便宜冒烟钉住，全量 suite 改到可审计的周期上跑。权威正文 = 已安装 stand-dev 插件 `skills/stand-dev/references/engine/merge-pipeline.md`「Test and verification gates」；本节是仓库侧摘要，更具体处以本节为准。
+
+| 门槛 | 时点 | 跑什么 |
+|---|---|---|
+| 分支门 | 每个 `feat/*` / `bug/*` 分支在送并前 | `sbt compile`（或 `make compile`）+ 触达范围的定向 `testOnly` + `make fmt-check` + `sbt "scalafix --check"` + `npm run check:static`（设计/静态腿：focus-ring F7/F8、flat-buttons、glass、input-surface、panel-unify、ui-structure、copy-budget、button-source、mobile-dock-float、test-hermetic、SDD） |
+| 合并门 | 每次 `--no-ff` 并入 `feat/base` 之后立即 | 在合并后的 `feat/base` 树上 `sbt compile` + 触达范围 `testOnly`，结果写进合并提交信息 `merge gate: compile PASS; testOnly <scope> PASS; tree <sha>` |
+| 全量门 | 累计每 100 次合并；部署前必跑；发版/切换 beta·stable 线前必跑 | 全量 `sbt test`（串行，约 35–40 分钟）+ 发布流程要求的浏览器腿 |
+
+禁止在功能分支上跑全量 suite。合并门不得拖到下一次合并之后：合并门红即封住后续合并——走正常分支修好再进来，或回退那次合并提交（合并提交是问责单位）。
+
+计数器（git 自生成，不设手维护计数文件）：
+
+```bash
+# 距上次已见证全量门累计的合并数（把每一次合并都算进去，偏早触发）
+git rev-list --count --merges "$(git tag --list 'fullgate-[0-9]*' --sort=-v:refname | head -1)^..feat/base"
+# 审计已见证的全量门
+git for-each-ref refs/tags/fullgate-* --format='%(refname:short) %(objectname:short) %(contents:subject)'
+```
+
+链条从 `fullgate-000` 锚点标签开始，锚在本规生效的那次提交（2026-11-22）。到 100 时在 `feat/base` 上跑全量门，绿则以 `git tag -a fullgate-<NNN>-<YYYYMMDD> -m "<日期、JDK、命令、退出码、计数、证据路径、所计合并区间>"` 见证。全量门红即封住合并；破损按 25 次合并分块在独立工作树里探边界、再在块内二分定位，不要反复整轮猜。已存在的 `fullgate-*` 标签永不改写、永不删除。
+
+分级只削减 suite 的广度与频次，不削减验收：送审过目、真实应用界面全壳证据（截图、几何/数值断言、动效录像）与改动面的隔离实例冒烟照旧必做，任何门槛绿都等于不了验收。
 
 ### 前端（Playwright）
 
@@ -109,7 +134,7 @@ USTC 保护与旧分支清理由作者按[保护清单](CONTRIBUTING.md#ustc-ser
 `npm run check:wt` 与默认 static 检查自动推断关联 worktree 的清单；用 `stand-wt.py audit <wtname>` 刷新。主 checkout 明确输出跳过本地清单的原因。
 
 - USTC PR 只由作者创建，源分支仅限 `feat/*`、`bug/*`，目标 `main`；由作者核验后 ff-only 合入。diff 保持最小、聚焦单一改动。
-- 开 PR 前：`sbt compile` 与受影响测试全绿。Scala 改动另跑 `make check`（scalafmt + scalafix）；前端改动跑类型/循环依赖门禁与受影响的 Playwright spec（见下）。
+- 开 PR 前：`sbt compile` 与受影响测试全绿。Scala 改动另跑 `make check`（scalafmt + scalafix）；前端改动跑类型/循环依赖门禁与受影响的 Playwright spec（见下）。全量 suite 不在逐支清单里——按上文「分级测试门槛」只在累计 100 次合并、部署前、发版前跑。
 - `.github/workflows/ci.yml` 与 `.gitlab-ci.yml` 的静态质量任务均为阻断门禁，后者覆盖 MR 与所有分支。`.github/workflows/auto-release.yml` 在构建前要求同一入口通过。现有浏览器观察任务仍保留非阻断状态。配置仅说明预期执行方式，不表示远程 CI 已经运行或通过。
 
 ## 代码风格
