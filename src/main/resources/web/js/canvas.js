@@ -189,19 +189,97 @@ const canvasWriter = createCanvasWriterClient({
 // 三条边界：
 //   ① 何时落：本窗口**从写者掉到只读**的那一刻（`writerChanged(role, lost=true)`），
 //      落一次；正常卸载的主动 release 不落（那条路 flushPendingPersist 已写穿）。
-//   ② 落在哪：**本浏览器** localStorage 的**单槽**（`key('canvas_seat_draft')`，最新
-//      覆盖最旧）。草稿天然是失权端自己的东西，不占用服务端任何共享面、不跨设备。
+//   ② 落在哪：**本浏览器** localStorage 的**本页签自己的槽**（`key('canvas_seat_draft'):<tabId>`，
+//      按页签隔离、上限 8 槽 LRU，见上方「按页签隔离」块）。草稿天然是失权端自己的东西，
+//      不占用服务端任何共享面、不跨设备。
 //   ④ 2026-11-22 作者令「去掉这个通知」：取回条（chip）整体撤除，失权端不再呈现任何
-//      「已另存为未合并草稿」文案；草稿仍静默落在 ② 的单槽，restoreSeatDraft 机制保留。
+//      「已另存为未合并草稿」文案；草稿仍静默落在 ② 的本页签槽，restoreSeatDraft 机制保留。
+//      恢复时机（2026-11-23）：页签打开（main.js boot，restoreTabs 之后）与切回（visibilitychange）
+//      各触发一次，只恢复本页签自己的草稿。
 //   ③ 边界·不覆盖他人正在写的内容：落草稿**不写服务端、不发任何共享帧**；取回时只把
 //      草稿里缺的页签**补开**进本地视图（并集，绝不删本地已有），再走正常写路径
 //      （写路径会按需静默接管席位）。草稿永远不会盖掉别的窗口正在写的内容。
-const LS_DRAFT_KEY = key('canvas_seat_draft');
+// ── 按页签隔离（作者令 2026-11-23 21:19「canvas ask 草稿缺陷，没有分标签页存放」）──
+// 旧形态是全局单槽：B 页丢席位另存会覆盖 A 页草稿。现在每个浏览器页签一槽：
+//   · 页签身份 = 既有 canvasTabInstanceId（页签加载即生成，不新造第二套 id）。为让「刷新后
+//     仍找回自己的草稿」，它在 sessionStorage（**每页签独立**、刷新保留）里存一份，
+//     首次加载以它为种子；sessionStorage 不跨页签共享，故两页签永不共用一槽。
+//   · 槽键 = `${key('canvas_seat_draft')}:${tabId}`；读写只碰本页签的槽。
+//   · 上限 SEAT_DRAFT_SLOT_MAX = 8 个页签槽；超出（或配额满）时淘汰 `at`（最后一次落草稿
+//     时刻）最早的他页槽（LRU）。本页槽永不被淘汰。
+//   · 旧单槽键 `key('canvas_seat_draft')` 迁移（migrateLegacySeatDraft）：由**还没有自有槽**
+//     的第一个打开的页签收进自己的槽并删旧键；旧体不可读 ⇒ 直接丢弃并删旧键；
+//     自有槽已存在的页签不收旧单槽（旧单槽留给下一个没有槽的页签）。
+const LS_DRAFT_PREFIX = key('canvas_seat_draft');
+const SEAT_DRAFT_SLOT_MAX = 8;
+const SEAT_DRAFT_TAB_SS_KEY = key('canvas_draft_tab');
+const canvasDraftTabId = (() => {
+  try {
+    const kept = sessionStorage.getItem(SEAT_DRAFT_TAB_SS_KEY);
+    if (kept) return kept;
+    sessionStorage.setItem(SEAT_DRAFT_TAB_SS_KEY, canvasTabInstanceId);
+  } catch { /* 无 sessionStorage：退回本次加载的页签实例 id */ }
+  return canvasTabInstanceId;
+})();
+const seatDraftSlotKey = () => `${LS_DRAFT_PREFIX}:${canvasDraftTabId}`;
 
-/** 读回本机的未合并草稿（无/坏体 ⇒ null，绝不清空既有）。 */
+/** 列出本机全部页签草稿槽键（不含旧单槽键）。 */
+function seatDraftSlotKeys() {
+  const out = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(`${LS_DRAFT_PREFIX}:`)) out.push(k);
+    }
+  } catch { /* 存储不可用 */ }
+  return out;
+}
+
+/** 某槽的最后落草稿时刻（坏体 ⇒ 0，即最先被淘汰）。 */
+function seatDraftSlotAt(slotKey) {
+  try {
+    const rec = JSON.parse(localStorage.getItem(slotKey) || 'null');
+    return rec && typeof rec.at === 'number' ? rec.at : 0;
+  } catch { return 0; }
+}
+
+/** LRU 淘汰：保证「他页槽数 ≤ cap」，淘汰最久未动（at 最早）的他页槽。keep = 本页槽键。 */
+function evictSeatDraftSlots(keep, cap) {
+  const others = seatDraftSlotKeys().filter((k) => k !== keep);
+  if (others.length <= cap) return;
+  others.sort((a, b) => seatDraftSlotAt(a) - seatDraftSlotAt(b));
+  for (const k of others.slice(0, others.length - cap)) {
+    try { localStorage.removeItem(k); } catch { /* ignore */ }
+  }
+}
+
+/** 写一个槽：配额满时先淘汰全部他页槽再试一次；仍失败返回 false（尽力而为，不阻断）。 */
+function writeSeatDraftSlot(slotKey, json) {
+  try { localStorage.setItem(slotKey, json); return true; } catch { /* 配额满 */ }
+  evictSeatDraftSlots(slotKey, 0);
+  try { localStorage.setItem(slotKey, json); return true; } catch { return false; }
+}
+
+/** 旧单槽一次性迁移（见上方块注释）。只在本页签还没有自有槽时收编。 */
+function migrateLegacySeatDraft() {
+  try {
+    const legacy = localStorage.getItem(LS_DRAFT_PREFIX);
+    if (legacy === null) return;
+    const slot = seatDraftSlotKey();
+    if (localStorage.getItem(slot) !== null) return;   // 自有槽优先
+    let rec = null;
+    try { rec = JSON.parse(legacy); } catch { rec = null; }
+    const usable = rec && rec.v === 2 && Array.isArray(rec.tabs) && rec.tabs.length > 0;
+    if (!usable) { localStorage.removeItem(LS_DRAFT_PREFIX); return; }   // 不可读 ⇒ 丢弃
+    evictSeatDraftSlots(slot, SEAT_DRAFT_SLOT_MAX - 1);
+    if (writeSeatDraftSlot(slot, legacy)) localStorage.removeItem(LS_DRAFT_PREFIX); // 写不进则保留旧键，等下次
+  } catch { /* 迁移尽力而为 */ }
+}
+
+/** 读回**本页签**的未合并草稿（无/坏体 ⇒ null，绝不清空既有）。 */
 function readSeatDraft() {
   try {
-    const raw = localStorage.getItem(LS_DRAFT_KEY);
+    const raw = localStorage.getItem(seatDraftSlotKey());
     if (!raw) return null;
     const rec = JSON.parse(raw);
     if (!rec || rec.v !== 2 || !Array.isArray(rec.tabs) || rec.tabs.length === 0) return null;
@@ -253,13 +331,15 @@ function captureSeatDraft() {
     if (sessionTombstones.size > 0) rec.tombstones = [...sessionTombstones.values()];
     const buffers = collectSeatDraftBuffers();
     if (buffers.length > 0) rec.buffers = buffers;
-    localStorage.setItem(LS_DRAFT_KEY, JSON.stringify(rec));
+    const slot = seatDraftSlotKey();
+    evictSeatDraftSlots(slot, SEAT_DRAFT_SLOT_MAX - 1);   // 本槽 + 他页 ≤ 8
+    writeSeatDraftSlot(slot, JSON.stringify(rec));
   } catch { /* storage 满/不可用：草稿尽力而为，绝不阻断 */ }
 }
 
-/** 清掉本机草稿（取回成功 / 用户忽略）。 */
+/** 清掉本页签的草稿（取回成功 / 用户忽略）。只动自己的槽，绝不碰他页槽。 */
 function clearSeatDraft() {
-  try { localStorage.removeItem(LS_DRAFT_KEY); } catch { /* ignore */ }
+  try { localStorage.removeItem(seatDraftSlotKey()); } catch { /* ignore */ }
 }
 
 /** 试着把暂存的草稿正文写回落回的页签（一 tick 一次；由 restoreSeatDraft 循环驱动）。
@@ -276,6 +356,8 @@ function flushSeatDraftBuffers() {
     const entry = [...tabs.values()].find((t) => t.absPath === absPath);
     if (!entry) continue;                       // 页签还没回来 —— 下一 tick
     if (buf.verdict) continue;                  // 已判定冲突，等用户决定
+    // 页签上已有未保存的本地改动（切回时常见）：绝不拿草稿盖掉正在编辑的内容 ⇒ 记冲突、草稿留着。
+    if (isTabDirty(entry)) { buf.verdict = 'local-dirty'; conflicts.push(absPath); continue; }
     if (buf.truncated) { buf.verdict = 'truncated'; conflicts.push(absPath); continue; }
     if (buf.baseVer && entry._fileVer && entry._fileVer !== buf.baseVer) {
       buf.verdict = 'conflict'; conflicts.push(absPath); continue;
@@ -301,7 +383,17 @@ function flushSeatDraftBuffers() {
  *  正文**写回编辑器缓冲，再走正常写路径（写路径按需静默接管席位）。
  *  **确认后清槽**：只有全部正文都落回（或本来就没有正文）才清本机草稿；有一条落不回去
  *  （冲突/截断/页签始终没回来）就**留着**草稿与取回条，让人还能再试一次。 */
-async function restoreSeatDraft() {
+let seatDraftRestoring = null;   // 同一时刻只跑一次（开页 / 切回 可能叠加）
+
+/** 只恢复**本页签自己**的草稿（打开 / 切回页签时调用，见 restoreOwnSeatDraft）。 */
+function restoreSeatDraft() {
+  if (seatDraftRestoring) return seatDraftRestoring;
+  seatDraftRestoring = restoreSeatDraftOnce().finally(() => { seatDraftRestoring = null; });
+  return seatDraftRestoring;
+}
+
+async function restoreSeatDraftOnce() {
+  migrateLegacySeatDraft();
   const rec = readSeatDraft();
   if (!rec) return;
   pendingSeatDraftBuffers.clear();
@@ -327,10 +419,15 @@ async function restoreSeatDraft() {
     // 有冲突：草稿留着（别让「取回」变成「丢草稿」），取回条改成冲突提示。
     try {
       const keep = { ...rec, buffers: rec.buffers };
-      localStorage.setItem(LS_DRAFT_KEY, JSON.stringify(keep));
+      writeSeatDraftSlot(seatDraftSlotKey(), JSON.stringify(keep));
     } catch { /* ignore */ }
   }
   if (stuck === 0) persistTabs();              // 写穿；席位由写路径按需静默接管
+}
+
+/** 对外：页签打开 / 切回时恢复**本页签**的草稿（幂等，无草稿即空操作）。 */
+export function restoreOwnSeatDraft() {
+  return restoreSeatDraft();
 }
 
 function allowCanvasMutation() {
@@ -5350,6 +5447,11 @@ export function initCanvas() {
   if (closeBtn) {
     closeBtn.addEventListener('click', closeCanvas);
   }
+
+  // 切回页签 = 本页签重新可见：只恢复**本页签自己**的草稿（按页签隔离，见 canvasDraftTabId）。
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) restoreSeatDraft();
+  });
 
   // Event delegation on the tab bar (defensive fix for task L: per-tab listeners
   // could silently stop firing after long sessions — e.g. listener loss on tabs
