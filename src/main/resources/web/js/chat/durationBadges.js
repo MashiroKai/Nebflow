@@ -3,6 +3,7 @@ import { t } from '../i18n.js';
 // formatFooterTime = footer-time 批（2026-10-06）的分层 footer label（今天仍为纯
 // 时钟 formatHm 语义，更早按本地日历日加日期层）——A 侧 chat.js 本簇改动随簇迁入。
 import { messageFooter } from '../chatItem.js';
+import { defaultBadgeTipMixer, composeTipPhrase } from './badgeTips.js';
 
 /**
  * Format milliseconds into a human-readable duration string.
@@ -42,15 +43,21 @@ const THINKING_COUNT = 19;
 /**
  * Pick a cosmology-themed thinking phrase with duration embedded.
  * e.g. "Counted some stars for 12s"
+ * 每次调用 = 一次徽章出现：混入器（badgeTips.js，每 6 次出现 1 条使用提示，绝不连出两条）
+ * 命中时以「提示：」标注的提示文案代替浪漫文案（composeTipPhrase），时长仍保留；其余走浪漫池（无标注）。
  * @param {number} durationMs
  * @param {number} [seed]
+ * @param {{next: () => (string|null)}} [tipMixer] 可注入（测试用），默认模块级混入器
  * @returns {string} The full phrase text with duration.
  */
-export function pickThinkingPhrase(durationMs, seed) {
+export function pickThinkingPhrase(durationMs, seed, tipMixer = defaultBadgeTipMixer) {
+  const tip = tipMixer.next();
+  const d = formatDuration(durationMs);
+  if (tip) return composeTipPhrase(tip, d);
   const idx = seed != null
     ? ((seed % THINKING_COUNT) + THINKING_COUNT) % THINKING_COUNT
     : Math.floor(Math.random() * THINKING_COUNT);
-  return '✻ ' + t('think.' + idx, { d: formatDuration(durationMs) });
+  return '✻ ' + t('think.' + idx, { d });
 }
 
 /**
