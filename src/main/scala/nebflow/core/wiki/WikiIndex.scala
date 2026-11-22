@@ -169,6 +169,90 @@ object WikiIndex:
     end if
   end frontmatterOf
 
+  // ── 读者提要（reader summary · canvas-popup-unify 批 2026-11-22）──────
+
+  /**
+   * 读者提要的**唯一读序**（作者裁定：正典落位 2026-11-19 11:30 + 落位补充
+   * 2026-11-22 09:23「frontmatter summary: 优先 → 旧文档回退读正文
+   * `<!-- reader-summary -->` 后完整段落 → 两者皆无给可读空态」）：
+   *
+   *   ① frontmatter `summary:` —— 新文档的**唯一**正典落位；
+   *   ② 旧文档：正文 `<!-- reader-summary -->` 标记之后的完整段落（历史兼容，
+   *      不再新增）；
+   *   ③ 皆无 ⇒ None（由显示层给可读空态并具名，绝不显示纯空白）。
+   *
+   * 为什么读序落在解析层：同一份提要有三个消费者（canvas 点文件的说明弹窗、
+   * 词条索引库 tools/stand-terms 的 extract_document_summary、词条面）。谁自己
+   * 挑一处读，就会出现「弹窗空、库里空、正文明明有」的三方分裂 —— 那正是作者
+   * 报障的形态（2026-11-22「现在点击还是空的」）。
+   *
+   * 长度口径不在这里判：R21 的 40–100 计数口径归校验器（check_wiki_docs，本批
+   * 不动插件脚本）；显示端照原文显示，来源经 `source` 显式回报。
+   *
+   * @return (提要正文, 来源) —— 来源 ∈ {"frontmatter", "marker", "none"}。
+   */
+  def readerSummary(text: String): (Option[String], String) =
+    val (fm, body, _) = frontmatterOf(text)
+    val fromFrontmatter = fm.flatMap(_.get("summary")).map(_.trim).filter(_.nonEmpty)
+    fromFrontmatter match
+      case Some(v) => (Some(v), "frontmatter")
+      case None =>
+        markerParagraph(body) match
+          case Some(p) => (Some(p), "marker")
+          case None    => (None, "none")
+
+  /** 旧文档的提要标记（历史形态，只读不写）。 */
+  val ReaderSummaryMarker = "<!-- reader-summary -->"
+
+  /**
+   * `<!-- reader-summary -->` 之后的**完整段落**：跳过标记后的空行与其它 HTML
+   * 注释，收连续的正文行，遇空行 / 标题 / 围栏 / 下一个注释即止。
+   *
+   * 「完整段落」是硬要求：收半句话（例如被下一个标题截断的残句）比空态更糟 ——
+   * 读者无从知道后面还有。围栏内的行不算提要（代码不是提要），围栏内的标记也不
+   * 算标记（示例代码里的字面量不是约定）。
+   */
+  private def markerParagraph(body: String): Option[String] =
+    val lines = body.linesIterator.toVector
+    if lines.isEmpty then None
+    else
+      val fenced = fencedMask(lines)
+      val start = lines.indices.find(i => !fenced(i) && lines(i).contains("reader-summary"))
+      start match
+        case None => None
+        case Some(s) =>
+          val buf = ListBuffer.empty[String]
+          var i = s + 1
+          var done = false
+          while i < lines.length && !done do
+            val raw = lines(i)
+            val t = raw.trim
+            if t.isEmpty then done = buf.nonEmpty
+            else if t.startsWith("<!--") then done = buf.nonEmpty
+            else if fenced(i) then done = buf.nonEmpty // 围栏出现 = 段落已结束
+            else if HeadingRe.findFirstMatchIn(raw).isDefined then done = true
+            else buf += t
+            i += 1
+          val text = buf.mkString(" ").trim
+          if text.isEmpty then None else Some(text)
+  end markerParagraph
+
+  /**
+   * 绝对/相对路径 → (项目, vault 相对路径)。唯一认可的落位形态 =
+   * `<anything>/<project>/.stand/docs/<rel>`（注册目录 vault，与
+   * [[ProjectStore.ledgerDocsDir]] 同口径）；不在这里猜第二套目录约定。
+   */
+  def splitVaultPath(raw: String): Option[(String, String)] =
+    val p = Option(raw).getOrElse("").replace('\\', '/').trim
+    val marker = s"/.stand/${VaultDirName}/"
+    val at = p.indexOf(marker)
+    if at <= 0 then None
+    else
+      val project = p.substring(0, at).split('/').filter(_.nonEmpty).lastOption.getOrElse("")
+      val rel = p.substring(at + marker.length).trim
+      if project.isEmpty || rel.isEmpty || rel.contains("..") then None else Some((project, rel))
+  end splitVaultPath
+
   // ── Link extraction ──────────────────────────────────────────────
 
   private val WikilinkRe = raw"(!?)\[\[([^\[\]]+?)\]\]".r

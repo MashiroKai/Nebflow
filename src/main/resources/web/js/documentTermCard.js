@@ -1,25 +1,11 @@
-// Document-reference preview. The SQLite API is queried on every opening so a
-// rebuild is visible without a page reload; no live-registry cache is involved.
+// Document-reference preview. The doc-metadata API is queried on every opening so
+// a freshly produced document (and a fresh frontmatter edit) shows up without a
+// page reload; no live-registry cache is involved.
+// 批注（canvas-popup-unify 批 ④ · 2026-11-22）：批前这里按 basename 查词条库再用
+// `documentIdentity` 反算绝对路径 —— 词条库只收**已登记提要**的文档，没有提要的
+// 产出文档查不到 ⇒ 弹窗空白。现在改查文档元数据端点（服务端按路径读文档本身），
+// 身份判定由服务端的路径解析承担，本文件不再自己猜。
 import { authHeaders } from './flowHelpers.js';
-
-// Canonical key: exact project + vault-relative path for registration-vault
-// references, or exact absolute path for already-resolved local references.
-// Never pick by basename alone; malformed, ambiguous and truncated results fail closed.
-function documentIdentity(path, terms, complete) {
-  if (!complete) return null;
-  const value = String(path || '').replace(/\\/g, '/');
-  const absolute = value.startsWith('/') || /^[A-Za-z]:\//.test(value);
-  const parts = value.split('/');
-  if (parts.some(p => p === '.' || p === '..')) return null;
-  const relative = !absolute && parts.length >= 4 && parts[1] === '.stand' && parts[2] === 'docs';
-  if (!absolute && !relative) return null;
-  const hits = terms.filter(t => {
-    if (t.source !== 'document_summary' || !t.doc) return false;
-    if (absolute) return String(t.doc.abs_path || '').replace(/\\/g, '/') === value;
-    return t.doc.project === parts[0] && t.doc.rel === parts.slice(3).join('/');
-  });
-  return hits.length === 1 ? hits[0] : null;
-}
 
 let active = null;
 let generation = 0;
@@ -85,19 +71,50 @@ export async function showDocumentTermCard(trigger, { path, title, remote = fals
   if (remote) { summary.textContent = '远端文档提要不可用'; return; }
   if (!path) return;
   try {
-    // The API filters against vault-relative paths, not absolute paths. Query
-    // by basename and verify the full absolute identity before showing data.
-    const basename = path.split(/[\\/]/).pop();
-    const res = await fetch('/api/wiki/terms?doc=' + encodeURIComponent(basename) + '&limit=500', { headers: { ...authHeaders() }, cache: 'no-store' });
-    if (!res.ok) throw new Error('terms unavailable');
-    const data = await res.json();
+    // 唯一数据腿 = 文档元数据端点（canvas-popup-unify 批 ④，2026-11-22 作者令
+    // 「现在产出的文档 点击还是没有说明……现在点击还是空的」）：
+    //   GET /api/wiki/doc?path=<absolute|project/.stand/docs/rel>
+    // 服务端只认注册目录 vault 一种落位形态，读序 = frontmatter `summary:` 优先
+    // → 旧文档 `<!-- reader-summary -->` 完整段落 → 无（WikiIndex.readerSummary）。
+    // 批前这里查的是词条库（/api/wiki/terms?doc=basename）：词条库只收**已登记
+    // 词条**的文档提要，没有提要的产出文档根本不在库里 ⇒ 弹窗只剩「暂无提要」，
+    // 正是作者看到的「空的」。
+    const res = await fetch('/api/wiki/doc?path=' + encodeURIComponent(path), {
+      headers: { ...authHeaders() }, cache: 'no-store',
+    });
+    if (!res.ok) throw new Error('doc meta unavailable');
+    const meta = await res.json();
     if (current !== generation || !active || active.card !== card) return;
-    const hit = documentIdentity(path, data.terms || [], data.count == null || data.count <= (data.terms || []).length);
-    if (hit) {
-      resolvedPath = hit.doc.abs_path || '';
-      heading.textContent = hit.doc.title || hit.name || heading.textContent;
-      summary.textContent = hit.definition || '此文档暂无提要';
-      metadata.textContent = `状态：${hit.doc.status || '—'}　更新：${hit.updated_at || '—'}`;
-    } else if (data.available === false) summary.textContent = '词条库暂不可用';
-  } catch { if (current === generation && active?.card === card) summary.textContent = '词条库暂不可用'; }
+    if (meta.available === false) {
+      // 文档读不到（远端离线 / 超限 / 已移走）：壳照常画，措辞指出缺的是哪一层。
+      summary.textContent = '读不到这篇文档的正文（离线或已移走），元数据暂不可用。';
+      summary.classList.add('document-term-empty');
+      summary.dataset.cvHint = 'empty';
+      metadata.textContent = `类型：—　状态：—　更新：${meta.updated || '—'}`;
+      return;
+    }
+    resolvedPath = meta.path || path;
+    heading.textContent = meta.title || heading.textContent;
+    // 提要顺序的服务端读序已经在 payload 里落定（summarySource 显式回报来源）；
+    // 没有提要 = 可读空态 + 具名缺哪个字段，绝不画纯空白。
+    if (meta.summary) {
+      summary.textContent = meta.summary;
+      summary.dataset.summarySource = meta.summarySource || 'frontmatter';
+      summary.title = meta.summary;
+    } else {
+      summary.textContent = '此文档暂无提要：frontmatter 未写 summary:，正文也没有 <!-- reader-summary --> 标记。';
+      summary.classList.add('document-term-empty');
+      summary.dataset.cvHint = 'empty';
+    }
+    const metaBits = [`类型：${meta.type || '—'}`, `状态：${meta.status || '—'}`, `更新：${meta.updated || '—'}`];
+    metadata.textContent = metaBits.join('　');
+    if (Array.isArray(meta.tags) && meta.tags.length) {
+      metadata.textContent += `　标签：${meta.tags.join(' · ')}`;
+    }
+  } catch {
+    if (current === generation && active?.card === card) {
+      summary.textContent = '文档元数据暂不可用（请求失败）。';
+      summary.classList.add('document-term-empty');
+    }
+  }
 }

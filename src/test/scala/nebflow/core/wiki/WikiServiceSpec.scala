@@ -1,5 +1,6 @@
 package nebflow.core.wiki
 
+import cats.effect.IO
 import munit.CatsEffectSuite
 import nebflow.shared.PathUtil
 
@@ -301,6 +302,103 @@ class WikiServiceSpec extends CatsEffectSuite:
       // 反向断言：vault 根 = 注册目录（不是 workspace/docs）
       assertEquals(nebflow.core.project.ProjectStore.ledgerDocsDir("beta"), betaLedger)
     }
+  }
+
+  // ── canvas-popup-unify 批 ④：文档元数据端点（点击说明弹窗的数据腿）──
+  test("WS-DOC-META: doc metadata read order (frontmatter → marker → none) + path resolution") {
+    // 夹具只在这条测试的生命周期内存在：测试结束即删，图谱断言（WS-1/WS-2）不受污染。
+    val fmDoc = alphaWs / "docs" / "meta-frontmatter.md"
+    val mkDoc = alphaWs / "docs" / "meta-marker.md"
+    // 落位形态（`<project>/.stand/docs/<rel>`）另用一个临时项目 gamma：
+    // alpha 的文档库是 workspace/docs（无 `.stand` 段），路径形态在它身上不存在。
+    val gammaRoot = tempRoot / "projects" / "gamma"
+    val gammaDoc = gammaRoot / ".stand" / "docs" / "meta-ledger.md"
+    os.write.over(
+      fmDoc,
+      """---
+        |type: audit
+        |status: accepted
+        |tags: [canvas, popup, unify]
+        |summary: 本批把 canvas 文件说明弹窗与词条弹窗收敛到同一套表面令牌。
+        |---
+        |
+        |# 元数据端点样例
+        |
+        |正文。
+        |""".stripMargin
+    )
+    os.write.over(
+      mkDoc,
+      """---
+        |type: research-log
+        |---
+        |
+        |# 旧文档样例
+        |
+        |<!-- reader-summary -->
+        |
+        |旧文档的读者提要在正文标记之后，整段一起读。
+        |""".stripMargin
+    )
+    os.makeDir.all(gammaRoot)
+    os.write.over(
+      gammaRoot / "project.json",
+      s"""{"name":"gamma","workspace":"${alphaWs.toString.replace("\\", "\\\\")}","agentFile":"","createdAt":1}"""
+    )
+    os.makeDir.all(gammaDoc / os.up)
+    os.write.over(
+      gammaDoc,
+      """---
+        |type: note
+        |summary: 注册目录 vault 的文档元数据按路径形态读取，不需要显式项目参数。
+        |---
+        |
+        |# 路径形态样例
+        |""".stripMargin
+    )
+    // ⚠ 清理必须挂在 IO 上（`.guarantee`），不能写成 try/finally —— CatsEffectSuite 的
+    // 测试体只**构造** IO，effect 在套件运行时才执行；try/finally 会在 effect 开跑前
+    // 就把夹具删掉（本批实测：弹窗读到 available:false 的假红灯）。
+    (for
+      fm <- svc.docMeta(Some("alpha"), Some("meta-frontmatter.md"), None)
+      mk <- svc.docMeta(None, None, Some(gammaDoc.toString)) // 走路径形态的档
+      mkRel <- svc.docMeta(Some("alpha"), Some("meta-marker.md"), None)
+      none0 <- svc.docMeta(Some("alpha"), Some("a.md"), None)
+      outside <- svc.docMeta(None, None, Some("/tmp/not-a-vault/x.md"))
+    yield {
+      val fmj = fm.toOption.get
+      assert(
+        fmj.hcursor.get[String]("summarySource").toOption.contains("frontmatter"),
+        s"payload=${fmj.spaces2} file=$fmDoc"
+      )
+      assertEquals(fmj.hcursor.get[String]("type").toOption, Some("audit"))
+      assertEquals(fmj.hcursor.get[String]("status").toOption, Some("accepted"))
+      assertEquals(fmj.hcursor.get[List[String]]("tags").toOption, Some(List("canvas", "popup", "unify")))
+      assert(fmj.hcursor.get[String]("summary").toOption.exists(_.startsWith("本批把 canvas")))
+      assert(fmj.hcursor.get[String]("updated").toOption.isDefined)
+
+      // 路径形态（绝对落位）也认：gamma 的注册目录 vault
+      val mkj = mk.toOption.get
+      assertEquals(mkj.hcursor.get[String]("project").toOption, Some("gamma"))
+      assertEquals(mkj.hcursor.get[String]("summarySource").toOption, Some("frontmatter"))
+
+      // 旧文档：正文标记 + 完整段落
+      val mkRelJ = mkRel.toOption.get
+      assertEquals(mkRelJ.hcursor.get[String]("summarySource").toOption, Some("marker"))
+
+      // 无提要 = summary:null + source none（显示层据此给可读空态，不画空白）
+      val nj = none0.toOption.get
+      assertEquals(nj.hcursor.get[String]("summarySource").toOption, Some("none"))
+      assertEquals(nj.hcursor.get[Option[String]]("summary").toOption.flatten, None)
+      assertEquals(nj.hcursor.get[Boolean]("available").toOption, Some(true))
+
+      // vault 外的路径 ⇒ 明确报错，不猜
+      assert(outside.isLeft)
+    }).guarantee(IO {
+      os.remove(fmDoc)
+      os.remove(mkDoc)
+      os.remove.all(gammaRoot)
+    })
   }
 
 end WikiServiceSpec
