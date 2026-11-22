@@ -3954,43 +3954,147 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 }
 .wg-tip.para .td { color: var(--color-frame-text-dim, var(--wg-muted)); }
 
-/* Document citation card: full summary, never line-clamped. */
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 悬浮小弹层族（popover family）—— canvas 文件说明卡 × 词条释义弹层
+ * canvas-popup-unify 批 2026-11-22 · 作者令逐字：
+ *   「另外 canvas点文件的说明和词条的弹窗 这两个设计应该是同源的 但是点文件那个
+ *    现在设计的很丑 而且不是毛玻璃的 是全透明的」
+ *
+ * 病根（本批之前逐条实测，全部是「同一族写成两份」的末端表现）：
+ *   ① 材质：词条弹层在毛玻璃账本里（css/glass.css 成员登记表 · .nf-term-tip），
+ *      文件说明卡**不在** ⇒ 卡上只有 --nf-glass-bg 的 α 底、零 backdrop-filter
+ *      ⇒ 底下的正文笔画直接穿过卡片 = 作者说的「全透明」。玻璃底本来就是半透的，
+ *      少了那层模糊就只剩「一层薄膜」——两者是配方的一半与另一半的关系。
+ *   ② 表面：同一族两份数值（宽 340/380、内距 14px/14px、圆角 fallback 14/12、
+ *      描边 fallback 两套色值），改一处不会改到另一处。
+ *   ③ 排版：文件说明卡的标题/提要/状态/路径是裸数值（无字号档、12px 硬写、
+ *      `line-height: 1.5` 裸行高、`opacity: .8` 变相调色、8/12px 裸间距）。
+ *   ④ 动作：`.document-term-open` 是**零样式的原生 button**（浏览器灰底圆角、
+ *      自带浮雕）—— 全站唯一一处没被按钮规范覆盖的按钮，也是「丑」最刺眼的
+ *      那一点（截图像素见 evidence 的 before-file-*）。
+ *
+ * 收敛口径（本批）：
+ *   · 表面 = **本节一条共享声明**（两个选择器同表）——材质/描边/圆角/内距/阴影/
+ *     宽度/层级/换行纪律只在这里给一次；材质配方本身仍只出生在 glass.css 成员
+ *     登记表（G1/G2 单一源，不许在这里另写 backdrop-filter）。
+ *   · 排版 = canvas-hint 的 tip 三档令牌（css/canvasHint.css --cv-hint-*），
+ *     与词条弹层的 tt/ts/td 逐档同值 ⇒ 两卡并排是同一套字级与行距节奏。
+ *   · 动作 = 复用本文件既有的 canvas 侧栏动作钮配方（.wg-detail-body .openbtn 同族：
+ *     frame-text-bright 底 + surface 字 + --ds-radius-button），并补齐扁平六态。
+ *   · 功能与信息架构零改动：仍是「标题 / 提要全文（不裁剪）/ 状态·更新 / 路径 /
+ *     打开原文档」，词条弹层仍是「词条名 / 定义 / 脚注」。
+ * 新增同族弹层 = 把选择器加进本节的两个选择器表（表 + 材质账本），不许再抄一份。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+.nf-term-tip,
 .document-term-card {
-  position: fixed; z-index: 901; box-sizing: border-box;
-  width: min(380px, calc(100vw - 16px)); max-height: calc(100vh - 16px);
-  overflow-y: auto; overflow-wrap: anywhere;
-  padding: 14px; border-radius: var(--ds-radius-xl, 14px);
-  border: 1px solid var(--glass-border, rgba(128,128,128,.35));
-  background: var(--nf-glass-bg, var(--color-bg, #fff));
-  color: var(--color-frame-text-bright, var(--color-text, #222));
-  box-shadow: var(--frost-shadow, 0 8px 28px rgba(0,0,0,.18));
-}
-.document-term-summary { margin-top: 8px; white-space: pre-wrap; line-height: 1.5; }
-.document-term-meta, .document-term-path { margin-top: 8px; font-size: 12px; opacity: .8; }
-.document-term-open {
-  border-radius: var(--ds-radius-chip); /* 圆角标准批 2026-11-22（作者令「要圆角的框」「落为标准」· 规范 §2.6）：F7 判据下的环基座。 */ margin-top: 12px; cursor: pointer; }
-.document-term-open:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
-
-/* 词条点击释义弹层：桌面/触屏均为小弹层，固定在 body 顶层避免滚动容器裁剪。 */
-.nf-term-tip {
   position: fixed;
-  z-index: 900;
-  display: none;
+  z-index: 901;
   box-sizing: border-box;
-  width: min(340px, calc(100vw - 16px));
+  /* 一族一个宽度：380 是族内最大内容（文档提要 + 绝对路径）需要的那一档，
+     词条弹层随族同宽（并排同源的前提是同一个盒子，不是同一个「大概」）。 */
+  width: min(380px, calc(100vw - 16px));
   max-width: calc(100vw - 16px);
   max-height: calc(100vh - 16px);
   overflow-y: auto;
   overscroll-behavior: contain;
-  background: var(--nf-glass-bg);
+  padding: var(--ds-space-block-y) var(--ds-space-3);
   border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.35));
   border-radius: var(--ds-radius-xl);
-  padding: var(--ds-space-block-y) 14px;
+  background: var(--nf-glass-bg);
   box-shadow: var(--frost-shadow, 0 8px 28px rgba(0, 0, 0, 0.10));
   color: var(--color-frame-text-bright, var(--color-text));
   pointer-events: auto;
-  overflow-wrap: anywhere;
   cursor: default;
+  overflow-wrap: anywhere;
+}
+
+/* ── 文件说明卡（canvas 点文件 = 文档提要面）正文节奏 ─────────────────────
+   标题 = tip 档 strong（12/600/1.45）· 提要 = tip 档正文（12/400/1.45/muted）·
+   状态/路径 = tip 档脚注（11/dim）。逐值与 .nf-term-tip 的 tt/ts/td 同表：
+   同一实体同一档，禁再出现「这张卡 12 那张 13」「这里 opacity .8 那里 token」。 */
+/* 落位前提：文件卡由模块 append 后量 offsetWidth/offsetHeight 再做视口钳位
+   （js/documentTermCard.js 落位算法）⇒ 本族两面里**只有**词条弹层可以
+   display:none（它的显示由模块显式置 block），文件卡不许隐藏，否则量到 0 尺寸、
+   永远往下开。故共享块不写 display，各面自己留显示态。 */
+.document-term-card > strong {
+  display: block;
+  font-size: var(--cv-hint-fs-h);
+  font-weight: var(--cv-hint-fw-strong);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color-strong);
+  word-break: break-word;
+}
+.document-term-summary {
+  margin-top: var(--ds-space-1);
+  font-size: var(--cv-hint-fs-h);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color);
+  white-space: pre-wrap;   /* 提要里的换行照原样留；全文不裁剪（信息架构不变） */
+}
+/* 空态（没有提要 / 元数据读不到）：走 canvas-hint 的 empty 档（S：12/500/1.45/
+   muted），并按「一句状态、不是一句报错」的语序排列 —— 具名缺什么（作者令
+   2026-11-22 09:23「两者皆无给可读空态」），不画空白、不画红色。 */
+.document-term-summary.document-term-empty {
+  font-weight: var(--cv-hint-fw-s);
+  color: var(--cv-hint-color);
+}
+.document-term-meta {
+  margin-top: var(--ds-space-1h);
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color-dim);
+  font-variant-numeric: tabular-nums;
+}
+/* 路径 = 机器可读的身份行（同一族在侧栏 .wg-detail-body .path 已有既定形态：
+   等宽 + 玻璃控制底 + 输入档圆角）。这里复用同一配方，长路径允许断行。 */
+.document-term-path {
+  margin-top: var(--ds-space-1h);
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color-dim);
+  background: var(--glass-control-bg);
+  border-radius: var(--ds-radius-input);
+  word-break: break-all;
+}
+/* 动作钮 = 同族动作配方（与 .wg-detail-body .openbtn 同值），并补扁平六态：
+   按下只缩放（扁平允许项）、键盘焦点走全站单规则焦点环、无任何厚度道具
+   （check-flat-buttons F1–F5 对按钮面禁止阴影/渐变/位移）。 */
+.document-term-open {
+  display: block;
+  width: 100%;
+  margin-top: var(--ds-space-stack-gap);
+  padding: var(--ds-space-2) 0;
+  border: 1px solid var(--color-frame-text-bright);
+  border-radius: var(--ds-radius-button);
+  background: var(--color-frame-text-bright);
+  color: var(--color-surface);
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-btn);
+  font-weight: 500;
+  line-height: var(--ds-lh-tight);
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .document-term-open:hover { opacity: .88; }
+}
+.document-term-open:active { transform: scale(var(--btn-press-scale)); }
+.document-term-open:focus-visible {
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .document-term-open:active { transform: none; opacity: var(--btn-press-fade); }
+}
+
+/* 词条点击释义弹层：桌面/触屏均为小弹层，固定在 body 顶层避免滚动容器裁剪。
+   表面在上面的族块里（同表给两面），本块只留词条面自己的显示态。 */
+.nf-term-tip {
+  display: none;
 }
 .nf-term-tip.interactive { pointer-events: auto; }
 /* 悬浮提示（tip 形态）三段字档（canvas-hint-text 批 2026-11-05）：
