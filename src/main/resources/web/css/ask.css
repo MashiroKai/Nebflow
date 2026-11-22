@@ -498,10 +498,13 @@ body.mobile-layer .note-dock .ds-resize-handle {
  * 观感两类（作者令点名的区分）：正常干活 = 中性 dim（不抢注意力）；前置不可用 =
  * warn 档；失败 = error 档。三段是并列的 flex 项，右对齐（面板右缘钉位）。 */
 .ask-state-line {
-  align-self: stretch;
-  width: 100%;
+  /* 毛玻璃胶囊（ask-status-glass 批）：内容宽、右缘钉位，材质由 glass.css 成员登记表
+     （`.ask-dock .ask-state-line`）供给 —— 单一配方，本块零材质声明。 */
+  align-self: flex-end;
+  max-width: 100%;
   box-sizing: border-box;
-  padding: 0 var(--ds-space-1h);
+  padding: var(--ds-space-hair) var(--ds-space-2);
+  border-radius: var(--ds-radius-pill);
   font-size: var(--ds-fs-hint);
   line-height: 1.4;
   display: flex;
@@ -509,7 +512,7 @@ body.mobile-layer .note-dock .ds-resize-handle {
   justify-content: flex-end;
   align-items: baseline;
   gap: 0 var(--ds-space-1);
-  color: var(--cv-hint-color-dim);
+  color: var(--ds-text);
   opacity: 1;
 }
 .ask-state-line[hidden] { display: none; }
