@@ -20,7 +20,7 @@
 //   危险类型（档位 + 一句话要点） → 卡首横幅（chat.js 生产；本模块只在无横幅时补一行）
 //   完整调用信息                  → `.perm-cmd` 一处（本模块生产，全文在 DOM、可展开）
 //   作用域（设备/工作目录/目标路径）→ `.perm-scope` 一行（本模块生产，各一次）
-//   判定出处（闸名 + 规则 id）     → `.perm-reason-meta` 次要字色尾注（本模块生产）
+//   （闸名 + 规则 id 不上卡：降噪令，host 裁定 B）
 // 改前被删掉的**重复项**（逐条对应作者第二令）：
 //   · 档位写了两次（横幅「危险操作」+ `.perm-risk-badge` 的「风险档 L2」）；
 //   · 命中的规则标签写了两次（横幅 `{detail}` + `.perm-reason-label`）；
@@ -227,9 +227,9 @@ export function renderPermDetail(host, detail, t, opts = {}) {
     else decide();
   }
 
-  // ② 判定（主信息：风险档 + 标签，置于命令之下、作用域之上）：闸名 + 规则 id（次要字色）。**不是**「理由」—— 理由（档位 +
-  //    人话标签）已经由卡首横幅承载，这里只补「这话是谁判的」，不复述结论。
-  //    无横幅的腿（手机层实测 / 历史行无 dangerLevel）必须自足：标签落回这一行。
+  // ② 理由（人话标签）：横幅已承载时不复述；无横幅的腿必须自足，标签落回这一行。
+  //    **不显示**闸名 / 规则 id（作者令「不需要显示这种细节」，host 裁定 B：展示槽统一为
+  //    人类可读白话，policy.* / 规则 id 不再上卡）。拦截判定本身不受影响。
   //    风险分档（L1/L2…）不在权限卡上显示（作者第 4 轮裁定）。
   if (reason) {
     const row = document.createElement('div');
@@ -240,27 +240,6 @@ export function renderPermDetail(host, detail, t, opts = {}) {
       lb.className = 'perm-reason-label';
       lb.textContent = labelText || t('perm.detail.noRule');
       row.appendChild(lb);
-    }
-    const ruleId = typeof reason.ruleId === 'string' ? reason.ruleId : '';
-    const gate = typeof reason.gate === 'string' ? reason.gate : '';
-    if (gate || ruleId) {
-      // 闸名 + 规则 id 是「出处」而不是「理由」：降为次要字色，**同一组**贴着标签
-      // 排（窄屏整组折到次行），不各占一块。
-      const meta = document.createElement('span');
-      meta.className = 'perm-reason-meta';
-      if (gate) {
-        const g = document.createElement('span');
-        g.className = 'perm-reason-gate';
-        g.textContent = t('perm.detail.gate') + ' ' + gate;
-        meta.appendChild(g);
-      }
-      if (ruleId) {
-        const r = document.createElement('span');
-        r.className = 'perm-reason-rule';
-        r.textContent = t('perm.detail.rule') + ' ' + ruleId;
-        meta.appendChild(r);
-      }
-      row.appendChild(meta);
     }
     if (row.firstChild) frag.appendChild(row);
   }

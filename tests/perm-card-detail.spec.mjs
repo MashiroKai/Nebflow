@@ -390,13 +390,13 @@ async function browserAssertions() {
       }
 
       const r = d.reason || {};
-      // 理由行 = 出处（闸 + 规则 id）；人话标签按去重契约只在横幅（>=2 档）或此行（warning 档）一次
-      const reasonOk = !!st.reason.trim()
-        && (!r.ruleId || st.rule.includes(String(r.ruleId)))
-        && (!r.gate || st.gate.includes(String(r.gate)));
+      // 理由行 = 人话标签（降噪令：闸名 / 规则 id 不上卡）；标签按去重契约只在横幅（>=2 档）或此行（warning 档）一次
+      // 标签或在理由行、或已在横幅（去重：横幅承载时理由行为空，属正常）
+      const labelVisible = !!st.reason.trim() || (!!r.label && String(st.bannerText).includes(String(r.label)));
+      const reasonOk = labelVisible && !st.rule.trim() && !st.gate.trim();
       reasonOk
-        ? ok(`D1[${tag}]`, '为什么危险（一行）：标签 + 规则 id + 闸名（后端判定）', `${st.reason.trim()} | ${st.rule.trim()} | ${st.gate.trim()}`)
-        : bad(`D1[${tag}]`, '理由行必须非空且带标签/规则 id/闸名', `reason=${JSON.stringify(st.reason)} rule=${JSON.stringify(st.rule)} gate=${JSON.stringify(st.gate)}`);
+        ? ok(`D1[${tag}]`, '为什么危险（一行）：人话标签；卡上不出现闸名/规则 id（降噪）', `${st.reason.trim()}`)
+        : bad(`D1[${tag}]`, '理由行必须非空，且卡上不得出现闸名/规则 id', `reason=${JSON.stringify(st.reason)} rule=${JSON.stringify(st.rule)} gate=${JSON.stringify(st.gate)}`);
       // D2（瘦身批去重）：人话标签整卡只出现一次 —— 在卡首横幅（危险类型），理由行不复述。
       const labelCount = r.label ? st.hostText.split(String(r.label)).length - 1 : 0;
       if (!r.label || labelCount === 1) {

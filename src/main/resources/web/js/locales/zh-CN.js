@@ -1874,8 +1874,6 @@ export default {
   'perm.detail.device': '设备',
   'perm.detail.cwd': '工作目录',
   'perm.detail.target': '目标路径',
-  'perm.detail.gate': '闸',
-  'perm.detail.rule': '规则',
   'perm.detail.remoteExec': '（对端下发 remote-exec）',
   'perm.detail.noRule': '该闸的固定确认项（无命中规则）',
   'chat.copied': '已复制！',
