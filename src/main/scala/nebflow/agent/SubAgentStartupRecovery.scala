@@ -281,6 +281,8 @@ object SubAgentStartupRecovery:
       recoverPendingInternal(store, sessionStore, revival.map(_.resources)) *>
         (if revival.isEmpty then reconcileWithoutResources(store, sessionStore) else IO.unit) *>
         finalizeCompletedUnreported(store, sessionStore, revival.map(_.resources)).void *>
+        // 面板行收口面补齐（2026-11-21 甲′）：确认终态行的墓碑/旗先摘（幂等；行非终态零触碰）。
+        nebflow.core.delegate.DelegateLedgerReconcile.reconcileTerminalMarks(store).void *>
         markInterruptedRecords(store).void *>
         nebflow.core.delegate.DelegateLedgerReconcile.reconcileInterruptedRecords(store).void
     val tasks = recoverPendingInternal(store, sessionStore, revival.map(_.resources)) *> interruptExternalRuns(store) *>
