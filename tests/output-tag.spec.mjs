@@ -38,7 +38,8 @@ const WEB_DIR = resolve(process.env.WEB_ROOT || join(ROOT, 'src/main/resources/w
 const PORT = Number(process.env.PORT || 8181);
 const BASE = `http://127.0.0.1:${PORT}`;
 const SHOTS_DIR = process.env.SHOTS_DIR || join(ROOT, 'evidence', '20261031_output-tag', 'shots');
-const VIEWPORT = { width: 1280, height: 900 };
+// VIEWPORT_MOBILE=1 ⇒ 390×844 移动口径（R9 移动端证据；默认桌面 1280×900 不变）。
+const VIEWPORT = process.env.VIEWPORT_MOBILE === '1' ? { width: 390, height: 844 } : { width: 1280, height: 900 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /* ─────────────── 夹具消息 ─────────────── */
