@@ -6,6 +6,7 @@ import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import io.circe.syntax.*
 import munit.FunSuite
+import nebflow.core.tools.ImageInject
 import nebflow.shared.{ContentBlock, UiMessage}
 
 import java.util.Base64
@@ -69,6 +70,16 @@ class AskAttachmentSpec extends FunSuite:
     assertEquals(row.uiJson.hcursor.downField("type").as[String], Right("image"))
     assertEquals(row.blocks.size, 1)
     assert(row.blocks.head.isInstanceOf[ContentBlock.Image])
+  }
+
+  test("save: vision blocks are capped at ImageInject.MAX_ATTACHMENTS; extra files stay in the UI row without a block") {
+    val cap = ImageInject.MAX_ATTACHMENTS
+    val items = AskAttachmentIntake.parse(List.fill(cap + 2)(img("shot.png"))).toOption.get
+    val saved = AskAttachmentIntake.save("ask-1a2b3c4d", items, owner = None).unsafeRunSync()
+    assertEquals(saved.size, cap + 2)
+    assertEquals(saved.count(_.blocks.exists(_.isInstanceOf[ContentBlock.Image])), cap)
+    assert(saved.drop(cap).forall(_.blocks.isEmpty))
+    assertEquals(saved.map(_.uiJson.hcursor.downField("name").as[String]).distinct, List(Right("shot.png")))
   }
 
   test("replay: a user row keeps its attachments (name/type/path) and a text-less image row survives") {

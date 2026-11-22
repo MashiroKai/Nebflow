@@ -80,9 +80,13 @@ private[gateway] object AskAttachmentIntake:
    * `askSid` 必须是单段安全路径（AttachmentScope.segmentOf），否则一律不落盘。
    */
   def save(askSid: String, items: List[Prepared], owner: Option[OwnerAccess]): IO[List[Saved]] =
-    items.traverse { p =>
+    items.zipWithIndex.traverse { case (p, idx) =>
       val b64 = Base64.getEncoder.encodeToString(p.bytes)
+      // vision 子集上限 = ImageInject.MAX_ATTACHMENTS（引擎单源：AskUserAnswerBridge「前 N 张」同律）。
+      // 超出部分仍落盘、行件保留，只是不进模型块。
+      val visionOk = idx < ImageInject.MAX_ATTACHMENTS
       val image = ContentBlock.Image(b64, p.mediaType)
+      val imageBlocks = if visionOk then List(image) else Nil
       val scoped = AttachmentScope.segmentOf(askSid)
       val keyOpt = nebflow.gateway.ResourceKey.from(s"${System.nanoTime()}_${stemOf(p.name)}.${extOf(p.mediaType)}").toOption
       val uploadRoot = Config.NebflowHome.toNIO.resolve("uploads").resolve(askSid)
@@ -101,16 +105,16 @@ private[gateway] object AskAttachmentIntake:
                       "type" -> "image".asJson,
                       "path" -> path.toString.asJson
                     ),
-                    List(image, ContentBlock.Text(s"[用户附加图片: ${path.toString}]"))
+                    imageBlocks ++ List(ContentBlock.Text(s"[用户附加图片: ${path.toString}]"))
                   )
                 )
               case Left(e) =>
                 logger.warn(s"ask image '${p.name}' not persisted (model still receives it): ${e.getMessage}") *>
-                  IO.pure(Saved(uiRow(p.name, None), List(image)))
+                  IO.pure(Saved(uiRow(p.name, None), imageBlocks))
             }
         case _ =>
           logger.warn(s"ask image '${p.name}' not persisted: owner access or session segment unavailable") *>
-            IO.pure(Saved(uiRow(p.name, None), List(image)))
+            IO.pure(Saved(uiRow(p.name, None), imageBlocks))
     }
 
   /** UI 行件（.ui.json 的 attachments 形状；path 缺席 ⇒ null，与主会话同律）。 */
