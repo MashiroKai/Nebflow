@@ -61,7 +61,10 @@ test('lone window silently takes the seat; a refused write shows the real save-f
     // 孤窗即位后写入真的送达服务端（桩回 409）⇒ 席位申请发生过，局地不再静默丢弃。
     // 注意写入走 debounce + 先申席位，必须轮询等待，同步断言会抢在首写之前。
     await expect.poll(() => writes, { timeout: 10000 }).toBeGreaterThan(0);
-    await expect(page.getByText('Canvas 保存失败，本地变更已保留。')).toHaveCount(1);
+    // 2026-11-22 作者令：保存失败静默保留，不弹任何通知（写穿已发生，失败后等一拍再断言）。
+    await page.waitForTimeout(1000);
+    await expect(page.getByText('Canvas 保存失败，本地变更已保留。')).toHaveCount(0);
+    await expect(page.locator('.nebflow-toast', { hasText: '保存失败' })).toHaveCount(0);
     expect(errors).toEqual([]);
   } finally { await context.close(); }
 });
