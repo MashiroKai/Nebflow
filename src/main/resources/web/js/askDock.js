@@ -461,8 +461,7 @@ function buildDialog() {
     //（有界，连接恢复后按序补发）⇒ 落「已提交排队 / 会话未连接」态，界面直说现状
     // 并给出路（改前这一处境零可见性：问完就一个转圈）。
     // 附图批：第三参 = 图片载荷（主会话 userMessage.attachments 同形）；无图 ⇒ 帧不带该键。
-    send: (s, v, media) => sendWs({
-      type: 'askQuestion',
+    send: (s, v, media) => sendWs({ type: 'askQuestion',
       sessionId: s.sid,
       content: v,
       mainSessionId: state.activeSessionId || '',
