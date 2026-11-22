@@ -120,6 +120,10 @@
   color: var(--color-frame-text-dim);
   transition: all 0.25s ease;
 }
+#memory-modal-actions button,
+#rules-modal-actions button {
+  box-shadow: var(--btn-shadow);
+}
 @media (hover: hover) {
   #modal-cancel:hover,
   #delete-cancel:hover,
@@ -1318,6 +1322,7 @@ body.canvas-open .nebflow-toast {
 .mp-mode-btn.on {
   background: var(--color-surface);
   color: var(--color-text);
+  box-shadow: var(--btn-shadow);
 }
 
 /* 台账 #937：/model 面板级降级面 —— 全角色读数失败（401/断连）时替下
@@ -1612,7 +1617,7 @@ div.mp-group > .mp-group-head { cursor: default; }
   width: 100%;
   height: 28px;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: var(--color-surface);
   color: var(--color-text);
   font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
@@ -1620,6 +1625,7 @@ div.mp-group > .mp-group-head { cursor: default; }
   cursor: pointer;
   outline: none;
   transition: border-color 0.15s;
+  box-shadow: var(--btn-shadow);
 }
 .mp-group-switch:focus { border-color: rgb(var(--sapphire) / 0.4); }
 .mp-group-switch:disabled { opacity: 0.55; cursor: default; }

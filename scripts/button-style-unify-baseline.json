@@ -1,0 +1,9 @@
+{
+  "_comment": "check-button-style-unify.mjs 存量基线（button-style-unify-canvas-ref 批 2026-11-22）：U2 = 判定保留的非统一阴影实底静止面，U4 = 判定保留的字面量圆角静止面。只许降不许升；降下来后 --update-baseline 重锚。 U2 存量理由：#deck-fab 规则块（glass.css:635 / 1137）本身零投影；元素投影由 canvas.js:2839 挂的 .canvas-button.g2-fab 共享面供给（G-CB3c 认可），gate 按族名匹配不到，故登记存量。",
+  "generatedAt": "2026-11-22T15:23:19.299Z",
+  "U2": [
+    "#deck-fab",
+    "html.no-backdrop #deck-fab"
+  ],
+  "U4": []
+}

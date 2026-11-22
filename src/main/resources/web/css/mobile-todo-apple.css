@@ -416,6 +416,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill-btn.on,
 body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-pill-btn.on {
   background: rgb(var(--sapphire) / 0.14);
   color: rgb(var(--sapphire));
+  box-shadow: var(--btn-shadow);
 }
 /* Capsule keys without a backing capability leave the row ([hidden] must win
    over the flex layout above) */
@@ -532,6 +533,7 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-quick-fab {
   background: var(--sapphire-tint-15);
   border-color: var(--sapphire-edge-strong);
   color: rgb(var(--term-link-ink));
+  box-shadow: var(--btn-shadow);
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-quick-fab svg {
   width: var(--band-icon, 24px);

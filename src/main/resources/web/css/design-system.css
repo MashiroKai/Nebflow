@@ -241,6 +241,11 @@
      不是装饰。文字位禁 box-shadow 判据另记（非 token）。 */
   --ds-shadow-float: var(--cv-shadow);            /* 浮件三档栈（悬浮控件单源，亮暗已在 sapphire.css） */
   --ds-shadow-press: var(--ig-shadow-press);      /* 墨玻璃按压影单源（glass.css） */
+  /* 按钮面统一阴影 = canvas 基准配方（作者令 2026-11-22 22:54「以 canvas 为准统一」）。
+     全站按钮面（有实底的静止态）只消费这一枚令牌；值 = canvas `.canvas-button` 同源
+     （--ds-shadow-float → --cv-shadow，亮暗双档在 sapphire.css）。改阴影只改这一行。
+     门禁：scripts/check-button-style-unify.mjs（裸写 box-shadow 的按钮面即红）。 */
+  --btn-shadow: var(--ds-shadow-float);
 
   /* ── ⑦ 动效（别名既有 token；SKILL.md §6）── */
   --ds-dur-micro: var(--dur-1);    /* 120ms 微变换（Carbon fast-02 110ms 同语义档） */
@@ -718,6 +723,7 @@
                 color var(--btn-dur-state) var(--ds-ease-std),
                 opacity var(--btn-dur-state) var(--ds-ease-std),
                 transform var(--btn-dur-press) var(--ds-ease-std);
+  box-shadow: var(--btn-shadow);
   }
 }
 
@@ -725,6 +731,7 @@
   color: var(--btn-primary-ink);
   background: var(--btn-primary-bg);
   border-color: var(--btn-primary-bg-hover);
+  box-shadow: var(--btn-shadow);
 }
 .ds-btn--danger { color: var(--ds-danger-icon); background: transparent; border-color: transparent; }
 /* hover 两态：底色升一档（触屏无 hover ⇒ 包在媒体查询里，按下态照样可见） */
@@ -814,6 +821,7 @@
   background: var(--ds-turn-send-bg);
   color: var(--ds-turn-send-ink);
   border-color: var(--ds-turn-send-border);
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .ds-turn-btn--send:hover {
@@ -835,6 +843,7 @@
   color: var(--ds-turn-stop-ink);
   border-color: transparent;
   display: none;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .ds-turn-btn--stop:hover { background: var(--ds-turn-stop-bg-hover); }
@@ -1453,6 +1462,7 @@
   cursor: pointer;
   user-select: none;
   transition: background var(--ds-dur-hover), transform var(--ds-dur-micro);
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .ds-media-stack__pill:hover { background: var(--ds-media-pill-bg-hover); }

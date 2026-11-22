@@ -1869,6 +1869,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   line-height: 1;
   white-space: nowrap;
   z-index: 2;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .code-block-wrap:hover .code-copy-btn {
@@ -1889,6 +1890,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-color: #2e7d32;
   background: #e8f5e9;
   opacity: 1;
+  box-shadow: var(--btn-shadow);
 }
 .code-copy-btn svg {
   flex-shrink: 0;
@@ -2242,6 +2244,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
     background: rgba(23,26,33,0.9);
     border-color: rgba(255,255,255,0.1);
     color: #7b7e88;
+  box-shadow: var(--btn-shadow);
   }
   @media (hover: hover) {
     .code-copy-btn:hover {
@@ -2254,6 +2257,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
     color: #66bb6a;
     border-color: #66bb6a;
     background: rgba(102,187,106,0.12);
+  box-shadow: var(--btn-shadow);
   }
 
   .duration-badge {
@@ -2374,6 +2378,7 @@ html[data-theme="light"] {
      （--dur-2 = 160ms hover 档，替换 0.25s all）。 */
   transition: background var(--dur-2) ease, color var(--dur-2) ease,
               border-color var(--dur-2) ease, box-shadow var(--dur-2) ease;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .option-btn:hover {
@@ -2387,6 +2392,7 @@ html[data-theme="light"] {
   background: var(--color-primary);
   color: #fff;
   border-color: var(--color-primary);
+  box-shadow: var(--btn-shadow);
 }
 .option-btn:disabled {
   opacity: 0.5;
@@ -2398,6 +2404,7 @@ html[data-theme="light"] {
 .option-btn.perm-upgrade-option {
   border-color: rgb(var(--sapphire) / 0.45);
   background: rgb(var(--sapphire) / 0.08);
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .option-btn.perm-upgrade-option:hover {
@@ -4778,6 +4785,7 @@ body:not(.mobile-layer) .option-preview-media {
   background: rgba(91, 127, 191, 0.03);
   color: var(--color-frame-text-dim);
   transition: all 0.25s ease;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .wsp-goto-btn:hover {
@@ -4899,6 +4907,7 @@ body:not(.mobile-layer) .option-preview-media {
   white-space: nowrap;
   transition: transform 0.18s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s ease;
   animation: nf-pill-in 0.18s ease;
+  box-shadow: var(--btn-shadow);
 }
 /* 扁平六态（flat-button-everywhere 批 2026-11-05）：原 hover/按下是
    「投影栈 + translateY(-1px)」的物理按键组合，两层退役（F1 + F5）。
@@ -6358,6 +6367,7 @@ body:not(.mobile-layer) #header .header-center {
   background: var(--agent-avatar-chip-bg);
   border: 1px solid var(--glass-control-border);
   transition: transform 0.15s ease;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   #agent-avatar-btn:hover { transform: scale(1.04); }

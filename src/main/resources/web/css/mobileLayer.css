@@ -3522,6 +3522,7 @@ body.mobile-layer #settings-modal .cfg-btn-primary {
   border-color: transparent;
   font-weight: 500;
   transition: background 0.18s ease;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   body.mobile-layer #settings-modal .cfg-btn-primary:hover {
@@ -3533,6 +3534,7 @@ body.mobile-layer #settings-modal .cfg-btn-primary {
   body.mobile-layer #settings-modal .cfg-btn-primary {
     background: var(--color-text);
     color: var(--color-bg);
+  box-shadow: var(--btn-shadow);
   }
 @media (hover: hover) {
     body.mobile-layer #settings-modal .cfg-btn-primary:hover {
@@ -6380,6 +6382,7 @@ body.mobile-layer .bgagent-overlay .bgagent-status-pill {
   pointer-events: none;
   user-select: none;
   transition: width 200ms ease, background-color 200ms ease, border-color 200ms ease;
+  box-shadow: var(--btn-shadow);
 }
 body.mobile-layer .bgagent-overlay .bgagent-pill-status {
   display: inline-flex;

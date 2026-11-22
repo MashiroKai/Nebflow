@@ -21,6 +21,7 @@
   font-weight: 500;
   cursor: pointer;
   transition: opacity 0.15s;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .neblink-login-btn:hover { opacity: 0.9; }

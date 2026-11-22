@@ -56,8 +56,11 @@ const FORBIDDEN = [
   {
     id: 'F1',
     prop: /^box-shadow$/,
-    test: (v) => v.trim() !== 'none',
-    label: 'box-shadow（含 inset 浮雕 / 焦点环影子）',
+    // 2026-11-22 按钮阴影统一令（作者令「以 canvas 为准」）：静止态投影只许统一令牌
+    // var(--btn-shadow)（design-system.css 单源；门禁 check-button-style-unify.mjs 管其余形态）。
+    // 其余任何非 none 投影（字面量 / inset 浮雕 / 焦点环影子）仍判红。
+    test: (v) => v.trim() !== 'none' && v.trim() !== 'var(--btn-shadow)',
+    label: 'box-shadow（非统一令牌的投影 / inset 浮雕 / 焦点环影子）',
   },
   {
     id: 'F2',

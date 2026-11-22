@@ -675,6 +675,7 @@
   cursor: pointer;
   font-family: inherit;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .config-actions button:hover { background: var(--color-frame-hover); color: var(--color-frame-text-bright); }
@@ -685,6 +686,7 @@
   border-color: var(--btn-primary-bg);
   background: var(--btn-primary-bg);
   color: var(--btn-primary-ink);
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .config-actions .btn-save:hover { background: var(--btn-primary-bg-hover); border-color: var(--btn-primary-bg-hover); }
@@ -1194,6 +1196,7 @@
   font-family: inherit;
   transition: background var(--dur-2) ease, color var(--dur-2) ease,
               border-color var(--dur-2) ease;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .cfg-btn:hover { background: var(--ctl-neutral-bg-hover); color: var(--ctl-neutral-ink); }
@@ -1210,6 +1213,7 @@
   cursor: pointer;
   font-family: inherit;
   transition: background var(--dur-2) ease, border-color var(--dur-2) ease, opacity var(--dur-2) ease;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .cfg-btn-primary:hover { background: var(--btn-primary-bg-hover); border-color: var(--btn-primary-bg-hover); opacity: 1; }
@@ -1616,10 +1620,12 @@
   background: var(--color-frame-border);
   padding: var(--ds-space-hair) var(--ds-space-1h);
   border-radius: var(--ds-radius-badge);
+  box-shadow: var(--btn-shadow);
 }
 .agent-mgr-model-pill.fallback {
   color: rgb(91,127,191);
   background: rgba(91,127,191,0.10);
+  box-shadow: var(--btn-shadow);
 }
 
 /* ── Agent management — Canvas tab ────────────────────────────────────── */
@@ -1845,6 +1851,7 @@
   color: var(--ctl-neutral-ink);
   cursor: pointer;
   transition: all 0.15s;
+  box-shadow: var(--btn-shadow);
 }
 /* v3 实现批：蓝 tint hover（rgba(91,127,191,…) 为 sapphire 玻璃结构色）退役 ——
    控件族中性三档（--ctl-neutral-*，暗档随面板主题自动解析）。
@@ -2100,6 +2107,7 @@
 .orb-theme-btn.on {
   background: var(--color-frame-hover);
   color: var(--color-frame-text);
+  box-shadow: var(--btn-shadow);
 }
 .orb-preview-wrap {
   display: flex;
@@ -2447,11 +2455,13 @@
   white-space: nowrap;
   color: var(--color-frame-text-muted);
   background: color-mix(in srgb, var(--color-frame-text-muted) 12%, transparent);
+  box-shadow: var(--btn-shadow);
 }
 .plugins-state-pill.on {
   color: rgb(var(--sapphire));
   background: rgb(var(--sapphire) / 0.1);
   border-color: rgb(var(--sapphire) / 0.22);
+  box-shadow: var(--btn-shadow);
 }
 /* 药丸两态（2026-10-21 作者令④后）：绑 blocked——amber「changed」档随面板
    change 提示退役整档删除（plugins.js `pillOf()` 同一口径，勿各自为政）。
@@ -2460,6 +2470,7 @@
   color: var(--status-word);
   background: color-mix(in srgb, var(--status-error-icon) 10%, transparent);
   border-color: color-mix(in srgb, var(--status-error-icon) 25%, transparent);
+  box-shadow: var(--btn-shadow);
 }
 .plugins-state-pill.blocked .st-ic { width: 10px; height: 10px; margin-right: var(--ds-space-1); }
 .plugins-card-desc {
@@ -2550,6 +2561,7 @@
   background: rgb(var(--amber) / 0.1);
   border: 1px solid rgb(var(--amber) / 0.25);
   white-space: nowrap;
+  box-shadow: var(--btn-shadow);
 }
 /* （旧 per-skill 条目样式 `.plugins-skill-item` / `.plugins-skill-item-head` /
    `.plugins-skill-item-id` / `.plugins-skill-item-desc` / `.plugins-skill-preview`
@@ -2651,6 +2663,7 @@
   transition-property: background-color, border-color;
   transition-duration: var(--nf-toggle-dur);
   transition-timing-function: var(--nf-toggle-ease);
+  box-shadow: var(--btn-shadow);
 }
 /* 命中盒：视觉本体不变（不放大不位移），只在四周补一层隐形可点面（44×44）。
    与手机层 `.nb-toggle::before` 同一手法；居中用双参 translate，不是 y 轴位移。 */
@@ -2688,6 +2701,7 @@
      颜色是冗余通道；对比度取舍见 stand-tokens.css 的 toggle 段注）。 */
   background: var(--nf-toggle-accent);
   border-color: var(--nf-toggle-accent);
+  box-shadow: var(--btn-shadow);
 }
 .nb-toggle.on::after { transform: translateX(var(--nf-toggle-travel)); }
 /* hover：OFF 档描边递进一档（ON 档保持绿描边，不被 hover 洗回中性） */

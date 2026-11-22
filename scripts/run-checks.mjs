@@ -44,6 +44,9 @@ export const CHECKS = [
   { name: 'noclip-floating-geometry', profiles: ['frontend'], timeoutMs: 240_000,
     argv: [process.execPath, 'tests/noclip-floating-geometry.spec.mjs'] },
   nodeCheck('design-tokens', 'check-design-tokens'),
+  // 按钮样式统一闸（button-style-unify-canvas-ref 批 2026-11-22）：全站实底静止按钮面
+  // 消费统一阴影令牌 var(--btn-shadow)（canvas 基准）；裸写投影/字面量圆角即红。
+  nodeCheck('button-style-unify', 'check-button-style-unify'),
   // 主会话交互卡统一风格（作者裁定 B，2026-11-21）：卡族（.option-box / llm-failure-card / .nfc）
   // 卡面表面属性只许经 var(--…) 令牌承载；新造字面量卡面即红。与 check-component-contract
   // 判据不重叠（本闸只读 CSS 卡面声明，不看 JS DOM 写法）。

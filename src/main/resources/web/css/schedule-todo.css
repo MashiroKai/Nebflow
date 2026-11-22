@@ -287,6 +287,7 @@
   color: var(--color-primary);
   font-weight: 600;
   background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  box-shadow: var(--btn-shadow);
 }
 .reminder-form-btn:active { opacity: 0.65; }
 /* 手机层收敛（单实现原则）：手机页面态的两面表单都挂在抽屉里，确认/取消 =

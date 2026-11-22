@@ -656,6 +656,8 @@ html[data-theme="light"] {
   /* 圆钮族零投影（扁平化批 2026-11-05）：原 `box-shadow: var(--cv-shadow)` 退役。
      圆钮的"浮"由 backdrop 玻璃采样 + 1px 描边表达，不靠投影造厚度。 */
 }
+#deck-fab {
+}
 @media (hover: hover) {
   
   /* hover：抬亮 + 1.05（触屏无 hover；split/ask 原逐面 hover 档随收编归一） */
@@ -787,7 +789,7 @@ html[data-theme="light"] {
 .canvas-button.epub-nav-btn,
 .canvas-button.epub-toc-item {
   border-radius: var(--ds-radius-pill);
-  box-shadow: var(--ds-shadow-float);
+  box-shadow: var(--btn-shadow);
 }
 
 /* 玻璃药丸 .g2-pill（消费方 = 接管卡次级【退出】；类名零改动，材质归包）：
@@ -828,6 +830,7 @@ html[data-theme="light"] {
     background-color var(--btn-dur-state) ease,
     border-color var(--btn-dur-state) ease,
     opacity var(--btn-dur-state) ease;
+  box-shadow: var(--btn-shadow);
 }
 /* hover 关在 (hover:hover) 里：触屏没有 hover，隔离后触屏只走按下态 */
 @media (hover: hover) {
@@ -900,6 +903,9 @@ html[data-theme="dark"] {
   /* 不透底墨面零 backdrop（.g2-pill 基材的玻璃采样对墨面无意义，显式摘除） */
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
+}
+.g2-pill-primary {
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .g2-pill-primary:hover,
@@ -1076,6 +1082,8 @@ body.mobile-layer #g2-edge-fade {
        正常引擎（支持 backdrop）零命中：本块是 `@supports not(...)`。 */
     background: var(--color-surface);
   }
+#deck-fab {
+}
   /* 主输入条 / 队列条 = 基准件：降级同样落不透明实底（旧档只摘 blur、保留 α .16
      底 = 同一种玻璃纸）。`:root` 前缀只为一个目的：压过后文非降级的 `#input-bar`
      规则（同 id、声明序在后）—— 两条降级路径必须给出同一个答案。 */
@@ -1158,6 +1166,8 @@ html.no-backdrop body.mobile-layer .mh-idhead-name,html.no-backdrop body.mobile-
   /* 见上一条 @supports 块同注（glass-runtime 批 2026-11-18）：降级回落实底一律
      不透明 —— α .16 底在无模糊引擎里是「玻璃纸」（正文原文穿出）。 */
   background: var(--color-surface);
+}
+html.no-backdrop #deck-fab {
 }
 /* The composer is the glass reference face; degraded engines lose blur, so the
    fallback must be an OPAQUE surface — the translucent base (α .16) only reads as
