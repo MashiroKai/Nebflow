@@ -48,7 +48,7 @@ import scala.concurrent.duration.*
  *
  * ==终态回收==
  * 「终态即回收」此前只是一句注释，没有任何实现：桥完成（或超时）后 registry
- * 条目（kind=SubTask）滞留 status=Idle、task store 恒 "running"、子 actor 永驻
+ * 条目（kind=Delegate，source=subagent）滞留 status=Idle、task store 恒 "running"、子 actor 永驻
  * idle——getActiveAgents 快照按「registry 有记录 = 任务在飞」的契约如实上报，
  * 子智能体面板随即渲染永不消失的「空闲」行（现场实证：
  * turn-complete 的 subagent-* 子会话挂面板 5 分钟+）。[[reap]] 镜像

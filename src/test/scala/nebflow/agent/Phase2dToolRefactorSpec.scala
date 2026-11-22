@@ -170,8 +170,9 @@ class Phase2dToolRefactorSpec extends FunSuite:
   test("D.1-1: legacy 双轨分支 team/catch-all 逐件不变；flow 分支已随 2026-09-06 裁撤批收 BaseTools"):
     // 2026-09-06 工具面裁撤批：FlowExecute（team 固定面）与 FlowReport（flow
     // 固定面）移出——legacy 双轨路径本身保留至阶段 3。
+    // 团队类型面删除批阶段 B2：TeamTask 三件退役 ⇒ team 固定面 = BaseTools + Mail。
     val team = AgentCore.legacyFixedTools(mkDef("backend").copy(category = "team"))
-    assertEquals(team, AgentCore.BaseTools + "Mail" ++ AgentCore.TeamTaskTools)
+    assertEquals(team, AgentCore.BaseTools + "Mail")
     val flow = AgentCore.legacyFixedTools(mkDef("node").copy(category = "flow"))
     assertEquals(flow, AgentCore.BaseTools, "flow 固定面零 FlowReport（2026-09-06 裁撤批）")
     val solo = AgentCore.legacyFixedTools(mkDef("Coder"))
@@ -361,16 +362,8 @@ class Phase2dToolRefactorSpec extends FunSuite:
     assert(d.contains("Canvas"), "呈现面")
     assert(!d.contains("never hand-draw"), "面向节点的「生成后立即 Pop」指导句必须已删（不得写成「节点也能 Pop」）")
 
-  test("D.2: TeamTask 三件 description 含任务协议关键句（order 630 下迁，双轨期）"):
-    val list = ToolRegistry.TOOL_MAP("TeamTaskList").description
-    assert(list.contains("<system-reminder>"), "reminder 到达协议")
-    assert(list.contains("[waiting-user]"), "人类 todo 语义")
-    assert(list.contains("auto-expire"), "TTL 生命周期")
-    assert(list.contains("fold into a count line"), "截断折叠语义")
-    val update = ToolRegistry.TOOL_MAP("TeamTaskUpdate").description
-    assert(update.contains("auto-expire"), "TTL 生命周期")
-    assert(update.contains("completed") && update.contains("failed"), "四态语义")
-    val create = ToolRegistry.TOOL_MAP("TeamTaskCreate").description
-    assert(create.contains("auto-expire"), "TTL 生命周期")
+  // D.2 原用例（TeamTask 三件 description 含任务协议关键句）随团队任务工具面一并
+  // 退役——团队类型面删除批阶段 B2（作者裁定 Q11）：被断言的三个工具已不在注册表，
+  // 其 TTL/四态语义随工具消亡，无处可断。
 
 end Phase2dToolRefactorSpec

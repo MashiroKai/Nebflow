@@ -185,7 +185,7 @@ class AgentControlNameAddressSpec extends CatsEffectSuite:
             project = Some("stand"),
             displayName = Some("worker-1")
           ),
-          teamSid -> AgentRecord(teamSid, teamRef, AgentKind.Team, teamSid)
+          teamSid -> AgentRecord(teamSid, teamRef, AgentKind.Root, teamSid)
         )
       )
       out <- IO.fromEither(

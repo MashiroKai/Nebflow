@@ -26,25 +26,4 @@ object TaskToolHelper:
         }
       case None => IO.unit
 
-  /**
-   * Team task panel event (spec §2.5, team-manager-task-tool):
-   * `{type: "teamTaskListUpdate", team, tasks}` — NO sessionId; the frontend
-   * routes it to the global teams panel (ws.js entry, flowCanvas
-   * onTeamTaskListUpdate mutates the in-memory team state and re-renders).
-   * Deliberately does NOT touch any session domain: team tasks live in their
-   * own directory and never leak into session surfaces.
-   */
-  def emitTeamTaskListUpdate(store: TaskStore, teamName: String, ctx: ToolContext): IO[Unit] =
-    ctx.wsSend match
-      case Some(send) =>
-        store.listVisible(TaskStore.teamScopeKey(teamName)).flatMap { tasks =>
-          val json = io.circe.Json.obj(
-            "type" -> "teamTaskListUpdate".asJson,
-            "team" -> teamName.asJson,
-            "tasks" -> tasks.asJson
-          )
-          send(json)
-        }
-      case None => IO.unit
-
 end TaskToolHelper

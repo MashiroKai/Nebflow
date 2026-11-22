@@ -118,7 +118,7 @@ object LoopGuard:
     transientFactor: Int = 3,
     /** 暂时性故障模式（正则；配置项整体替换默认集）。 */
     transientPatterns: Set[String] = DefaultTransientPatterns,
-    exemptTools: Set[String] = Set("TaskQuery", "TaskList", "TeamTaskList"),
+    exemptTools: Set[String] = Set("TaskQuery", "TaskList"),
     /**
      * T3（bash overhaul，作者令 2026-11-04）：同 fp 的 Query/Wait 类调用**连续**
      * 达此次数 → 仅一次 L0 nudge（指向 `Bash(background_job_id, timeout)` 有界等待），**永不**

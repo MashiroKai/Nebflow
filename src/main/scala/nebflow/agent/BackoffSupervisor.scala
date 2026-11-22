@@ -1770,7 +1770,10 @@ object BackoffSupervisor:
             val fallback = AgentRecord(
               sessionId = subagentId,
               ref = newChild,
-              kind = if source == "subtask" then AgentKind.SubTask else AgentKind.Delegate,
+              // B4 去 SubTask 名（§4.1 Q3 / 衍生清单 2：恢复机制保留、只去名）——
+              // ghost respawn 重建的条目统一为 Delegate kind；`source`（"subagent"/
+              // "subtask"/"delegate"）仍按原样区分通知轨与任务行域，逐字不动。
+              kind = AgentKind.Delegate,
               rootSessionId = parentSessionId,
               supervisorRef = Some(ctx.self),
               parentSessionId = parentSessionId

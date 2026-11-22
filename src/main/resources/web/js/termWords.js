@@ -46,7 +46,8 @@ export function badgeWord(concept) {
  * `delegate`）、会话 id 前缀判读结果（`Subagent` / `Delegate` …）都从这里过一道。
  *
  * 两条语义（与术语分层批一脉相承，不是本批新造）：
- *   · `subtask` 与 `delegate` 是同一概念（修订批九点②：SubTask 显示词更名 delegate
+ *   · `SubTask`（阶段 B3 起引擎不再产出该 kind，留作旧快照兼容）与 `subtask` 同
+ *   `delegate` 是同一概念（修订批九点②：SubTask 显示词更名 delegate
  *     语义）⇒ 同一词面 `delegate`；
  *   · 成员位的整体词（`Flow` / `AgentFlow` / `flow-step`）读作成员自身——成员是
  *     `node`，整体词只在整体行身份词位出现（见 bgAgents.js bgAgentflowWord）。

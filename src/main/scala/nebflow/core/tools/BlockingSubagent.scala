@@ -37,11 +37,11 @@ import scala.concurrent.duration.*
  *
  * ==叶子纪律==
  * subagent 是叶子：不注册 SupervisorAdapter（无后台续命），终态即回收；取消
- * 由 AgentControl 的 SubTask 通道（Stop fallback）覆盖。
+ * 由 AgentControl 的 cancel 通道（Stop fallback）覆盖。
  *
  * ==终态回收==
  * 「终态即回收」此前只是一句注释，没有任何实现：桥完成（或超时）后 registry
- * 条目（kind=SubTask）滞留 status=Idle、task store 恒 "running"、子 actor 永驻
+ * 条目（kind=Delegate，source=subagent）滞留 status=Idle、task store 恒 "running"、子 actor 永驻
  * idle——getActiveAgents 快照按「registry 有记录 = 任务在飞」的契约如实上报，
  * 子智能体面板随即渲染永不消失的「空闲」行（现场实证：
  * turn-complete 的 subagent-* 子会话挂面板 5 分钟+）。现补上 [[reap]]：镜像 BackoffSupervisor.notifyParentAndStop 的
@@ -112,7 +112,10 @@ object BlockingSubagent:
               resources,
               id = childId,
               ref = ref,
-              kind = nebflow.actor.AgentKind.SubTask,
+              // B3 换标（§4.1 Q1/Q3 衍生清单 3）：子会话的 kind 由 SubTask 换为
+              // Delegate——阻塞子代理三件套保留（作者裁定 Q1），但「SubTask」不再
+              // 是独立会话类型，统一归 subagent/Delegate 语义。
+              kind = nebflow.actor.AgentKind.Delegate,
               rootSessionId = rootOf(ctx),
               parentRef = ctx.agentActorRef,
               startedAt = System.currentTimeMillis(),

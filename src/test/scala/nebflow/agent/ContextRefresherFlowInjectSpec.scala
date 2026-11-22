@@ -109,7 +109,7 @@ class ContextRefresherFlowInjectSpec extends munit.CatsEffectSuite:
       tmp <- IO(os.temp.dir(prefix = "cf-inject-"))
       _ <- writeDiskAgent(tmp)
       resources <- mkResources(tmp, system)
-      freshOpt <- ContextRefresher.loadCurrentDef(None, resources, injectedDef)
+      freshOpt <- ContextRefresher.loadCurrentDef(resources, injectedDef)
     yield
       val d = freshOpt.getOrElse(fail("loadCurrentDef returned None — disk def not found"))
       assertEquals(d.flowContract, injectedDef.flowContract, "flowContract dropped by reload")
@@ -130,7 +130,7 @@ class ContextRefresherFlowInjectSpec extends munit.CatsEffectSuite:
       tmp <- IO(os.temp.dir(prefix = "cf-inject-"))
       _ <- writeDiskAgent(tmp)
       resources <- mkResources(tmp, system)
-      freshOpt <- ContextRefresher.loadCurrentDef(None, resources, plain)
+      freshOpt <- ContextRefresher.loadCurrentDef(resources, plain)
     yield
       val d = freshOpt.getOrElse(fail("loadCurrentDef returned None"))
       assert(!d.tools.contains("FlowReport"), s"FlowReport invented for non-flow def: ${d.tools}")
@@ -147,7 +147,7 @@ class ContextRefresherFlowInjectSpec extends munit.CatsEffectSuite:
       tmp <- IO(os.temp.dir(prefix = "cf-inject-"))
       _ <- writeDiskAgent(tmp)
       resources <- mkResources(tmp, system)
-      freshOpt <- ContextRefresher.loadCurrentDef(None, resources, retired)
+      freshOpt <- ContextRefresher.loadCurrentDef(resources, retired)
     yield
       val d = freshOpt.getOrElse(fail("loadCurrentDef returned None — disk def not found"))
       assert(!d.tools.contains("FlowReport"), s"retired FlowReport re-appended by reload: ${d.tools}")

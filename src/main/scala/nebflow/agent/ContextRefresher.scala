@@ -4,7 +4,6 @@ import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.actor.*
 import nebflow.core.*
-import nebflow.core.entity.{EntityLoader, TeamCatalog}
 import nebflow.core.skill.SkillService
 import nebflow.shared.*
 
@@ -291,12 +290,9 @@ object ContextRefresher:
    */
   def buildMemoryBlock(
     agentName: String,
-    teamName: Option[String] = None,
     contextWindow: Int = nebflow.shared.Defaults.ContextWindow
   ): String =
-    val agentMemory = teamName match
-      case Some(tn) => MemoryStore.loadTeamAgentMemory(tn, agentName)
-      case None => MemoryStore.loadSoulMemory(agentName)
+    val agentMemory = MemoryStore.loadSoulMemory(agentName)
     renderMemoryBlock(
       MemoryStore.loadUserMemory,
       agentMemory,
@@ -441,39 +437,20 @@ object ContextRefresher:
    * makes panel edits (flows whitelist, tools) take effect on the running
    * actor mid-session.
    *
-   * Team agents resolve from the team dir, global agents from the agents
-   * dir; presentation fields (avatar/displayName/voiceEnabled) are carried
-   * over from the actor-startup def because AgentEntry doesn't carry them.
-   * Returns None when neither disk source has the agent — callers fall back
-   * to the actor-startup snapshot.
+   * Reloads from the global agents dir (agentLibrary); presentation fields
+   * (avatar/displayName/voiceEnabled) are carried over from the actor-startup
+   * def because AgentEntry doesn't carry them. Returns None when the disk
+   * source lacks the agent — callers fall back to the actor-startup snapshot.
+   *
+   * 团队类型面删除批阶段 B2：原 `teamNameOpt` 参数（团队局部定义
+   * `teams/<team>/agents/<name>/` 的查找腿）随团队面删除——该参数自阶段 3 起
+   * 恒 None，团队分支结构上不可达。
    */
   def loadCurrentDef(
-    teamNameOpt: Option[String],
     resources: SharedResources,
     agentDef: AgentDef
   ): IO[Option[AgentDef]] =
-    // Team agents reload their def from the team dir every turn so panel
-    // edits (e.g. PUT /api/agents/:name/model) take effect on the running
-    // actor. agentLibrary.get only scans the GLOBAL agents dir — for team
-    // agents it returns None and the code would silently keep using the
-    // actor-startup snapshot (MailTool's team-agent load result).
-    // loadTeamAgent checks teams/<team>/agents/<name>/ first, then global.
-    teamNameOpt match
-      case Some(teamName) =>
-        EntityLoader.loadTeamAgent(teamName, agentDef.name).map { entryOpt =>
-          entryOpt
-            .map(
-              _.toAgentDef.copy(
-                // AgentEntry doesn't carry presentation fields — keep whatever
-                // the running actor already resolved (avatar from panel config).
-                avatar = agentDef.avatar,
-                displayName = agentDef.displayName,
-                voiceEnabled = agentDef.voiceEnabled
-              )
-            )
-            .map(applyRuntimeOverrides(agentDef, _))
-        }
-      case None => resources.agentLibrary.get(agentDef.name).map(_.map(applyRuntimeOverrides(agentDef, _)))
+    resources.agentLibrary.get(agentDef.name).map(_.map(applyRuntimeOverrides(agentDef, _)))
 
   /**
    * Re-apply ALL runtime injections made at spawn time onto the freshly
@@ -506,13 +483,10 @@ object ContextRefresher:
     agentDef: AgentDef
   ): IO[TurnContext] =
     for
-      // Detect team membership once — used for both the def refresh source
-      // and the memory block below.
-      // 团队功能删除批（team-feature-deletion-20261104）阶段 3：团队会话登记表本体
-      // 删除 ⇒ 团队归属**恒 None**（团队 agent 的 per-turn def 重载与团队 memory
-      // 分档因此不再可达；全局 agents 路径与 memory 判据零变化）。
-      teamNameOpt <- IO.pure(Option.empty[String])
-      freshDefOpt <- loadCurrentDef(teamNameOpt, resources, agentDef)
+      // 团队类型面删除批阶段 B2：`teamNameOpt` 自团队会话登记表退役（阶段 3）起
+      // 恒 None，per-turn def 重载与 memory 分档的团队分支结构上不可达 ⇒ 死管线
+      // 连同参数一并删除（全局 agents 路径与 memory 判据零变化）。
+      freshDefOpt <- loadCurrentDef(resources, agentDef)
       globalDef = freshDefOpt.getOrElse(agentDef)
       // 阶段 2 批 A（2026-09）：systemPrefix 整层退役——四源（for-all/teams/
       // flows/manager + JAR fallback 双兜底链）与三段拼装全部删除；
@@ -557,7 +531,9 @@ object ContextRefresher:
       // nonEmpty）自然不渲染（与 skillCatalog D.1-12 同款先例）；TurnContext
       // 字段保留至阶段 3。
       flowCatalog = ""
-      teamCatalog <- buildTeamCatalogForSession(state.sessionId)
+      // 团队目录注入（T4）停注：生产点置空，order 816 section（condition=nonEmpty）
+      // 自然不渲染——与 flowCatalog 同款先例；TurnContext 字段保留至阶段 3。
+      teamCatalog = ""
       // Memory: only Nebula (2026-08-31 裁定①). Team agents, standalone
       // agents get no memory block — clean context.
       // Headless (NEBFLOW_HEADLESS=1): none at all — benchmark determinism.
@@ -566,7 +542,7 @@ object ContextRefresher:
       // ModelCandidate.contextWindow → spawn/update 写入状态；🔴 既有单点链，
       // 不另立旁路，本处只**消费**）。
       memoryBlock =
-        if shouldInjectMemory(globalDef.name) then buildMemoryBlock(globalDef.name, teamNameOpt, state.contextWindow)
+        if shouldInjectMemory(globalDef.name) then buildMemoryBlock(globalDef.name, state.contextWindow)
         else ""
     yield TurnContext(
       globalDef,
@@ -599,56 +575,5 @@ object ContextRefresher:
    */
   def skillCatalogEnabledFor(agentName: String): Boolean =
     !AgentCore.ConvergedAgentNames.contains(agentName) || agentName == RootAgentIdentity.Name
-
-  /**
-   * Build Team catalog for system prompt injection.
-   *  Detects team membership from the session's FlowMembership registration.
-   *  - Team agents: see their own team's members + flows (progressive disclosure)
-   *  - Nebula / standalone: empty — global Teams & Flows 概览已停注（系统
-   *    提示词重构阶段二 B 批，flowCatalog/skillCatalog 同款先例；TurnContext
-   *    字段保留至阶段 3）
-   */
-  private def buildTeamCatalogForSession(sessionId: Option[String]): IO[String] =
-    sessionId match
-      case Some(_) =>
-        for
-          // 团队功能删除批阶段 3：团队归属恒 None（表本体已删）⇒ 本目录的团队分支
-          // 结构上不可达，只剩「无团队 ⇒ 空串」一条（global 目录停注见下）。
-          teamNameOpt <- IO.pure(Option.empty[String])
-          result <- teamNameOpt match
-            case Some(teamName) =>
-              // Team agent: show team-specific catalog. The agents map MUST
-              // cover team-local definitions (teams/<name>/agents/): lead and
-              // members live there, and listAgents() only scans the GLOBAL
-              // agents dir — passing it alone rendered "(agent not found)"
-              // leads and empty member lists, which team Managers read as
-              // "my members don't exist" and reported activation failures
-              // without ever trying to Mail them. Mirror the runtime
-              // resolution order (loadTeamAgent: team-local first, global
-              // fallback) so the catalog shows exactly what Mail can reach.
-              for
-                team <- EntityLoader.loadTeam(teamName)
-                globalAgents <- EntityLoader.listAgents()
-                teamAgents <- EntityLoader.listTeamAgents(teamName)
-                flows <- EntityLoader.listFlows()
-                rules <- EntityLoader.loadTeamRules(teamName)
-              yield team
-                .map { t =>
-                  val catalog = TeamCatalog.buildCatalog(t, globalAgents ++ teamAgents, flows)
-                  if rules.nonEmpty then s"$catalog\n\n=== Team Rules: ${t.name} ===\n$rules\n=== End Team Rules ==="
-                  else catalog
-                }
-                .getOrElse("")
-            case None =>
-              // global 目录停注（系统提示词重构阶段二 B 批）：无 team 注册
-              // 会话（Nebula/standalone）不再注入 global Teams & Flows 概览
-              // ——生产点置空，order 816 section（condition=nonEmpty）自然
-              // 不渲染（与 flowCatalog 571-575 先例同款）；TurnContext 字段
-              // 保留至阶段 3。team 专属目录分支保留（team agent 渐进披露不变）。
-              IO.pure("")
-        yield result
-      case None =>
-        // 无 session（极早期 init）：同上，global 目录停注（阶段二 B 批）。
-        IO.pure("")
 
 end ContextRefresher

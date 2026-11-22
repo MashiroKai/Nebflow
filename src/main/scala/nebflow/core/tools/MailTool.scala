@@ -2344,13 +2344,14 @@ $message"""
           // （`_index.json` 的盘上遗留值：全局 confirm-edits 时被 Mail 激活的成员会
           // 继承盘上 auto-all），也不再有会话覆盖面。
           safetyMode <- resources.effectiveSafetyMode.map(nebflow.core.SafetyMode.toString)
-          entryOpt <- session.flowName match
-            case Some(teamName) => EntityLoader.loadTeamAgent(teamName, agentName)
-            case None => EntityLoader.loadAgent(agentName)
+          // 团队类型面删除批阶段 B2（作者裁定 Q2：teams/ 盘上遗留直接丢弃）：原
+          // `session.flowName match Some(teamName) => loadTeamAgent(teamName, …)` 的
+          // 团队局部定义查找腿删除，激活身份只走全局 agent 库（磁盘 agents/ + 内置）。
+          entryOpt <- EntityLoader.loadAgent(agentName)
           _ <- IO {
             if entryOpt.isEmpty then
               logger.warn(
-                s"[mail] activation failed: agent def '$agentName' not loadable (team=${session.flowName.getOrElse("-")}) for session ${sessionId.take(8)} (issue #22 observability)"
+                s"[mail] activation failed: agent def '$agentName' not loadable for session ${sessionId.take(8)} (issue #22 observability)"
               )
           }
           _ <- entryOpt.traverse_ { entry =>
@@ -2454,9 +2455,19 @@ $message"""
                   session.id -> AgentRecord(
                     sessionId = session.id,
                     ref = ref,
-                    // 团队会话 kinds 面：团队退役后本腿已无生产调用方（仅遗留队列层
-                    // spec 直调），kind 值保持 `Team` 以免动枚举（作者未裁定枚举去留）。
-                    kind = AgentKind.Team,
+                    // B5（枚举 Team 值删除）：Mail 激活的会话登记为 `Root`——它就是
+                    // **本会话自己的 agent**（每个会话只有一个 agent，depth=1 的子会话
+                    // 形态是 Delegate/subagent，不是本条腿）。
+                    //
+                    // 选 Root 而不选 Delegate 的理由 = 换标前 Team 记录在四个消费点的
+                    // 语义逐条等价，行为零变化（铁律 2 的同类要求）：
+                    //  · TaskStuckWatcher：本记录带 parentSessionId ⇒ 命中「Root kind + 有父
+                    //    会话」的 attention-only 腿（只广播不 Stop）＝ 原 Team 腿；
+                    //  · 树根 Nebula（非 Mail 激活）与本条靠 parentSessionId 区分，互不干扰；
+                    //  · MailIdleGate：Root 不在 taskKinds ⇒ 不计入发送者子树忙判 ＝ 原 Team 腿；
+                    //  · filterActiveAgents：Root 不在 taskKinds ⇒ 不出现在子代理行集 ＝ 原 Team 腿；
+                    //  · AgentControl：Root 被显式拒绝（self-preservation guard）＝ 原 Team 被显式拒绝。
+                    kind = AgentKind.Root,
                     rootSessionId = rootSid,
                     parentRef = ctx.agentActorRef,
                     // Block 0 链的 parent 语义随团队退役收敛为「激活方会话」。

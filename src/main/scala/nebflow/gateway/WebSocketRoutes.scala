@@ -125,14 +125,10 @@ class WebSocketRoutes(
         case Some(agentName) =>
           sharedResources.agentLibrary.get(agentName).flatMap {
             case Some(defn) => IO.pure(defn)
-            case None =>
-              metaOpt.flatMap(_.flowName) match
-                case Some(fn) =>
-                  nebflow.core.entity.EntityLoader.loadTeamAgent(fn, agentName).flatMap {
-                    case Some(entry) => IO.pure(entry.toAgentDef)
-                    case None => rootFallback(agentName)
-                  }
-                case None => rootFallback(agentName)
+            // 团队类型面删除批阶段 B2（作者裁定 Q2：teams/ 盘上遗留直接丢弃）：
+            // 原 flowName → EntityLoader.loadTeamAgent 的团队局部定义查找腿删除，
+            // 全局 agent 库缺席时直接走 Nebula 兜底（不再读 teams/<flowName>/agents/）。
+            case None => rootFallback(agentName)
           }
         case None =>
           sharedResources.agentLibrary.get(RootAgentIdentity.Name).flatMap {
@@ -365,7 +361,7 @@ class WebSocketRoutes(
     pendingEvent: AgentCommand.ExternalEvent
   ): IO[BgSessionActivator.ActivationResult] =
     kind match
-      case AgentKind.Delegate | AgentKind.SubTask =>
+      case AgentKind.Delegate =>
         IO.pure(
           BgSessionActivator.Deferred(
             s"session family $kind revival is owned by its supervisor respawn / boot-sweep legs"
@@ -1420,13 +1416,9 @@ class WebSocketRoutes(
                       )
                       activeMeta <- sessionStore.getActiveMeta
                       agentName = activeMeta.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
-                      // ⑦ (2026-08-24): 原为「WS connect 即恢复已挂团队」——挂在
-                      // initFlowTree → 树 actor 的 restoreTeams 上。团队功能删除批
-                      // 阶段 1 已断掉 initFlowTree（见 :490 注），此处**只保留** root
-                      // agent 的确保（ensureRootAgent 幂等，冷启 spawn / 热路径原样返回）；
-                      // 团队恢复腿随之不存在。/api/teams/mounted 在阶段 1 的中间态见
-                      // reports-evidence/team-feature-deletion/stage1/README.md §4；
-                      // 该路由本身已在阶段 2 退役（见 PresenceRoutes 同位墓碑注）。
+                      // ⑦ (2026-08-24) 的「WS connect 即恢复已挂团队」腿已随团队面删除
+                      // （团队功能删除批阶段 1），此处**只保留** root agent 的确保
+                      // （ensureRootAgent 幂等，冷启 spawn / 热路径原样返回）。
                       _ <- activeMeta.traverse_(meta =>
                         ensureRootAgent(meta.id).void.handleErrorWith(e =>
                           logger.warn(s"WS-connect root agent ensure failed for session ${meta.id}: ${e.getMessage}")
@@ -3425,14 +3417,15 @@ object WebSocketRoutes:
    *
    * 团队功能删除批（team-feature-deletion-20261104）阶段 3：原有第二条腿「Team
    * 记录按 busyMap 过滤」随 busy 标记面整体退役（busyMap 的唯一读者就是它，而
-   * `AgentKind.Team` 记录的唯一生产者是以团队会话登记表为底座的冷激活腿 ⇒ 两侧
+   * Team 记录的唯一生产者是以团队会话登记表为底座的冷激活腿 ⇒ 两侧
    * 同时失去数据源）。呈现面因此零变化：本仓再也产生不出 Team 记录。
    *
    * Standalone (zero class deps) so it is directly unit-testable
    * (ActiveAgentsFilterSpec).
    */
   def filterActiveAgents(registry: Map[String, AgentRecord]): IO[List[AgentRecord]] =
-    val taskKinds = Set(AgentKind.Delegate, AgentKind.Flow, AgentKind.SubTask)
+    // B5：SubTask kind 已删（子代理会话在 B3 换标为 Delegate）；Team 亦然。
+    val taskKinds = Set(AgentKind.Delegate, AgentKind.Flow)
     IO.pure(registry.values.toList.filter(r => taskKinds.contains(r.kind)))
 
   /**
@@ -3490,7 +3483,8 @@ object WebSocketRoutes:
    * 本就持有批次标题，此处对齐为单一解析缝。
    *
    * - `AgentKind.Delegate`：registryTitle 优先（跨重启权威），storeDescription 回填。
-   * - `AgentKind.SubTask`：DelegateRegistry 只装 delegate——只走 storeDescription。
+   * - 子代理会话（B3 换标后 kind=Delegate，DelegateRegistry 无记录）：registryTitle 为
+   *   None ⇒ 走 storeDescription。
    * - 其余 kind：None（既有三档链逐字不动）。
    *
    * 纯函数、零类依赖（`handleGetActiveAgents` 薄调用；IO 包装在调用方）。
@@ -3502,8 +3496,9 @@ object WebSocketRoutes:
     storeDescription: Option[String]
   ): Option[String] =
     val store = storeDescription.filter(_.trim.nonEmpty)
+    // B5：SubTask 分支删除（子代理会话是 Delegate；DelegateRegistry 只装真 delegate ⇒
+    // registryTitle 对它为 None，`.orElse(store)` 已承担原 SubTask 分支的全部效果）。
     if kind == AgentKind.Delegate then registryTitle.filter(_.trim.nonEmpty).orElse(store)
-    else if kind == AgentKind.SubTask then store
     else None
 
   /**

@@ -110,9 +110,9 @@ class MailIdleGateWiringSpec extends FunSuite:
 
   /**
    * fixture team（lead=boss, member=member）on disk under tmp —— 只是磁盘上的团队
-   *  实体（`teams/<name>/team.json` + agents/），供 `EntityLoader.loadTeamAgent` 的
-   *  重载腿读取。团队功能删除批阶段 3：团队会话登记表已删，不再有「object 单例跨
-   *  测试残留」问题；teamName 仍逐测试唯一（保持 fixture 互不干扰）。
+   *  实体（`teams/<name>/team.json` + agents/）。团队类型面删除批阶段 B2：
+   *  `EntityLoader.loadTeamAgent` 的重载腿已删，本 fixture 只剩「各测试团队名唯一、
+   *  不互相干扰」的隔离作用（teamName 仍逐测试唯一）。
    */
   private def fixtureTeam(tmp: os.Path, teamName: String): Unit =
     val data = tmp / "data"
@@ -127,6 +127,12 @@ class MailIdleGateWiringSpec extends FunSuite:
       val adir = teamDir / "agents" / name
       os.makeDir.all(adir)
       os.write.over(adir / "agent.json", """{"description": "fixture", "useWhen": "tests"}""")
+      // 团队类型面删除批阶段 B2（作者裁定 Q2）：Mail 激活身份只走全局 agent 库
+      // （loadTeamAgent 的团队局部查找腿已删）⇒ 同一份定义必须同时落在
+      // agents/<name>/，否则激活取不到 def（本 fixture 从「团队目录」迁到全局目录）。
+      val gdir = data / "agents" / name
+      os.makeDir.all(gdir)
+      os.write.over(gdir / "agent.json", """{"description": "fixture", "useWhen": "tests"}""")
 
   private def ctxFor(resources: SharedResources, system: ActorSystem, senderSid: String): ToolContext =
     ToolContext(

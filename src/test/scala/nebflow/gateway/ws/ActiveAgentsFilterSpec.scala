@@ -51,11 +51,11 @@ class ActiveAgentsFilterSpec extends FunSuite:
       .toSet
 
   test("task-lifecycle kinds are presence-based (no busy gating)") {
-    // Delegate/SubTask/Flow unregister on completion, so registry
-    // presence == in flight. (裁定5：Ephemeral 已删，不再作为 task kind 参与。)
+    // Delegate/Flow unregister on completion, so registry presence == in flight.
+    // (裁定5：Ephemeral 已删；B5：SubTask 枚举值已删，子代理会话即 Delegate。)
     val registry = Map(
       "del-1" -> rec("del-1", AgentKind.Delegate),
-      "sub-1" -> rec("sub-1", AgentKind.SubTask),
+      "sub-1" -> rec("sub-1", AgentKind.Delegate), // 子代理会话（原 SubTask kind）
       "flow-1" -> rec("flow-1", AgentKind.Flow)
     )
     val out = run(registry)
@@ -63,7 +63,7 @@ class ActiveAgentsFilterSpec extends FunSuite:
       out,
       Set(
         ("del-1", AgentKind.Delegate),
-        ("sub-1", AgentKind.SubTask),
+        ("sub-1", AgentKind.Delegate),
         ("flow-1", AgentKind.Flow)
       )
     )
@@ -107,7 +107,7 @@ class ActiveAgentsFilterSpec extends FunSuite:
       "del-idle" -> rec("del-idle", AgentKind.Delegate, AgentStatus.Idle),
       "del-standby" -> rec("del-standby", AgentKind.Delegate, AgentStatus.Waiting),
       "del-frozen" -> rec("del-frozen", AgentKind.Delegate, AgentStatus.Frozen),
-      "sub-restart" -> rec("sub-restart", AgentKind.SubTask, AgentStatus.Idle),
+      "sub-restart" -> rec("sub-restart", AgentKind.Delegate, AgentStatus.Idle),
       "flow-idle" -> rec("flow-idle", AgentKind.Flow, AgentStatus.Idle)
     )
     val rows = WebSocketRoutes.filterActiveAgents(registry).unsafeRunSync()

@@ -81,14 +81,6 @@ case class ToolContext(
    */
   isRemoteExec: Boolean = false,
   /**
-   * Team Manager task tools: the team name of a team-agent
-   * session, injected at spawn (AgentActor derives it from
-   * the retired team session registry). None for non-team contexts — TeamTaskCreate/Update
-   * hard-reject (no cross-team write surface); TeamTaskList falls back to the
-   * `team` parameter for Nebula's read-only oversight.
-   */
-  teamName: Option[String] = None,
-  /**
    * Project 上下文（#28 阶段 0）：项目分发器会话注入——Node 工具 project
    * 参数缺省从本字段取（分发器无需每次传 project）。None = 非项目上下文。
    * project 节点会话亦注入（SessionContext.projectName 链路

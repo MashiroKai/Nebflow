@@ -33,7 +33,7 @@ class CancelCascadeSpec extends CatsEffectSuite:
     AgentRecord(
       sessionId = id,
       ref = null, // 假端口不经 actor——ref 只被生产腿触碰
-      kind = AgentKind.SubTask,
+      kind = AgentKind.Delegate,
       rootSessionId = "root-x",
       parentSessionId = parent,
       status = status,

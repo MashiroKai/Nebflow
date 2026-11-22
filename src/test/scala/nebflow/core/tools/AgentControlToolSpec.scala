@@ -156,7 +156,7 @@ class AgentControlToolSpec extends CatsEffectSuite:
           "team-nebflow-project-Backend" -> AgentRecord(
             "team-nebflow-project-Backend",
             teamRef,
-            AgentKind.Team,
+            AgentKind.Root,
             "team-nebflow-project-Backend"
           )
         )
@@ -176,8 +176,13 @@ class AgentControlToolSpec extends CatsEffectSuite:
       assert(teamLine.contains("read-only"), s"Team row must be read-only now:\n$teamLine")
       assert(out.contains("Explorer"), s"agent name from task record:\n$out")
       assert(out.contains("guard test task"), s"task description column:\n$out")
-      assert(out.contains("2m0s"), s"up column from startedAt (120s → 2m0s):\n$out")
-      assert(out.contains("45s"), s"idle column from lastActivityMs (45s):\n$out")
+      // 时长列判据改为「档位」而非逐秒字面量：startedAt/lastActivityMs 是相对
+      // 测试起点的偏移，渲染又取渲染时的 now ⇒ 机器负载下 1 秒抖动会把 "2m0s" 变成
+      // "2m3s"（本批在并入批回归共存时实测复现，与产品行为无关）。断言意图是
+      // 「up 列按分钟档渲染 / idle 列按秒档渲染」。
+      val delegateLine = out.linesIterator.find(_.contains("delegate-Explorer-aaaa1111")).getOrElse("")
+      assert(delegateLine.matches(".*\\b2m\\d+s\\b.*"), s"up column from startedAt (120s → 2mXXs):\n$delegateLine")
+      assert(delegateLine.matches(".*\\b4[0-9]s\\b.*"), s"idle column from lastActivityMs (45s → 4Xs):\n$delegateLine")
     program.guarantee(system.stopAll.attempt.void)
   }
 
@@ -223,7 +228,7 @@ class AgentControlToolSpec extends CatsEffectSuite:
           "team-member-x" -> AgentRecord(
             "team-member-x",
             memRef,
-            AgentKind.Team,
+            AgentKind.Root,
             "root-t1",
             startedAt = System.currentTimeMillis() - 30_000,
             status = AgentStatus.Processing,
@@ -237,10 +242,11 @@ class AgentControlToolSpec extends CatsEffectSuite:
     val res = program.guarantee(system.stopAll.attempt.void).unsafeRunSync()
     // 阶段 3 口径：status 是**只读**面（诊断可见性保留，便于看残留记录），
     // 但可管理性判定经同一 `kindRejection` ⇒ Team 恒 "manageable: no (read-only kind)"。
-    val out = res.toOption.getOrElse(fail(s"status must still render for a Team record, got: $res"))
-    assert(out.contains("kind: Team"), out)
+    val out = res.toOption.getOrElse(fail(s"status must still render for a Root (mail-activated) record, got: $res"))
+    // B5：Mail 激活的长驻会话登记为 Root（Team 枚举值已删）⇒ 恒不可管。
+    assert(out.contains("kind: Root"), out)
     assert(out.contains("manageable: no (read-only kind)"), out)
-    assert(!out.contains("manageable: cancel"), s"Team target must not advertise cancel/restart:\n$out")
+    assert(!out.contains("manageable: cancel"), s"Root target must not advertise cancel/restart:\n$out")
   }
 
   test("status detects orphan task files (registry empty, task still running)") {
@@ -291,7 +297,7 @@ class AgentControlToolSpec extends CatsEffectSuite:
           "team-nebflow-project-Backend" -> AgentRecord(
             "team-nebflow-project-Backend",
             teamRef,
-            AgentKind.Team,
+            AgentKind.Root,
             "self-session"
           ),
           // 同桶 Flow —— cancelFlow 指引
@@ -310,9 +316,10 @@ class AgentControlToolSpec extends CatsEffectSuite:
       assert(rootRes.left.exists(_.message.contains("cannot be managed")), rootRes.toString)
       // 团队功能删除批阶段 3：Team 目标恒显式拒绝（team scope 整段删除；Block 2
       // §C3 的「root 桶全局可管 Team」随之作废）。
+      // B5：Mail 激活的长驻会话现为 Root ⇒ 由 self-preservation 拒绝承载同一「不可管」结果。
       assert(
-        teamRes.left.exists(_.message.contains("Team targets are not manageable")),
-        s"Team target must be refused for every caller, got: $teamRes"
+        teamRes.left.exists(_.message.contains("cannot be managed")),
+        s"Root (mail-activated) target must be refused for every caller, got: $teamRes"
       )
       assert(flowRes.left.exists(_.message.contains("cancelFlow")), flowRes.toString)
       assert(crossRes.left.exists(_.message.contains("Permission denied")), crossRes.toString)
@@ -368,7 +375,9 @@ class AgentControlToolSpec extends CatsEffectSuite:
           "subtask-Worker-eeee5555" -> AgentRecord(
             "subtask-Worker-eeee5555",
             childRef,
-            AgentKind.SubTask,
+            // B3：子代理会话换标为 Delegate（§4.1 衍生清单 3）——本用例断言的
+            // 「降级 cancel 腿」判据与换标前一致。
+            AgentKind.Delegate,
             "root-5",
             parentRef = Some(parentRef),
             parentSessionId = "root-5"
@@ -391,7 +400,9 @@ class AgentControlToolSpec extends CatsEffectSuite:
       assert(res.toOption.get.contains("fallback path"), res.toOption.get)
       val ext = parentCmds.collectFirst { case e: AgentCommand.ExternalEvent => e }
       assert(ext.isDefined, s"parent must be notified, got: $parentCmds")
-      assertEquals(ext.get.source, "subtask")
+      // B3：来源改取任务行 source（store 是这条事实的单点），不再由 kind 推导——
+      // 本 fixture 的任务行 source="delegate"，故父侧通知 source 同为 delegate。
+      assertEquals(ext.get.source, "delegate")
       assertEquals(ext.get.eventType, "cancelled")
       assertEquals(ext.get.metadata("cancelled").flatMap(_.asBoolean), Some(true))
       val task = tasks.find(_.taskId == "subtask-Worker-eeee5555").get

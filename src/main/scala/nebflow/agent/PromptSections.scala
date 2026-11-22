@@ -78,7 +78,8 @@ object PromptSections:
     skillCatalog: String = "",
     /** Pre-rendered flow catalog (per-agent, from SkillService.buildPerAgentFlowCatalog). */
     flowCatalog: String = "",
-    /** Pre-rendered team catalog (from TeamCatalog.buildCatalog). */
+    /** Pre-rendered team catalog — 恒空串（团队类型面删除批阶段 B2 后无生产者；
+     *  order 816 section 的 condition=nonEmpty 因此永不渲染，字段保留至阶段 3）。 */
     teamCatalog: String = "",
     /** Pre-rendered memory block (from ContextRefresher.buildMemoryBlock). */
     memoryBlock: String = "",

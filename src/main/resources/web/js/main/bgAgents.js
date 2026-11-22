@@ -332,7 +332,7 @@ function bgIdleDetail(info) {
 
 /** Session-id prefix predicate (single point): `dispatcher-` = Project task
  *  dispatcher session. `node-` = Project Flow Map node session, `delegate-` /
- *  `subtask-` = Delegate / SubTask sub-agents. */
+ *  `subtask-` = 子代理（历史 id 前缀；SubTask kind 已在阶段 B3 换标为 Delegate）. */
 function isDispatcherSession(id) {
   return typeof id === 'string' && id.startsWith('dispatcher-');
 }
@@ -735,18 +735,19 @@ function bgMemberKindWord(member) {
   // kernel/执行体的**只读侦察子代理本体**（BlockingSubagent.scala:81 的唯一 spawn 点，
   // 机制固定 = AgentCore.SubagentFixedTools，叶子不派生），身份词 = `subagent`。
   // 为什么必须在这里抢先（不能靠 info.kind / source 链）：引擎把这条腿**按控制面
-  // 归组**注册成 `AgentKind.SubTask`（BlockingSubagent.scala 的 registerAgent(kind=
-  // AgentKind.SubTask)——为了 AgentControl 的 cancel/restart 白名单与无 Mail 面的语义），
-  // 快照面 `kind` 因此逐字是 "SubTask"（WebSocketRoutes.activeAgentEntryJson 的
-  // `"kind" -> rec.kind.toString`）；而术语统一批把 `SubTask` 归一成 `delegate`
+  // 归组**注册进同一控制面家族（阶段 B3 换标前逐字是 `AgentKind.SubTask`，换标后为
+  // `AgentKind.Delegate`——为了 AgentControl 的 cancel/restart 白名单与无 Mail 面的
+  // 语义），快照面 `kind` 因此只反映「可管可 cancel 的族」，不区分侦察子代理与
+  // Delegate 批次；而术语统一批把 `SubTask` 归一成 `delegate`
   // （termWords.badgeFaceOfKind）——于是**真的子智能体在面板上被贴上了 delegate 标签**
   // （作者截图实证：kernel「节点卡点审计」下的两个子行，store 证据 = subagent-tasks/
   // delegate-nebflow-94ce9d8e.json 的 source:"subagent" + taskId "subagent-*"）。
   // 判据边界（防止把别的 delegate 混改）：只认会话 id 前缀 `subagent-`——`subtask-*`
-  // （SubTaskTool 的并行工人）与 `delegate-*`（Delegate 批次）逐字不动，`SubTask`
-  // 数据词在 store source / 协议 kind 两条既有路径上仍归一为 `delegate`。
+  // （历史工人 id 前缀，SubTaskTool 已退役、旧会话仍在盘上）与 `delegate-*`（Delegate
+  // 批次）逐字不动，`SubTask`/`subtask` 数据词在 store source / 协议 kind 两条既有
+  // 路径上仍归一为 `delegate`（旧快照兼容，保留不删）。
   // 真实身份与路由零改动：本函数只产**显示词**，AgentKind / MailAddress / 控制面
-  // 白名单全在原处（SubTask 依旧无 Mail 面、依旧可 cancel/restart）。
+  // 白名单全在原处（子代理仍无 Mail 面、依旧可 cancel/restart）。
   if (sid.startsWith('subagent-')) return badgeWord('subagent');
   const source = String(m.source || '');
   const word = source || String(info.kind || '') || bgAgentKindFromSession(sid);
@@ -2126,7 +2127,8 @@ export function bgTaskRowHtml(id, info, opts = {}) {
   // agentflow 错标修复批（2026-11-06）：两个词**同读一个来源对象** opts.registryRow
   // （注册行镜像；成员行恒 null）——组头层级不再自己决定身份词，kernel / 旧盘行因此
   // 拿不到 agentflow 词。
-  // 修订批九点②补漏：快照 kind（AgentKind.SubTask）同走显示词归一（数据面不动）。
+  // 修订批九点②补漏：快照 kind（换标前 AgentKind.SubTask / 换标后 Delegate）同走
+  // 显示词归一（数据面不动；'SubTask' 字面量留作旧快照兼容）。
   const registryRow = opts.headLevel ? (opts.registryRow || null) : null;
   const kind = opts.headLevel
     ? bgDelegateBadgeWord(bgDelegateExecMode(registryRow))

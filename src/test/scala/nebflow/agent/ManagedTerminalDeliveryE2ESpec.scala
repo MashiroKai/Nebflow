@@ -186,7 +186,7 @@ class ManagedTerminalDeliveryE2ESpec extends CatsEffectSuite:
           AgentRecord(
             sessionId = sid,
             ref = agent,
-            kind = AgentKind.SubTask,
+            kind = AgentKind.Delegate,
             rootSessionId = parentSid,
             parentSessionId = parentSid,
             supervisorRef = Some(target)

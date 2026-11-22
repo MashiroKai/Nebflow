@@ -1077,6 +1077,7 @@ export default {
   // per-row `#id · title` badge
   'subagents.taskBadge': 'Task: {text}',
   'manage.uptime': 'Up {time}',
+  'manage.readonlyRoot': 'Root session agents are read-only (self-preservation guard)',
   'manage.readonlyTeam': 'Team agents are read-only',
   'manage.readonlyFlow': 'Flow node agents are read-only',
   'manage.stopSent': 'Stop command sent',

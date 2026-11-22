@@ -131,6 +131,11 @@ class ColdQueueActivationSpec extends FunSuite:
     val memberDir = teamDir / "agents" / "member"
     os.makeDir.all(memberDir)
     os.write.over(memberDir / "agent.json", """{"description": "fixture member", "useWhen": "tests"}""")
+    // 团队类型面删除批阶段 B2（作者裁定 Q2）：Mail 激活身份只走全局 agent 库
+    // （loadTeamAgent 的团队局部查找腿已删）⇒ 成员定义同时落在 agents/member/。
+    val globalMemberDir = data / "agents" / "member"
+    os.makeDir.all(globalMemberDir)
+    os.write.over(globalMemberDir / "agent.json", """{"description": "fixture member", "useWhen": "tests"}""")
 
   private def ctxFor(
     resources: SharedResources,
@@ -202,7 +207,7 @@ class ColdQueueActivationSpec extends FunSuite:
         _ + (meta.id -> AgentRecord(
           sessionId = meta.id,
           ref = victim,
-          kind = AgentKind.Team,
+          kind = AgentKind.Root,
           rootSessionId = meta.id
         ))
       )

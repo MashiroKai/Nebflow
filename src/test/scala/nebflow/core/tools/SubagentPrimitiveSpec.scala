@@ -255,7 +255,8 @@ class SubagentPrimitiveSpec extends CatsEffectSuite:
         _ + (childId -> AgentRecord(
           sessionId = childId,
           ref = childRef,
-          kind = AgentKind.SubTask,
+          // B3：子代理会话换标为 Delegate（§4.1 衍生清单 3）。
+          kind = AgentKind.Delegate,
           rootSessionId = parentId,
           parentSessionId = parentId
         ))

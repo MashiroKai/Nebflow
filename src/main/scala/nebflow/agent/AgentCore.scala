@@ -766,13 +766,6 @@ object AgentCore:
   )
 
   /**
-   * Team task tools（任务工具重做 2026-08-30：category=team 机制层注入
-   * 全体成员——Manager 与成员同级可用，任务=进展展示语义；不再是 lead 专属
-   * owner 集。SubTask workers / flow nodes / depth≥2 "*" agents 仍剥离）。
-   */
-  val TeamTaskTools = Set("TeamTaskCreate", "TeamTaskUpdate", "TeamTaskList")
-
-  /**
    * Base tools always available to ALL agents regardless of category.
    * These are injected automatically — agent.json does not need to list them.
    *
@@ -927,11 +920,10 @@ object AgentCore:
    */
   private[agent] def legacyFixedTools(agentDef: AgentDef): Set[String] =
     agentDef.category match
-      // 任务工具重做（2026-08-30）：任务只配 team——TeamTask 三件机制层注入
-      // 全体 team 成员（照 #381 SubTask 先例；ctx.teamName 把写域钉死在
-      // 自己的 team，无跨 team 面）。FlowExecute 移出固定面（2026-09-06
-      // 工具面裁撤批）。
-      case "team" => BaseTools + "Mail" ++ AgentCore.TeamTaskTools
+      // 团队类型面删除批阶段 B2：TeamTask 三件随团队任务工具面退役（作者裁定
+      // Q11）——category=team 固定面只剩 BaseTools + Mail。（FlowExecute 已在
+      // 2026-09-06 工具面裁撤批移出固定面。）
+      case "team" => BaseTools + "Mail"
       // FlowReport 移出固定面（2026-09-06 裁撤批）——flow 节点文本输出即结果。
       case "flow" => BaseTools
       case _ => BaseTools

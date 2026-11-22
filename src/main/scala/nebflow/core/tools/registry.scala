@@ -73,12 +73,10 @@ object ToolRegistry:
       // Perception mail (mail-perception-impl batch): draft + snapshot card;
       // the user always triggers the actual send (card/canvas).
       "EmailSend" -> PerceptionMailTool,
-      // Team task tools (任务工具重做 2026-08-30: 任务=进展展示，工具只配
-      // team——category=team 机制层注入全体成员；session 域 TaskCreate/Update/
-      // Query 已退役，TTL 清理见 TaskStore)
-      "TeamTaskCreate" -> TeamTaskCreateTool,
-      "TeamTaskUpdate" -> TeamTaskUpdateTool,
-      "TeamTaskList" -> TeamTaskListTool,
+      // 团队任务工具（TeamTaskCreate/Update/List）随团队类型面删除批阶段 B2 退役
+      // （作者裁定 Q11）：它们的注入面 = category=team 机制层，团队退役后无注入方；
+      // ToolContext.teamName 恒 None ⇒ 三个工具必 hard-reject。存储 TaskStore 保留
+      // （session 域 TaskList 仍在用），本批只撤工具面。
       // Scheduled tasks
       "Schedule" -> ScheduleTool,
       // Unified agent communication —— **唯一消息原语**（R2「一个 Mail 统一」，
