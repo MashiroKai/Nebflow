@@ -33,7 +33,8 @@ import { installTicketMock } from './nf-ticket-mock.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
-const WEB_DIR = resolve(ROOT, 'src/main/resources/web');
+// WEB_ROOT 覆写 = 负控腿（拿本 spec 去打**未修**的 web 树，必须触红）。
+const WEB_DIR = resolve(process.env.WEB_ROOT || join(ROOT, 'src/main/resources/web'));
 const PORT = Number(process.env.PORT || 8181);
 const BASE = `http://127.0.0.1:${PORT}`;
 const SHOTS_DIR = process.env.SHOTS_DIR || join(ROOT, 'evidence', '20261031_output-tag', 'shots');
@@ -386,6 +387,212 @@ try {
   ok(consoleErrors.length === 0, `R7 零 console 错误（${consoleErrors.length}${consoleErrors.length ? '：' + consoleErrors[0] : ''}）`);
 
   await page.context().close();
+} catch (e) {
+  // R1–R7 异常 ⇒ 收尾（浏览器/静态服务在 R8 段的 finally 里统一关，这里只兜底）。
+  await browser.close().catch(() => {});
+  webServer.close();
+  throw e;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   R8 两相渲染面 + 上滑分页腿（report-filter-gap 批，作者报障 2026-11-22 09:04
+   「消息气泡退化为原 md report 块」实拍：DELEGATE 徽章下的气泡整段显示
+   `<report> **…**`，标签裸露、markdown 未渲染）。
+
+   根因（本批实测）：历史回放腿与上滑分页腿都是**两相**渲染 —— 先
+   `el.textContent = 源文本`（persistence.js 的 deferMd），再经 rAF 升级批换成
+   markdown/摘除面。手机上这一窗口可被拉长（后台标签 rAF 挂起 / 长历史跨数百帧
+   / 分页批与手势抢帧），气泡就长时间停在「裸 <report> 标签 + 未渲染 markdown」
+   的原报告块态 —— 作者截图正是这一相。第二处漏网：分页腿 deferMd 把第 4 参
+   `opts` 就地丢掉 ⇒ 该腿 root 行连透明面都拿不到（裸标签以 HTML 元素落地、
+   块内 markdown 被吞）。
+
+   判据（R8）：
+     R8a 单元负控：第一相收口是唯一开关 —— 不带 `{report:true}` 的调用方拿到
+         **源文本原样**（含裸标签 = 改前第一相），带则不见标签；
+     R8b 同步回放腿第一相（rAF 抑制 = 升级批未落地）：root 平衡块行的气泡文本
+         不得含裸 `<report>`/`</report>`，也不得把它们当元素解析；
+     R8c 分页挂载腿终相：root 平衡块行 = 摘除面（标签零暴露）；块内提到字面
+         `<report>` 的零块行 = 透明面（markdown 照常渲染、标签是转义后的可见
+         字面文本，**不是**被当 HTML 元素吞掉块内 markdown）；
+     R8d 分页挂载腿在 rAF 抑制下的兜底路径同样零裸标签（该腿分帧推进带 120ms
+         setTimeout 兜底；同步回放腿没有兜底 —— 这正是手机端窗口可长到被看见的
+         原因，故第一相的可观测性由 R8b 承担）；
+     R8e 两页零 console/pageerror。
+   ───────────────────────────────────────────────────────────────────────── */
+const R8_FULL = ['<report>', '**结论先行**：块内正文应当照常渲染。', '</report>', '', '框外叙述。'].join('\n');
+const R8_ROWS = [
+  { type: 'user', text: 'R8 分页腿对照输入', timestamp: Date.now() - 60000 },
+  { type: 'ai', text: R8_FULL, terminal: true, durationMs: 4200, model: 'stub-r8', isRoot: true, timestamp: Date.now() - 50000 },
+  { type: 'user', text: 'R8 零块对照输入', timestamp: Date.now() - 40000 },
+  // 块内**提到**字面 <report> 的真实形态 ⇒ 平衡闸判嵌套 ⇒ 零块面（作者会话里
+  // 真实存在的行；改前分页腿在此把标签当 HTML 元素、块内 markdown 全吞）。
+  { type: 'ai', text: '<report>\n结论：**唯一用户可见面**是 <report> 语法本身。\n</report>', terminal: true, durationMs: 1200, model: 'stub-r8', isRoot: true, timestamp: Date.now() - 30000 },
+];
+/** 独立上下文：可抑制 rAF（模拟「升级批未落地」的手机现场）后注入 R8 画面。 */
+async function bootR8(browser, suppressRaf, mode) {
+  const ctx = await browser.newContext({ viewport: VIEWPORT });
+  await ctx.addInitScript(() => {
+    localStorage.setItem('nebflow_token', 't'); localStorage.setItem('neblink_token', 't');
+    localStorage.setItem('nebflow_locale', 'zh-CN'); localStorage.setItem('neblink_locale', 'zh-CN');
+  });
+  const page = await ctx.newPage();
+  page.setDefaultTimeout(30000);
+  const pageErrors = [];
+  const consoleErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(String(e.message || e).slice(0, 300)));
+  page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(String(m.text()).slice(0, 300)); });
+  await page.route('**/api/**', (r) => r.fulfill({ json: {} }));
+  await page.route('**/agents/**', (r) => r.fulfill({ json: {} }));
+  await installTicketMock(page);
+  await page.routeWebSocket(/\/ws/, (ws) => {
+    ws.onMessage((raw) => {
+      let m; try { m = JSON.parse(raw); } catch { return; }
+      if (m.type === 'getHistory') {
+        return ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: [], hasMore: false, offset: 0 }));
+      }
+    });
+    ws.send(JSON.stringify({ type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {} }));
+    ws.send(JSON.stringify({ type: 'sessionList', sessions: [{ id: 'sess-r8', agentName: 'Nebula', title: 'R8', updatedAt: Date.now() }], activeId: 'sess-r8', folders: [] }));
+  });
+  await page.goto(BASE + '/index.html');
+  await page.waitForSelector('#activity-bar', { timeout: 20000, state: 'attached' });
+  await page.evaluate(() => {
+    document.querySelectorAll('.onboarding-overlay').forEach((o) => o.remove());
+    document.documentElement.classList.remove('ui-init');
+  });
+  // rAF 抑制 = 升级批永不落地（手机后台标签 / 长历史批未 drain 的现场）：
+  // 之后注入的每一行都停在**第一相**纯文本 —— 本批要钉死的那一面。
+  if (suppressRaf) await page.evaluate(() => { window.requestAnimationFrame = () => 0; });
+  await sleep(300);
+  if (mode === 'sync') {
+    await page.evaluate((msgs) => {
+      window.__r8Msgs = msgs;
+    }, R8_ROWS);
+    await page.evaluate(async () => {
+      const { restoreFromBackendHistory } = await import('/js/persistence.js');
+      restoreFromBackendHistory(window.__r8Msgs, { scrollToBottom: false });
+    });
+  } else {
+    await page.evaluate((msgs) => {
+      window.__r8Msgs = msgs;
+    }, R8_ROWS);
+    await page.evaluate(async () => {
+      const { mountHistoryPageChunked } = await import('/js/persistence.js');
+      await mountHistoryPageChunked(window.__r8Msgs, {}, {
+        onBuilt: (container) => {
+          const chat = document.getElementById('chat');
+          chat.innerHTML = '';
+          chat.appendChild(container);
+          return true;
+        },
+      });
+    });
+  }
+  await sleep(900);
+  return { ctx, page, pageErrors, consoleErrors };
+}
+
+try {
+  // R8a —— 单元负控：第一相收口是唯一开关（改前行为 = 源文本原样落地）。
+  const { ctx: c8a, page: p8a, pageErrors: e8a, consoleErrors: ce8a } = await bootR8(browser, false, 'sync');
+  const r8a = await p8a.evaluate(async (full) => {
+    const mod = await import('/js/outputTag.js');
+    // 负控腿（拿本 spec 打未修树）：模块里没有第一相收口 ⇒ 直接判红，不抛断链。
+    if (typeof mod.outputFirstPaintText !== 'function') return { missing: true };
+    const fn = mod.outputFirstPaintText;
+    const raw = fn(full);
+    const faced = fn(full, { report: true });
+    return {
+      rawHasTags: raw.includes('<report>') && raw.includes('</report>'),
+      rawIsSource: raw === full,
+      facedNoTags: !faced.includes('<report>') && !faced.includes('</report>'),
+      facedHasInner: faced.includes('结论先行') && !faced.includes('框外叙述'),
+      emptyOk: fn('', { report: true }) === '' && fn(null) === '',
+    };
+  }, R8_FULL);
+  ok(r8a.missing !== true, 'R8a 第一相收口原语在场（outputFirstPaintText）');
+  ok(r8a.rawIsSource === true, 'R8a 负控：不带 report 选项 ⇒ 第一相 = 源文本原样（含裸标签，= 改前行为）');
+  ok(r8a.rawHasTags === true, 'R8a 负控：改前面文本确实带裸 <report> 标签');
+  ok(r8a.facedNoTags === true, 'R8a 修复面：root 面第一相零标签');
+  ok(r8a.facedHasInner === true, 'R8a 修复面：root 面第一相 = 块内正文（不带框外叙述）');
+  ok(r8a.emptyOk === true, 'R8a 空值/null 不炸');
+  await c8a.close();
+
+  // R8b —— 同步回放腿**第一相**（rAF 抑制 = 升级批未落地）：不得含裸标签。
+  const { ctx: c8b, page: p8b, pageErrors: e8b, consoleErrors: ce8b } = await bootR8(browser, true, 'sync');
+  const r8b = await p8b.evaluate(() => {
+    const b = Array.from(document.querySelectorAll('#chat .bubble.ai:not(.thinking-bubble)'))
+      .find((x) => (x.textContent || '').includes('结论先行') || (x.textContent || '').includes('唯一用户可见面'));
+    if (!b) return { found: false };
+    return {
+      found: true,
+      text: b.textContent || '',
+      showsTags: (b.textContent || '').includes('<report>') || (b.textContent || '').includes('</report>'),
+      tagElement: !!b.querySelector('report'),
+      defer: b.dataset.nfDeferOutput || '',
+    };
+  });
+  ok(r8b.found === true, 'R8b 第一相气泡在场');
+  ok(r8b.defer === '1', 'R8b 该行确为待升级的 root report 行（升级批未落地 = 手机现场）');
+  ok(r8b.showsTags === false, `R8b 第一相零裸标签（气泡文本：${String(r8b.text).replace(/\s+/g, ' ').slice(0, 40)}）`);
+  ok(r8b.tagElement === false, 'R8b 第一相无 <report> 元素残留');
+  ok(e8b.length === 0 && ce8b.length === 0, `R8b 零异常（page=${e8b.length} console=${ce8b.length}）`);
+  await c8b.close();
+
+  // R8c —— 分页挂载腿终相：平衡块行摘除面；零块（嵌套/提及）行走透明面。
+  const { ctx: c8c, page: p8c, pageErrors: e8c, consoleErrors: ce8c } = await bootR8(browser, false, 'mount');
+  const r8c = await p8c.evaluate(() => {
+    const pick = (needle) => Array.from(document.querySelectorAll('#chat .bubble.ai:not(.thinking-bubble)'))
+      .find((x) => (x.textContent || '').includes(needle));
+    const block = pick('结论先行');
+    const mention = pick('唯一用户可见面');
+    return {
+      block: block ? {
+        nfOutput: block.dataset.nfOutput || '',
+        noTags: !(block.textContent || '').includes('<report>'),
+        tagElement: !!block.querySelector('report'),
+        bold: !!block.querySelector('strong'),
+      } : null,
+      mention: mention ? {
+        tagElement: !!mention.querySelector('report'),
+        bold: !!mention.querySelector('strong'),
+        escapedTagText: (mention.textContent || '').includes('<report>'),
+      } : null,
+    };
+  });
+  ok(!!r8c.block, 'R8c 分页腿平衡块行在场');
+  ok(r8c.block && r8c.block.nfOutput === '1', 'R8c 分页腿平衡块行走摘除面（data-nf-output）');
+  ok(r8c.block && r8c.block.noTags === true, 'R8c 分页腿平衡块行零裸标签');
+  ok(r8c.block && r8c.block.bold === true, 'R8c 分页腿平衡块行块内 markdown 照常渲染');
+  ok(!!r8c.mention, 'R8c 分页腿零块（提及式）行在场');
+  ok(r8c.mention && r8c.mention.tagElement === false,
+    'R8c 分页腿零块行不再把 <report> 当 HTML 元素吞块内 markdown（改前 = 元素落地 + markdown 被吞）');
+  ok(r8c.mention && r8c.mention.bold === true, 'R8c 分页腿零块行块内 markdown 渲染（透明面 opts 未被丢弃）');
+  ok(e8c.length === 0 && ce8c.length === 0, `R8c 零异常（page=${e8c.length} console=${ce8c.length}）`);
+  await c8c.close();
+
+  // R8d —— 分页挂载腿在 rAF 抑制下的兜底：该腿的分帧推进带 120ms setTimeout
+  // 兜底（nextMountFrame），后台标签 rAF 挂起时升级批仍会 drain ⇒ 断言「兜底路径
+  // 走完也零裸标签」。第一相本身的可观测性由 R8b（同步回放腿，无兜底）承担。
+  const { ctx: c8d, page: p8d, pageErrors: e8d, consoleErrors: ce8d } = await bootR8(browser, true, 'mount');
+  const r8d = await p8d.evaluate(() => {
+    const b = Array.from(document.querySelectorAll('#chat .bubble.ai:not(.thinking-bubble)'))
+      .find((x) => (x.textContent || '').includes('结论先行'));
+    if (!b) return { found: false };
+    return {
+      found: true,
+      showsTags: (b.textContent || '').includes('<report>') || (b.textContent || '').includes('</report>'),
+      tagElement: !!b.querySelector('report'),
+      faced: b.dataset.nfOutput === '1',
+    };
+  });
+  ok(r8d.found === true, 'R8d 分页腿（rAF 抑制）气泡在场');
+  ok(r8d.showsTags === false, 'R8d 分页腿（rAF 抑制）零裸标签');
+  ok(r8d.tagElement === false, 'R8d 分页腿（rAF 抑制）无 <report> 元素残留');
+  ok(r8d.faced === true, 'R8d 分页腿（rAF 抑制）仍走到摘除面（nextMountFrame 120ms 兜底不饿死升级批）');
+  ok(e8d.length === 0 && ce8d.length === 0, `R8d 零异常（page=${e8d.length} console=${ce8d.length}）`);
+  await c8d.close();
 } finally {
   await browser.close();
   webServer.close();
