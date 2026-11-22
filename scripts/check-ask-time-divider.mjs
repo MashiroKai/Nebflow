@@ -10,6 +10,7 @@
 //     S3 时间源 = 既有 ts 字段：实时落行处（user/ai/error/say/注入）均带 ts: Date.now()
 //     S4 落盘保留 ts（askDock.js persistRow），旧行缺席不落键
 //     S5 样式在场（ask.css `.ask-time-divider`，细线 + 小字，零新材质 token）
+//     S11 服务端回放下发 timestamp（WsAskHandlers.encodeTranscript，仅 >0）
 //     S6 无新状态：分隔线模块与 askDialog 不新建 localStorage 键
 //   B 组（行为：真跑纯模块，不是 grep）
 //     S7 分段：会话开头必插；间隔 > 阈值插；= 阈值不插；无时间行不起段不断段
@@ -75,6 +76,15 @@ check('S5', /\.ask-time-divider\s*\{/.test(cssSrc) && /\.ask-time-divider::befor
 
 // 只看代码（去掉 // 注释），避免头注释里的说明词误伤。
 const codeOf = (s) => s.replace(/\/\/.*$/gm, '');
+// S11 服务端回放下发时间戳（encodeTranscript user/ai 行仅 >0 时带 timestamp）。
+const WS_ASK = join(ROOT, 'src', 'main', 'scala', 'nebflow', 'gateway', 'WsAskHandlers.scala');
+const wsSrc = read(WS_ASK);
+check('S11', /private\[gateway\] def withTimestamp\(/.test(wsSrc)
+  && /withTimestamp\(Json\.obj\("role" -> "user"/.test(wsSrc)
+  && /withTimestamp\(Json\.obj\("role" -> "ai"/.test(wsSrc)
+  && /if ts > 0L/.test(wsSrc),
+  WS_ASK, 'encodeTranscript 未对 user/ai 行下发 timestamp（或缺 >0 闸）');
+
 const newStore = /localStorage/.test(codeOf(modSrc)) || /localStorage\.setItem\(\s*key\(\s*'ask-time/.test(codeOf(dlgSrc));
 check('S6', !newStore, MODULE, '分隔线不得新建 localStorage 状态');
 
