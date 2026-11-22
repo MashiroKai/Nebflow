@@ -3357,6 +3357,8 @@ export default {
   'todoapple.discardPending': '放弃重试',
   'todoapple.replyFailed': '回复未发送，请重试一次。',
   'todoapple.answerFirst': '先作答再完成',
+  'todoapple.decisionPending': '待作答',
+  'todoapple.decisionAnswered': '已作答',
   'todoapple.answerSubmit': '提交作答',
   'todoapple.answerRejected': '作答未保存',
   'todoapple.answerSecretBlocked': '敏感决策题本期不能在待办里作答',

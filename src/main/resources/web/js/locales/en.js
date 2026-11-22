@@ -3447,6 +3447,8 @@ export default {
   'todoapple.discardPending': 'Discard retry',
   'todoapple.replyFailed': 'Reply not sent. Please try again.',
   'todoapple.answerFirst': 'Answer first, then complete',
+  'todoapple.decisionPending': 'Awaiting answer',
+  'todoapple.decisionAnswered': 'Answered',
   'todoapple.answerSubmit': 'Submit answer',
   'todoapple.answerRejected': 'Answer not saved',
   'todoapple.answerSecretBlocked': 'Sensitive decisions cannot be answered in todos yet',
