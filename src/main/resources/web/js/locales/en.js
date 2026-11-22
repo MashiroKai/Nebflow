@@ -2950,8 +2950,6 @@ export default {
   'perm.detail.device': 'Device',
   'perm.detail.cwd': 'Working directory',
   'perm.detail.target': 'Target path',
-  'perm.detail.gate': 'gate',
-  'perm.detail.rule': 'rule',
   'perm.detail.remoteExec': '(remote-exec)',
   'perm.detail.noRule': 'fixed confirmation of this gate (no rule hit)',
 

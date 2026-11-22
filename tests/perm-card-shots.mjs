@@ -85,7 +85,6 @@ function factsOf(frame) {
   const facts = [];
   facts.push({ id: 'tool', text: frame.toolName, note: '工具名' });
   if (d.reason && d.reason.label) facts.push({ id: 'label', text: d.reason.label, note: '危险类型·人话标签' });
-  if (d.reason && d.reason.ruleId) facts.push({ id: 'rule', text: d.reason.ruleId, note: '判定规则 id' });
   if (d.scope && d.scope.device) facts.push({ id: 'device', text: d.scope.device, note: '设备' });
   if (d.scope && d.scope.cwd) facts.push({ id: 'cwd', text: d.scope.cwd, note: '工作目录' });
   if (d.scope && d.scope.target) facts.push({ id: 'target', text: d.scope.target, note: '目标路径' });

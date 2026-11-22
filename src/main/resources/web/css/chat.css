@@ -4318,20 +4318,6 @@ body:not(.mobile-layer) .option-preview-media {
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.perm-reason-gate,
-.perm-reason-rule {
-  font-size: var(--ds-fs-meta);
-  color: var(--ds-text-muted);
-  overflow-wrap: anywhere;
-}
-/* 闸名 + 规则 id 成组：整组折行，不让「规则」孤零零掉到下一行最左。 */
-.perm-reason-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0 var(--ds-space-1h);
-  min-width: 0;
-}
 /* 作用域一行：设备 · 工作目录 · 目标路径（键次要字色，值等宽、可折可滚）。 */
 .perm-scope {
   display: flex;
