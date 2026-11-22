@@ -77,8 +77,7 @@ object AskBashGuard:
         else ok = false
       else if GitBranchFilterFlags.exists(f => t.startsWith(f + "=")) then
         if t.indexOf('=') < t.length - 1 then i += 1 else ok = false
-      else if !t.startsWith("-") then
-        if listing then i += 1 else ok = false
+      else if !t.startsWith("-") then if listing then i += 1 else ok = false
       else ok = false
     end while
     if ok then Right(()) else refused
