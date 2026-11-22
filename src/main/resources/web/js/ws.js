@@ -402,6 +402,12 @@ const TERMINAL_MSG_TYPES = new Set([
   // 会话帧被入口过滤器丢弃，活跃会话帧无订阅者 no-op（后端照发，零触碰）。
   'backgroundTaskUpdate',
   'askUser', 'askPermission',
+  // 控制台单实例接管独占两帧（2026-10-27；2026-11-22 历史基线回补）——均无 sessionId 的
+  // **本连接**直回/定向帧。🔴 必须入 GLOBAL（remoteAgents 同律）：否则会被下方视图路由当
+  // 会话内事件 ⇒ setActiveView(primary) 抢走正在看的视图。消费点 = takeoverModal.js。
+  //   takeover        服务端→被移位实例（fresh-claim 翻位 / 旧主回连 superseded 通知）
+  //   takeoverResult  【重新接管】的回执（ok ⇒ 收模态回 active）
+  'takeover', 'takeoverResult',
   // model-fallback-card 批（2026-11-18 作者裁定 14:37）：统一「模型不可用」卡
   // （任何槽：small-llm / kernel / node / dispatcher / subagent 共用同一张）。
   'modelUnavailable',

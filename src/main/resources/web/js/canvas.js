@@ -117,8 +117,8 @@ function writerChanged(role, lost = false) {
   if (lost) {
     localUnsynced = true;
     // 静默接管批（2026-11-19）：失权端**零用户可见通知**地把当前编辑缓冲落成
-    // 未合并草稿（这里就是「从写者掉到只读」的唯一时刻），事后由非阻断的取回
-    // 入口呈现。绝不弹阻断式通知（作者原话「现在通知很烦」）。
+    // 未合并草稿（这里就是「从写者掉到只读」的唯一时刻）。绝不弹通知（作者原话
+    // 「现在通知很烦」）。2026-11-22 作者令：取回条（另存通知）已撤，草稿只静默落本机。
     captureSeatDraft();
   }
   if (role !== 'writer') {
@@ -211,8 +211,8 @@ const canvasWriter = createCanvasWriterClient({
 //   · 失权端可能**已经死了**（强杀 / 后台冻结 / 换设备）⇒ 它收不到信号、也写不出自己
 //     的内存；那部分字节物理上找不回（本设计如实承认，不假装找回）；
 //   · 「不弹通知」+「不丢改动」要同时成立 ⇒ 只剩一条路：失权端**零用户可见通知**地把
-//     当前编辑缓冲落成一份「未合并草稿」（静默发生），事后以一个**非阻断的取回入口**
-//     呈现（下面的 chip）。
+//     当前编辑缓冲落成一份「未合并草稿」（静默发生）。取回入口的呈现已于 2026-11-22
+//     撤除（见下方 ④），草稿机制本身保留。
 // 触发信号**复用既有消息通道**：席位变更帧 `canvasWriterChanged`（服务端静默接管时
 // 定向送达被顶下的写者，并广播全端）；本模块按 `msg.epoch > 自己的 epoch` 判「我丢了
 // 席位」——见 bindPersistReconnect 的 onMessage 处理器。**不新增第二套草稿/席位协议。**
@@ -221,11 +221,12 @@ const canvasWriter = createCanvasWriterClient({
 //      落一次；正常卸载的主动 release 不落（那条路 flushPendingPersist 已写穿）。
 //   ② 落在哪：**本浏览器** localStorage 的**单槽**（`key('canvas_seat_draft')`，最新
 //      覆盖最旧）。草稿天然是失权端自己的东西，不占用服务端任何共享面、不跨设备。
+//   ④ 2026-11-22 作者令「去掉这个通知」：取回条（chip）整体撤除，失权端不再呈现任何
+//      「已另存为未合并草稿」文案；草稿仍静默落在 ② 的单槽，restoreSeatDraft 机制保留。
 //   ③ 边界·不覆盖他人正在写的内容：落草稿**不写服务端、不发任何共享帧**；取回时只把
 //      草稿里缺的页签**补开**进本地视图（并集，绝不删本地已有），再走正常写路径
 //      （写路径会按需静默接管席位）。草稿永远不会盖掉别的窗口正在写的内容。
 const LS_DRAFT_KEY = key('canvas_seat_draft');
-const DRAFT_CHIP_CLASS = 'canvas-draft-chip';
 
 /** 读回本机的未合并草稿（无/坏体 ⇒ null，绝不清空既有）。 */
 function readSeatDraft() {
@@ -283,75 +284,12 @@ function captureSeatDraft() {
     const buffers = collectSeatDraftBuffers();
     if (buffers.length > 0) rec.buffers = buffers;
     localStorage.setItem(LS_DRAFT_KEY, JSON.stringify(rec));
-    renderDraftEntry();
   } catch { /* storage 满/不可用：草稿尽力而为，绝不阻断 */ }
 }
 
 /** 清掉本机草稿（取回成功 / 用户忽略）。 */
 function clearSeatDraft() {
   try { localStorage.removeItem(LS_DRAFT_KEY); } catch { /* ignore */ }
-}
-
-/** 草稿条的取回入口（非阻断、不抢焦点、不进层栈）：挂在**激活页签的滚动面**里。
- *  手机层会把激活 pane 收编进全屏画布页 ⇒ 同一条桌面/手机都可见（单一落点）。
- *  **落点判据（铁律 9：编辑面可滚不静默裁切）**：md/txt 族查看器的滚动面是 pane 内
- *  `position:absolute; inset:0` 的 `.canvas-md-scroll / .canvas-txt-scroll`——把条目
- *  `prepend` 进 pane 静态流会被滚动面盖住、压住正文首行（既有 `.canvas-update-hint`
- *  就是这么浮着的）。故这里挂进滚动面**自身的文档流**（正文整体下移，零遮挡、零裁切），
- *  并 `position:sticky; top:0` —— 静置时条目占着自己那一格（绝不压住正文首行），
- *  滚动时才贴着滚动口上缘停靠（不会被滚走）。**不许**写 `top:<滚动面顶垫>`：
- *  滚动口上缘 ≠ 宿主上缘，那样 sticky 会把条目往下顶进正文（实测遮过 H1）。
- *  样式**全走既有 token**（不新增第二套颜色/尺寸/圆角）。 */
-function renderDraftEntry() {
-  const rec = readSeatDraft();
-  const pane = activeTabId ? tabs.get(activeTabId)?.paneEl : null;
-  // 撤掉不在当前激活 pane 上的旧条（换签/取回/忽略后不留残影）。
-  for (const e of tabs.values()) {
-    if (e.paneEl && e.paneEl !== pane) e.paneEl.querySelector?.('.' + DRAFT_CHIP_CLASS)?.remove();
-  }
-  if (!rec) { pane?.querySelector?.('.' + DRAFT_CHIP_CLASS)?.remove?.(); return; }
-  if (!pane || !pane.isConnected) return;
-  if (pane.querySelector('.' + DRAFT_CHIP_CLASS)) return;  // 幂等：已在场
-  const host = pane.querySelector('.canvas-md-scroll, .canvas-txt-scroll') || pane;
-  const inScrollFace = host !== pane;
-  const chip = document.createElement('div');
-  chip.className = DRAFT_CHIP_CLASS;
-  chip.setAttribute('role', 'status');
-  chip.setAttribute('style', [
-    ...(inScrollFace
-      ? ['position:sticky', 'top:0', 'z-index:6',
-        'margin:0 var(--ds-space-indent-x) var(--ds-space-2)']
-      : ['position:relative', 'z-index:5',
-        'margin:var(--cv-safe-top, 56px) var(--ds-space-indent-x) var(--ds-space-2)']),
-    'display:flex', 'align-items:center', 'gap:var(--ds-space-inline-gap)',
-    'padding:var(--ds-space-2) var(--ds-space-inline-x)',
-    'border-radius:var(--ds-radius-button)',
-    'background:var(--st-control-bg)', 'color:var(--st-text)',
-    'font:var(--ds-fs-hint)/1.4 -apple-system,"Segoe UI",sans-serif',
-    'border:1px solid var(--st-control-border)',
-    'box-shadow:var(--st-control-shadow)',
-  ].join(';'));
-  const text = document.createElement('span');
-  text.className = 'canvas-draft-chip-text';
-  // 有落不回的正文 ⇒ 文案改成冲突说明（零通知仍成立：这是取回条自身的状态，
-  // 不是弹窗/toast；不给用户留一条「点了取回但其实没回来」的静默假象）。
-  const conflicted = [...pendingSeatDraftBuffers.values()].some((b) => b.verdict);
-  text.textContent = conflicted ? t('canvas.draftConflict') : t('canvas.draftAvailable');
-  text.setAttribute('style', 'flex:1 1 auto;');
-  const restore = document.createElement('button');
-  restore.className = 'canvas-draft-chip-restore';
-  restore.type = 'button';
-  restore.textContent = t('canvas.draftRestore');
-  restore.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:var(--ds-space-1) var(--ds-space-inline-x);border-radius:var(--ds-radius-input);border:1px solid var(--st-control-border);background:var(--st-control-bg-hover);color:inherit;font:inherit;');
-  restore.onclick = () => { restoreSeatDraft(); };
-  const dismiss = document.createElement('button');
-  dismiss.className = 'canvas-draft-chip-dismiss';
-  dismiss.type = 'button';
-  dismiss.textContent = t('canvas.draftDismiss');
-  dismiss.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:var(--ds-space-1) var(--ds-space-inline-x);border-radius:var(--ds-radius-input);border:1px solid var(--st-control-border);background:transparent;color:inherit;font:inherit;');
-  dismiss.onclick = () => { clearSeatDraft(); renderDraftEntry(); };
-  chip.append(text, restore, dismiss);
-  host.prepend(chip);
 }
 
 /** 试着把暂存的草稿正文写回落回的页签（一 tick 一次；由 restoreSeatDraft 循环驱动）。
@@ -422,7 +360,6 @@ async function restoreSeatDraft() {
       localStorage.setItem(LS_DRAFT_KEY, JSON.stringify(keep));
     } catch { /* ignore */ }
   }
-  renderDraftEntry();
   if (stuck === 0) persistTabs();              // 写穿；席位由写路径按需静默接管
 }
 
@@ -2924,9 +2861,6 @@ function renderCanvasHeader() {
   deckTitleEl.classList.toggle('is-dirty', !!(entry && isTabDirty(entry)));
   syncHeaderActions();
   syncRefBackButton();   // F5 返回原文档：随激活页签重sync可见性/座位
-  // 失权端草稿取回入口（静默接管批 2026-11-19）：随激活页签/页签集变化在这里对齐
-  // （幂等；草稿缺席即无动作）。
-  renderDraftEntry();
   // 触屏常驻横向档同步（作者令 2026-11-05 12:10）：本函数是「页签集 / 激活签 /
   // 脏标记」三处变化的公共出口 ⇒ 横排胶囊环在这里对齐新状态（桌面腿 no-op）。
   if (ringSyncFn) ringSyncFn();

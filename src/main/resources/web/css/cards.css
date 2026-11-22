@@ -273,6 +273,16 @@ html[data-theme="dark"] {
    面迁移（本批落点，设计稿 §4 M1/M2）
    ═══════════════════════════════════════════════════════════════════════ */
 
+/* ── M1 接管弹窗 #takeover-box（2026-11-22 历史基线回补：显隐 + 入场动效）──
+   家族卡 + 字标 + 标题/正文/错误行/动作行（DOM 见 index.html；视觉全走 .nfc 家族）。
+   id 选择器只保留弹窗机制面：默认隐藏（show() 置 display:flex 亮起）+ 入场动效
+   modalIn（design-system 弹层层族单点，时长 --ds-dur-layer，缓动 --ds-ease-enter）。
+   历史口径 = 84ca97882^ 的 M1 块；bc652038b 删去后桌面端失了入场动效。 */
+#takeover-box {
+  display: none;
+  animation: modalIn var(--ds-dur-layer) var(--ds-ease-enter);
+}
+
 /* ── M2 门入场加载卡 .nf-entry-card（样式体自 index.html 门内联块迁入——
    该面只在门脚本置 data-entry="on"（CSS 窗全 ok）后显示，外迁安全；
    display:none 预藏线留门内联块（防慢载窗空卡裸浮），ID 特异性胜本行）。

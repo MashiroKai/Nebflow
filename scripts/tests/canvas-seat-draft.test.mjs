@@ -37,12 +37,11 @@ const FN_SRC = [
 ].join('\n');
 
 /** 造一个只够这几个函数用的最小宿主：tabs / readerLocalTabs / activeTabId / tombstones
- *  / localStorage / key / renderDraftEntry / Date，以及一枚**会抛的 fetch** 钩子。
+ *  / localStorage / key / Date，以及一枚**会抛的 fetch** 钩子。
  *  dirty 项 = 给该 id 的页签挂一个「有未保存正文」的编辑器句柄（pane._editorHandle）。 */
 function makeHarness({ tabs = [], stored = null, setItemThrows = false, dirty = {} } = {}) {
   const slot = new Map();
   if (stored !== null) slot.set('canvas_seat_draft', stored);
-  let renderCalls = 0;
   let fetchCalls = 0;
   const localStorage = {
     getItem: (k) => (slot.has(k) ? slot.get(k) : null),
@@ -63,7 +62,6 @@ function makeHarness({ tabs = [], stored = null, setItemThrows = false, dirty = 
     sessionTombstones: new Map(),
     localStorage,
     key: (k) => k,
-    renderDraftEntry: () => { renderCalls += 1; },
     fetch: () => { fetchCalls += 1; throw new Error('草稿路径不得发网络请求'); },
     Date,
     JSON, console,
@@ -75,7 +73,6 @@ function makeHarness({ tabs = [], stored = null, setItemThrows = false, dirty = 
   const api = ctx.__draftApi;
   return {
     api, slot,
-    get renderCalls() { return renderCalls; },
     get fetchCalls() { return fetchCalls; },
     setActive: (id) => { ctx.activeTabId = id; },
     addTombstone: (v) => { ctx.sessionTombstones.set(v.id ?? v, v); },
@@ -97,7 +94,7 @@ test('丢席位那一刻：当前编辑缓冲落进本机单槽（页签 + 激�
   assert.equal(rec.activeTabId, 'b');
   assert.equal(rec.tombstones.length, 1);
   assert.equal(typeof rec.at, 'number');
-  assert.equal(h.renderCalls, 1, '落草稿后要重渲取回入口（否则草稿在但没人看得见）');
+  assert.equal(h.slot.has('canvas_seat_draft'), true, '草稿静默落进本机单槽（取回条已撤，零通知）');
   assert.equal(h.fetchCalls, 0, '落草稿是纯本机动作，零网络');
 });
 
@@ -105,7 +102,6 @@ test('空集不落：没有可序列化页签时不留空草稿条', () => {
   const h = makeHarness({ tabs: [tab('r', { type: 'flow-run' }), tab('u', { type: 'url' })] });
   h.api.captureSeatDraft();
   assert.equal(h.slot.has('canvas_seat_draft'), false);
-  assert.equal(h.renderCalls, 0);
   assert.equal(h.fetchCalls, 0);
 });
 
