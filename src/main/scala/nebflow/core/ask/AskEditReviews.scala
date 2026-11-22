@@ -389,6 +389,35 @@ object AskEditReviews:
     }
   end reject
 
+  /**
+   * resync（审阅期间文件被外部改动后的「重试」= 重拉盘上 + 重算 diff，零写盘）：
+   * 盘上 == currentText ⇒ 原样返回（Kept）；不等 ⇒ currentText 换成盘上现文、
+   * baseText 原样保留（diff 按原基线重算，外部改动以块的形式可见、可审）。
+   * 不静默盖章：resync 只更新审阅视图，不做接受/拒绝。盘上回到基线 ⇒ 无差异 ⇒ 了结（Cleared）。
+   */
+  def resync(sid: String): IO[Either[String, ResolveResult]] =
+    IO.blocking {
+      lockOf(sid).synchronized {
+        store.get(sid) match
+          case None => Left("resync failed: no pending review for this session")
+          case Some(review) =>
+            try
+              val disk = new String(Files.readAllBytes(Path.of(review.path)), StandardCharsets.UTF_8)
+              if disk == review.currentText then Right(ResolveResult.Kept(review))
+              else
+                val updated = review.copy(currentText = disk, updatedAt = System.currentTimeMillis())
+                if updated.hunks.isEmpty then
+                  store.remove(sid)
+                  Right(ResolveResult.Cleared(review.path))
+                else
+                  store.update(sid, updated)
+                  Right(ResolveResult.Kept(updated))
+            catch
+              case NonFatal(e) =>
+                Left(s"could not read ${review.path} (${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)})")
+      }
+    }
+
   /** dismiss：保留盘上现状、清账（冲突逃生口，零写盘）。 */
   def dismiss(sid: String): IO[Either[String, ResolveResult]] =
     IO.blocking {

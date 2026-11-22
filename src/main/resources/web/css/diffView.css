@@ -961,6 +961,11 @@ span.nf-rcpt-note { cursor: default; }
   pointer-events: none;
   user-select: none;
 }
+/* 触屏/无物理键盘（pointer: coarse）不显示键位提示：没有 ⌘ 可按，且它与手机底部
+   点条（.mf-dots）同行争位（实测 375 视口压在药丸上）。桌面档不受影响。 */
+@media (pointer: coarse) {
+  .nf-dv-keyhint { display: none; }
+}
 .nf-dv-allgroup {
   display: flex;
   align-items: center;
