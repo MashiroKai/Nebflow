@@ -209,20 +209,12 @@ object ToolRegistry:
       // 产物，不整篇载入；答案引用页码的取数面）。授权面同 ask_edit/ask_write
       // （AskExclusiveTools 剥除非 ask 角色；工具内侧 isAskSession 双保险）。
       "PdfPage" -> PdfPageTool,
-      // browser-verbs-p0（2026-11-22）：浏览器九动词一等工具面（常驻会话 = BrowserSessions）。
-      // 授权面：名字进 AgentCore.RootExclusiveTools（防声明逃逸）+ 挂载面单点
-      // AgentCore.BrowserVerbTools（buildAllowedToolSet 尾段：Nebula 根 / 非 kernel delegate）。
-      // 工具内侧身份闸 = BrowserPolicy.callerAllowed（双保险）。
-      "browser_open" -> BrowserOpenTool,
-      "browser_snapshot" -> BrowserSnapshotTool,
-      "browser_click" -> BrowserClickTool,
-      "browser_fill" -> BrowserFillTool,
-      "browser_wait" -> BrowserWaitTool,
-      "browser_screenshot" -> BrowserScreenshotTool,
-      "browser_download" -> BrowserDownloadTool,
-      "browser_state" -> BrowserStateTool,
-      "browser_close" -> BrowserCloseTool
     )
+    // browser-verbs-p0 插件分发裁定（作者 2026-11-22）：浏览器九动词**不在** builtins——
+    // 实现登记于此（执行查表用），默认工具面无名字；授权 = 项目派发挂载 browser-use 插件
+    // （插件 `org.nebflow/engine-tools` 声明 → PluginMcpManager 前缀来源 → buildAllowedToolSet
+    // 挂载腿）。builtinToolNames 过滤之（不进前端内建清单）。
+    val pluginEngine: Map[String, Tool] = BrowserPluginTools.All
     // imagegen 双层批（2026-10-24）+ 功能开放批（2026-10-30 作者令「直接开放
     // 出来」，缺省编入）：编译期 seal 门控保留为应急开关——显式 `STAND_IMAGEGEN=0`
     // 构建（ImageGenSeal.CompiledIn=false，final val 常量折叠）本注册整段消失；
@@ -233,7 +225,7 @@ object ToolRegistry:
       nebflow.core.ImageGenSeal.CompiledIn,
       nebflow.service.ConfigService.imagegenEnabledForToolFace
     )
-    tools.putAll((builtins ++ experimental).asJava)
+    tools.putAll((builtins ++ experimental ++ pluginEngine).asJava)
   }
 
   private[nebflow] def imageGenTools(compiledIn: Boolean, panelEnabled: Boolean): Map[String, Tool] =
@@ -254,7 +246,7 @@ object ToolRegistry:
 
   /** Builtin tool names (non-MCP), used by frontend to build configurable tool list. */
   def builtinToolNames: List[String] =
-    tools.asScala.keys.filterNot(_.startsWith("mcp__")).toList.sorted
+    tools.asScala.keys.filterNot(n => n.startsWith("mcp__") || BrowserVerbNames.All.contains(n)).toList.sorted
 
   /**
    * 面判定（P0-1 / P-M1，2026-09-20）：该注册名对应的实例是否为**外部工具**

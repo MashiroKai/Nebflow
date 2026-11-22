@@ -18,9 +18,11 @@ import nebflow.core.tools.*
  *  1. 纯策略：会话名 / ref 形状 / 身份判据 / URL 脱敏 / 页面状态分类（含反爬误报回归）/
  *     填充守卫（凭据红线）/ Chrome 候选路径。
  *  2. 无障碍树：解析 + 渲染（ref 只挂在有 DOM 后端的节点；忽略节点下钻；截断；循环保护）。
- *  3. 注册面：九动词进 TOOL_MAP、eq 同实例、ALL_TOOLS 暴露 schema、requiresTrustedExecutionIdentity。
- *  4. 授权面：RootExclusiveTools 防声明逃逸（非授权身份剥净）、插件白名单与 remoteableTools 不含。
- *  5. 调用面 fail-closed：非授权身份 → BROWSER_FORBIDDEN，且不触碰浏览器；凭据守卫在会话查找之前拒绝。
+ *  3. 注册面：九动词登记于 TOOL_MAP（执行查表）、eq 同实例、requiresTrustedExecutionIdentity；
+ *     **不在** builtins 语义面（builtinToolNames 不含）、不在 RootExclusiveTools。
+ *  4. 授权面（插件分发裁定，作者 2026-11-22）：挂载态 engineGrantFor ⇒ 九动词；未挂载态 ⇒ 空集；
+ *     插件声明越界名字被白名单拒（EngineToolWhitelist）；remoteableTools 仍不含。
+ *  5. 调用面：守卫只留身份基本校验（Nebula 根 / 非空 sessionId）；匿名直调 fail-closed；凭据守卫先于会话查找。
  *  6. 注册表文件：与种子 sessions/<name>.json 形状互通；不存在的会话 state=NONE、close 无副作用。
  *  7. 端到端（默认跳过；需设 NEBFLOW_BROWSER_E2E=1 且本机有 Chrome）：open → snapshot → fill → click → state → close。
  */
@@ -45,11 +47,11 @@ class BrowserVerbsSpec extends CatsEffectSuite:
     assertEquals(BrowserPolicy.parseRef("e1 "), None)
   }
 
-  test("身份判据单点：Nebula 根 或 delegate- 会话；其余 fail-closed") {
+  test("身份基本校验（插件分发裁定）：Nebula 根或带会话身份即过；匿名直调 fail-closed") {
     assert(BrowserPolicy.callerAllowed(isNebulaRoot = true, sessionId = None))
     assert(BrowserPolicy.callerAllowed(isNebulaRoot = false, sessionId = Some("delegate-abc")))
-    assert(!BrowserPolicy.callerAllowed(isNebulaRoot = false, sessionId = Some("ask-gv-1")))
-    assert(!BrowserPolicy.callerAllowed(isNebulaRoot = false, sessionId = Some("node-7")))
+    assert(BrowserPolicy.callerAllowed(isNebulaRoot = false, sessionId = Some("node-7")))
+    assert(!BrowserPolicy.callerAllowed(isNebulaRoot = false, sessionId = Some("   ")))
     assert(!BrowserPolicy.callerAllowed(isNebulaRoot = false, sessionId = None))
   }
 
@@ -168,21 +170,34 @@ class BrowserVerbsSpec extends CatsEffectSuite:
 
   // ══════════ 4. 授权面 ══════════
 
-  test("授权：RootExclusiveTools 含九动词（防声明逃逸）；非 Nebula 身份全部剥净，Nebula 不在剥离面") {
-    assertEquals(AgentCore.BrowserVerbTools, nineNames)
-    assert(nineNames.subsetOf(AgentCore.RootExclusiveTools), "九动词必须在防声明逃逸集")
-    assert(nineNames.subsetOf(AgentCore.exclusiveToolsFor("general")), "general 剥净")
-    assert(nineNames.subsetOf(AgentCore.exclusiveToolsFor("nebflow")), "nebflow 剥净（授能只走挂载腿）")
-    assert(nineNames.subsetOf(AgentCore.exclusiveToolsFor("dream")), "dream 无豁免")
-    assert(!nineNames.exists(AgentCore.exclusiveToolsFor("Nebula").contains), "Nebula 不在剥离面")
+  test("授权（默认面）：九动词不在 RootExclusiveTools、不在 builtins 清单，任何身份默认面无名字") {
+    assert(nineNames.intersect(AgentCore.RootExclusiveTools).isEmpty, "不得再经防声明逃逸集授能")
+    assert(nineNames.intersect(ToolRegistry.builtinToolNames.toSet).isEmpty, "builtins 清单不得含浏览器动词")
+    assert(!nebflow.core.plugin.PluginRegistry.BuiltinToolWhitelist.exists(nineNames.contains))
+    assert(RemoteExecutor.remoteableTools.intersect(nineNames).isEmpty, "remoteableTools 不得含浏览器动词")
   }
 
-  test("授权：插件白名单与 remoteableTools 均不含浏览器动词（不得经插件或远端面绕过）") {
-    assert(
-      nebflow.core.plugin.PluginRegistry.BuiltinToolWhitelist.intersect(nineNames).isEmpty,
-      "插件白名单不得含浏览器动词"
+  test("授权（挂载态）：挂载 browser-use（plugin_browser-use_engine 前缀来源）⇒ 九动词全授予") {
+    val granted = nebflow.core.plugin.PluginRegistry.engineGrantFor(List("plugin_browser-use_engine"))
+    assertEquals(granted, nineNames)
+  }
+
+  test("授权（未挂载态）：无引擎前缀来源 ⇒ 空集；他插件 MCP 前缀不误判为引擎挂载") {
+    assertEquals(nebflow.core.plugin.PluginRegistry.engineGrantFor(Nil), Set.empty[String])
+    assertEquals(
+      nebflow.core.plugin.PluginRegistry.engineGrantFor(List("plugin_x_playwright", "agent-Nebula_s")),
+      Set.empty[String]
     )
-    assert(RemoteExecutor.remoteableTools.intersect(nineNames).isEmpty, "remoteableTools 不得含浏览器动词")
+  }
+
+  test("授权（声明白名单）：插件声明越界名字被 EngineToolWhitelist 排除，Delegate 等编排名永不可授") {
+    val declared = List("browser_open", "Delegate", "Bash")
+    val kept = declared.filter(nebflow.core.plugin.PluginRegistry.EngineToolWhitelist.contains)
+    assertEquals(kept, List("browser_open"))
+  }
+
+  test("授权（纵深）：挂载态授予的九动词对非引擎身份守卫仍只留身份基本校验（匿名拒）") {
+    assert(!BrowserPolicy.callerAllowed(isNebulaRoot = false, sessionId = None))
   }
 
   // ══════════ 5. 调用面 fail-closed ══════════
@@ -194,8 +209,8 @@ class BrowserVerbsSpec extends CatsEffectSuite:
       agentDef = agentName.map(n => AgentDef(name = n, description = "", tools = Nil))
     )
 
-  test("调用面：非授权身份 → BROWSER_FORBIDDEN，不触碰浏览器") {
-    BrowserClickTool.call(JsonObject("ref" -> "e1".asJson), ctxOf(Some("general"), Some("node-7"))).map { res =>
+  test("调用面：匿名直调（无会话身份且非 Nebula 根）→ BROWSER_FORBIDDEN，不触碰浏览器") {
+    BrowserClickTool.call(JsonObject("ref" -> "e1".asJson), ctxOf(Some("general"), None)).map { res =>
       assert(res.isLeft)
       assert(res.left.toOption.get.message.contains("BROWSER_FORBIDDEN"))
     }

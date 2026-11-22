@@ -50,7 +50,11 @@ class PluginMcpManager private (
           }
         )
         .toMap
-    if wanted.isEmpty then IO.pure(Right(PluginMcpManager.Grant(Nil)))
+    // browser-verbs-p0 插件分发：声明了引擎工具的插件 ⇒ 前缀来源 `plugin_<p>_engine`
+    // （无子进程、不进 serverRefs 引用计数——工具实现在引擎内，挂载即授权）。
+    val engineIds: List[String] =
+      plugins.filter(_.engineTools.nonEmpty).map(p => PluginMcpManager.serverIdFor(p.name, PluginRegistry.EngineServerName)).distinct
+    if wanted.isEmpty then IO.pure(Right(PluginMcpManager.Grant(engineIds)))
     else
       for
         existing <- serverRefs.get
@@ -94,7 +98,7 @@ class PluginMcpManager private (
                   case None => acc.updated(sid, PluginMcpManager.ServerEntry(pname, Set(sessionId), digest))
               }
             } *> sessionRefs.update(m => m + (sessionId -> (m.getOrElse(sessionId, Set.empty) ++ wanted.keys.toSet))) *>
-              IO.pure(Right(PluginMcpManager.Grant(wanted.keys.toList)))
+              IO.pure(Right(PluginMcpManager.Grant(wanted.keys.toList ++ engineIds)))
       yield result
 
     end if

@@ -3031,12 +3031,13 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // Strip only the two Ask-exclusive message/history tools from other roles.
     // Shared lookup tools and Bash retain their existing role permissions.
     // B3：`SubTask` 工具名已退役（不在注册表）⇒ 剥离集不再需要它。
-    // browser-verbs-p0：浏览器动词面 = 机制固定单点授能（tail 腿，同 TaskBoard/ChainWrite 的
-    // 「挂载面 + 工具内身份拒绝」双保险）。判据：Nebula 根，或非 kernel 形态的 delegate 会话
-    // （kernel 极简内核面不挂载——与 kernelFace 截断同口径）。
-    val browserGrant =
-      if isRoot || (delegateSession && !kernelFace) then AgentCore.BrowserVerbTools else Set.empty[String]
-    (withDelegateMail ++ browserGrant) -- nebflow.core.ask.AskSessions.AskExclusiveTools
+    // browser-verbs-p0 插件分发裁定（作者 2026-11-22）：引擎工具面（浏览器九动词）经**挂载的插件**
+    // 授予——plugin 声明 `org.nebflow/engine-tools`，PluginMcpManager.acquire 产出前缀来源
+    // `plugin_<p>_engine`（无子进程）。本腿仅认挂载态：agentDef.pluginMcpServers 含该前缀 ⇒ 并入
+    // EngineToolWhitelist（现即九动词；挂载判据是插件有 engine-tools 声明，粒度为白名单整集——
+    // 按插件逐名授予需 AgentDef 新增字段，留作后续）；无挂载 ⇒ 空集（默认工具面无名字）。不看身份名单。
+    val pluginEngineGrant = nebflow.core.plugin.PluginRegistry.engineGrantFor(agentDef.pluginMcpServers)
+    (withDelegateMail ++ pluginEngineGrant) -- nebflow.core.ask.AskSessions.AskExclusiveTools
 
   end buildAllowedToolSet
 

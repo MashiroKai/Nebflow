@@ -11,10 +11,11 @@ import nebflow.core.browser.{BrowserPolicy, BrowserSessions}
  * 常驻会话（BrowserSessions）的模型直调入口：browser_open / snapshot / click / fill /
  * wait / screenshot / download / state / close。定位只认最近一次快照的 ref（快照即真相）。
  *
- * 授权面（单点）：名字进 AgentCore.RootExclusiveTools（防声明逃逸）+ 挂载面 =
- * AgentSessionExecution.buildAllowedToolSet 尾段 `BrowserVerbTools` 腿（Nebula 根会话与
- * 非 kernel 形态的 delegate 会话）。工具内侧双保险：BrowserPolicy.callerAllowed 同判据。
- * 插件白名单与 remoteableTools 均不含本组名字。
+ * 授权面（裁定变更，作者 2026-11-22「BU 和 CU 的能力都通过插件来分发，不落 agent 直接的
+ * 默认工具面」）：九动词**不在** builtins 与 RootExclusiveTools；由 seed 插件 browser-use 的
+ * `org.nebflow/engine-tools` 声明经 PluginMcpManager 前缀来源（`plugin_browser-use_engine`）
+ * 挂载进会话——授权 = 项目派发挂载该插件。工具实现与 BrowserSessions 基座仍在引擎内。
+ * 工具内侧守卫 BrowserPolicy.callerAllowed 只留身份基本校验（挂载即授权；凭据红线在 fill）。
  *
  * 凭据红线：fill 拒绝 password 字段与 `secret:` 保留语法；回执不回显输入值；错误文案不含页面内容。
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -55,7 +56,7 @@ abstract class BrowserVerbTool extends Tool:
       IO.pure(
         Left(
           ToolError(
-            s"$name: permission denied — browser verbs are exclusive to the Nebula root and delegate sessions. (${BrowserPolicy.PermissionCode})"
+            s"$name: permission denied — no identified session (browser verbs need a mounted browser-use plugin on a session). (${BrowserPolicy.PermissionCode})"
           )
         )
       )
@@ -243,7 +244,22 @@ object BrowserCloseTool extends BrowserVerbTool:
   override def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     guarded(input, ctx) { s => BrowserSessions.close(s) }
 
-/** 九动词名单（单点）：挂载面、RootExclusiveTools 与测试共用。 */
+/** 插件分发的引擎工具实现登记（browser-use 插件挂载后可用；不进 builtins 默认面）。 */
+object BrowserPluginTools:
+  val All: Map[String, Tool] =
+    List[Tool](
+      BrowserOpenTool,
+      BrowserSnapshotTool,
+      BrowserClickTool,
+      BrowserFillTool,
+      BrowserWaitTool,
+      BrowserScreenshotTool,
+      BrowserDownloadTool,
+      BrowserStateTool,
+      BrowserCloseTool
+    ).map(t => t.name -> t).toMap
+
+/** 九动词名单（单点）：插件白名单（PluginRegistry.EngineToolWhitelist）、挂载面与测试共用。 */
 object BrowserVerbNames:
   val All: List[String] = List(
     BrowserOpenTool.Name,

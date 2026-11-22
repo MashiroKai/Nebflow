@@ -2,7 +2,6 @@ package nebflow.core.browser
 
 import io.circe.Json
 
-import nebflow.core.delegate.DelegateSessions
 
 /**
  * 浏览器动词面的纯策略（无 IO，可单测）。
@@ -32,12 +31,12 @@ object BrowserPolicy:
   def parseRef(s: String): Option[String] = if s.matches("e[0-9]{1,6}") then Some(s) else None
 
   /**
-   * 调用身份判据（单点）：Nebula 根会话，或 delegate 会话（`delegate-` 前缀，
-   * DelegateSessions 单点）。其余一切身份（节点 / ask / dream / 普通 REST 直调）fail-closed。
-   * 挂载面（AgentSessionExecution 尾段）与工具内侧闸共用本判据。
+   * 调用身份基本校验（作者 2026-11-22 插件分发裁定）：授权 = 项目派发挂载 browser-use 插件
+   * （挂载即授权，不再按身份名单）。守卫只留身份基本校验：Nebula 根，或带会话身份的引擎
+   * 会话（非空 sessionId）；匿名 REST 直调 fail-closed。凭据红线不在此处——见 fillRefusal。
    */
   def callerAllowed(isNebulaRoot: Boolean, sessionId: Option[String]): Boolean =
-    isNebulaRoot || DelegateSessions.isDelegateSession(sessionId)
+    isNebulaRoot || sessionId.exists(_.trim.nonEmpty)
 
   /** 输出 URL 脱敏：查询串整段替换（cookie/token 常在 query 里）。 */
   def redactUrl(u: String): String =

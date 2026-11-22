@@ -104,6 +104,26 @@ object PluginRegistry:
   val BuiltinToolWhitelist: Set[String] = Set("WebSearch", "WebFetch", "Curl")
 
   /**
+   * 引擎工具分发白名单（browser-verbs-p0 插件分发裁定，作者 2026-11-22）：插件经
+   * `extensions["org.nebflow/engine-tools"]` 声明的引擎侧工具（实现在引擎内，如浏览器
+   * 九动词）。仅白名单内名字被采纳；越界名字装载层告警并丢弃（同 BuiltinToolWhitelist
+   * 的防声明逃逸语义）。授权 = 项目派发挂载该插件（PluginMcpManager.acquire 产出的
+   * `plugin_<p>_engine` 前缀来源），不进 agent 默认工具面。
+   */
+  val EngineToolWhitelist: Set[String] = nebflow.core.tools.BrowserVerbNames.All.toSet
+
+  /** 引擎工具前缀来源的保留服务名（serverId = `plugin_<p>_engine`，无子进程）。 */
+  val EngineServerName: String = "engine"
+
+  /**
+   * 挂载态授权判据（单点，纯函数）：会话的 plugin 前缀来源含 `plugin_<p>_engine` ⇒ 授予
+   * EngineToolWhitelist；否则空集（未挂载 ⇒ 默认工具面无引擎工具名）。
+   */
+  def engineGrantFor(pluginServerIds: List[String]): Set[String] =
+    if pluginServerIds.exists(_.endsWith("_" + EngineServerName)) then EngineToolWhitelist
+    else Set.empty[String]
+
+  /**
    * §5.2 canonical manifest $schema（Agent Plugins 1.0.0）。缺失/非 canonical
    * → 拒载（required + 客户端只识别 canonical 值，§5.2/§5.3）。
    */
@@ -272,7 +292,13 @@ object PluginRegistry:
      * `contentChanged` / 目录段尾注记 / 启动健康摘要。无审批记录 ⇒ false
      * （无可比对基准，不是「变更」）。
      */
-    contentChanged: Boolean = false
+    contentChanged: Boolean = false,
+    /**
+     * browser-verbs-p0 插件分发（作者 2026-11-22）：插件声明的引擎侧工具（已经
+     * [[EngineToolWhitelist]] 过滤）。非空 ⇒ 挂载该插件即授予这些工具（经
+     * `plugin_<p>_engine` 前缀来源），缺键 = Nil（旧插件逐字节不变）。
+     */
+    engineTools: List[String] = Nil
   )
 
   /**
@@ -890,6 +916,18 @@ object PluginRegistry:
                   warnings += s"tools.json decode failed (${err.getMessage}) — tools extension ignored"
                   (Right(Nil): Either[(String, String), List[String]])
 
+      // 引擎工具声明（browser-verbs-p0 插件分发裁定 2026-11-22）：
+      // extensions["org.nebflow/engine-tools"] = ["browser_open", ...]（内联数组）。
+      // 越界名字告警 + 丢弃（不拒载，组件级降级）；缺键 = Nil。
+      engineTools =
+        c.downField("extensions").downField("org.nebflow/engine-tools").as[List[String]] match
+          case Right(ts) =>
+            val illegal = ts.filterNot(EngineToolWhitelist.contains)
+            if illegal.nonEmpty then
+              warnings += s"org.nebflow/engine-tools requests non-whitelisted engine tool(s): ${illegal.mkString(", ")} — dropped (ENGINE_TOOL_ILLEGAL)"
+            ts.filter(EngineToolWhitelist.contains)
+          case Left(_) => Nil
+
       // org.nebflow/viewers.json（canvas-media 批 2026-10-05，OD-3=K-1）：manifest
       // `extensions["org.nebflow/viewers"]` 声明文件名（字符串，与 org.nebflow/tools
       // 同形态——K-1 零 schema 变更）；未声明时回落 org.nebflow/viewers.json。
@@ -990,7 +1028,8 @@ object PluginRegistry:
       warnings = warnings.toList,
       trust = trust,
       dir = dir.toString,
-      contentChanged = contentChanged
+      contentChanged = contentChanged,
+      engineTools = engineTools
     )
     end for
   end loadPlugin
