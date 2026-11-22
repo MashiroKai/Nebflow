@@ -107,26 +107,26 @@ object DesktopScreenshotTool extends DesktopVerbTool:
   override def name: String = Name
 
   override def description: String =
-    """Take a read-only screenshot (macOS screencapture -x). Modes: `full` (whole main screen, default), `region` (global points `region: "x,y,w,h"`), `window` (the first visible window of `app`, by its rectangle; occluding windows are included). Returns the PNG path and byte size under the engine captures directory; the image itself is not inlined. Refused for host applications. Requires the Screen Recording permission; if denied, the error is reported and not retried. Note: a `full` capture CAN include host windows — it is not masked."""
+    """Take a read-only screenshot (macOS screencapture -x). Modes: `region` (global points `region: "x,y,w,h"`) or `window` (the first visible window of `app`, by its rectangle; occluding windows are included). `full` (whole screen) is NOT available yet — it awaits a masking mechanism, since an unmasked full capture would include host private windows. Returns the PNG path and byte size under the engine captures directory; the image itself is not inlined. Refused for host applications. Requires the Screen Recording permission; if denied, the error is reported and not retried."""
 
   override def inputSchema: JsonObject =
     obj(
-      "mode" -> prop("string", "full | region | window (default full)."),
+      "mode" -> prop("string", "region | window (required; `full` is not available yet)."),
       "region" -> prop("string", "Required when mode=region: global screen points `x,y,w,h` (integers, w/h > 0)."),
       "app" -> prop("string", "Required when mode=window: application name.")
     )()
 
   override def summarize(input: JsonObject): String =
-    s"desktop_screenshot(${str(input, "mode").getOrElse("full")})"
+    s"desktop_screenshot(${str(input, "mode").getOrElse("?")})"
 
   override def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val mode = str(input, "mode").getOrElse("full")
+    val mode = str(input, "mode").getOrElse("")
     val app = str(input, "app")
     val region = str(input, "region")
     guarded(ctx) {
       mode match
         case "full" =>
-          DesktopObserve.screenshotFull.map(_.map(fmt))
+          IO.pure(Left("mode=full is not available yet: full-screen capture awaits the masking mechanism (host private windows would be exposed). Use mode=region or mode=window."))
         case "region" =>
           region.flatMap(DesktopPolicy.parseRegion) match
             case Some((x, y, w, h)) => DesktopObserve.screenshotRegion(x, y, w, h).map(_.map(fmt))
@@ -137,7 +137,7 @@ object DesktopScreenshotTool extends DesktopVerbTool:
             case Some(a) if DesktopPolicy.validAppName(a).isDefined =>
               DesktopObserve.screenshotApp(a).map(_.map(fmt))
             case _ => IO.pure(Left("mode=window needs a valid `app` name"))
-        case other => IO.pure(Left(s"unknown mode `$other` (full | region | window)"))
+        case other => IO.pure(Left(s"unknown or missing mode `$other` (region | window)"))
     }
 
   private def fmt(r: (String, Long)): String =

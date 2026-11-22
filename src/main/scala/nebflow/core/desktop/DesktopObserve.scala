@@ -94,11 +94,7 @@ object DesktopObserve:
       }
     }
 
-  /** 全屏截图落盘；返回绝对路径与字节数。 */
-  def screenshotFull: IO[Either[String, (String, Long)]] =
-    shoot(None)
-
-  /** 区域截图（屏幕点坐标）。 */
+  /** 区域截图（屏幕点坐标）。全屏档暂不开放（待遮罩机制，见审计 P1 开放项）。 */
   def screenshotRegion(x: Int, y: Int, w: Int, h: Int): IO[Either[String, (String, Long)]] =
     shoot(Some((x, y, w, h)))
 
@@ -111,6 +107,7 @@ object DesktopObserve:
     }
 
   private def shoot(region: Option[(Int, Int, Int, Int)]): IO[Either[String, (String, Long)]] =
+    // 仅区域/窗口档经此入口（region=None 分支保留为未来遮罩机制的落点，当前不可达）。
     IO.blocking {
       val dir = captureDir
       os.makeDir.all(dir)
