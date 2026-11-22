@@ -206,7 +206,11 @@ private[gateway] object WsAskHandlers:
       case u: nebflow.shared.UiMessage.User if u.injected =>
         rows += Json.obj("role" -> "sys".asJson, "text" -> u.text.asJson, "source" -> u.source.getOrElse("").asJson)
       case u: nebflow.shared.UiMessage.User =>
-        rows += Json.obj("role" -> "user".asJson, "text" -> u.text.asJson)
+        // 附图批：附件行件随回放下发（{name,type,path}；前端 path → /uploads 路由取图）。
+        // 「图+无正文」行保留（text 可空，行不因正文空被丢弃）。
+        val base = Json.obj("role" -> "user".asJson, "text" -> u.text.asJson)
+        rows += (if u.attachments.isEmpty then base
+                 else base.deepMerge(Json.obj("attachments" -> u.attachments.asJson)))
       case a: nebflow.shared.UiMessage.Ai if a.text.trim.nonEmpty =>
         rows.lastOption.flatMap(_.hcursor.downField("role").as[String].toOption) match
           case Some("ai") =>
@@ -233,29 +237,38 @@ private[gateway] object WsAskHandlers:
     val raw = WsDispatch.parsedJson(text)
     val sid = raw.hcursor.downField("sessionId").as[String].getOrElse("")
     val content = raw.hcursor.downField("content").as[String].getOrElse("")
+    // 附图批：附件清单（主会话 userMessage.attachments 同形）；缺席 = Nil ⇒ 纯文本提问逐字现状。
+    val attsJson = raw.hcursor.downField("attachments").as[List[Json]].getOrElse(Nil)
 
     if !AskSessions.isAskSession(sid) then askError(wsSend, sid, "askQuestion: sessionId must be an ask- session")
-    else if content.trim.isEmpty then askError(wsSend, sid, "askQuestion: empty content")
+    // 有图不算空：正文空白但带图 ⇒ 合法提问（「图+无正文」）。
+    else if content.trim.isEmpty && attsJson.isEmpty then askError(wsSend, sid, "askQuestion: empty content")
     else
-      AskGatewayServices.instance match
-        case None => askError(wsSend, sid, "ask mode unavailable on this instance")
-        case Some(svc) =>
-          svc.registry.byId(sid).flatMap {
-            case None => askError(wsSend, sid, "askQuestion: no file binding for this session")
-            case Some(binding) =>
-              // 冷却组装腿（§3.3：冷却期满后的下一次交互——发问——前重组）。
-              svc
-                .assembleIfDue(sid, binding)
-                .handleErrorWith(e => logger.warn(s"ask assemble failed (non-fatal): ${e.getMessage}")) *>
-                // 交互前刷新转交目标（主会话可能已切换）。
-                refreshMainIfReported(svc, sid, raw) *>
-                // PDF note/ask 批（2026-11-18）· 懒解析触发点：给 ask 发的消息是
-                // 解析的唯一触发器。绑定 PDF 时在后台起（或 join）解析——
-                // askOpen / note 腿都不碰 PdfCache.ensure，这里不 await（大文档
-                // 不许挡住提问；模型侧 PdfPage 调用自会 join 同一单飞）。
-                triggerPdfParseIfNeeded(binding) *>
-                ctx.handleUserText(sid, content, "ask-dock", fromUser = true)
-          }
+      AskAttachmentIntake.parse(attsJson) match
+        case Left(why) => askError(wsSend, sid, s"askQuestion: $why")
+        case Right(prepared) =>
+          AskGatewayServices.instance match
+            case None => askError(wsSend, sid, "ask mode unavailable on this instance")
+            case Some(svc) =>
+              svc.registry.byId(sid).flatMap {
+                case None => askError(wsSend, sid, "askQuestion: no file binding for this session")
+                case Some(binding) =>
+                  // 冷却组装腿（§3.3：冷却期满后的下一次交互——发问——前重组）。
+                  svc
+                    .assembleIfDue(sid, binding)
+                    .handleErrorWith(e => logger.warn(s"ask assemble failed (non-fatal): ${e.getMessage}")) *>
+                    // 交互前刷新转交目标（主会话可能已切换）。
+                    refreshMainIfReported(svc, sid, raw) *>
+                    // PDF note/ask 批（2026-11-18）· 懒解析触发点：给 ask 发的消息是
+                    // 解析的唯一触发器。绑定 PDF 时在后台起（或 join）解析——
+                    // askOpen / note 腿都不碰 PdfCache.ensure，这里不 await（大文档
+                    // 不许挡住提问；模型侧 PdfPage 调用自会 join 同一单飞）。
+                    triggerPdfParseIfNeeded(binding) *>
+                    // 附图批：落盘（uploads/<askSid>，所有权同主会话）→ 行件 + 模型块 → 同一派发腿。
+                    AskAttachmentIntake.save(sid, prepared, ctx.askOwnerAccess).flatMap { saved =>
+                      ctx.handleAskUserText(sid, content, saved.map(_.uiJson), saved.flatMap(_.blocks))
+                    }
+              }
     end if
   end handleAskQuestion
 

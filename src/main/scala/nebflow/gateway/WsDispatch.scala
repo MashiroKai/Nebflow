@@ -146,7 +146,15 @@ final class WsDispatchCtx(
    * travels on (one push face, never a second one).
    */
   resolveRootSessionIdImpl: String => IO[String],
-  projectCreateBroadcastImpl: io.circe.Json => IO[Unit]
+  projectCreateBroadcastImpl: io.circe.Json => IO[Unit],
+  /**
+   * canvas ask 附图批：附图提问腿（askQuestion 带 attachments）。入参 = (askSid, content,
+   * UI 行件, 模型侧块)；WebSocketRoutes 接线到 dispatchUserText 同腿（行件进 UiMessage、
+   * 块进 ImmediateInput.blocks）。缺省 = 空操作（既有构造点零改动）。
+   */
+  handleAskUserTextImpl: (String, String, List[Json], List[ContentBlock]) => IO[Unit] = (_, _, _, _) => IO.unit,
+  /** canvas ask 附图批：已认证会话主体（落盘登记所有权；缺席 ⇒ 不落盘，与主会话同律）。 */
+  val askOwnerAccess: Option[OwnerAccess] = None
 ):
 
   def replayPendingAsks(
@@ -254,6 +262,15 @@ final class WsDispatchCtx(
     clientMessageId: Option[String] = None
   ): IO[Unit] =
     handleUserTextImpl(sessionId, content, source, fromUser, device, clientMessageId)
+
+  /** canvas ask 附图批：附图提问腿（见构造参数 handleAskUserTextImpl 的注释）。 */
+  def handleAskUserText(
+    sessionId: String,
+    content: String,
+    attachments: List[Json],
+    blocks: List[ContentBlock]
+  ): IO[Unit] =
+    handleAskUserTextImpl(sessionId, content, attachments, blocks)
 
   /** device-provenance 批：帧 `device` 键的来源设备解析（见 WebSocketRoutes.deviceProvenanceOf）。 */
   def deviceProvenance(json: io.circe.Json): IO[Option[nebflow.bridge.ResolvedDevice]] =
