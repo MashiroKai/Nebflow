@@ -3031,7 +3031,12 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // Strip only the two Ask-exclusive message/history tools from other roles.
     // Shared lookup tools and Bash retain their existing role permissions.
     // B3：`SubTask` 工具名已退役（不在注册表）⇒ 剥离集不再需要它。
-    withDelegateMail -- nebflow.core.ask.AskSessions.AskExclusiveTools
+    // browser-verbs-p0：浏览器动词面 = 机制固定单点授能（tail 腿，同 TaskBoard/ChainWrite 的
+    // 「挂载面 + 工具内身份拒绝」双保险）。判据：Nebula 根，或非 kernel 形态的 delegate 会话
+    // （kernel 极简内核面不挂载——与 kernelFace 截断同口径）。
+    val browserGrant =
+      if isRoot || (delegateSession && !kernelFace) then AgentCore.BrowserVerbTools else Set.empty[String]
+    (withDelegateMail ++ browserGrant) -- nebflow.core.ask.AskSessions.AskExclusiveTools
 
   end buildAllowedToolSet
 

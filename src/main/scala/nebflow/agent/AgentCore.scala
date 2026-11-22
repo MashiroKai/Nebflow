@@ -297,8 +297,27 @@ object AgentCore:
     // GenerateImage（imagegen 双层批 2026-10-24，调试状态）：Nebula 专属生图件——
     // 同享本集【防声明逃逸】通道（真实授能 = RootOrchestrationTools 单点；编译期
     // seal 关时经 imageGenSealedStrip 从交付面剥除且本集条目随之不可达）。
-    "GenerateImage"
+    "GenerateImage",
+    // browser-verbs-p0（2026-11-22）：浏览器九动词 —— 同享本集【防声明逃逸】通道：agent.json /
+    // 插件声明（含 "*"）对一切非授权身份不授能。真实授能 = BrowserVerbTools 单点 + buildAllowedToolSet
+    // 尾段 browserGrant 腿（Nebula 根 / 非 kernel delegate 会话）。
+    "browser_open",
+    "browser_snapshot",
+    "browser_click",
+    "browser_fill",
+    "browser_wait",
+    "browser_screenshot",
+    "browser_download",
+    "browser_state",
+    "browser_close"
   )
+
+  /**
+   * 浏览器动词面授能单点（browser-verbs-p0，2026-11-22）。挂载判据在 buildAllowedToolSet 尾段：
+   * `isRoot`（Nebula 根）或 非 kernel 形态的 delegate 会话。本集条目同时在 RootExclusiveTools
+   * 中（防声明逃逸）；挂载面与工具内侧身份闸（BrowserPolicy.callerAllowed）双保险。
+   */
+  val BrowserVerbTools: Set[String] = nebflow.core.tools.BrowserVerbNames.All.toSet
 
   /**
    * dream 的 MemoryNote 准入例外（2026-09-05 作者签准，修订 2026-08-31 裁定①）：

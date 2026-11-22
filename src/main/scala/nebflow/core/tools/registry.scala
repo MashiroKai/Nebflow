@@ -208,7 +208,20 @@ object ToolRegistry:
       // PDF note/ask 批（2026-11-18）：ask 会话绑定 PDF 的按需取页件（只读解析
       // 产物，不整篇载入；答案引用页码的取数面）。授权面同 ask_edit/ask_write
       // （AskExclusiveTools 剥除非 ask 角色；工具内侧 isAskSession 双保险）。
-      "PdfPage" -> PdfPageTool
+      "PdfPage" -> PdfPageTool,
+      // browser-verbs-p0（2026-11-22）：浏览器九动词一等工具面（常驻会话 = BrowserSessions）。
+      // 授权面：名字进 AgentCore.RootExclusiveTools（防声明逃逸）+ 挂载面单点
+      // AgentCore.BrowserVerbTools（buildAllowedToolSet 尾段：Nebula 根 / 非 kernel delegate）。
+      // 工具内侧身份闸 = BrowserPolicy.callerAllowed（双保险）。
+      "browser_open" -> BrowserOpenTool,
+      "browser_snapshot" -> BrowserSnapshotTool,
+      "browser_click" -> BrowserClickTool,
+      "browser_fill" -> BrowserFillTool,
+      "browser_wait" -> BrowserWaitTool,
+      "browser_screenshot" -> BrowserScreenshotTool,
+      "browser_download" -> BrowserDownloadTool,
+      "browser_state" -> BrowserStateTool,
+      "browser_close" -> BrowserCloseTool
     )
     // imagegen 双层批（2026-10-24）+ 功能开放批（2026-10-30 作者令「直接开放
     // 出来」，缺省编入）：编译期 seal 门控保留为应急开关——显式 `STAND_IMAGEGEN=0`
