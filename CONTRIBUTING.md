@@ -81,7 +81,9 @@ git rev-list --count --merges "$(git tag --list 'fullgate-[0-9]*' --sort=-v:refn
 git for-each-ref refs/tags/fullgate-* --format='%(refname:short) %(objectname:short) %(contents:subject)'
 ```
 
-The chain starts at the `fullgate-000` anchor tag on the commit that introduced this rule (2026-11-22). At 100, run the full gate on `feat/base` and witness a green run with `git tag -a fullgate-<NNN>-<YYYYMMDD> -m "<date, JDK, command, exit, counts, evidence path, merge range>"`. A red full gate blocks merges; localize the break by block search (test the 25-merge block boundaries in a separate worktree, then bisect inside the identified block), never by repeated whole-suite guesses. Never rewrite or delete an existing `fullgate-*` tag.
+The chain starts at the `fullgate-000` anchor tag on the commit that introduced this rule (2026-11-22). At 100, run the full gate on `feat/base` and witness a green run with `git tag -a fullgate-<NNN>-<YYYYMMDD> -m "<date, JDK, command, exit, counts, evidence path, merge range>"`. Scheduling: the full gate and any other long sbt run or heavy suite must not run inside **02:00–10:00 local time** (host-pressure window: compressed memory peaks ~7.8 GB, swap ~25 GB). Defer a trigger that lands in the window and record the deferral; the pre-deploy/pre-release gate moves, it is not waived.
+
+A red full gate blocks merges; localize the break by block search (test the 25-merge block boundaries in a separate worktree, then bisect inside the identified block), never by repeated whole-suite guesses. Never rewrite or delete an existing `fullgate-*` tag.
 
 Staging changes suite width and frequency only, not acceptance: author word-for-word review, real-application full-shell evidence (screenshots, geometry/numeric assertions, motion recordings) and isolated-instance smoke for a changed surface stay mandatory, and no green gate of any kind is acceptance.
 
