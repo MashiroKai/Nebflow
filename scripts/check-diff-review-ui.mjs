@@ -145,6 +145,8 @@ try {
       && /resync:\s*'askEditResync'/.test(reviewJs));
   staticLeg('J3 拒绝保外部改动回归用例存在（reject 全部 + 外部追加行保留）',
     specSrc.includes('reject(all) during an external append keeps the external line'));
+  staticLeg('J4 逐块钮为同块右侧浮层（absolute，不再流内撑行）',
+    /\.cm-deletedChunk \.cm-chunkButtons\s*\{[^}]*position:\s*absolute/.test(cssSrc));
 
   writeFileSync(IDX, ORIG_IDX);
   writeFileSync(THM, ORIG_THM);

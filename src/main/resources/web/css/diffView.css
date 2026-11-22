@@ -815,8 +815,9 @@ span.nf-rcpt-note { cursor: default; }
    块被撑成 76px、正文被挤压）。改为同块右侧浮层：块最小高 = 一颗钮高（48），钮垂直居中于
    块内、贴右；删除行右侧预留钮宽，正文折行让位于钮，不被遮。
    左缘对齐：删除/改动行的 8px 内边距（theme.js）去掉，与未改行共用同一左缘（6px）。 */
-.nf-dv .cm-deletedChunk {
-  padding-left: 6px;
+.nf-dv .cm-deletedChunk { padding-left: 6px; }
+/* 仅审阅块（带逐块钮）预留钮位与一颗钮高；只读面（delegate）无钮，不加空白。 */
+.nf-dv .cm-deletedChunk:has(> .cm-chunkButtons) {
   /* 预留 = 两颗钮（min-width 72）+ 钮间距 + 贴右内缩 + 钮与正文间距 */
   padding-right: calc(2 * 72px + var(--ds-space-1h, 6px) + var(--ds-space-2, 8px) * 2);
   min-height: var(--nf-dv-ctl-size);
