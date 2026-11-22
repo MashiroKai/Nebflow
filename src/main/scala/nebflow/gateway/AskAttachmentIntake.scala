@@ -88,7 +88,8 @@ private[gateway] object AskAttachmentIntake:
       val image = ContentBlock.Image(b64, p.mediaType)
       val imageBlocks = if visionOk then List(image) else Nil
       val scoped = AttachmentScope.segmentOf(askSid)
-      val keyOpt = nebflow.gateway.ResourceKey.from(s"${System.nanoTime()}_${stemOf(p.name)}.${extOf(p.mediaType)}").toOption
+      val keyOpt =
+        nebflow.gateway.ResourceKey.from(s"${System.nanoTime()}_${stemOf(p.name)}.${extOf(p.mediaType)}").toOption
       val uploadRoot = Config.NebflowHome.toNIO.resolve("uploads").resolve(askSid)
       (owner, scoped, keyOpt) match
         case (Some(access), Some(sid), Some(key)) =>

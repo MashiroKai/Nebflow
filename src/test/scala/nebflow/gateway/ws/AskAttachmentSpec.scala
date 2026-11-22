@@ -27,11 +27,75 @@ class AskAttachmentSpec extends FunSuite:
   private val pngB64: String =
     Base64.getEncoder.encodeToString(
       Array[Byte](
-        0x89.toByte, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
-        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90.toByte, 0x77, 0x53,
-        0xde.toByte, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41, 0x54, 0x08, 0xd7.toByte, 0x63, 0xf8.toByte, 0xcf.toByte,
-        0xc0.toByte, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xdd.toByte, 0x8d.toByte, 0xb0.toByte, 0x00, 0x00,
-        0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae.toByte, 0x42, 0x60, 0x82.toByte
+        0x89.toByte,
+        0x50,
+        0x4e,
+        0x47,
+        0x0d,
+        0x0a,
+        0x1a,
+        0x0a,
+        0x00,
+        0x00,
+        0x00,
+        0x0d,
+        0x49,
+        0x48,
+        0x44,
+        0x52,
+        0x00,
+        0x00,
+        0x00,
+        0x01,
+        0x00,
+        0x00,
+        0x00,
+        0x01,
+        0x08,
+        0x02,
+        0x00,
+        0x00,
+        0x00,
+        0x90.toByte,
+        0x77,
+        0x53,
+        0xde.toByte,
+        0x00,
+        0x00,
+        0x00,
+        0x0c,
+        0x49,
+        0x44,
+        0x41,
+        0x54,
+        0x08,
+        0xd7.toByte,
+        0x63,
+        0xf8.toByte,
+        0xcf.toByte,
+        0xc0.toByte,
+        0x00,
+        0x00,
+        0x03,
+        0x01,
+        0x01,
+        0x00,
+        0x18,
+        0xdd.toByte,
+        0x8d.toByte,
+        0xb0.toByte,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x49,
+        0x45,
+        0x4e,
+        0x44,
+        0xae.toByte,
+        0x42,
+        0x60,
+        0x82.toByte
       )
     )
 
@@ -72,7 +136,9 @@ class AskAttachmentSpec extends FunSuite:
     assert(row.blocks.head.isInstanceOf[ContentBlock.Image])
   }
 
-  test("save: vision blocks are capped at ImageInject.MAX_ATTACHMENTS; extra files stay in the UI row without a block") {
+  test(
+    "save: vision blocks are capped at ImageInject.MAX_ATTACHMENTS; extra files stay in the UI row without a block"
+  ) {
     val cap = ImageInject.MAX_ATTACHMENTS
     val items = AskAttachmentIntake.parse(List.fill(cap + 2)(img("shot.png"))).toOption.get
     val saved = AskAttachmentIntake.save("ask-1a2b3c4d", items, owner = None).unsafeRunSync()
@@ -83,7 +149,11 @@ class AskAttachmentSpec extends FunSuite:
   }
 
   test("replay: a user row keeps its attachments (name/type/path) and a text-less image row survives") {
-    val att = Json.obj("name" -> "shot.png".asJson, "type" -> "image".asJson, "path" -> "/x/uploads/ask-1a2b3c4d/1-shot.png".asJson)
+    val att = Json.obj(
+      "name" -> "shot.png".asJson,
+      "type" -> "image".asJson,
+      "path" -> "/x/uploads/ask-1a2b3c4d/1-shot.png".asJson
+    )
     val rows = WsAskHandlers.encodeTranscript(
       List(UiMessage.User(text = "", attachments = List(att), timestamp = 1L))
     )
