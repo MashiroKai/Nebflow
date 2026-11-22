@@ -210,6 +210,14 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .flowmap-nav-bar,
 .nf-findbar,
 .wg-tip,
 .nf-term-tip,
+/* canvas-popup-unify 批（2026-11-22）：canvas 点文件的「文档说明卡」入册。
+   它与 `.nf-term-tip` 是同一族（作者令「这两个设计应该是同源的」）；批前它
+   **缺席本账本** ⇒ 只有 --nf-glass-bg 的半透底、零 backdrop-filter ⇒ 作者看到的
+   「全透明」（底下正文笔画直接穿过卡片）。表面几何/排版在 css/split.css 的
+   「悬浮小弹层族」共享块里与词条弹层同表，本表只给配方。
+   模糊层数记账：两面各自独立模糊（同屏最多 2 层），都是 body 顶层小面，
+   不与滚动容器同层 ⇒ 不引入滚动期重采样。 */
+.document-term-card,
 .canvas-refback-btn,
 .wg-switch-select,
 .wg-search,

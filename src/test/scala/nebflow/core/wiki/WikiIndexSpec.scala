@@ -754,4 +754,69 @@ body links [[real]]"""
     assertEquals(WikiIndex.selectTerm("alias one", scan.terms), WikiIndex.TermSelection.Resolved(scan.terms.head))
   }
 
+  // ───────────────────── reader summary（点击说明弹窗的提要读序）─────────────────────
+
+  test("WI-40 reader summary: frontmatter `summary:` is canonical (source=frontmatter)") {
+    val doc =
+      """---
+        |type: research-log
+        |status: open
+        |summary: 三十七个计数单位的读者提要示例，说明本文回答什么问题、结论与数字。
+        |---
+        |
+        |# Title
+        |
+        |Body paragraph that the graph preview would otherwise take.
+        |""".stripMargin
+    val (summary, source) = WikiIndex.readerSummary(doc)
+    assertEquals(source, "frontmatter")
+    assertEquals(summary, Some("三十七个计数单位的读者提要示例，说明本文回答什么问题、结论与数字。"))
+  }
+
+  test("WI-41 reader summary: legacy docs fall back to the COMPLETE paragraph after the marker") {
+    val legacy =
+      """---
+        |type: research-log
+        |---
+        |
+        |# Legacy doc
+        |
+        |<!-- reader-summary -->
+        |
+        |旧文档把读者提要写在正文标记之后：这里是一整段。
+        |这一段续行必须一起显示，否则读者读到的是半句话。
+        |
+        |## 过程
+        |
+        |细节。
+        |""".stripMargin
+    val (summary, source) = WikiIndex.readerSummary(legacy)
+    assertEquals(source, "marker")
+    assertEquals(
+      summary,
+      Some("旧文档把读者提要写在正文标记之后：这里是一整段。 这一段续行必须一起显示，否则读者读到的是半句话。")
+    )
+  }
+
+  test("WI-42 reader summary: none ⇒ (None, none) — never an empty string; marker without a paragraph/H1 first") {
+    assertEquals(WikiIndex.readerSummary("# Only a title\n\nplain body, no marker\n"), (None, "none"))
+    assertEquals(WikiIndex.readerSummary("<!-- reader-summary -->\n\n## 过程\n\n细节\n"), (None, "none"))
+    // 围栏里的标记是示例代码，不是约定
+    assertEquals(
+      WikiIndex.readerSummary("# T\n\n```md\n<!-- reader-summary -->\n```\n\n正文\n"),
+      (None, "none")
+    )
+  }
+
+  test("WI-43 splitVaultPath: only `<project>/.stand/docs/<rel>` is a metadata-carrying path") {
+    assertEquals(
+      WikiIndex.splitVaultPath("/Users/kaiyu/.stand/projects/stand/.stand/docs/x__20261122.md"),
+      Some(("stand", "x__20261122.md"))
+    )
+    assertEquals(WikiIndex.splitVaultPath("stand/.stand/docs/sub/y.md"), Some(("stand", "sub/y.md")))
+    assertEquals(WikiIndex.splitVaultPath("/tmp/nope/x.md"), None)
+    assertEquals(WikiIndex.splitVaultPath("stand/.stand/docs/../evil.md"), None)
+    assertEquals(WikiIndex.splitVaultPath(""), None)
+  }
+
 end WikiIndexSpec

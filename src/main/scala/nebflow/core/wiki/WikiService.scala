@@ -967,6 +967,107 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
     )
 
   /**
+   * 文档元数据（canvas-popup-unify 批 ④ · 2026-11-22 作者令：
+   * 「现在产出的文档 点击还是没有说明 也就是我之前说过的文档元数据……现在点击
+   *  还是空的 把这个交给点canvas文件 同一批做」）。
+   *
+   * 点击说明弹窗的**唯一数据腿**：一次读一篇文档（不是整 vault 图谱），字段 =
+   * 读者提要（读序见 [[WikiIndex.readerSummary]]：frontmatter `summary:` 优先 →
+   * 旧文档 `<!-- reader-summary -->` 完整段落 → 无）+ frontmatter 的
+   * type/status/tags + 标题 + 更新时间 + vault 落位。
+   *
+   * 三条硬约束：
+   *   1. **不猜路径**：`path` 只认 `<project>/.stand/docs/<rel>` 一种形态
+   *      （[[WikiIndex.splitVaultPath]]，与 ProjectStore.ledgerDocsDir 同口径）；
+   *      `project` + `rel` 显式给出时优先。
+   *   2. **降级可读**：文档读不到（远端离线 / 超限 / 不存在）⇒ Right 带
+   *      `available:false` + 原因，显示层照常画路径与动作钮，不画空白。
+   *   3. **提要为 null 就是 null**：没有提要 ⇒ `summary:null` + `summarySource:"none"`，
+   *      由显示层给可读空态（具名缺元数据），绝不用空串冒充。
+   */
+  def docMeta(
+    projectParam: Option[String],
+    relParam: Option[String],
+    pathParam: Option[String]
+  ): IO[Either[String, Json]] =
+    val explicit = for
+      p <- projectParam.map(_.trim).filter(_.nonEmpty)
+      r <- relParam.map(_.trim).filter(_.nonEmpty)
+    yield (p, r)
+    val fromPath = pathParam.flatMap(WikiIndex.splitVaultPath)
+    explicit.orElse(fromPath) match
+      case None =>
+        IO.pure(
+          Left(
+            "project+rel or a <project>/.stand/docs/<rel> path is required " +
+              "(a path outside the registration vault has no metadata)"
+          )
+        )
+      case Some((project, rel)) =>
+        ProjectStore.load(project).flatMap {
+          case None => IO.pure(Left(s"project '$project' not found"))
+          case Some(pd) =>
+            val localFile =
+              if ProjectOrigin.isSelfLiteral(deviceOf(pd)) then
+                val segs = rel.split('/').toVector.filter(s => s.nonEmpty && s != "." && s != "..")
+                if segs.isEmpty then None
+                else Some(segs.foldLeft(ProjectStore.localVault(pd))(_ / os.RelPath(_)))
+              else None
+            val updated = localFile.filter(os.exists).flatMap(f => scala.util.Try(os.mtime(f)).toOption).map { ms =>
+              java.time.Instant
+                .ofEpochMilli(ms)
+                .atZone(java.time.ZoneId.systemDefault())
+                .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
+            }
+            readVaultDoc(pd, rel).map {
+              case None =>
+                Right(
+                  Json.obj(
+                    "available" -> false.asJson,
+                    "reason" -> "doc unreadable (missing / oversized / peer offline)".asJson,
+                    "project" -> project.asJson,
+                    "rel" -> rel.asJson,
+                    "path" -> localFile.map(_.toString.asJson).getOrElse(Json.Null),
+                    "title" -> rel.split('/').lastOption.getOrElse(rel).asJson,
+                    "type" -> Json.Null,
+                    "status" -> Json.Null,
+                    "tags" -> Json.arr(),
+                    "updated" -> updated.map(_.asJson).getOrElse(Json.Null),
+                    "summary" -> Json.Null,
+                    "summarySource" -> "none".asJson
+                  )
+                )
+              case Some(text) =>
+                val (fm, _body, _off) = WikiIndex.frontmatterOf(text)
+                val parsed = WikiIndex.parseDoc(rel, text)
+                val (summary, source) = WikiIndex.readerSummary(text)
+                val tags = fm
+                  .flatMap(_.get("tags"))
+                  .map { raw =>
+                    raw.stripPrefix("[").stripSuffix("]").split(',').toVector.map(_.trim.stripPrefix("\"").stripSuffix("\"")).filter(_.nonEmpty)
+                  }
+                  .getOrElse(Vector.empty)
+                Right(
+                  Json.obj(
+                    "available" -> true.asJson,
+                    "project" -> project.asJson,
+                    "rel" -> rel.asJson,
+                    "path" -> localFile.map(_.toString.asJson).getOrElse(Json.Null),
+                    "title" -> parsed.title.asJson,
+                    "type" -> fm.flatMap(_.get("type")).filter(_.nonEmpty).map(_.asJson).getOrElse(Json.Null),
+                    "status" -> fm.flatMap(_.get("status")).filter(_.nonEmpty).map(_.asJson).getOrElse(Json.Null),
+                    "tags" -> tags.map(_.asJson).asJson,
+                    "updated" -> updated.map(_.asJson).getOrElse(Json.Null),
+                    "summary" -> summary.map(_.asJson).getOrElse(Json.Null),
+                    "summarySource" -> source.asJson,
+                    "headings" -> parsed.headings.size.asJson,
+                    "links" -> parsed.links.size.asJson
+                  )
+                )
+            }
+        }
+
+  /**
    * Read one vault doc's text — local projects straight from disk, remote
    * projects through the peer browse channel. None = unreadable (degrade,
    * never fail).
