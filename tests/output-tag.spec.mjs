@@ -593,6 +593,95 @@ try {
   ok(r8d.faced === true, 'R8d 分页腿（rAF 抑制）仍走到摘除面（nextMountFrame 120ms 兜底不饿死升级批）');
   ok(e8d.length === 0 && ce8d.length === 0, `R8d 零异常（page=${e8d.length} console=${ce8d.length}）`);
   await c8d.close();
+
+  // R9 —— 在飞缓冲的两条重放腿（追加批 2026-11-22，作者裁定「给在飞缓冲补身份标记」）：
+  //   · 重连重放腿  chat/historyReplay.js replayHistoryPageInitialLoad
+  //   · 会话切换重放腿 sidebar.js resetChatForActiveSession（侧栏弹窗重放面）
+  // 缓冲身份 = 服务端帧戳 isRoot（state.sessionTextIdentity，或 pendingRestore 落盘的
+  // isRoot）。本段直接种入「服务端会写入的状态形状」再调**真实**重放函数。
+  //   busy  = 在飞（流式面：第一相文本 + 游标）；terminal = 收口后的 pendingRestore（终相）。
+  //   负控 = identity false（缺戳/非 root）⇒ 改前全文字面标签必须仍在（不猜身份）。
+  const R9_FULL = '<report>\n**结论先行**：块内正文照常渲染。\n</report>\n\n框外叙述不得出现。';
+  const r9Run = async (leg, { busy, identity }) => {
+    const { ctx, page, pageErrors: pe, consoleErrors: ce } = await bootR8(browser, false, 'sync');
+    const res = await page.evaluate(async ({ full, leg, busy, identity }) => {
+      const st = (await import('/js/state.js')).default;
+      const sid = st.activeSessionId || 'sess-r8';
+      st.activeSessionId = sid;
+      if (busy) st.busySessionIds.add(sid); else st.busySessionIds.delete(sid);
+      if (busy) {
+        st.sessionTexts[sid] = full;
+        // 改前树无此映射（旧代码也不读它）⇒ 缺席即初始化，使 before 腿落到断言而非崩溃。
+        st.sessionTextIdentity = st.sessionTextIdentity || {};
+        st.sessionTextIdentity[sid] = identity;
+      } else {
+        st.pendingRestore[sid] = { text: full, isRoot: identity };
+      }
+      const chatEl = document.getElementById('chat');
+      if (leg === 'replay') {
+        const { replayHistoryPageInitialLoad } = await import('/js/chat/historyReplay.js');
+        const { activeView } = await import('/js/chatView.js');
+        activeView.pagination.pendingInitialLoad = true;
+        replayHistoryPageInitialLoad({ type: 'historyPage', sessionId: sid, messages: [], hasMore: false, offset: 0 }, activeView);
+      } else {
+        const { resetChatForActiveSession } = await import('/js/sidebar.js');
+        resetChatForActiveSession();
+      }
+      await new Promise((r) => setTimeout(r, 200));
+      const b = Array.from(chatEl.querySelectorAll('.bubble.ai:not(.thinking-bubble)'))
+        .find((x) => (x.textContent || '').includes('结论先行') || (x.textContent || '').includes('<report>'));
+      if (!b) return { found: false };
+      const text = b.textContent || '';
+      return {
+        found: true,
+        showsTags: text.includes('<report>') || text.includes('</report>'),
+        tagElement: !!b.querySelector('report'),
+        outside: text.includes('框外叙述'),
+        bold: !!b.querySelector('strong'),
+        faced: b.dataset.nfOutput === '1',
+        rootMark: b._nfIsRoot === true,
+        hasCursor: !!b.querySelector('.cursor'),
+      };
+    }, { full: R9_FULL, leg, busy, identity });
+    const shot = join(SHOTS_DIR, `r9-${leg}-${busy ? 'busy' : 'terminal'}-${identity ? 'root' : 'nonroot'}.png`);
+    mkdirSync(SHOTS_DIR, { recursive: true });
+    await page.screenshot({ path: shot });
+    await sleep(100);
+    await ctx.close();
+    return { res, pageErrors: pe, consoleErrors: ce, shot };
+  };
+
+  for (const leg of ['replay', 'sidebar']) {
+    const tag = leg === 'replay' ? '重连重放腿' : '侧栏会话切换重放面';
+    const busyRoot = await r9Run(leg, { busy: true, identity: true });
+    ok(busyRoot.res.found === true, `R9 ${tag} 在飞根行气泡在场`);
+    ok(busyRoot.res.showsTags === false && busyRoot.res.tagElement === false,
+      `R9 ${tag} 在飞（第一相）root 行零裸标签（改前 = 标签字面现形）`);
+    ok(busyRoot.res.outside === false, `R9 ${tag} 在飞根行框外叙述被摘除`);
+    ok(busyRoot.res.bold === true, `R9 ${tag} 在飞根行块内 markdown 照常渲染`);
+    ok(busyRoot.res.rootMark === true, `R9 ${tag} 在飞气泡携 _nfIsRoot（后续 live 帧沿用报告面）`);
+    ok(busyRoot.res.hasCursor === true, `R9 ${tag} 在飞气泡保留流式游标`);
+    ok(busyRoot.pageErrors.length === 0 && busyRoot.consoleErrors.length === 0,
+      `R9 ${tag} 在飞零异常（page=${busyRoot.pageErrors.length} console=${busyRoot.consoleErrors.length}）`);
+
+    const termRoot = await r9Run(leg, { busy: false, identity: true });
+    ok(termRoot.res.found === true, `R9 ${tag} 终相根行气泡在场`);
+    ok(termRoot.res.showsTags === false && termRoot.res.tagElement === false,
+      `R9 ${tag} 终相 root 行零裸标签`);
+    ok(termRoot.res.faced === true, `R9 ${tag} 终相 root 平衡块行走摘除面（data-nf-output）`);
+    ok(termRoot.res.outside === false && termRoot.res.bold === true, `R9 ${tag} 终相框外隐藏 / 块内 markdown 渲染`);
+    ok(termRoot.pageErrors.length === 0 && termRoot.consoleErrors.length === 0,
+      `R9 ${tag} 终相零异常（page=${termRoot.pageErrors.length} console=${termRoot.consoleErrors.length}）`);
+
+    // 改前全文面（无 report 选项）：`<report>` 不是文本就是元素（被 HTML 解析吞掉），
+    // 二者必居其一 —— 即「标签未被摘除」。断言该现象即可，不依赖具体落地形态。
+    const busyNon = await r9Run(leg, { busy: true, identity: false });
+    ok(busyNon.res.found === true && (busyNon.res.showsTags === true || busyNon.res.tagElement === true) && busyNon.res.rootMark !== true,
+      `R9 负控 ${tag} 在飞 identity=false ⇒ 改前全文面（标签未摘除，不猜身份）`);
+    const termNon = await r9Run(leg, { busy: false, identity: false });
+    ok(termNon.res.found === true && (termNon.res.showsTags === true || termNon.res.tagElement === true) && termNon.res.faced === false,
+      `R9 负控 ${tag} 终相 identity=false ⇒ 改前全文面、不走摘除面`);
+  }
 } finally {
   await browser.close();
   webServer.close();

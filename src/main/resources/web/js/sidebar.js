@@ -10,6 +10,7 @@ function showBatchDeleteModalLazy() {
   import('./modal.js').then(({ showBatchDeleteModal }) => showBatchDeleteModal());
 }
 import { renderMarkdownWithMath, smartScroll, stopSpinner, createIconsIn, statusIcon } from './utils.js';
+import { applyReplayFace } from './outputTag.js';
 import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF, bindCollapsibleToggle } from './chat.js';
 import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTodoTaskList } from './todoFace.js';
@@ -2058,7 +2059,13 @@ export function resetChatForActiveSession() {
       row.className = 'row ai';
       pv.stream.currentAiBubble = document.createElement('div');
       pv.stream.currentAiBubble.className = 'bubble ai';
-      pv.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(pv.stream.aiText, true, { cache: !isStreaming, stream: isStreaming }) + (isStreaming ? '<span class="cursor"></span>' : '');
+      // 追加批（2026-11-22）：身份取服务端戳（sessionTextIdentity 与 sessionTexts 同写；
+      // 仅剩 pendingRestore 时取其落盘的 isRoot）。root ⇒ 报告面（与主腿同款）；
+      // 非 root / 缺戳 ⇒ 下方原全文渲染逐字不变。
+      const txtRoot = state.sessionTexts[sid] ? state.sessionTextIdentity[sid] === true : pendingData?.isRoot === true;
+      if (!applyReplayFace(pv.stream.currentAiBubble, pv.stream.aiText, { root: txtRoot, streaming: isStreaming, cache: !isStreaming })) {
+        pv.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(pv.stream.aiText, true, { cache: !isStreaming, stream: isStreaming }) + (isStreaming ? '<span class="cursor"></span>' : '');
+      }
       row.appendChild(pv.stream.currentAiBubble);
       chat.appendChild(row);
       if (!isStreaming) {

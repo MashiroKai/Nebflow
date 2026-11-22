@@ -1202,7 +1202,11 @@ onMessage('textDelta', (msg, view) => {
   if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
   phaseStampIfMissing(sid); // thinkingtimer-fix：段未开则开段（重试重流不重置既有段）
   // Accumulate text for ALL sessions
-  if (sid) state.sessionTexts[sid] = (state.sessionTexts[sid] || '') + msg.delta;
+  if (sid) {
+    state.sessionTexts[sid] = (state.sessionTexts[sid] || '') + msg.delta;
+    // 追加批（2026-11-22）：缓冲身份 = 帧上服务端戳（`=== true` 才是 root；缺戳 ⇒ false，不猜）。
+    state.sessionTextIdentity[sid] = msg.isRoot === true;
+  }
   resetStreamTimeout(sid);
   state.lastStreamActivity = Date.now();
   armBusyFromStream(sid); // ①-2: gated (see armBusyFromStream)
@@ -1235,7 +1239,7 @@ onMessage('textDone', (msg, view) => {
     // (must reset between turns to avoid cross-turn concatenation).
     const thinkingText = state.sessionThinkingBuffers[sid] || '';
     saveMsg({type: 'ai', text: state.sessionTexts[sid], thinking: thinkingText || undefined}, sid);
-    state.pendingRestore[sid] = { text: state.sessionTexts[sid], thinking: thinkingText || undefined };
+    state.pendingRestore[sid] = { text: state.sessionTexts[sid], thinking: thinkingText || undefined, isRoot: state.sessionTextIdentity[sid] === true };
     delete state.sessionTexts[sid];
     if (state.sessionThinkingBuffers[sid]) delete state.sessionThinkingBuffers[sid];
   }
@@ -1529,7 +1533,7 @@ onMessage('done', (msg, view) => {
         saveMsg({type: 'ai', text, thinking: thinkingText || undefined, durationMs, model: msg.model, terminal: true}, msg.sessionId);
         // pendingRestore only contains the LAST round's data (not concatenated across rounds),
         // so dedup against backend history (last Ai message) works correctly.
-        state.pendingRestore[msg.sessionId] = { text, thinking: thinkingText || undefined, durationMs, model: msg.model };
+        state.pendingRestore[msg.sessionId] = { text, thinking: thinkingText || undefined, durationMs, model: msg.model, isRoot: state.sessionTextIdentity[msg.sessionId] === true };
       }
       delete state.sessionTexts[msg.sessionId];
       delete state.sessionThinkingBuffers[msg.sessionId];

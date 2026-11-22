@@ -232,6 +232,12 @@ export default {
   // Per-session streaming text buffer: sessionId -> accumulated text
   sessionTexts: {},
 
+  // Per-session identity of the in-flight text buffer (report-filter-gap 追加批
+  // 2026-11-22）：sessionId -> boolean，取自**服务端帧戳** `isRoot`（AgentActor
+  // stampSourceIdentity 逐帧落戳）。只在 textDelta 写入、且与 sessionTexts 同帧
+  // 同写 ⇒ 读取端只在 sessionTexts 存在时读它，陈旧值不可达。缺戳帧 ⇒ false（不猜）。
+  sessionTextIdentity: {},
+
   // Per-session ask streaming buffer: sessionId -> { question, answer, model }
   sessionAskBuffers: {},
 
