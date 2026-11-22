@@ -883,6 +883,7 @@ html[data-theme="dark"] {
    按下 = 墨族 active 档底色 + 2% 缩放；焦点 = 2px outline 环；禁用 = 50% opacity。 */
 .g2-pill-primary,
 #memory-modal-save {
+  border-radius: var(--ds-radius-chip); /* 圆角标准批 2026-11-22（作者令「要圆角的框」「落为标准」· 规范 §2.6）：F7 判据下的环基座。 */
   background: var(--btn-primary-bg);
   border-color: var(--btn-primary-bg);
   color: var(--btn-primary-ink);

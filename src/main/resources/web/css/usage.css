@@ -277,6 +277,10 @@
 .ud-cell {
   width: var(--ud-cell, 11px);
   height: var(--ud-cell, 11px);
+  /* 圆角标准批（作者令 2026-11-22 08:03；§2.6）：热力格 11px 是**微格**（短边 < 12px），
+     按规范的几何档留 2px —— 6px 半径在 11px 格上会被浏览器钳到 50%（格变圆点，
+     热力图读起来从「格子密度」变成「珠串」）。这不是登记豁免：判据是几何
+     （短边 < 12px ⇒ --ds-radius-thin），门禁 F7 用同一条规则核对。 */
   border-radius: var(--ds-radius-thin);
   cursor: pointer;
   border: none;

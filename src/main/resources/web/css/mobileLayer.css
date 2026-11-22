@@ -5971,6 +5971,7 @@ body.mobile-layer .tfl-menu-sub {
 
 /* ── 行（一级/二级共用）─────────────────────────────────────────────── */
 body.mobile-layer .tfl-menu-row {
+  border-radius: var(--ds-radius-chip); /* 圆角标准批 2026-11-22（作者令「要圆角的框」「落为标准」· 规范 §2.6）：F7 判据下的环基座。 */
   position: relative;
   display: flex;
   align-items: center;
@@ -6140,7 +6141,9 @@ body.mobile-layer .mobile-page .tfl-hit {
   flex-direction: column;
   box-sizing: border-box;
   overflow: hidden;
-  border-radius: var(--ds-radius-badge);   /* 起点 = 行盒圆角 */
+  /* 圆角标准批（2026-11-22；§2.6）：起点 = 行盒圆角 = 6px（.tfl-menu-row 同批改档），
+     动画展开到 .is-open 的卡档 —— 两点同源，展开过程不会出现「先变方再变圆」。 */
+  border-radius: var(--ds-radius-chip);
   box-shadow: none;                         /* 起点 = 行（无浮影） */
 }
 body.mobile-layer .mobile-page .tfl-hit.is-open {

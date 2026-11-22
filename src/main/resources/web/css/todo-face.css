@@ -774,7 +774,10 @@
   align-items: flex-start;
   gap: var(--ds-space-1);
   padding: var(--ds-space-1) var(--ds-space-1h);
-  border-radius: var(--ds-radius-badge);
+  /* 圆角标准批（作者令 2026-11-22 08:03「我说了要圆角的框」「落为标准」；§2.6）：
+     本行原以 badge 档 4px 登记为方角造型件，现并入可交互件标准档 6px
+     （= --ds-radius-chip），焦点环随 border-radius 走。 */
+  border-radius: var(--ds-radius-chip);
   background: color-mix(in srgb, var(--color-text, #000) 4%, transparent);
   border: 0.6px solid transparent;
   transition: opacity 0.3s ease-out, transform 0.3s ease-out, background 0.15s, border-color 0.15s;

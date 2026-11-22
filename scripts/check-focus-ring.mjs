@@ -22,14 +22,18 @@
 //     找到对应选择器（防止「记住了但代码早改了」的僵尸豁免）。
 //  F6 别名收编：`--btn-ring*` / `--ds-focus-ring` / `--dropdown-focus` / `--nf-field-ring*`
 //     全树 0 处（含定义处；定义留着 = 有人随时会重新引用它）。
+//  F7 圆角标准（round2 · 作者令 2026-11-22 08:03「我说了要圆角的框」「落为标准」）：
+//     画环的基座必须显式落到 ≥6px 档；胶囊/圆形（999px / 50%）放行；短边 <12px 的微格
+//     允许 ≤4px（6px 在 11px 格上被钳成圆点，热力图语义被破）；查不到任何圆角声明 = 红。
+//     **方角登记豁免机制已废除** —— 台账再带 `squareCorners` 段也是红（机制不得复活）。
+//  F8 环不改形状：焦点规则里不得声明 border-radius（环半径 = 组件半径）。实测反例：
+//     `#deck-fab:focus-visible{border-radius:6px}` 让圆钮在键盘聚焦时变成圆角方钮。
 //
-// 附（规范 §2.6 圆角规则的登记面，不做级联推断）：`squareCorners` 里的每条「方角
-// 造型件」必须写明半径值与非空理由，且选择器确实存在于所声明文件 —— 登记即承诺，
-// 承诺要能被核对。
-//
-// 已知盲点（诚实记账，见规范「判据盲点」节）：本闸只读 CSS 文本，不做级联计算。
+// 已知盲点（诚实记账，见规范 §6「判据盲点」）：本闸只读 CSS 文本，不做级联计算。
 // ① 由 JS 内联写出的焦点样式不在判定面；② `:focus-within` 的容器环不判（它不是
-// 「控件被键盘聚焦」，是「里面有人聚焦」）；③ 元素实际命中的圆角需运行时复核。
+// 「控件被键盘聚焦」，是「里面有人聚焦」）；③ F7 用「index.html 加载序 + 圆角声明」
+// 近似级联（含 @media 内规则），裸元素基座与 ID 主体基座跳过 —— 这两类由运行时闸
+// P-5 按计算样式判（那是「元素到底是不是方角」的权威读数）。
 //
 // 用法：
 //   node scripts/check-focus-ring.mjs              # 门禁（红/绿）
@@ -163,34 +167,37 @@ function parseOutline(value) {
 
 // ── 豁免台账（读 JSON，脚本内零硬编码豁免）───────────────────────────────
 function loadLedger() {
-  if (!existsSync(LEDGER)) return { ok: false, exemptions: [], squareCorners: [], baseline: 0, error: `台账缺失：${rel(LEDGER)}` };
+  if (!existsSync(LEDGER)) return { ok: false, exemptions: [], baseline: 0, error: `台账缺失：${rel(LEDGER)}` };
   let data;
   try {
     data = JSON.parse(readFileSync(LEDGER, 'utf8'));
   } catch (e) {
-    return { ok: false, exemptions: [], squareCorners: [], baseline: 0, error: `台账不是合法 JSON：${String(e.message)}` };
+    return { ok: false, exemptions: [], baseline: 0, error: `台账不是合法 JSON：${String(e.message)}` };
   }
   const exemptions = Array.isArray(data.exemptions) ? data.exemptions : [];
-  const squareCorners = Array.isArray(data.squareCorners) ? data.squareCorners : [];
   const baseline = Number.isFinite(data._baseline) ? data._baseline : exemptions.length;
-  const bad = [
-    ...exemptions.filter((r) => !r || !r.selector || !r.reason || String(r.reason).trim().length < 8)
-      .map((r) => (r && r.selector) || '(空行)'),
-    ...squareCorners.filter((r) => !r || !r.selector || !r.reason || String(r.reason).trim().length < 8)
-      .map((r) => (r && r.selector) || '(空行)'),
-  ];
+  const bad = exemptions
+    .filter((r) => !r || !r.selector || !r.reason || String(r.reason).trim().length < 8)
+    .map((r) => (r && r.selector) || '(空行)');
+  // round2：方角登记段（squareCorners）已废除 —— 台账若还留着它 = 红（机制不得复活）。
+  const legacySquare = Array.isArray(data.squareCorners) ? data.squareCorners.length : 0;
+  const badLegacy = legacySquare
+    ? `台账仍带 squareCorners 段（${legacySquare} 条）—— round2 已废除方角登记机制，圆角改由 F7 几何判据核对`
+    : '';
   return {
-    ok: bad.length === 0,
+    ok: bad.length === 0 && !badLegacy,
     exemptions,
-    squareCorners,
     baseline,
-    error: bad.length ? `台账有空理由行：${bad.join(' / ')}` : '',
+    legacySquare,
+    error: bad.length ? `台账有空理由行：${bad.join(' / ')}` : badLegacy,
   };
 }
 
 // ── 扫描 ────────────────────────────────────────────────────────────────
 const violations = [];
 const inventory = [];
+/** F7 用：所有画环的基座（文件 + 行 + 基座），循环后统一判圆角。 */
+const ringBaseRows = [];
 const ledger = loadLedger();
 
 function addViolation(code, file, line, selector, detail, prop) {
@@ -278,6 +285,21 @@ for (const file of cssFiles) {
     for (const s of sels) if (FOCUS_SEL.test(s)) ringBases.add(selectorBase(s));
   }
 
+  // F7 的输入：把「画环的基座」记进全树清单（圆角核对在循环之后统一做）。
+  for (const rule of rules) {
+    const sels = splitSelectorGroup(rule.selector);
+    for (const s of sels) {
+      if (!FOCUS_SEL.test(s)) continue;
+      const draws = parseDecls(rule.body).some((d) => {
+        if (d.prop !== 'outline') return false;
+        const o = parseOutline(d.value);
+        return !o.bare && o.style !== 'none';
+      });
+      if (!draws) continue;
+      ringBaseRows.push({ file: relPath, line: rule.line, base: selectorBase(s) });
+    }
+  }
+
   for (const rule of rules) {
     const sels = splitSelectorGroup(rule.selector);
     const focusSels = sels.filter((s) => FOCUS_SEL.test(s));
@@ -332,6 +354,14 @@ for (const file of cssFiles) {
             `box-shadow: ${d.value} —— 焦点不许用光晕/投影环，环由 outline 承担`, 'box-shadow');
         }
       }
+      if (d.prop === 'border-radius') {
+        // F8 环半径 = 组件半径：焦点规则自己写半径 = 「聚焦瞬间改组件形状」。
+        // 实测反例（round2 首跑）：`#deck-fab:focus-visible { border-radius: 6px }` 让圆钮
+        // 在键盘聚焦时变成圆角方钮。组件方角 ⇒ 改组件（F7），不要在环规则里补。
+        addViolation('F8', file, rule.line, rule.selector,
+          `border-radius: ${d.value} —— 焦点规则不得声明圆角（环半径 = 组件半径，规范 §2.6）`,
+          'border-radius');
+      }
     }
 
     // F4 无裸去环（「裸」= 同文件里这个基座任何焦点规则都没画环）
@@ -361,18 +391,204 @@ for (const row of ledger.exemptions) {
     addViolation('F5', LEDGER, 0, sel, `僵尸豁免：${row.file} 里已找不到这个选择器`, 'selector');
   }
 }
-// §2.6 圆角登记面核对
-for (const row of ledger.squareCorners) {
-  if (!row || !row.selector || !row.file) continue;
-  const fileKey = [...sourceByRel.keys()].find((k) => k.includes(String(row.file).replace(/`/g, '').trim()));
-  if (!fileKey) {
-    addViolation('F5', LEDGER, 0, row.selector, `方角登记指向的文件不存在：${row.file}`, 'file');
+// ── F7 圆角标准（作者令 2026-11-22 08:03「我说了要圆角的框」「落为标准」；规范 §2.6）
+// 方角登记豁免机制已废除：圆角不再靠台账自证，改由**几何判据**核对 —— 画环的基座
+// 必须是圆角件：标准档 ≥6px；胶囊/圆形（999px / 50%）放行；短边 <12px 的微格允许
+// 2px（否则 6px 在 11px 格上被钳成圆点，热力图语义被破）。无任何圆角声明 = UA 方角
+// = 红。元素级基座（`textarea` 这类裸元素选择器）不判 —— 它的圆角由上下文决定，
+// 静态闸不做级联（规范 §6 盲点①），那部分由运行时闸 P-5 在真像素上判。
+const MIN_RADIUS_PX = 6;
+const MICRO_RADIUS_MAX_PX = 4;
+
+/** 递归遍历（含 @media / @supports 等 at-rule 内的规则）：F7 判形状必须看得见
+ *  「在媒体查询里才生效的圆角」，否则 `.ds-btn` 这类被 @media 包着的基座会被误判成方角。
+ *  line 为近似值（at-rule 内规则的行号按块内相对位置给出）。 */
+function* walkRulesDeep(src, lineBase = 1) {
+  for (const rule of walkRules(src)) {
+    const isAt = /^@/.test(rule.selector.trim());
+    if (isAt) {
+      const innerBase = lineBase + src.slice(0, rule.offset + rule.selector.length).split('\n').length - 1;
+      yield* walkRulesDeep(rule.body, innerBase);
+      continue;
+    }
+    yield rule;
+  }
+}
+
+function buildShapeIndex() {
+  const tokens = new Map();
+  const decls = [];
+  // 级联顺序 = index.html 的 <link rel="stylesheet"> 顺序（真实加载序）；不在 html 里的
+  // 文件排在最后（按文件名），只会影响「谁最后写」的近似，不会漏判方角。
+  const order = new Map();
+  try {
+    const html = readFileSync(join(WEB, 'index.html'), 'utf8');
+    let i = 0;
+    for (const m of html.matchAll(/<link[^>]+rel="stylesheet"[^>]+href="([^"]+)"/g)) {
+      const name = m[1].split('/').pop();
+      if (!order.has(name)) order.set(name, i++);
+    }
+  } catch { /* 没有 index.html 就退化为文件名字典序 */ }
+  for (const file of cssFiles) {
+    const name = file.split('/').pop();
+    const ordinal = order.has(name) ? order.get(name) : 1000;
+    const src = stripCssComments(readFileSync(file, 'utf8'));
+    for (const m of src.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) tokens.set(m[1], m[2].trim());
+    let seq = 0;
+    for (const rule of walkRulesDeep(src)) {
+      seq++;
+      const body = rule.body;
+      const grab = (prop) => {
+        const m = body.match(new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;]+);`));
+        return m ? m[1].trim() : null;
+      };
+      const radius = grab('border-radius');
+      const width = grab('width');
+      const height = grab('height');
+      if (!radius && !width && !height) continue;
+      decls.push({
+        file: rel(file),
+        ord: ordinal * 100000 + seq,
+        line: rule.line,
+        selector: rule.selector.trim().replace(/\s+/g, ' '),
+        radius,
+        width: resolveLen(width, tokens),
+        height: resolveLen(height, tokens),
+      });
+    }
+  }
+  return { decls, tokens };
+}
+
+/** `var(--x)` / `var(--x, fallback)` → 解析成字面值（深度上限防环）。 */
+function resolveToken(value, tokens, depth = 0) {
+  if (!value || depth > 6) return value;
+  const m = /^var\(\s*(--[\w-]+)\s*(?:,\s*([^)]+))?\)$/.exec(value.trim());
+  if (!m) return value.trim();
+  if (tokens.has(m[1])) return resolveToken(tokens.get(m[1]), tokens, depth + 1);
+  return m[2] ? resolveToken(m[2], tokens, depth + 1) : value.trim();
+}
+
+/** 长度字面量 → px 数（解析不出返回 null：交给运行时判）。 */
+function resolveLen(value, tokens) {
+  if (!value) return null;
+  const v = resolveToken(value, tokens);
+  const m = /^(-?[\d.]+)px$/.exec(String(v).trim());
+  return m ? Number(m[1]) : null;
+}
+
+/** 半径声明 → px 数 / 'pill' / 'circle' / null（未知）。 */
+function radiusPx(value, tokens) {
+  if (!value) return null;
+  const parts = String(value).trim().split(/\s+/).map((p) => resolveToken(p, tokens));
+  if (parts.some((p) => p === '50%')) return 'circle';
+  const nums = parts.map((p) => {
+    const m = /^(-?[\d.]+)px$/.exec(String(p).trim());
+    if (m) return Number(m[1]);
+    if (/^999px$/.test(String(p).trim())) return 999;
+    if (/^50%$/.test(String(p).trim())) return 999; // 圆形
+    return null;
+  });
+  if (nums.includes(999)) return 'pill';
+  if (nums.some((n) => n == null)) return null;
+  return Math.max(...nums);
+}
+
+/** 基座 → 候选基座（去掉尾随伪类/属性段；`:is()/:where()` 组展开成成员）。
+ *  作用：`.ud-cell[data-date]` 的圆角写在 `.ud-cell` 上；`:is(#send-btn, …)` 的圆角
+ *  写在成员族上 —— 这两种都是「同一个件换了写法」，不是方角。 */
+function baseCandidates(base) {
+  const out = new Set([base]);
+  const isGroup = /^:(is|where)\(/.exec(base);
+  if (isGroup) {
+    const inner = base.slice(base.indexOf('(') + 1, base.lastIndexOf(')'));
+    for (const part of splitSelectorGroup(inner)) {
+      out.add(part.replace(/\s+/g, ' ').trim());
+    }
+  }
+  // 后代链的「主体复合选择器」（`#bg-dropdown .bg-task-row` → `.bg-task-row`）与其类名：
+  // 圆角一般写在主体那一族上，写成带祖先后缀的复制品是同一个件。
+  for (const cand of [...out]) {
+    const subject = (cand.match(/([^\s>+~]+)$/) || [])[1];
+    if (!subject || subject === cand) continue;
+    out.add(subject);
+    for (const tok of subject.match(/[.#][\w-]+/g) || []) out.add(tok);
+  }
+  for (const cand of [...out]) {
+    let cur = cand;
+    for (;;) {
+      const next = cur.replace(/(::?[\w-]+(\([^)]*\))?|\[[^\]]+\])$/, '').trim();
+      if (next === cur || !next) break;
+      out.add(next);
+      cur = next;
+    }
+  }
+  return [...out].filter(Boolean);
+}
+
+/** 基座 → 形状声明（按选择器组逐段匹配，边界感知；按**加载序 + 行号**近似级联，
+ *  取最后一条圆角声明为准 —— 静态闸不做特异性计算，见规范 §6 盲点①）。 */
+function shapeFor(base, index) {
+  const hits = [];
+  const cands = baseCandidates(base);
+  for (const d of index.decls) {
+    for (const sel of splitSelectorGroup(d.selector)) {
+      const norm = sel.replace(/\s+/g, ' ').trim();
+      if (!norm) continue;
+      for (const cand of cands) {
+        const esc = cand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // 以 `.` / `#` 开头的基座：左边可以是复合选择器的成员边界（`pre.perm-cmd`），
+        // 因此不要求左侧分隔符（点号本身就是分隔）；右侧必须是词边界（`.perm-cmd`
+        // 不得命中 `.perm-cmd-toggle`）。其余形式（属性/标签开头）保留左右分隔。
+        const re = cand.startsWith('.') || cand.startsWith('#')
+          ? new RegExp(`${esc}(?![\\w-])`)
+          : new RegExp(`(^|[\\s(,>+~])${esc}(?![\\w-])`);
+        if (!re.test(norm)) continue;
+        hits.push(d);
+        break;
+      }
+    }
+  }
+  return hits.sort((a, b) => a.ord - b.ord);
+}
+
+const shapeIndex = buildShapeIndex();
+const seenShape = new Set();
+for (const row of ringBaseRows) {
+  const base = String(row.base || '').replace(/\s+/g, ' ').trim();
+  if (!base) continue;
+  // 元素级基座（裸标签）与 ID 主体基座不判：
+  //  · 裸标签（`textarea`）—— 圆角由上下文决定；
+  //  · ID 主体（`#send-btn`）—— 它的形状来自元素上的**类**（如 `.icon-btn` 50%），
+  //    静态闸看不见元素实际带了哪些类。
+  // 这两类都由运行时闸 P-5 在真像素上判（规范 §6 盲点①）。
+  const subject = (base.match(/([^\s>+~]+)$/) || [])[1] || '';
+  const elementOnly = !/[.#\[]/.test(subject);
+  const idSubject = subject.startsWith('#');
+  if (elementOnly || idSubject) continue;
+  if (exemptionFor(base, row.file)) continue;
+  const key = `${row.file}::${base}`;
+  if (seenShape.has(key)) continue;
+  seenShape.add(key);
+  const hits = shapeFor(base, shapeIndex);
+  const radiusHits = hits.filter((h) => h.radius);
+  const last = radiusHits.length ? radiusHits[radiusHits.length - 1] : null;
+  const eff = last ? radiusPx(last.radius, shapeIndex.tokens) : null;
+  const micro = hits.some((h) => (h.width != null && h.width > 0 && h.width < 12)
+    || (h.height != null && h.height > 0 && h.height < 12));
+  if (!last) {
+    addViolation('F7', join(ROOT, row.file), row.line, base,
+      '焦点环基座在整个 CSS 树里查不到任何圆角声明（= UA 方角）—— 可交互件必须显式落到 '
+      + `≥${MIN_RADIUS_PX}px 档（--ds-radius-chip / -input / -button），微格按 §2.6 取 2px`, 'border-radius');
     continue;
   }
-  const sel = String(row.selector).replace(/`/g, '').trim();
-  if (!sourceByRel.get(fileKey).replace(/\s+/g, ' ').includes(sel)) {
-    addViolation('F5', LEDGER, 0, sel, `僵尸登记：${row.file} 里已找不到这个选择器`, 'selector');
-  }
+  if (eff === 'pill' || eff === 'circle') continue;
+  if (eff == null) continue; // 解析不出（calc / inherit）⇒ 交给运行时
+  if (eff >= MIN_RADIUS_PX) continue;
+  if (micro && eff <= MICRO_RADIUS_MAX_PX) continue;
+  addViolation('F7', join(ROOT, row.file), row.line, base,
+    `焦点环基座圆角 ${eff}px < 标准档 ${MIN_RADIUS_PX}px（规范 §2.6；生效声明 = ${last.file}:${last.line} `
+    + `"${last.radius}"）—— 方角登记豁免机制已废除，改组件圆角而不是登记`, 'border-radius');
 }
 
 // F6 别名收编（全树 0 处，含定义处）
@@ -393,7 +609,8 @@ for (const file of cssFiles) {
 if (JSON_OUT) {
   console.log(JSON.stringify({
     ok: violations.length === 0 && ledger.ok,
-    ledger: { ok: ledger.ok, exemptions: ledger.exemptions.length, baseline: ledger.baseline, squareCorners: ledger.squareCorners.length, error: ledger.error },
+    ledger: { ok: ledger.ok, exemptions: ledger.exemptions.length, baseline: ledger.baseline, legacySquareCorners: ledger.legacySquare, error: ledger.error },
+    ringBases: ringBaseRows.length,
     violations,
   }, null, 2));
   process.exit(violations.length === 0 && ledger.ok ? 0 : 1);
@@ -431,5 +648,6 @@ if (violations.length || !ledger.ok) {
   process.exit(1);
 }
 console.log(`focus-ring: OK — 焦点环单规则单色源（${CANON_WIDTH} solid ${CANON_COLOR} · 内缩 · 禁光晕）；`
-  + `豁免 ${ledger.exemptions.length}/${ledger.baseline} 条、方角登记 ${ledger.squareCorners.length} 条、别名引用 0 处`);
+  + `豁免 ${ledger.exemptions.length}/${ledger.baseline} 条、圆角标准 F7 覆盖 ${ringBaseRows.length} 个环基座`
+  + `（方角登记机制已废除）、别名引用 0 处`);
 process.exit(0);

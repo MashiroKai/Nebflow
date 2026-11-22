@@ -925,6 +925,7 @@ button.fm-req-decline:focus-visible {
   text-align: center;
 }
 .fm-fwd-row {
+  border-radius: var(--ds-radius-chip); /* 圆角标准批 2026-11-22（作者令「要圆角的框」「落为标准」· 规范 §2.6）：F7 判据下的环基座。 */
   display: flex;
   align-items: center;
   gap: var(--ds-space-inline-gap);
@@ -1219,6 +1220,7 @@ button.fm-req-decline:focus-visible {
    `fm-att-dl` 同时是卡级预览的嵌套控件豁免判据（messages.makeCardPreviewable）与
    既有 QA 钩子——只作标记，不再带自有 chrome（旧文本键样式随统一退役）。 */
 .file-card .fm-att-dl {
+  border-radius: var(--ds-radius-chip); /* 圆角标准批 2026-11-22（作者令「要圆角的框」「落为标准」· 规范 §2.6）：F7 判据下的环基座。 */
   margin-left: auto;
   flex-shrink: 0;
   width: 30px;
@@ -1229,7 +1231,12 @@ button.fm-req-decline:focus-visible {
 
 /* 可点面（点击 = Canvas 预览）：cursor 由卡面自带（file-card/pop-media-flat 既有
    pointer），这里只保留键盘焦点环（可达性与改前同档）。 */
-.fm-att-previewable:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
+/* 标记类（不是几何所有者）：圆角跟随宿主卡面（inherit），焦点规则因此不需要写半径。 */
+.fm-att-previewable { border-radius: inherit; }
+.fm-att-previewable:focus-visible {
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
+}
 
 /* ── 图片附件直显槽（`.fm-att-inline` 旧段）已随 fm-att-card-unify 批退役 ──────────
    图片附件的出帧面 = 主会话媒体卡（chat.css `.pop-media-flat` + popArtifacts
@@ -1938,7 +1945,11 @@ body:not(.mobile-layer) #profile-face-overlay {
    焦点环 / 高亮取**既有** sapphire 半透明档（`--sapphire-tint-15` / `rgb(var(--sapphire) / 0.5)`，
    与 :184 `:focus-visible` 同款值）⇒ 零新色值；🔴 高亮**不是**左缘色条/高亮条
    （设计硬约束「无 accent bars」）—— 是一次性整块 fade，与 `.search-hit-flash` 同族。 */
-.fm-quote-block[data-quote-jump="ready"] { cursor: pointer; }
+.fm-quote-block[data-quote-jump="ready"] {
+  /* 标记类：圆角跟随引用块本体（inherit）。 */
+  border-radius: inherit;
+  cursor: pointer;
+}
 .fm-quote-block[data-quote-jump="ready"]:focus-visible {
   outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
   outline-offset: calc(var(--nf-focus-ring-w) * -1);
