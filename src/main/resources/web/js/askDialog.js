@@ -155,9 +155,11 @@ function createMediaTray(tt) {
   strip.style.display = 'none';
   const fileInput = h('input', { type: 'file', accept: 'image/*', multiple: true, 'aria-hidden': 'true' });
   fileInput.style.display = 'none';
+  // 附件钮 = 主会话 `#attach-btn` 同一组件类 `.icon-btn`（几何/图标档/hover/焦点单源在
+  // design-system 与 input.css 的 `.icon-btn` 族）；`.ask-attach` 只是身份钩子。
   const attachBtn = h('button', {
     type: 'button',
-    class: 'ask-attach',
+    class: 'icon-btn ask-attach',
     'aria-label': tt('附加图片', 'Attach image'),
     title: tt('附加图片（也可粘贴 / 拖入）', 'Attach images (paste or drop also works)'),
   }, [h('i', { 'data-lucide': 'paperclip' })]);
@@ -288,9 +290,11 @@ export function createAskDialog(cfg) {
     onSend: () => { dlg.submit(); },
   });
   const { root: inputRow, input, sendBtn: send, stopBtn: stop } = composer;
-  // 附图入口（ask 附图批）：附件钮位于输入条首位（文本框之前），缩略件条在输入条之上。
+  // 附图入口（ask 附图批）：附件钮位于输入条内「文本框之后、发送钮之前」——与主会话
+  // `#input-bar` 的 DOM 次序逐一对齐（textarea → attach → send/stop，UI 小修 2026-11 作者令
+  // 「以主会话为基准」）；缩略件条在输入条之上。
   const media = createMediaTray(tt);
-  inputRow.insertBefore(media.attachBtn, input);
+  inputRow.insertBefore(media.attachBtn, send);
   inputRow.appendChild(media.fileInput);
   const col = h('div', { class: 'ask-col' });
   const colwrap = h('div', { class: 'ask-colwrap' }, [col]);
