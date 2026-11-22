@@ -208,22 +208,26 @@ private[gateway] object WsAskHandlers:
       case u: nebflow.shared.UiMessage.User =>
         // 附图批：附件行件随回放下发（{name,type,path}；前端 path → /uploads 路由取图）。
         // 「图+无正文」行保留（text 可空，行不因正文空被丢弃）。
-        val base = Json.obj("role" -> "user".asJson, "text" -> u.text.asJson)
+        val base = withTimestamp(Json.obj("role" -> "user".asJson, "text" -> u.text.asJson), u.timestamp)
         rows += (if u.attachments.isEmpty then base
                  else base.deepMerge(Json.obj("attachments" -> u.attachments.asJson)))
       case a: nebflow.shared.UiMessage.Ai if a.text.trim.nonEmpty =>
         rows.lastOption.flatMap(_.hcursor.downField("role").as[String].toOption) match
           case Some("ai") =>
             // 同轮相邻段并回一泡（原文直连 = live delta 拼接同形；tool 行透明不隔断，
-            // user/sys 行已落行故天然隔断）。
+            // user/sys 行已落行故天然隔断）。时间戳沿用首段（deepMerge 保留既有 timestamp 键）。
             val prev = rows.last.hcursor.downField("text").as[String].getOrElse("")
-            rows(rows.length - 1) = Json.obj("role" -> "ai".asJson, "text" -> (prev + a.text).asJson)
+            rows(rows.length - 1) = rows.last.deepMerge(Json.obj("text" -> (prev + a.text).asJson))
           case _ =>
-            rows += Json.obj("role" -> "ai".asJson, "text" -> a.text.asJson)
+            rows += withTimestamp(Json.obj("role" -> "ai".asJson, "text" -> a.text.asJson), a.timestamp)
       case _ => () // tool / agent / ask / system：dock 透明纪律（live 腿同样不进泡列）
     }
     rows.toList
   end encodeTranscript
+
+  /** 时间戳随回放行下发（canvas ask 时间分隔线批）：仅 >0 时加 `timestamp` 键；0/缺席 ⇒ 行形态逐字不变。 */
+  private[gateway] def withTimestamp(row: Json, ts: Long): Json =
+    if ts > 0L then row.deepMerge(Json.obj("timestamp" -> ts.asJson)) else row
 
   // ── askQuestion：真实用户文本链路（与输入框同腿 dispatchUserText）────────
 
