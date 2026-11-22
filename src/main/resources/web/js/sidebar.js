@@ -866,19 +866,17 @@ export function renderSettings() {
   // 造型单点 = css/settingsRows.css（令牌 --set-* 落在 css/stand-tokens.css）。
   // 「能进下一面板」的行一律 setNavRow（图标位 + 主标题 + 单个副值 + chevron），
   // 读数/控件行一律 setRow（同一高度网格）；动作按钮一律 .set-btn（同尺寸令牌）。
+  // ── 通用 + 运行时 融合为单块（作者令 2026-11-22 18:51「把设置面板里的通用和运行时融合为
+  // 一个块」）：原「通用」（语言 / 外观）与「运行时」（思考 / 日志 / 工作时段 / 语音 / 工具
+  // 结果缓存 / 开机自启）两个分区 + 两张白卡 ⇒ 一个分区（标题「通用」）+ 一张白卡。两组设置
+  // 项在卡内各自成组（setGroup），组间靠 settingsRows.css 的组间分隔线区分。
+  // 卡内不再发射第二个卡标题（栏目名去重：分区头 = 唯一栏目名，机检见
+  // scripts/check-settings-section-dedupe.mjs）。
   content.innerHTML = `
     <section class="sp-panel-group" data-panel-group="general"><h2>${t('settings.general')}</h2>
-      ${setCard({ body: setGroup(setRow({ title: t('settings.language'), control: `<select class="cfg-select set-field" id="cfg-language" style="width:auto">${langOpts}</select>` })) })}
-      ${ORB_SETTINGS_VISIBLE ? setCard({ title: t('settings.appearance'), body: renderAppearanceSection() }) : ''}
-    </section>
-    <section class="sp-panel-group" data-panel-group="runtime"><h2>${t('settings.runtime')}</h2>
-    <!-- 栏目名去重批（2026-11-18 作者实拍报障「每一栏都出现两次栏目名 比如高级 高级」）：
-         单卡分区的卡内标题与 section 标题逐字相同 ⇒ 二取一，保留**卡外**的 section
-         标题（它是全页分组节奏的唯一承载体，删掉会让本组脱离「组标题 + 白卡」的版式），
-         卡内标题整件撤除。多卡分区（模型与服务：服务商 / 模型（按会话类别）/ 密钥）
-         的卡内标题与 section 标题不同名 ⇒ 一个不动。机检：
-         scripts/check-settings-section-dedupe.mjs 逐对核（红/绿自证）。 -->
     ${setCard({ body: `
+      ${setGroup(setRow({ title: t('settings.language'), control: `<select class="cfg-select set-field" id="cfg-language" style="width:auto">${langOpts}</select>` }))}
+      ${ORB_SETTINGS_VISIBLE ? renderAppearanceSection() : ''}
       ${setGroup(
         setRow({
           title: t('settings.thinkingMode'),
@@ -998,7 +996,7 @@ export function renderSettings() {
       </div>
     ` })}</section>`;
 
-  for (const name of ['general', 'models', 'runtime', 'advanced', 'about']) {
+  for (const name of ['general', 'models', 'advanced', 'about']) {
     const group = content.querySelector(`[data-panel-group="${name}"]`);
     if (group) content.appendChild(group);
   }

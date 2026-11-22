@@ -161,14 +161,15 @@ for (const [locale, mcpTitle] of [['zh-CN', 'MCP 服务器'], ['en', 'MCP Server
     if (locale === 'zh-CN') {
       // 2026-10-20 校准：模型方案节已随早前批次并入 LLM 服务商。
       // 2026-11-18（本批）：账号栏整件退役 ⇒ 「账号」组题不再在场（判据反转）。
-      for (const t of ['运行时', 'LLM 服务商', '密钥', '高级', '关于']) {
+      // 通用 + 运行时 融合为单块「通用」（2026-11-22 18:51）
+      for (const t of ['通用', 'LLM 服务商', '密钥', '高级', '关于']) {
         expect(dump.titles, `section ${t} must remain`).toContain(t);
       }
       expect(dump.titles, 'account column heading must be retired (2026-11-18 作者令)').not.toContain('账号');
       expect(dump.titles, 'standalone Device Link section must stay merged away').not.toContain('设备互联');
     }
     if (locale === 'en') {
-      for (const t of ['Runtime', 'LLM Providers', 'Secrets', 'Advanced', 'About']) {
+      for (const t of ['General', 'LLM Providers', 'Secrets', 'Advanced', 'About']) {
         expect(dump.titles, `section ${t} must remain`).toContain(t);
       }
       expect(dump.titles, 'account column heading must be retired (2026-11-18 作者令)').not.toContain('Account');

@@ -82,8 +82,8 @@ for (const mobile of [false, true]) {
   test(`${mobile ? 'mobile' : 'desktop'} settings five ordered groups and no account column`, async ({ page }) => {
     await boot(page, mobile);
     const groups = page.locator('#settings-content > [data-panel-group]');
-    await expect(groups).toHaveCount(5);
-    expect(await groups.evaluateAll(nodes => nodes.map(n => n.dataset.panelGroup))).toEqual(['general', 'models', 'runtime', 'advanced', 'about']);
+    await expect(groups).toHaveCount(4);
+    expect(await groups.evaluateAll(nodes => nodes.map(n => n.dataset.panelGroup))).toEqual(['general', 'models', 'advanced', 'about']);
     // 账户栏整件退役（作者令 2026-11-18 16:36/16:45）：账号分组、账号卡、只读
     // 「登录账号」读数行一律不存在（不是隐藏——DOM 为零命中）。
     await expect(page.locator('#settings-content [data-panel-group="account"]')).toHaveCount(0);
