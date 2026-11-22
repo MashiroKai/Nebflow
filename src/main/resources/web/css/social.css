@@ -14,6 +14,8 @@
    shared `--overlay-bg` token is already `transparent` in both themes, so the
    computed background is rgba(0,0,0,0) by construction. */
 #social-overlay {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
   background: var(--overlay-bg);
@@ -126,6 +128,8 @@
    (sidebar.css); only the status colour mapping is ours (X1 定序). */
 .social-card-head .social-status-pill { margin-left: auto; }
 .social-status-pill[data-status="notConfigured"] {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: var(--color-frame-text-muted);
   background: color-mix(in srgb, var(--color-frame-text-muted) 12%, transparent);
   border-color: transparent;
@@ -134,6 +138,8 @@
    meaning. 🔴 Deliberately NOT the sapphire/`on` family: in this product
    sapphire reads as "enabled / live", which would be a fake-connection cue. */
 .social-status-pill[data-status="configuredNotLinked"] {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: var(--color-frame-text);
   background: color-mix(in srgb, var(--color-frame-text) 10%, transparent);
   border-color: color-mix(in srgb, var(--color-frame-text) 20%, transparent);
@@ -142,6 +148,8 @@
    （--status-word），语义由词前 triangle-alert 图标（socialPanel.js 注入）承载。
    （ui-status-redesign 批，分叉①=A；此前整 pill 红字。） */
 .social-status-pill[data-status="configInvalid"] {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: var(--status-word);
   background: color-mix(in srgb, var(--status-error-icon) 10%, transparent);
   border-color: color-mix(in srgb, var(--status-error-icon) 25%, transparent);
@@ -149,6 +157,8 @@
 /* Phase-2 reserved: unreachable while `adapterRegistered` is false. Keeping the
    rule here documents the intent without creating any render point. */
 .social-status-pill[data-status="connected"] {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: rgb(var(--brand-green));
   background: rgb(var(--brand-green) / 0.1);
   border-color: rgb(var(--brand-green) / 0.25);
@@ -158,6 +168,8 @@
    invalid-configuration state; no new colour token. ui-status-redesign：字转
    中性＋词前 unplug 图标（断链语义），红底红边 = 图案载体保留。 */
 .social-status-pill[data-status="failed"] {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: var(--status-word);
   background: color-mix(in srgb, var(--status-error-icon) 10%, transparent);
   border-color: color-mix(in srgb, var(--status-error-icon) 25%, transparent);
@@ -450,6 +462,8 @@
       sheet: it wins at :hover only, so the resting ghost face is unchanged. */
 .social-item-row-bound { cursor: default; }
 .social-card .social-item-line .social-item-unbind:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: color-mix(in srgb, var(--status-error-icon) 10%, transparent);
   border-color: color-mix(in srgb, var(--status-error-icon) 25%, transparent);
 }

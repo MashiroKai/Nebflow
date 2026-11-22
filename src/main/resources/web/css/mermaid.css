@@ -130,6 +130,8 @@ body > [id^='dnf-mermaid-svg-'] {
    （rich-render ③「完成后 svg 恰好 1 个」、mermaid-md R1 按索引取 SVG），内联图标
    会被当成第二个图（实测 sequenceDiagram 读出 13x13 的 lucide 图标尺寸）。 */
 .nf-figure-open-ico {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   display: block;
   width: 13px;
   height: 13px;

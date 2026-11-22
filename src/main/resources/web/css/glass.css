@@ -75,6 +75,10 @@
 .glass,
 .glass-control,
 #input-bar {
+  /* 全面圆角批 2026-11-22（§2.6）：本块是**材质共享块**——材质在这里给，几何由成员
+     自己给（`.g2-fab` 的 50% / `#input-bar` 的 `--ds-radius-shell` 20px）。在这里写
+     一个统一档位会把胶囊与外壳一律压成 6px（实测反例：`#input-bar` 20→6、
+     `#settings-modal-close` 50%→6）。 */
   /* 🔴 composer 统一批（2026-11-18）：主会话输入条外壳 `#input-bar` 的材质声明
      并进**这一条**共享块（此前 `#queue-bar.visible` 之后另起一条 id 级 `#input-bar`
      块 —— 同一套值写了两遍，正是「同一个壳换个选择器再画一遍材质」的分叉）。
@@ -92,6 +96,8 @@
 /* 毛玻璃的 hover 档（只提不透，不改形态/不改模糊——形态只有一种） */
 @media (hover: hover) {
   .nf-glass:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
     background: var(--nf-glass-input-bg);
   }
 }
@@ -103,6 +109,8 @@
 /* 接管毛玻璃背景（四修批 2026-10-29 作者令；bc652038b 误删后 2026-11-21 恢复）：
    被顶出弹窗在场时整页压暗 + 模糊——幕布成员（值仍只读 --nf-glass-scrim* 单源）。 */
 #modal-overlay.takeover-blur {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: var(--nf-glass-scrim);
   -webkit-backdrop-filter: var(--nf-glass-scrim-blur);
   backdrop-filter: var(--nf-glass-scrim-blur);
@@ -539,6 +547,9 @@ html[data-theme="light"] {
 #onboarding-panel,
 .model-panel,
 .wsp-panel {
+  /* 全面圆角批 2026-11-22（§2.6）：弹窗外壳档（20px，`--ds-radius-shell`）——
+     这一组是外壳本体，几何归它自己，不是成员给。 */
+  border-radius: var(--ds-radius-shell);
   background: var(--glass-bg);
   -webkit-backdrop-filter: var(--nf-glass-input-filter);
   backdrop-filter: var(--nf-glass-input-filter);

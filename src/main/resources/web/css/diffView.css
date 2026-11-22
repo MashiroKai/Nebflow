@@ -37,6 +37,8 @@
   min-width: 0;
 }
 .nf-fc-row:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: var(--color-bg-hover, rgba(128, 128, 128, 0.12));
 }
 .nf-fc-row::marker,
@@ -74,14 +76,20 @@
   border: 1px solid transparent;
 }
 .nf-fc-badge-added {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: var(--color-success, var(--nf-review-success-fallback));
   border-color: var(--color-success, var(--nf-review-success-fallback));
 }
 .nf-fc-badge-modified {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: var(--color-warning, var(--nf-review-warning-fallback));
   border-color: var(--color-warning, var(--nf-review-warning-fallback));
 }
 .nf-fc-badge-deleted {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: var(--color-danger, var(--nf-review-danger-fallback));
   border-color: var(--color-danger, var(--nf-review-danger-fallback));
 }
@@ -129,10 +137,14 @@
   padding: 0 var(--ds-space-2);
 }
 .nf-diff-add {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: rgba(63, 185, 80, 0.15);
   color: var(--color-success, var(--nf-review-success-fallback));
 }
 .nf-diff-del {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: rgba(248, 81, 73, 0.15);
   color: var(--color-danger, var(--nf-review-danger-fallback));
 }
@@ -140,6 +152,8 @@
   color: var(--color-text-muted, var(--nf-review-muted-fallback));
 }
 .nf-diff-hunk {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: var(--color-info, var(--nf-review-info-fallback));
   background: rgba(88, 166, 255, 0.1);
   margin: var(--ds-space-1) 0;
@@ -586,6 +600,8 @@ span.nf-rcpt-note { cursor: default; }
 }
 /* 打开失败行的行内标记（下次成功开图时移除）。 */
 .nf-fc-openfail {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   outline: 1px solid var(--color-danger, #d64545);
 }
 
@@ -653,6 +669,8 @@ span.nf-rcpt-note { cursor: default; }
 .nf-ar-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
 /* 冲突条（显式提示，绝不静默覆盖；role=alert）。 */
 .nf-ar-conflict {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   display: flex;
   align-items: center;
   gap: var(--ds-space-1h);
@@ -680,10 +698,18 @@ span.nf-rcpt-note { cursor: default; }
   gap: var(--ds-space-1h);
   margin-left: auto;
 }
-.nf-ar-retry { color: var(--color-warning, var(--nf-review-warning-fallback)); background: rgba(210, 153, 34, 0.12); border-color: rgba(210, 153, 34, 0.35); }
-@media (hover: hover) { .nf-ar-retry:hover { background: rgba(210, 153, 34, 0.2); } }
-.nf-ar-dismiss { color: var(--color-text-muted); background: transparent; border-color: var(--color-border, var(--nf-review-border-fallback)); }
-@media (hover: hover) { .nf-ar-dismiss:hover { color: var(--color-text); background: var(--color-surface); } }
+.nf-ar-retry {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); color: var(--color-warning, var(--nf-review-warning-fallback)); background: rgba(210, 153, 34, 0.12); border-color: rgba(210, 153, 34, 0.35); }
+@media (hover: hover) { .nf-ar-retry:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: rgba(210, 153, 34, 0.2); } }
+.nf-ar-dismiss {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); color: var(--color-text-muted); background: transparent; border-color: var(--color-border, var(--nf-review-border-fallback)); }
+@media (hover: hover) { .nf-ar-dismiss:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); color: var(--color-text); background: var(--color-surface); } }
 /* 文档体：全文滚动面（横向可滚——diff 行不折行）。 */
 .nf-ar-body {
   flex: 1 1 auto;
@@ -701,11 +727,15 @@ span.nf-rcpt-note { cursor: default; }
 }
 .nf-ar-line.ctx { color: var(--color-text-muted, var(--nf-review-muted-fallback)); }
 .nf-ar-line.add {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: var(--color-success, var(--nf-review-success-fallback));
   background: rgba(63, 185, 80, 0.15);
   box-shadow: inset 2px 0 0 var(--color-success, var(--nf-review-success-fallback));
 }
 .nf-ar-line.del {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: var(--color-danger, var(--nf-review-danger-fallback));
   background: rgba(248, 81, 73, 0.15);
   box-shadow: inset 2px 0 0 var(--color-danger, var(--nf-review-danger-fallback));
@@ -733,6 +763,8 @@ span.nf-rcpt-note { cursor: default; }
 .nf-ar-hunk { margin: var(--ds-space-1) 0; }
 .nf-ar-hunk[data-state="waiting"] { opacity: 0.55; }
 .nf-ar-hunkbar {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   display: flex;
   align-items: center;
   gap: var(--ds-space-1h);
@@ -760,6 +792,8 @@ span.nf-rcpt-note { cursor: default; }
    · 覆盖 @codemirror/merge 自带逐块按钮的绝对定位于铺排（改壳为行内 44px 带，
      D4/D6 的「可点面被浮钮压住 / 目标 <44px」就在这一处消掉）。 */
 .nf-dv {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
@@ -837,6 +871,8 @@ span.nf-rcpt-note { cursor: default; }
               transform var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease);
 }
 .nf-dv .nf-dv-chunkbtn-reject {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: var(--nf-dv-reject-fg);
   background: var(--nf-dv-reject-bg);
   border-color: var(--nf-dv-reject-border);
@@ -1009,8 +1045,12 @@ span.nf-rcpt-note { cursor: default; }
 
 /* 状态可见（已接受/已拒绝后的呈现要能看出）：动作发出即就地落 data-chunk-state，
    动作带底 tint + 行内状态标签（前景 = 正文 token，双主题对比度由 --nf-dv-fg 保证）。 */
-.nf-dv .cm-deletedChunk[data-chunk-state='accepted'] .cm-chunkButtons { background: var(--nf-dv-state-ok-bg); }
-.nf-dv .cm-deletedChunk[data-chunk-state='rejected'] .cm-chunkButtons { background: var(--nf-dv-state-no-bg); }
+.nf-dv .cm-deletedChunk[data-chunk-state='accepted'] .cm-chunkButtons {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--nf-dv-state-ok-bg); }
+.nf-dv .cm-deletedChunk[data-chunk-state='rejected'] .cm-chunkButtons {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--nf-dv-state-no-bg); }
 .nf-dv .cm-deletedChunk[data-chunk-state] .cm-chunkButtons button { opacity: 0.55; }
 .nf-dv-chunkstate {
   flex: 0 0 auto;

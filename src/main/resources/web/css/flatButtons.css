@@ -144,6 +144,8 @@
    这两族原本 hover/按下都为空 ⇒ 顺手把两态一起补上（底色阶 + 按下加深）。 */
 @media (hover: hover) {
   :is(.mp-mode-btn, .settings-collapse-toggle):not(:disabled):hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
     background-color: var(--btn-hover-bg);
   }
   /* canvas-video-player 批（2026-11-05）：画布视频控件族的 hover —— 底色升一档
@@ -155,6 +157,8 @@
      退役钩子的 hover 档（cv-hover-bg + 1.05）随钩子消失，本层按扁平底色阶补
      （--btn-hover-bg 档），不复活玻璃抬亮配方。 */
   :is(.lt-btn, .viewer-retry-btn):not(:disabled):hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
     background-color: var(--btn-hover-bg);
   }
 }

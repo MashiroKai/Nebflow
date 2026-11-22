@@ -100,7 +100,9 @@ html[data-theme="dark"] #perception-panel {
   border: none; background: transparent; font: inherit; color: inherit; cursor: pointer;
   text-align: left; transition: background .15s;
 }
-.pp-entry-head:hover { background: var(--st-control-bg-hover); }
+.pp-entry-head:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--st-control-bg-hover); }
 .pp-e-ic {
   width: var(--st-icon-chip); height: var(--st-icon-chip); flex-shrink: 0; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
@@ -329,7 +331,9 @@ html[data-theme="dark"] #perception-panel {
 .mt-btn.on { background: rgb(var(--st-sapphire) / .12); color: rgb(var(--st-sapphire)); }
 .mt-btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .mt-btn .bi { font-weight: 700; font-style: italic; }
-.mt-sep { width: 1px; height: 14px; background: var(--st-etched-border); margin: 0 var(--ds-space-1); }
+.mt-sep {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-thin); width: 1px; height: 14px; background: var(--st-etched-border); margin: 0 var(--ds-space-1); }
 
 /* 正文（contenteditable，官网档正文排版 13.5px/1.8） */
 .mail-body-edit {

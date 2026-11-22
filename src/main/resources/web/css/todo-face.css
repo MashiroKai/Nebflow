@@ -502,17 +502,23 @@
   box-shadow: 0 0 3px color-mix(in srgb, var(--tag-color, var(--color-text, #000)) 30%, transparent);
 }
 .tfl-chip-tag.selected {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: color-mix(in srgb, var(--tag-color) 32%, transparent);
   border-color: color-mix(in srgb, var(--tag-color) 60%, transparent);
   box-shadow: 0 0 3px color-mix(in srgb, var(--tag-color) 55%, transparent);
 }
 .tfl-chip-tag .tfl-chip-dot { background: var(--tag-color); }
 .tfl-chip-all {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: color-mix(in srgb, var(--color-text, #000) 7%, transparent);
   border-color: transparent;
   z-index: 1;
 }
 .tfl-chip-all.selected {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: color-mix(in srgb, var(--color-text, #000) 18%, transparent);
   border-color: color-mix(in srgb, var(--color-text, #000) 45%, transparent);
   box-shadow: 0 0 3px color-mix(in srgb, var(--color-text, #000) 30%, transparent);
@@ -527,6 +533,8 @@
 /* 拖拽中：源 chip 25% 透明（复刻 isDragged opacity） */
 .tfl-chip-tag.dragging { opacity: 0.25; }
 .tfl-chip-ghost {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: fixed;
   z-index: 10000;
   pointer-events: none;
@@ -585,8 +593,12 @@
 .tfl-chip-add:hover { color: color-mix(in srgb, var(--color-text, #000) 80%, transparent); }
 /* 重要度四签行 */
 .tfl-prio-row { display: flex; align-items: center; gap: var(--ds-space-half); flex-wrap: wrap; }
-.tfl-chip-prio { background: color-mix(in srgb, var(--tag-color, var(--color-text, #000)) 5%, transparent); }
+.tfl-chip-prio {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: color-mix(in srgb, var(--tag-color, var(--color-text, #000)) 5%, transparent); }
 .tfl-chip-prio.selected {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: color-mix(in srgb, var(--tag-color) 22%, transparent);
   border-color: color-mix(in srgb, var(--tag-color) 50%, transparent);
   box-shadow: 0 0 3px color-mix(in srgb, var(--tag-color) 45%, transparent);
@@ -693,6 +705,8 @@
   border: 1.5px solid transparent;
 }
 .tfl-tag-color.selected::before {
+  /* 全面圆角批 2026-11-22（§2.6 标记类）：选中环是覆盖层，圆角跟随色点本体。 */
+  border-radius: inherit;
   box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--color-text, #fff) 80%, transparent);
 }
 /* 校验反馈行（作者报障批 2026-11-07：空名/重名原先静默关闭，零反馈 ⇒ 读作
@@ -1210,7 +1224,7 @@
   align-items: center;
   gap: 8px;
   padding: var(--ds-space-1h) 10px;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   border: 1px solid var(--tfl-hint-stroke);
   background: var(--tfl-hint-bg);
   color: var(--tfl-hint-text);

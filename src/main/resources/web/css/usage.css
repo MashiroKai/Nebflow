@@ -5,6 +5,8 @@
    summary cards only, intraday 24h curve (SVG), heatmap dimension param. */
 
 #usage-overlay {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: fixed;
   inset: 0;
   display: flex;
@@ -469,7 +471,9 @@
   text-overflow: ellipsis;
   max-width: 160px;
 }
-.ud-table tbody tr:hover { background: var(--glass-etched-bg); }
+.ud-table tbody tr:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--glass-etched-bg); }
 .ud-table .num { text-align: right; }
 .ud-drill-empty, .ud-drill-error {
   font-size: var(--ds-fs-hint);

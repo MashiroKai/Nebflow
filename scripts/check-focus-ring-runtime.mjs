@@ -22,6 +22,10 @@
 //       且 outline-offset 必须是负且 ≥ 环宽（几何上内缩）。
 //   P-4 玻璃：带 backdrop-filter 的弹层内控件（设置面 / 面板 / 叠卡）与 P-1/P-3 同口径
 //       且差分必须 > 0（叠加层没有把它吃掉）。
+//   P-6 全面圆角：页面上每个**画得出盒子**的元素（背景/边框/投影）都取计算样式判圆角 ——
+//      短边 ≤12px 的微格放行 2px 档，其余要求 ≥6px 或胶囊/圆形；唯「贴边满幅」
+//      （盒边 = 视口边）按其几何豁免，并逐条具名进读数（作者令 2026-11-22 10:17
+//      「还是存在部分不是圆角的 得全面圆角」；规范 §2.6/§4）。
 //
 // 豁免：scripts/focus-ring-exemptions.json 里具名登记的「无环焦点」控件（如主会话输入条
 // 内层 #input，作者令 2026-11-03 ④）在运行时按 `exempt` 记录，不判 P-1（这是规范 §2.3
@@ -60,6 +64,10 @@ const skipped = [];
 const deviations = [];
 const notPainted = [];
 const unstableRows = [];
+/** P-6 全面圆角普查：样本 / 违规 / 结构全幅豁免（具名）。 */
+const p6Rows = [];
+const p6Fails = [];
+const p6Structural = [];
 
 // ── 豁免选择器（从台账读，脚本内零硬编码）──────────────────────────────────
 const ledger = JSON.parse(readFileSync(join(ROOT, 'scripts', 'focus-ring-exemptions.json'), 'utf8'));
@@ -170,6 +178,80 @@ const MEASURE = `(idx, mode) => {
     borderRadius: cs.borderRadius,
     rect: { x: r.x, y: r.y, w: r.width, h: r.height },
   };
+}`;
+
+/**
+ * P-6 全面圆角普查：把页面上**画得出盒子**的每个元素都取计算样式判圆角
+ * （作者令 2026-11-22 10:17「还是存在部分不是圆角的 得全面圆角」；规范 §2.6/§4）。
+ *
+ * 与 P-5 的分工：P-5 只判「焦点环基座」（可交互件），P-6 判全树画框面（徽章 / chip /
+ * 统计卡 / 提示条 / 分隔面 / 媒体占位 …… 这些不在 Tab 序里，人眼却看得见方角）。
+ *
+ * 判据（几何，不看 CSS 文本）：
+ *   · 画框 = 背景不透明 >2% / ≥2 条可见边框 / 有投影；面积 <16px² 的元素不构成盒子。
+ *   · 短边 ≤12px 的微格放行 2px 档（浏览器在 11px 盒上把 6px 钳成 50%，格子变圆点，
+ *     热力图语义被破 —— 物理钳制，不是审美选择）；其余要求 ≥6px 或胶囊/圆形。
+ *   · **贴边满幅**（盒边 = 视口边：左右都贴或上下都贴）是唯一的结构豁免：它的圆角会被
+ *     视口裁掉。这类件逐条具名记进 readout 的 structural 段 —— 是几何判据，不是
+ *     round1 那种 per-item 方角登记。
+ */
+const SURVEY = `(scopeSel) => {
+  const scope = scopeSel ? document.querySelector(scopeSel) : document.body;
+  if (!scope) return null;
+  const vw = innerWidth, vh = innerHeight;
+  const describe = (el) => {
+    const cls = typeof el.className === 'string' && el.className.trim()
+      ? '.' + el.className.trim().split(/\\s+/).slice(0, 2).join('.') : '';
+    const lbl = (el.getAttribute('aria-label') || el.id || '').trim().replace(/\\s+/g, ' ').slice(0, 20);
+    return el.tagName.toLowerCase() + (el.id ? '#' + el.id : cls) + (lbl ? ' "' + lbl + '"' : '');
+  };
+  const rows = [], structural = [];
+  for (const el of scope.querySelectorAll('*')) {
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden' || +cs.opacity < 0.02) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width * r.height < 16) continue;
+    if (r.bottom < 0 || r.top > vh || r.right < 0 || r.left > vw) continue;
+    // 画框判定
+    let bgPaint = false;
+    const bg = String(cs.backgroundColor || '');
+    const m = /rgba?\\(([^)]+)\\)/.exec(bg);
+    if (m) {
+      const parts = m[1].split(',').map(Number);
+      bgPaint = parts.length < 4 || parts[3] > 0.02;
+    } else if (bg && bg !== 'transparent' && bg !== 'none') bgPaint = true;
+    const sides = ['Top', 'Right', 'Bottom', 'Left'].filter((sd) =>
+      parseFloat(cs['border' + sd + 'Width']) > 0 && cs['border' + sd + 'Style'] !== 'none').length;
+    const shadow = cs.boxShadow && cs.boxShadow !== 'none';
+    if (!bgPaint && sides < 2 && !shadow) continue;
+    // 圆角读数（四角最大值；% 记 999 = 胶囊/圆形档）
+    const raw = ['borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomRightRadius', 'borderBottomLeftRadius']
+      .map((prop) => String(cs[prop] || '0px'));
+    const px = raw.map((v) => {
+      const mm = /^([\\d.]+)px$/.exec(v.trim());
+      if (mm) return Number(mm[1]);
+      return /%/.test(v) ? 999 : null;
+    });
+    const known = px.every((n) => n != null);
+    const maxRadius = known ? Math.max(...px) : 0;
+    const shortSide = Math.min(r.width, r.height);
+    // 贴边满幅（盒边 = 视口边）
+    const fullX = r.left <= 1 && r.right >= vw - 1;
+    const fullY = r.top <= 1 && r.bottom >= vh - 1;
+    const tag = el.tagName.toLowerCase();
+    const row = {
+      label: describe(el), tag, rect: { x: r.x, y: r.y, w: r.width, h: r.height },
+      shortSide, maxRadius, radii: raw, bg: bgPaint, borderSides: sides, shadow: Boolean(shadow),
+    };
+    if (tag === 'html' || tag === 'body' || el.id === 'app' || ((fullX || fullY) && maxRadius === 0)) {
+      structural.push({ ...row, why: tag === 'html' || tag === 'body' || el.id === 'app'
+        ? '结构根（盒 = 视口）' : (fullX && fullY ? '贴边满幅（四边 = 视口边）'
+        : (fullX ? '贴边满幅（左右 = 视口边）' : '贴边满幅（上下 = 视口边）')) });
+      continue;
+    }
+    rows.push(row);
+  }
+  return { rows, structural };
 }`;
 
 const pw = loadPlaywright();
@@ -414,6 +496,33 @@ for (const theme of THEMES) {
           + '方角件的焦点环也是方的（规范 §2.6；方角登记机制已废除，请改组件圆角）');
       }
     }
+
+    // ── P-6 全面圆角普查（本场景全树画框面，不看 Tab 序）─────────────────
+    const survey = await page.evaluate(`(${SURVEY})(${JSON.stringify(scene.scope)})`);
+    if (!survey) {
+      skipped.push(`${theme}/${scene.name}: P-6 场景缺失（普查未执行）`);
+    } else {
+      for (const box of survey.rows) {
+        const required = box.shortSide <= 12 ? 1 : 5.5;
+        const pillOrCircle = box.maxRadius >= box.shortSide / 2 - 0.5;
+        const ok = box.maxRadius >= required || pillOrCircle;
+        const row6 = {
+          theme, scene: scene.name, label: box.label, rect: box.rect, shortSide: box.shortSide,
+          maxRadius: box.maxRadius, radii: box.radii, paints: { bg: box.bg, borderSides: box.borderSides, shadow: box.shadow },
+          required, ok,
+        };
+        p6Rows.push(row6);
+        if (!ok) {
+          p6Fails.push(row6);
+          findings.push(`P-6 ${theme}/${scene.name} ${box.label} — 画框面计算圆角 ${box.radii.join(' ')}`
+            + `（短边 ${box.shortSide.toFixed(0)}px，画的是 bg=${box.bg} border=${box.borderSides} shadow=${box.shadow}）`
+            + ' ⇒ 低于 §2.6 标准档（6px；微格 2px）');
+        }
+      }
+      for (const st of survey.structural) {
+        p6Structural.push({ theme, scene: scene.name, label: st.label, rect: st.rect, why: st.why });
+      }
+    }
   }
   await session.close();
 }
@@ -432,6 +541,10 @@ const summary = {
   p4Fail: rows.filter((r) => r.P.p4 === false).length,
   p5Samples: rows.filter((r) => r.P.p5 != null).length,
   p5Fail: rows.filter((r) => r.P.p5 === false).length,
+  p6Samples: p6Rows.length,
+  p6Fail: p6Fails.length,
+  p6MicroAccepted: p6Rows.filter((r) => r.ok && r.shortSide <= 12).length,
+  p6Structural: p6Structural.length,
   p5Micro: rows.filter((r) => r.P.p5Detail && r.P.p5Detail.kind === 'micro').length,
   p5RadiusKinds: (() => {
     const out = {};
@@ -449,6 +562,7 @@ const summary = {
   })(),
   skipped,
   notPainted,
+  p6: { samples: p6Rows.length, fail: p6Fails.length, structural: p6Structural },
   p3UnjudgedUnstable: unstableRows.length,
   deviations,
 };
@@ -457,6 +571,8 @@ if (OUT_DIR) {
   mkdirSync(OUT_DIR, { recursive: true });
   writeFileSync(join(OUT_DIR, 'focus-runtime-readout.json'),
     JSON.stringify({ summary, rows, findings }, null, 2));
+  writeFileSync(join(OUT_DIR, 'round-corners-runtime-readout.json'),
+    JSON.stringify({ samples: p6Rows, failures: p6Fails, structural: p6Structural }, null, 2));
 }
 
 if (JSON_OUT) {
@@ -492,11 +608,24 @@ console.log(`\nP-1 失败 ${summary.p1Fail} · P-2 失败 ${summary.p2Fail} · P
   + ` · P-4 样本 ${summary.p4Samples}（失败 ${summary.p4Fail}）`
   + ` · P-5 样本 ${summary.p5Samples}（失败 ${summary.p5Fail}，微格放行 ${summary.p5Micro}）`);
 console.log(`* = 「环对相邻像素」实测 <3:1，已在读数里逐件标注（${summary.subThree} 件）`);
+console.log(`P-6 画框面普查 ${summary.p6Samples} 件（方角失败 ${summary.p6Fail}；微格 2px 档放行 ${summary.p6MicroAccepted} 件）`);
+if (p6Structural.length) {
+  const named = [...new Set(p6Structural.map((s) => `${s.label}（${s.why}）`))];
+  console.log(`结构全幅豁免（几何判据，具名 ${named.length} 件）：`);
+  for (const n of named.slice(0, 12)) console.log(`  - ${n}`);
+}
+if (p6Fails.length) {
+  console.log('P-6 方角件（前 20）：');
+  for (const f of p6Fails.slice(0, 20)) {
+    console.log(`  - ${f.theme}/${f.scene} ${f.label} 圆角=${f.radii.join(' ')} 短边=${f.shortSide.toFixed(0)}px`);
+  }
+}
 console.log(`承载面实测低于门槛的偏差 ${summary.surfaceBelowFloor} 件（读数 deviations 段；亮档产品底比纯白深，作者批的 2.53:1 是纯白基准）`);
 if (findings.length) {
   console.error(`\nfocus-ring-runtime: RED — ${findings.length} 违规`);
   for (const f of findings) console.error(`  ${f}`);
   process.exit(1);
 }
-console.log('focus-ring-runtime: OK — 指示器可见、内缩、不越界、玻璃弹层内可读、环件为圆角件（P-1–P-5 绿）');
+console.log('focus-ring-runtime: OK — 指示器可见、内缩、不越界、玻璃弹层内可读、环件为圆角件、'
+  + `画框面全部圆角（P-1–P-6 绿；P-6 普查 ${summary.p6Samples} 件 / 0 方角）`);
 process.exit(0);

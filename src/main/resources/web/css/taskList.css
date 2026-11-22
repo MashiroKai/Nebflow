@@ -205,11 +205,19 @@
 
 /* 终态：实心色点；未知状态：中性半透明点优雅降级 */
 .task-node-dot { border-radius: 50%; }
-.task-node-dot-completed { background: var(--color-success, #4caf50); }
+.task-node-dot-completed {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--color-success, #4caf50); }
 /* ui-status-redesign（盘点 #17）：图案点保留，色值归状态 token（暗档随 token 提亮）。 */
-.task-node-dot-failed { background: var(--status-error-icon, #f44336); }
-.task-node-dot-cancelled { background: var(--color-warning, #ff9800); }
-.task-node-dot-neutral { background: color-mix(in srgb, var(--color-text-muted, #888) 45%, transparent); }
+.task-node-dot-failed {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--status-error-icon, #f44336); }
+.task-node-dot-cancelled {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--color-warning, #ff9800); }
+.task-node-dot-neutral {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: color-mix(in srgb, var(--color-text-muted, #888) 45%, transparent); }
 
 /* #566：.task-node-dot-blocked 退役（delegate 行值域无 blocked——producer 已删，
    agentflow flow 节点的 blocked 语言在 flowMap/fmNodeCard 面板） */
@@ -300,6 +308,8 @@
   white-space: nowrap;
 }
 .task-delegate-badge-interrupted {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: var(--color-warning, #ff9800);
   background: color-mix(in srgb, var(--color-warning, #ff9800) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-warning, #ff9800) 35%, transparent);
@@ -309,11 +319,15 @@
    语系，同待答 chip 家族）/ dispatcher 分发器（亮一档正文色，同编排徽标的
    「信息标注非警示」基调）。闸关/旧盘不渲染，行高零变化。 */
 .task-delegate-badge-mode-kernel {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: rgb(var(--sapphire));
   background: color-mix(in srgb, rgb(var(--sapphire)) 10%, transparent);
   border: 1px solid color-mix(in srgb, rgb(var(--sapphire)) 30%, transparent);
 }
 .task-delegate-badge-mode-dispatcher {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: var(--color-frame-text);
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);

@@ -221,6 +221,12 @@ export const CHECKS = [
   nodeCheck('focus-ring', 'check-focus-ring', ['static', 'frontend']),
   { name: 'focus-ring-runtime', profiles: ['frontend'], timeoutMs: 600_000,
     argv: [process.execPath, 'scripts/check-focus-ring-runtime.mjs'] },
+  // 全面圆角批（作者令 2026-11-22 10:17「还是存在部分不是圆角的 得全面圆角 而且成为规范
+  // 和自动化/lint检查」）：F7/P-5 只判**焦点环基座**（可交互件）；本闸判**全树画框面**
+  // （徽章 / chip / 统计卡 / 提示条 / 分隔面 / 媒体占位等不参与 Tab 序的方角）。
+  // 静态腿 = G1–G4（画框规则必须有圆角档，结构全幅按几何具名豁免）；运行时腿 = P-6
+  // （check-focus-ring-runtime.mjs 内的计算样式普查）。规范正文同 §2.6/§3/§4。
+  nodeCheck('round-corners', 'check-round-corners', ['static', 'frontend']),
   nodeCheck('dropdown-single-control', 'check-dropdown-single-control'),
   nodeCheck('mobile-canvas-strip', 'check-mobile-canvas-strip'),
   // dock 悬浮批（作者裁定 2026-11-21 10:41「手机端 dock 在其他页面都是悬浮效果，但主会话

@@ -1057,7 +1057,9 @@
 }
 :is(#send-btn, .fm-send-btn).disconnected svg { opacity: 0.45; }
 @media (hover: hover) {
-  :is(#send-btn, .fm-send-btn).disconnected:hover { background: var(--glass-send-bg-active); }
+  :is(#send-btn, .fm-send-btn).disconnected:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--glass-send-bg-active); }
 }
 
 /* v3 实现批：hover/active = --ctl-send-* 绿阶（见本块头注）；10-30 墨族注释
@@ -1395,6 +1397,9 @@ html.no-backdrop #mention-dropdown {
 
 /* ── Queue items ── */
 .queue-item {
+  /* 全面圆角批 2026-11-22（§2.6）：排队行 = 画框面（hover/drag/failed 三态都上色），
+     几何归基座这条 —— 态规则不再各写一遍圆角。 */
+  border-radius: var(--ds-radius-chip);
   display: flex;
   align-items: center;
   gap: var(--ds-space-2);

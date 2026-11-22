@@ -220,6 +220,8 @@ body.voice-mode-active #queue-bar {
    随手势面退役），非 flag 态。 */
 .mic-orb-wrap.voice-static .voice-drag-hint { display: none; }
 .voice-drag-hint span {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   width: 0;
   height: 0;
   border-top: 5px solid transparent;

@@ -58,6 +58,8 @@
 
 /* ══ 面板本体（popover / sheet 两皮共用，规格 = 同构）═════════════════════ */
 .tw-panel {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: fixed;
   z-index: 10001;
   display: none;
@@ -69,7 +71,9 @@
 }
 .tw-panel.in,
 .tw-panel.out { display: block; }
-html.no-backdrop .tw-panel { background: var(--color-surface); }
+html.no-backdrop .tw-panel {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--color-surface); }
 
 .tw-panel.popover {
   width: 300px;
@@ -313,11 +317,15 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
 }
 .tw-status.show { display: block; }
 .tw-status-cross.show {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: rgb(var(--sapphire));
   background: rgb(var(--sapphire) / 0.1);
   border: 1px solid rgb(var(--sapphire) / 0.18);
 }
 .tw-status-equal.show {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: var(--status-error-icon);
   background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--status-error-icon) 22%, transparent);

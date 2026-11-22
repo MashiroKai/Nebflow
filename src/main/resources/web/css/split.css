@@ -167,6 +167,8 @@
 .explorer-context-menu button.danger,
 .fm-context-menu button.danger,
 .canvas-tab-context-menu button.danger {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: var(--btn-danger-ink);
   outline: 1px solid var(--btn-danger-stroke);
   outline-offset: calc(-1 * 1px);
@@ -175,6 +177,8 @@
   .explorer-context-menu button.danger:hover,
   .fm-context-menu button.danger:hover,
   .canvas-tab-context-menu button.danger:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
     background: var(--btn-danger-tint);
     color: var(--btn-danger-ink);
   }
@@ -209,6 +213,8 @@
   flex-grow: 1;
 }
 .explorer-root-drop-margin.drop-target {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: rgb(var(--sapphire) / 0.1);
 }
 
@@ -787,7 +793,7 @@ body.canvas-open.canvas-overlay #canvas-panel {
   align-items: center;
   gap: var(--ds-space-2, 8px);
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: var(--bg-primary, white);
   color: var(--text-primary, black);
   font-size: var(--ds-fs-hint, 12px);
@@ -1140,6 +1146,8 @@ body:not(.mobile-layer) .canvas-header .canvas-close-btn {
    inset ring, the same glass language as .explorer-item.drop-target (no accent
    bars). Same 1px/13% value family, applied to the pane instead of a row. */
 .canvas-tab-pane.canvas-drop-target {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: rgb(var(--sapphire) / 0.06);
   box-shadow: inset 0 0 0 1px rgb(var(--sapphire) / 0.45);
 }
@@ -1790,6 +1798,8 @@ body:not(.canvas-open) #canvas-capsule-ring { display: none !important; }
    uifix ③a：叠卡态投影 = 前景档 token（随 look 三版联动）。
    UI 批 ⑤：描边随卡族一并退役（层次靠明暗差），投影羽化融边。 */
 #canvas-panel.stacked {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   transform: translateY(var(--stack-shift, 8px)) scale(var(--stack-scale, 0.85));
   border-color: transparent;
   box-shadow:
@@ -1863,6 +1873,9 @@ body:not(.canvas-open) #canvas-capsule-ring { display: none !important; }
   pointer-events: none;
 }
 .deck-card .card-top {
+  /* 全面圆角批 2026-11-22（§2.6）：叠卡卡头自带底色+下边线 = 画框面（几何归它自己，
+     上两角跟卡壳、下两角方 —— 用 inherit 跟随卡壳，避免在内壁留缝）。 */
+  border-radius: inherit;
   flex: none;
   display: flex;
   align-items: center;
@@ -1981,6 +1994,8 @@ body:not(.canvas-open) #canvas-capsule-ring { display: none !important; }
 .deck-card .ln.w85 { width: 85%; } .deck-card .ln.w100 { width: 100%; }
 .deck-card .thumb-pad { position: absolute; inset: 12px 14px; }
 .deck-card .thumb-grid {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute;
   inset: 0;
   background:
@@ -1988,10 +2003,14 @@ body:not(.canvas-open) #canvas-capsule-ring { display: none !important; }
     repeating-linear-gradient(90deg, var(--bar-3) 0 1px, transparent 1px 34px);
 }
 .deck-card .thumb-grid .ghead {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute; top: 0; left: 0; right: 0; height: 20px;
   background: rgb(var(--sapphire) / 0.10); border-bottom: 1px solid rgb(var(--sapphire) / 0.18);
 }
 .deck-card .thumb-img {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute;
   inset: 0;
   background: linear-gradient(135deg, rgb(var(--sapphire) / 0.38), rgb(var(--sapphire) / 0.10) 60%, rgb(var(--sapphire) / 0.22));
@@ -2283,10 +2302,14 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   font-size: var(--ds-fs-hint);
 }
 .canvas-md-viewer th, .canvas-md-viewer td {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   border: 1px solid var(--color-border);
   padding: var(--ds-space-1) var(--ds-space-2);
 }
-.canvas-md-viewer th { background: var(--color-surface, #f5f5f5); font-weight: 600; }
+.canvas-md-viewer th {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--color-surface, #f5f5f5); font-weight: 600; }
 .canvas-md-viewer a { color: var(--color-primary); }
 .canvas-md-viewer hr { border: none; border-top: 1px solid var(--color-border); margin: var(--ds-space-2) 0; }
 .canvas-md-viewer strong { font-weight: 600; }
@@ -2359,6 +2382,8 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   position: relative;
 }
 .epub-reader-content {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   padding: var(--ds-space-6) 36px;
   font-size: var(--ds-fs-callout);
   line-height: 1.8;
@@ -2405,6 +2430,8 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   background: var(--color-frame-input-bg, rgba(127, 127, 127, 0.08));
 }
 .epub-reader-content [data-nf-res-miss] {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   display: inline-block;
   min-width: 48px;
   min-height: 24px;
@@ -2641,7 +2668,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   flex-direction: column;
   padding: var(--ds-space-block-y) var(--ds-space-2);
   border-right: 1px solid var(--glass-border);
-  border-radius: 0 12px 12px 0;
+  border-radius: 0 var(--ds-radius-xl) var(--ds-radius-xl) 0;
   background: var(--glass-bg);
   box-shadow: var(--frost-shadow);
   font-size: var(--ds-fs-body);
@@ -2703,6 +2730,8 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   pointer-events: none;
 }
 .epub-flip-layer {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute;
   inset: 0;
   overflow: hidden;
@@ -2712,6 +2741,8 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 }
 .epub-flip-layer.rebound { transition-duration: 180ms; }
 .epub-flip-page {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: relative;
   overflow: hidden;
   background: var(--epub-bg, var(--color-surface));
@@ -2725,8 +2756,12 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   opacity: 0;
   z-index: 2;
 }
-.epub-flip-shadow.l { left: 0; background: linear-gradient(to right, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0)); }
-.epub-flip-shadow.r { right: 0; background: linear-gradient(to left, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0)); }
+.epub-flip-shadow.l {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); left: 0; background: linear-gradient(to right, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0)); }
+.epub-flip-shadow.r {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); right: 0; background: linear-gradient(to left, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0)); }
 @media (prefers-reduced-motion: reduce) {
   .epub-flip-layer { transition-duration: 0.01s !important; }
 }
@@ -2737,6 +2772,8 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
    后的自持滚动容器——排版对齐 epub 纸质档（同字号/行距/段距族），无 chrome
    底栏/翻页/TOC；\f 段界只作分段视觉距（段间 28px + 细分隔线）。 ── */
 .canvas-txt-scroll {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute;
   inset: 0;
   overflow-y: auto;
@@ -2922,6 +2959,8 @@ mark.nf-anno[data-anno-stale] {
    任意按下即拖动画布。光标/hand 语义随 pan-enabled 门（image.js hand 钮 /
    按住 Space 才挂类），默认态 cursor:default。 */
 .canvas-image-viewport {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   /* A restrained light mat keeps dark line art readable without full white glare. */
   background: #e8eaed;
   flex: 1;
@@ -3466,12 +3505,16 @@ body.mobile-layer .canvas-ref-select {
 }
 .xlsx-sheet-content td,
 .xlsx-sheet-content th {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   border: 1px solid var(--color-border, rgba(128,128,128,0.12));
   padding: var(--ds-space-1) var(--ds-space-2);
   white-space: nowrap;
   text-align: left;
 }
 .xlsx-sheet-content tr:first-child td {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: var(--color-surface, rgba(128,128,128,0.04));
   font-weight: 600;
 }
@@ -3652,6 +3695,8 @@ html.ui-init #canvas-panel {
 }
 .col-resizer:hover::before,
 .col-resizer.dragging::before {
+  /* 全面圆角批 2026-11-22（§2.6 标记类）：5px 竖条抓取面 —— 圆角跟随宿主，条头不切方。 */
+  border-radius: inherit;
   opacity: 0.9;
   background: var(--color-primary);
   height: 48px;
@@ -3879,6 +3924,8 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
    styles further down, #wiki-graph-side) — this block only dresses the
    canvas pane: canvas + tooltip (+ the mobile-layer panebar). */
 .wiki-graph-pane {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   --wg-background: #f5f6f7;
   --wg-card: #ffffff;
   --wg-foreground: #141416;
@@ -4243,7 +4290,9 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
 }
 /* 造型 + 焦点态 + 原生下拉箭头：归 css/inputSurface.css（输入面唯一标准批
    2026-11-06；`.wg-switch-select` 登记在标准的下拉成员表里）。 */
-.wg-switch-select option { color: var(--color-frame-text); background: var(--color-surface, #fff); }
+.wg-switch-select option {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); color: var(--color-frame-text); background: var(--color-surface, #fff); }
 
 /* Breadcrumb row (#744-B drill-in views): X › sub › …, last crumb static. */
 .wg-crumbs { flex: none; font-size: var(--cv-hint-fs-m); font-weight: var(--cv-hint-fw); line-height: var(--cv-hint-lh-m); color: var(--cv-hint-color); padding: 0 var(--ds-space-half); }

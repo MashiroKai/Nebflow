@@ -124,6 +124,8 @@
 }
 /* 拖放目标态（JS 只 toggle .drag-over；色仍取族内 hover 槽） */
 .folder-item.drag-over {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: var(--ds-row-hover);
 }
 
@@ -196,6 +198,8 @@
 }
 
 .session-divider {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   height: var(--ds-border-width);
   background: var(--color-frame-border);
   margin: 0 var(--ds-space-4);
@@ -296,6 +300,8 @@
   transition: background var(--ds-dur-micro) var(--ds-ease-std);
 }
 .session-ctx-menu .ctx-item:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: var(--ds-row-hover);
   color: var(--ds-text-bright);
 }
@@ -307,6 +313,8 @@
 
 /* Context menu submenu */
 .ctx-separator {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   height: var(--ds-border-width);
   background: var(--color-frame-border);
   margin: var(--ds-space-1) var(--ds-space-2);
@@ -336,6 +344,8 @@
   white-space: nowrap;
 }
 .ctx-sub:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: var(--ds-row-hover);
   color: var(--ds-text-bright);
 }
@@ -514,6 +524,8 @@
    本文件只保留滚动容器与设置面内**非行族**的控件（.cfg-btn / .cfg-select /
    配置卡 / 配置编辑器），见下方各段。 */
 #settings-content {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -682,12 +694,16 @@
 
 /* 设置内主保存 = 主操作语义（2026-10-30 按钮体系批 B7：蓝描边 → 墨族实心底） */
 .config-actions .btn-save {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   border-color: var(--btn-primary-bg);
   background: var(--btn-primary-bg);
   color: var(--btn-primary-ink);
 }
 @media (hover: hover) {
-  .config-actions .btn-save:hover { background: var(--btn-primary-bg-hover); border-color: var(--btn-primary-bg-hover); }
+  .config-actions .btn-save:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--btn-primary-bg-hover); border-color: var(--btn-primary-bg-hover); }
 }
 
 /* About section */
@@ -1219,6 +1235,8 @@
 /* 虚线添加钮 = 幽灵档（v3：扁平族内唯一无实底者；dashed 边型 + muted 字，
    hover 微垫 —— 与 C3 实底次钮拉开「新建」语义） */
 .cfg-btn-add {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   width: 100%;
   border-style: dashed;
   margin-top: var(--ds-space-1);
@@ -1227,7 +1245,9 @@
   border-color: var(--color-frame-border);
 }
 @media (hover: hover) {
-  .cfg-btn-add:hover { background: var(--color-frame-hover); color: var(--color-frame-text-bright); }
+  .cfg-btn-add:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--color-frame-hover); color: var(--color-frame-text-bright); }
 }
 
 
@@ -1281,6 +1301,8 @@
 
 /* ── Config Modal ────────────────────────────────────────────────────────── */
 .cfg-modal-overlay {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: fixed;
   inset: 0;
   background: var(--overlay-bg);
@@ -1504,11 +1526,15 @@
   white-space: nowrap;
 }
 .cfg-btn-save {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   border-color: rgb(var(--sapphire) / 0.35) !important;
   color: rgb(var(--sapphire)) !important;
 }
 @media (hover: hover) {
   .cfg-btn-save:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
     background: rgb(var(--sapphire) / 0.12) !important;
     border-color: rgb(var(--sapphire) / 0.55) !important;
   }
@@ -1582,7 +1608,9 @@
   cursor: pointer;
   transition: background 0.15s;
 }
-.agent-mgr-card:hover { background: rgba(0,0,0,0.03); }
+.agent-mgr-card:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: rgba(0,0,0,0.03); }
 .agent-mgr-avatar {
   width: 32px; height: 32px;
   border-radius: var(--ds-radius-input);
@@ -1935,7 +1963,9 @@
     border-color: var(--color-frame-text-dim);
     color: var(--color-frame-text-muted);
   }
-  .agent-mgr-card:hover { background: rgba(255,255,255,0.04); }
+  .agent-mgr-card:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: rgba(255,255,255,0.04); }
   .agent-mgr-standalone-badge { background: rgba(100,200,100,0.2); color: #8c8; }
   .agent-detail-model-row { background: rgba(255,255,255,0.03); }
   .agent-detail-prompt-edit { background: rgba(255,255,255,0.03); }
@@ -2098,6 +2128,8 @@
   font-family: inherit;
 }
 .orb-theme-btn.on {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: var(--color-frame-hover);
   color: var(--color-frame-text);
 }
@@ -2392,6 +2424,8 @@
   transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
 .plugins-item-uninstall:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
   border-color: color-mix(in srgb, var(--status-error-icon) 45%, transparent);
 }
@@ -2428,7 +2462,9 @@
   color: rgb(var(--sapphire));
   transition: color 0.15s, border-color 0.15s;
 }
-.plugins-item-doc:hover { border-color: rgb(var(--sapphire) / 0.35); }
+.plugins-item-doc:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); border-color: rgb(var(--sapphire) / 0.35); }
 .plugins-item-doc:focus-visible {
   outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
   outline-offset: calc(var(--nf-focus-ring-w) * -1);

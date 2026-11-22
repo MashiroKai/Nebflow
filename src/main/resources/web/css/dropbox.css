@@ -249,6 +249,8 @@
   overflow: hidden;
 }
 .dropbox-file-progress-bar {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   height: 100%;
   background: #34c759;
   transition: width 0.2s ease-out;
@@ -274,6 +276,8 @@
 /* 拖拽目标 = 整个对话框（③-F/③A6）。outline（不是 border）承载拖拽态：不参与
    布局、不推动任何内容；dashed 与提示条同族。 */
 .dropbox-modal.drag-over {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   outline: 1.5px dashed rgba(91, 127, 191, 0.6);
   outline-offset: -6px;
 }

@@ -284,9 +284,13 @@
 /* 一次性强调环（900ms 后由 JS 摘 class；静态环 ⇒ reduced-motion 下语义不变）。
    亮/暗两档只差 alpha；用 inset 形态避开卡片自身的 `overflow: hidden`
    （flowCss.js:31）与滚动容器的裁剪边缘（§F-3④ 焦点环同款判据）。 */
-.project-card.is-new { box-shadow: inset 0 0 0 2px rgb(var(--sapphire) / 0.28); }
+.project-card.is-new {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); box-shadow: inset 0 0 0 2px rgb(var(--sapphire) / 0.28); }
 @media (prefers-color-scheme: dark) {
-  .project-card.is-new { box-shadow: inset 0 0 0 2px rgb(var(--sapphire) / 0.45); }
+  .project-card.is-new {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); box-shadow: inset 0 0 0 2px rgb(var(--sapphire) / 0.45); }
 }
 
 /* 退场（归档）：淡出 + 6px 右滑 280ms；`pointer-events: none` 关掉整卡交互面
