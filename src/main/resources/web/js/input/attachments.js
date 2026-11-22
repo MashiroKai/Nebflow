@@ -30,6 +30,24 @@ function compressImage(file, opts = {}) {
   });
 }
 
+/**
+ * 图片附件载荷（主会话同款压缩管线的**单点导出**，供 Canvas Ask 输入条复用）：
+ * 压缩为 JPEG（1920 / 0.8）；压缩失败回落原字节。返回 WS 帧 `attachments[]` 的
+ * 同形载荷 `{name, mimeType, data(base64), size}`——与 addFileAttachment 的图片
+ * 分支产出同一形状（帧形状单源）。
+ * @param {File} file
+ * @returns {Promise<{name:string, mimeType:string, data:string, size:number}>}
+ */
+export async function imageAttachmentPayload(file) {
+  try {
+    const { dataUrl } = await compressImage(file);
+    return { name: file.name, mimeType: 'image/jpeg', data: dataUrl.split(',')[1], size: file.size };
+  } catch (e) {
+    const buffer = await file.arrayBuffer();
+    return { name: file.name, mimeType: file.type || 'image/jpeg', data: arrayBufferToBase64(buffer), size: file.size };
+  }
+}
+
 // ---------- File Attachment ----------
 
 /** Show an inline error in the attachment preview area (no alert popup). */

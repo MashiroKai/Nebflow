@@ -296,9 +296,20 @@ function loadPersisted(sid) {
     if (!v || !Array.isArray(v.msgs)) return null;
     const msgs = v.msgs
       .filter((m) => m && typeof m.text === 'string' && PERSISTED_ROLES.includes(m.role))
-      .map((m) => ({ role: m.role, text: m.text }));
+      .map(persistRow);
     return msgs;
   } catch { return null; }
+}
+
+/** 转录行 → 落盘行（附图批：images 只落 {name,path}——live 件的 objectURL 不可落盘）。 */
+function persistRow(m) {
+  const row = { role: m.role, text: m.text };
+  if (Array.isArray(m.images) && m.images.length) {
+    const kept = m.images.filter((i) => i && typeof i.path === 'string' && i.path)
+      .map((i) => ({ name: i.name || '', path: i.path }));
+    if (kept.length) row.images = kept;
+  }
+  return row;
 }
 
 /** 写某会话的本地转录（write-through 单点；任何突变后调用）。 */
@@ -308,7 +319,7 @@ function persistSession(s) {
     const rows = s.msgs
       .filter((m) => PERSISTED_ROLES.includes(m.role))
       .slice(-SESS_MAX_MSGS)
-      .map((m) => ({ role: m.role, text: m.text }));
+      .map(persistRow);
     localStorage.setItem(key(SESS_STORE_PREFIX + s.sid), JSON.stringify({ ts: Date.now(), msgs: rows }));
     pruneSessionStore();
   } catch { /* 私密模式 / quota —— 体验加速面，静默降级 */ }
@@ -449,7 +460,14 @@ function buildDialog() {
     // cfg.onQueued 原样回传）——false = 连接未开、帧进了 ws.js 的 pending 队列
     //（有界，连接恢复后按序补发）⇒ 落「已提交排队 / 会话未连接」态，界面直说现状
     // 并给出路（改前这一处境零可见性：问完就一个转圈）。
-    send: (s, v) => sendWs({ type: 'askQuestion', sessionId: s.sid, content: v, mainSessionId: state.activeSessionId || '' }),
+    // 附图批：第三参 = 图片载荷（主会话 userMessage.attachments 同形）；无图 ⇒ 帧不带该键。
+    send: (s, v, media) => sendWs({
+      type: 'askQuestion',
+      sessionId: s.sid,
+      content: v,
+      mainSessionId: state.activeSessionId || '',
+      ...(media && media.length ? { attachments: media } : {}),
+    }),
     // 帧入队可见性（上同）：挂钩本体是通用的，这里只把回调指到本文件的上报单点。
     onQueued: (s, sent) => { noteAskQueued(s, !sent); },
     // 帧事实喂入口（状态可见性与失败上报批）：内核 consume 每收一帧就回调一次
