@@ -38,3 +38,21 @@ test('转入组与计划组的中文文案不同形（分离可见）', () => {
   assert.ok(pick('todo.grpAskConverted'));
   assert.notEqual(pick('todo.grpAskConverted'), pick('todo.grpPlan'));
 });
+
+const store = read('src/main/resources/web/js/todoStore.js');
+const prompt = read('src/main/scala/nebflow/prompts/PromptCatalog.scala');
+
+test('计数口径单点：转入的问句条目不进任何角标计数（作者 11-18 裁定）', () => {
+  assert.match(store, /function countable\(list\) \{\s*return surfaced\(list\)\.filter\(\(it\) => it\.source !== 'ask'\);/);
+  for (const fn of ['openCount', 'overdueCount', 'dueTodayCount', 'openCountOf']) {
+    const i = store.indexOf(`function ${fn}(`);
+    assert.ok(i >= 0, `${fn} 缺失`);
+    assert.match(store.slice(i, i + 400), /countable\(items\)/, `${fn} 未经 countable`);
+  }
+});
+
+test('提示词不再一句话把待办与提问混为一谈，且写明待裁定优先 AskUser', () => {
+  assert.doesNotMatch(prompt, /Todos \/ questions \/ decisions all go through AskUserQuestion/);
+  assert.match(prompt, /Pending decisions the author must rule on go through AskUserQuestion first/);
+  assert.match(prompt, /design recommendations and future plans/);
+});
