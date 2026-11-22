@@ -307,6 +307,8 @@ function loadPersisted(sid) {
 /** 转录行 → 落盘行（附图批：images 只落 {name,path}——live 件的 objectURL 不可落盘）。 */
 function persistRow(m) {
   const row = { role: m.role, text: m.text };
+  // 时间戳随行落盘（canvas ask 时间分隔线批）：缺席不落键，旧行形态不变。
+  if (typeof m.ts === 'number' && Number.isFinite(m.ts) && m.ts > 0) row.ts = m.ts;
   if (Array.isArray(m.images) && m.images.length) {
     const kept = m.images.filter((i) => i && typeof i.path === 'string' && i.path)
       .map((i) => ({ name: i.name || '', path: i.path }));

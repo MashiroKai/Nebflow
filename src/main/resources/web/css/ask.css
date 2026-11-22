@@ -654,6 +654,37 @@ body.mobile-layer .note-dock .ds-resize-handle {
 .ask-reply-mark[data-nf-reply-state="working"] { color: var(--color-primary, #5e6ad2); }
 .ask-reply-mark[data-nf-reply-state="failed"] { color: var(--color-error, #d0342c); }
 
+/* ═══ 时间分隔线（canvas ask 时间分隔线批）═════════════════════════════════
+ * 微信式：段界处居中一条细横线，线上是时间。细线 + 浅色小字，不抢内容；
+ * 颜色走既有 muted 槽（同 .ask-reply-mark），零新材质。 */
+.ask-time-divider {
+  /* 列是 flex 纵向且气泡按 flex-end 贴右：分隔线必须自己拉满整列宽，细线才横贯。 */
+  align-self: stretch;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  user-select: none;
+}
+.ask-time-divider::before,
+.ask-time-divider::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.15;
+}
+.ask-time-divider {
+  color: var(--color-text-muted, #888);
+}
+.ask-time-divider-label {
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ═══ 会话地址行（ask-mail 批 2026-11-16）═══════════════════════════════════
  * ask 会话的 Mail 可达地址（`ask:<sessionId>`）常驻面板头部右贴：编排方经
  * Mail 向该地址续聊（双向通道的门牌）。形态 = chat.css `.ask-mail-addr` /

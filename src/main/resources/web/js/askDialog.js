@@ -48,6 +48,8 @@ import { createScrollPill, bottomDistance, AT_BOTTOM_PX } from './scrollPill.js'
 // 都不计未读）。抽取批后本内核是 canvas 档唯一的落列/计数写点，故该腿落在这里（作者线
 // 该腿写在旧 askDock.js 的 settleCol，那一段已被抽取批搬空 ⇒ 按其语义在本处重建）。
 import { countUnread } from './unreadCount.js';
+import { timeDividerIndices, timeDividerLabel, msgTs, carryTs } from './askTimeDivider.js';
+import { formatHm } from './timeFormat.js';
 // card-tool-revive 批（2026-11-18 作者裁定②）：ask 会话里 Card 工具返回的 HTML 卡
 // 由对话列显形——渲染**复用唯一单源** cardRegistry.renderWithRegistry（哨兵解析 +
 // 沙箱 iframe + 主题注入那一套语义原样借用），零第二套渲染、零裸 HTML 内联、零自造
@@ -106,7 +108,7 @@ function setMarkdownHtml(node, text, streaming) {
  * @typedef {Object} AskSession
  * @property {string} sid
  * @property {string} [fileName]
- * @property {Array<{role: string, text: string}>} msgs
+ * @property {Array<{role: string, text: string, ts?: number, images?: any[]}>} msgs
  * @property {boolean} [stateSent]
  * @property {boolean} [unread]
  * @property {boolean} [busy]
@@ -410,13 +412,22 @@ export function createAskDialog(cfg) {
       const s = cfg.activeSession();
       // v2.1 显示面减法：只出 user/ai 两族——sys（回执/状态噪声类）转录仍存但永不呈现。
       const vis = s ? s.msgs.filter((m) => m.role !== 'sys') : [];
-      const desired = vis.map((m) => (m.role === 'card'
+      const rowsDesired = vis.map((m) => (m.role === 'card'
         // card-tool-revive 批（2026-11-18 作者裁定②）——卡载荷行：ask 面**唯一**的
         // iframe 落点。渲染腿 = cardRegistry.renderWithRegistry（哨兵解析 + 沙箱
         // `allow-scripts allow-same-origin` iframe + 主题注入，与主会话卡行同一单源），
         // 本函数只给宿主节点与行几何；卡行不参与气泡族（不进 askBubbleClass）。
         ? { kind: 'card', key: cardKey(m.text), text: m.text, msg: m }
         : { kind: 'bubble', role: m.role, text: m.text, msg: m }));
+      // 时间分隔线（canvas ask 时间分隔线批）：段界处（会话开头 / 间隔 > 5 分钟）在该行
+      // 之前插一条 kind:'divider'。分段口径单点在 askTimeDivider.js；本处只落位。
+      // 必须在 mark 插入与建池之前完成（同 mark：插入会平移下标）。
+      const divAt = timeDividerIndices(vis);
+      const desired = [];
+      rowsDesired.forEach((d, i) => {
+        if (divAt.has(i)) desired.push({ kind: 'divider', ts: msgTs(d.msg) });
+        desired.push(d);
+      });
 
       // 回合标记（canvas ask 状态可视批 2026-11-21，作者 13:00 令）：最后一条用户问
       // 之后挂一行「处理中 / 已回复 / 已中止 / 失败」——终态**常驻**，不随 2.6s 驻留
@@ -472,6 +483,12 @@ export function createAskDialog(cfg) {
           row.appendChild(host);
           renderWithRegistry(host, d.text, 'Card');
           node = row;
+        } else if (d.kind === 'divider') {
+          // 时间分隔线：细横线 + 居中浅色小字（ask.css `.ask-time-divider*`）。
+          node = h('div', { class: 'ask-time-divider', role: 'separator', 'data-ts': String(d.ts) }, [
+            h('span', { class: 'ask-time-divider-label' },
+              [timeDividerLabel(d.ts, Date.now(), formatHm, tt)]),
+          ]);
         } else if (d.kind === 'mark') {
           const label = {
             working: tt('处理中…', 'Working…'),
@@ -598,7 +615,7 @@ export function createAskDialog(cfg) {
       input.value = '';
       input.style.height = 'auto';
       // ④ 双泡修复批 2026-10-31：发问时**不再预压空 ai 泡**——等待期只有 typing。
-      const userRow = { role: 'user', text: v };
+      const userRow = { role: 'user', text: v, ts: Date.now() };
       if (picked.length) userRow.images = picked.map((p) => ({ name: p.name, url: p.url }));
       s.msgs.push(userRow);
       cfg.onPersist?.(s);
@@ -642,7 +659,7 @@ export function createAskDialog(cfg) {
     say(text) {
       const s = cfg.activeSession();
       if (!s) return;
-      s.msgs.push({ role: 'ai', text });
+      s.msgs.push({ role: 'ai', text, ts: Date.now() });
       dlg.removeTyping();
       dlg.render();
       dlg.settleCol([{ role: 'ai' }]); // 提示行 = 一条助手族消息（离底才计未读）
@@ -676,7 +693,7 @@ export function createAskDialog(cfg) {
           // ask-mail 批（2026-11-16）：引擎下发的会话 Mail 地址（`ask:<sid>` 逐字，
           // 与本地派生同式——引擎字段优先，仅存内存不落盘：每帧 askState 都重发）。
           if (typeof msg.mailAddress === 'string' && msg.mailAddress) entry.mailAddress = msg.mailAddress;
-          const serverMsgs = Array.isArray(msg.messages)
+          let serverMsgs = Array.isArray(msg.messages)
             ? msg.messages
               .filter((m) => m && typeof m.text === 'string')
               .map((m) => {
@@ -684,6 +701,9 @@ export function createAskDialog(cfg) {
                   role: m.role === 'user' ? 'user' : m.role === 'sys' ? 'sys' : 'ai',
                   text: m.text,
                 };
+                // 时间戳（canvas ask 时间分隔线批）：服务端下发的 timestamp/ts 原样带入；缺席不落键。
+                const rowTs = msgTs(m);
+                if (rowTs) row.ts = rowTs;
                 // 附图批：回放行的附件（服务端 .ui.json 的 {name,type,path}）→ 气泡图（path 寻址）。
                 const imgs = Array.isArray(m.attachments)
                   ? m.attachments.filter((a) => a && typeof a.path === 'string' && a.path)
@@ -693,6 +713,8 @@ export function createAskDialog(cfg) {
                 return row;
               })
             : entry.msgs;
+          // 服务端回放未带时间的行，沿用本地同位行的 ts（只补缺，防状态帧抹掉分隔线）。
+          if (Array.isArray(msg.messages)) serverMsgs = carryTs(serverMsgs, entry.msgs);
           const localLastUser = entry.msgs.filter((m) => m.role === 'user').slice(-1)[0];
           const adopted = serverMsgs.length >= entry.msgs.length ? serverMsgs : entry.msgs;
           const adoptedLastUser = adopted.filter((m) => m.role === 'user').slice(-1)[0];
@@ -724,7 +746,7 @@ export function createAskDialog(cfg) {
           if (!(entry === cfg.activeSession() && dlg.isOpen())) entry.unread = true;
           dlg.armTurn(entry);
           const last = entry.msgs[entry.msgs.length - 1];
-          if (!last || last.role !== 'ai') entry.msgs.push({ role: 'ai', text: '' });
+          if (!last || last.role !== 'ai') entry.msgs.push({ role: 'ai', text: '', ts: Date.now() });
           const ai = entry.msgs[entry.msgs.length - 1];
           ai.text += msg.delta || '';
           if (entry === cfg.activeSession() && dlg.isOpen()) {
@@ -767,7 +789,7 @@ export function createAskDialog(cfg) {
           const last = entry.msgs[entry.msgs.length - 1];
           const errText = tt('出错了：', 'Error: ') + (msg.message || 'unknown');
           if (last && last.role === 'ai' && !last.text) last.text = errText;
-          else entry.msgs.push({ role: 'ai', text: errText });
+          else entry.msgs.push({ role: 'ai', text: errText, ts: Date.now() });
           cfg.onPersist?.(entry);
           if (entry === cfg.activeSession()) {
             if (dlg.isOpen()) { dlg.removeTyping(); dlg.render(); dlg.settleCol([{ role: 'ai' }]); } // Error bubble.
@@ -779,7 +801,7 @@ export function createAskDialog(cfg) {
           // 注入族（injected:true）：迁移自 askDock（canvas 回问腿）；选区档同一条腿。
           if (msg.injected) {
             if (!(entry === cfg.activeSession() && dlg.isOpen())) entry.unread = true;
-            entry.msgs.push({ role: 'user', text: msg.text || '' });
+            entry.msgs.push({ role: 'user', text: msg.text || '', ts: Date.now() });
             cfg.onPersist?.(entry);
             if (entry === cfg.activeSession()) {
               if (dlg.isOpen()) { dlg.removeTyping(); dlg.render(); dlg.settleCol([{ role: 'user' }]); } // User-role injection is excluded.
