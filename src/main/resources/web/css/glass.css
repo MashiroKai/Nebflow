@@ -106,6 +106,8 @@
   background: var(--nf-glass-scrim);
   -webkit-backdrop-filter: var(--nf-glass-scrim-blur);
   backdrop-filter: var(--nf-glass-scrim-blur);
+  /* 历史口径回补（84ca97882^ modal.css 块）：遮罩淡入过渡 0.25s。 */
+  transition: background 0.25s ease, backdrop-filter 0.25s ease;
 }
 
 /* ── 成员登记表（M1..Mn）─────────────────────────────────────────────────
