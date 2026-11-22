@@ -41,5 +41,17 @@ export function createBadgeTipMixer({ every = TIP_EVERY, tips = BADGE_TIPS } = {
   };
 }
 
+/** tip 标注前缀：让「这是条使用提示」一眼可辨（浪漫语不带此前缀）。 */
+export const TIP_LABEL = '提示：';
+
+/**
+ * 组装 tip 形态的徽章 phrase：`✻ 提示：<tip>（<时长>）`。
+ * @param {string} tip 提示文案（来自 BADGE_TIPS）
+ * @param {string} durationText 已格式化的时长（如 "8s"）
+ */
+export function composeTipPhrase(tip, durationText) {
+  return '✻ ' + TIP_LABEL + tip + '（' + durationText + '）';
+}
+
 /** 模块级默认混入器（浏览器页生命周期内计数）。 */
 export const defaultBadgeTipMixer = createBadgeTipMixer();

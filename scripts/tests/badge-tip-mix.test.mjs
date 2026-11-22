@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { BADGE_TIPS, TIP_EVERY, createBadgeTipMixer } from '../../src/main/resources/web/js/chat/badgeTips.js';
+import { BADGE_TIPS, TIP_EVERY, TIP_LABEL, createBadgeTipMixer, composeTipPhrase } from '../../src/main/resources/web/js/chat/badgeTips.js';
 
 const durationSrc = readFileSync(
   new URL('../../src/main/resources/web/js/chat/durationBadges.js', import.meta.url), 'utf8');
@@ -58,7 +58,15 @@ test('tip 模块无外部依赖（可独立注入测试，池与浪漫池物理�
   assert.equal(/^\s*import\s/m.test(src), false);
 });
 
-test('pickThinkingPhrase 接线：徽章出现走混入器（源码级断言，模块依赖 i18n/DOM 无法在 node 直接加载）', () => {
-  assert.match(durationSrc, /import \{ defaultBadgeTipMixer \} from '\.\/badgeTips\.js'/);
+test('tip 标注：提示前缀 + 文案 + 时长，浪漫语不带前缀', () => {
+  assert.equal(TIP_LABEL, '提示：');
+  const p = composeTipPhrase(BADGE_TIPS[0], '8s');
+  assert.equal(p, '✻ 提示：给好友也能直接发文件（8s）');
+  assert.ok(p.includes(TIP_LABEL));
+});
+
+test('pickThinkingPhrase 接线：徽章出现走混入器、tip 走 composeTipPhrase（源码级断言，模块依赖 i18n/DOM 无法在 node 直接加载）', () => {
+  assert.match(durationSrc, /import \{ defaultBadgeTipMixer, composeTipPhrase \} from '\.\/badgeTips\.js'/);
   assert.match(durationSrc, /tipMixer\.next\(\)/);
+  assert.match(durationSrc, /if \(tip\) return composeTipPhrase\(tip, d\);/);
 });
