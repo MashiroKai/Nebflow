@@ -343,11 +343,12 @@ object ModelRuleDsl:
       else Nil
     }
     val dupClauses = rules.flatMap { r =>
-      r.clauses.foldLeft((Set.empty[String], List.empty[RuleError])) { case ((seen, errs), c) =>
+      val (_, errs) = r.clauses.foldLeft((Set.empty[String], List.empty[RuleError])) { case ((seen, acc), c) =>
         if SingleKinds.contains(c.kind) && seen.contains(c.kind) then
-          (seen, errs :+ RuleError(c.line, s"规则 '${r.name}' 中子句 ${c.kind} 重复（每条规则至多一次）"))
-        else (seen + c.kind, errs)
-      }._2
+          (seen, acc :+ RuleError(c.line, s"规则 '${r.name}' 中子句 ${c.kind} 重复（每条规则至多一次）"))
+        else (seen + c.kind, acc)
+      }
+      errs
     }
     val catErrs = rules.flatMap(_.clauses.flatMap(catalogErrors(_, catalog)))
     dupNames ++ dupClauses ++ catErrs ++ conflictErrors(rules)
