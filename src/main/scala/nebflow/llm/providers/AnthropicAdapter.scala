@@ -62,7 +62,7 @@ class AnthropicAdapter(
 
   // private[providers] for spec access (pure JSON mapping, no backend needed)
   private[providers] def toAnthropicMessages(messages: List[Message]): List[Json] =
-    mergeConsecutive(pairToolResults(messages.filterNot(_.role == MessageRole.System))).map { msg =>
+    mergeConsecutive(pairToolResults(dropBlankText(messages.filterNot(_.role == MessageRole.System)))).flatMap { msg =>
       val role = msg.role match
         case MessageRole.User => "user"
         case MessageRole.Assistant => "assistant"
@@ -77,10 +77,12 @@ class AnthropicAdapter(
           // cache_control，补键只能发生在块形态上。若保留字符串形态，上一轮尾
           // 消息（块+marker）到下一轮变回纯字符串 ⇒ 同一会话相邻两轮 wire 结构
           // 抖动 ⇒ 供应商前缀匹配在该消息处断链，「不该 miss 的场景」miss。
-          Json.obj(
-            "role" -> Json.fromString(role),
-            "content" -> Json.fromValues(
-              List(Json.obj("type" -> "text".asJson, "text" -> text.asJson))
+          Some(
+            Json.obj(
+              "role" -> Json.fromString(role),
+              "content" -> Json.fromValues(
+                List(Json.obj("type" -> "text".asJson, "text" -> text.asJson))
+              )
             )
           )
         case Right(blocks) =>
@@ -134,9 +136,30 @@ class AnthropicAdapter(
                   else Json.Null
           }
           val filtered = content.filterNot(_ == Json.Null)
-          if filtered.isEmpty then Json.obj("role" -> Json.fromString(role), "content" -> Json.fromString(" "))
-          else Json.obj("role" -> Json.fromString(role), "content" -> Json.fromValues(filtered))
+          // 无可编码内容的消息整条丢弃（旧形态发 " " 字符串，同样是空白内容 400）。
+          if filtered.isEmpty then None
+          else Some(Json.obj("role" -> Json.fromString(role), "content" -> Json.fromValues(filtered)))
       end match
+    }
+
+  /**
+   * 空白 text 块净化（2026-11-22 修复批）：Anthropic 拒收 text 为空白的 text 块
+   * （`HTTP 400 text content blocks must contain non-whitespace text`）。历史从落盘
+   * 恢复、每次回放重建 ⇒ 一条空白块 = 该会话每发必 400。请求侧在编码前统一剔除：
+   * 空白 text 块删除；剔除后无内容的消息整条删除。这一处同时覆盖已落盘 checkpoint。
+   */
+  private[providers] def dropBlankText(messages: List[Message]): List[Message] =
+    messages.flatMap { msg =>
+      msg.content match
+        case Left(text) => if text.isBlank then None else Some(msg)
+        case Right(blocks) =>
+          val kept = blocks.filterNot {
+            case ContentBlock.Text(text) => text.isBlank
+            case _ => false
+          }
+          if kept.size == blocks.size then Some(msg)
+          else if kept.isEmpty then None
+          else Some(msg.copy(content = Right(kept)))
     }
 
   /**
@@ -235,12 +258,12 @@ class AnthropicAdapter(
 
   /** Build the system field as content blocks with cache_control on the stable prefix. */
   private def buildSystemBlocks(params: SendMessageParams): Json =
-    val stableOpt = params.systemStable.filter(_.nonEmpty)
+    val stableOpt = params.systemStable.filter(!_.isBlank)
     // Route identity stays constant within a provider/model cache domain.
     // Per-request context belongs after the history, never in this prefix.
-    val dynamicOpt = Some(WireShape.routeBanner(providerId, params.model)).filter(_.nonEmpty)
+    val dynamicOpt = Some(WireShape.routeBanner(providerId, params.model)).filter(!_.isBlank)
     // Fallback: if systemParts not provided, extract from messages (backward compat)
-    val fallbackSystem = params.messages.find(_.role == MessageRole.System).map(_.textContent).filter(_.nonEmpty)
+    val fallbackSystem = params.messages.find(_.role == MessageRole.System).map(_.textContent).filter(!_.isBlank)
 
     val stable = stableOpt.orElse(fallbackSystem)
     if stable.isEmpty && dynamicOpt.isEmpty then Json.Null
@@ -298,7 +321,7 @@ class AnthropicAdapter(
    * 永不进持久历史（CachePrefixAssemblySpec 契约 C1/C4）。
    */
   private def appendRequestContext(messages: List[Json], ephemeralTexts: List[String]): List[Json] =
-    ephemeralTexts.filter(_.nonEmpty).foldLeft(messages) { (acc, text) =>
+    ephemeralTexts.filter(!_.isBlank).foldLeft(messages) { (acc, text) =>
       val block = Json.obj("type" -> "text".asJson, "text" -> text.asJson)
       acc.lastOption match
         case Some(last) if last.hcursor.get[String]("role").toOption.contains("user") =>
@@ -664,7 +687,7 @@ class AnthropicAdapter(
         case CacheBreakpoints.StablePrefix => toAnthropicMessages(params.messages)
     val ephemeralTexts = params.requestOnlyContext.map(_.textContent) ++ params.systemDynamic.toList
     val ephemeralWire =
-      ephemeralTexts.filter(_.nonEmpty) match
+      ephemeralTexts.filter(!_.isBlank) match
         case Nil => Nil
         case texts =>
           List(
@@ -673,11 +696,17 @@ class AnthropicAdapter(
               "content" -> Json.fromValues(texts.map(t => Json.obj("type" -> "text".asJson, "text" -> t.asJson)))
             )
           )
+    val wireMessages = appendRequestContext(persisted, ephemeralTexts)
+    // 净化后无任何消息 ⇒ 显式拒绝，绝不静默发空 messages 请求（2026-11-22 修复批）。
+    if wireMessages.isEmpty then
+      throw new IllegalStateException(
+        "anthropic request refused: no non-blank message remains after sanitizing blank text blocks"
+      )
     val base = Json.obj(
       "model" -> params.model.asJson,
       // cache-hit 批（2026-11-06）：消息尾增量 cache 断点（见
       // [[withTailCacheBreakpoint]]）——这是「同会话连续请求必须命中」判据的装配点。
-      "messages" -> Json.fromValues(appendRequestContext(persisted, ephemeralTexts)),
+      "messages" -> Json.fromValues(wireMessages),
       "max_tokens" -> maxTokensFor(params).asJson
     )
     val withStream = if streaming then base.deepMerge(Json.obj("stream" -> true.asJson)) else base
@@ -757,11 +786,12 @@ class AnthropicAdapter(
 
   def sendMessage(params: SendMessageParams): IO[AdapterResponse] =
     def attempt(p: SendMessageParams): IO[AdapterResponse] =
+      IO.defer(IO(bodyOf(p, streaming = false).noSpaces)).flatMap { bodyStr =>
       val request = applyHeaders(
         basicRequest
           .post(uri"$endpoint")
           .contentType("application/json")
-          .body(bodyOf(p, streaming = false).noSpaces)
+          .body(bodyStr)
       )
 
       backend.send(request).flatMap { response =>
@@ -788,6 +818,7 @@ class AnthropicAdapter(
                     )
                   case Right(json) => IO.pure(parseNonStreamingResponse(json, p))
               }
+      }
       }
     end attempt
 
@@ -895,6 +926,7 @@ class AnthropicAdapter(
 
   def sendMessageStream(params: SendMessageParams): Stream[IO, StreamChunk] =
     def attempt(p: SendMessageParams): Stream[IO, StreamChunk] =
+      Stream.eval(IO(bodyOf(p, streaming = true).noSpaces)).flatMap { bodyStr =>
       Stream.eval(IO.ref(Map.empty[Int, (String, String, StringBuilder)])).flatMap { toolCallState =>
         Stream.eval(IO.ref(Tokens(0, None, None))).flatMap { tokenRef =>
           // 头装配在 .response/.readTimeout 之前完成（后两者返回 StreamRequest，
@@ -903,7 +935,7 @@ class AnthropicAdapter(
             basicRequest
               .post(uri"$endpoint")
               .contentType("application/json")
-              .body(bodyOf(p, streaming = true).noSpaces)
+              .body(bodyStr)
           ).response(asStreamUnsafe(Fs2Streams[IO])).readTimeout(Defaults.LlmReadTimeoutSec.seconds)
 
           // Hard-recovery P1: per-attempt backend when provided (per-request
@@ -922,6 +954,7 @@ class AnthropicAdapter(
                   parseSseIncrementally(byteStream, toolCallState, tokenRef, p)
           }
         }
+      }
       }
 
     // 降级重试（作者令 17:45 第 3 条）：400 + 上游明说"思考必须回传" ⇒ 就地

@@ -1466,7 +1466,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         then
           sessionIdOpt.traverse_ { sid =>
             val blocks = result.thinking.toList.map(t => ContentBlock.Thinking(t, result.thinkingSignature)) ++
-              (if result.text.nonEmpty then List(ContentBlock.Text(result.text)) else Nil) ++
+              (if !result.text.isBlank then List(ContentBlock.Text(result.text)) else Nil) ++
               result.toolCalls.map(c => ContentBlock.ToolUse(c.id, c.name, c.input))
             resources.sessionStore.saveMessagesForSession(
               sid,

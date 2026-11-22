@@ -778,7 +778,7 @@ private[agent] object AgentProcessing:
         val toolCalls = tc.results.map((call, _) => call)
         val assistantBlocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
         tc.thinking.foreach(t => assistantBlocks += ContentBlock.Thinking(t, tc.thinkingSignature))
-        if tc.originalText.nonEmpty then assistantBlocks += ContentBlock.Text(tc.originalText)
+        if !tc.originalText.isBlank then assistantBlocks += ContentBlock.Text(tc.originalText)
         toolCalls.foreach(c => assistantBlocks += ContentBlock.ToolUse(c.id, c.name, c.input))
         val assistantMsg = Message(MessageRole.Assistant, Right(assistantBlocks.toList))
         val resultBlocks = tc.results.map { (call, r) =>
@@ -2093,11 +2093,7 @@ private[agent] object AgentProcessing:
       "mail-reminder",
       s"agent finished without Mail (reminder ${state.mailReminders + 1}/$MaxMailReminders)"
     )
-    val assistantContent = (result.thinking, result.text) match
-      case (None, _) => Left(result.text)
-      case (Some(t), "") => Right(List(ContentBlock.Thinking(t, result.thinkingSignature)))
-      case (Some(t), txt) =>
-        Right(List(ContentBlock.Thinking(t, result.thinkingSignature), ContentBlock.Text(txt)))
+    val assistantContent = AgentFinishTurn.assistantContentOf(result.thinking, result.thinkingSignature, result.text)
     val assistantMsg = Message(MessageRole.Assistant, assistantContent)
     val reminderMsg = Message(
       MessageRole.User,
@@ -2314,7 +2310,7 @@ private[agent] object AgentProcessing:
     val toolCalls = tc.results.map((call, _) => call)
     val assistantBlocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
     tc.thinking.foreach(t => assistantBlocks += ContentBlock.Thinking(t, tc.thinkingSignature))
-    if tc.originalText.nonEmpty then assistantBlocks += ContentBlock.Text(tc.originalText)
+    if !tc.originalText.isBlank then assistantBlocks += ContentBlock.Text(tc.originalText)
     toolCalls.foreach(c => assistantBlocks += ContentBlock.ToolUse(c.id, c.name, c.input))
     val resultBlocks = tc.results.map { (call, r) =>
       ContentBlock.ToolResult(call.id, r.content, Some(r.isError))

@@ -18,6 +18,24 @@ import nebflow.shared.given
  * AgentActor,经 import AgentActor.* 引用。
  */
 private[agent] object AgentFinishTurn:
+
+  /**
+   * 助手终轮内容的唯一装配点（2026-11-22 修复批，空白块产生源）。
+   * 空白正文（`""` / `"  \n"`）**不落 text 块**：落盘的空白 text 块在每次历史回放时
+   * 被 Anthropic 以 400 `text content blocks must contain non-whitespace text` 拒收。
+   * 无正文 ⇒ 只留 thinking 块（或无块）；有正文 ⇒ 原样保留。请求侧
+   * [[nebflow.llm.providers.AnthropicAdapter.dropBlankText]] 为兜底。
+   */
+  private[agent] def assistantContentOf(
+    thinking: Option[String],
+    thinkingSignature: Option[String],
+    text: String
+  ): Either[String, List[ContentBlock]] =
+    (thinking, text.isBlank) match
+      case (None, true) => Right(Nil)
+      case (None, false) => Left(text)
+      case (Some(t), true) => Right(List(ContentBlock.Thinking(t, thinkingSignature)))
+      case (Some(t), false) => Right(List(ContentBlock.Thinking(t, thinkingSignature), ContentBlock.Text(text)))
   import nebflow.agent.AgentActor.*
 
   private def routeChildProgress(
@@ -287,11 +305,7 @@ private[agent] object AgentFinishTurn:
       )
     val isSubagent = parentRef.isDefined
     val sendText = !textAlreadyStreamed && text.nonEmpty
-    val assistantContent = (thinking, text) match
-      case (None, _) => Left(text)
-      case (Some(t), "") => Right(List(ContentBlock.Thinking(t, thinkingSignature)))
-      case (Some(t), txt) =>
-        Right(List(ContentBlock.Thinking(t, thinkingSignature), ContentBlock.Text(txt)))
+    val assistantContent = assistantContentOf(thinking, thinkingSignature, text)
     val newMessages = normalizedState.messages :+ Message(MessageRole.Assistant, assistantContent)
     val sendTextIO =
       if sendText then
