@@ -1,3 +1,14 @@
+/* 决策统一批（2026-11-22）期 0/3：未作答决策待办的圆钮门控 + 行内作答面板 */
+.reminder-circle.gated { opacity: 0.45; cursor: not-allowed; }
+.reminder-decision { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; outline: none; }
+.reminder-decision-q { font-weight: 600; }
+.reminder-decision-opts { display: flex; flex-direction: column; gap: 4px; }
+.reminder-decision-opt { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.reminder-decision-key { font-size: 11px; opacity: 0.6; border: 1px solid currentColor; border-radius: 3px; padding: 0 4px; }
+.reminder-decision-err { color: var(--ds-danger, #d33); font-size: 12px; min-height: 0; }
+.reminder-decision-err:empty { display: none; }
+.reminder-decision-submit { align-self: flex-end; }
+
 /* ═══════════════════════════════════════════════════════════════════════
    schedule-todo.css — 「定时任务页 ⇄ 待办页」两页共用的**单一面语言**（单源）
    （schedule-todo-unify 批 · 作者令 2026-11-06 09:43）
