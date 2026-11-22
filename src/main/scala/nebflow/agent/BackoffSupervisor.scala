@@ -1114,27 +1114,25 @@ object BackoffSupervisor:
             else
               val now = System.currentTimeMillis()
               val recent = restartHistory.filter(t => now - t < withinTimeRange.toMillis)
+              // 回合级空终轮（末轮零工具 ∧ 终文空/stub）：先重试（respawn 续推，
+              // 指数退避，fresh LLM 调用）；预算耗尽 ⇒ 显式失败（retryable），绝不
+              // 静默 completed（取代旧 delegate 轨 completeNormally 收尾）。
               if recent.length < maxRestarts then
                 logger.warn(
-                  s"BackoffSupervisor: child $childName completed EMPTY (no text, zero tool calls — empty burn), " +
-                    s"restarting #${recent.length + 1}/$maxRestarts instead of reporting completion"
+                  s"BackoffSupervisor: child $childName ended with an EMPTY final turn (no text, zero tool calls this turn — empty burn), " +
+                    s"retry #${recent.length + 1}/$maxRestarts instead of reporting completion"
                 )
                 respawnSafely(ctx, "empty-completion", now, recent)
-              else if source == "delegate" then
-                logger.warn(
-                  s"BackoffSupervisor: child $childName completed EMPTY with restart budget exhausted ($maxRestarts) — terminal verdict left to the deterministic precheck (blocked)"
-                )
-                completeNormally(messages)
               else
                 logger.warn(
-                  s"BackoffSupervisor: child $childName completed EMPTY with restart budget exhausted ($maxRestarts) — honest failed terminal"
+                  s"BackoffSupervisor: child $childName ended with an EMPTY final turn; retry budget exhausted ($maxRestarts) — explicit failed terminal (empty-final-turn), never a silent completion"
                 )
                 notifyParentAndStop(
                   "failed",
-                  s""""$description": empty completion — the worker produced no text and made no tool calls (empty burn), unresolved after $maxRestarts restarts""",
+                  s""""$description": empty-final-turn (provider stream empty after $maxRestarts retries) — the final turn produced no text and made no tool calls (empty burn)""",
                   JsonObject(
                     "failedSessionId" -> subagentId.asJson,
-                    "retryable" -> false.asJson,
+                    "retryable" -> true.asJson,
                     "failureType" -> "empty-burn".asJson
                   )
                 )
@@ -2489,16 +2487,27 @@ object BackoffSupervisor:
     messages.flatMap(_.content.toOption).flatten.count(_.isInstanceOf[ContentBlock.ToolUse])
 
   /**
-   * 空烧完成判据：全会话零工具调用 **且** 终文不可用——终文为空（thinking-only
-   * / 静默空轮，`turn-ended-empty` 形态）或止于 max_tokens 空烧 stub
-   * （[[Defaults.MaxTokensStubText]]，与 handleEmptyResponse 收尾文案同串）。
-   * 有真实终文（哪怕零工具）不算空烧——那是判定机的正常输入。
+   * 空终轮判据（回合级，2026-11-22 语义修复）：`messages` 末条即本轮收尾的
+   * assistant 回合（finishTurn 以 `messages :+ Assistant` 落盘）。它**本回合零
+   * tool_use** 且**终文不可用**——终文为空（thinking-only / 静默空轮，
+   * `turn-ended-empty` 形态）或止于 max_tokens 空烧 stub（[[Defaults.MaxTokensStubText]]）。
+   *
+   * 旧判据是全会话零工具，多工具重会话（7–167 次工具）末轮空烧被守卫整体放过、
+   * 静默判 completed（17 例团灭根因）。回合级判据下：
+   *  - 末轮带 tool_use ⇒ 非空终轮（正常中间态，原样走完成闸）；
+   *  - 末轮有真实终文 ⇒ 非空终轮（判定机的正常输入）；
+   *  - 之前回合有过工具调用**不再**豁免末轮空烧。
+   * 无任何消息（Nil）⇒ 视为空终轮（无产出即无终文）。
    */
   private[agent] def isEmptyBurnCompletion(messages: List[Message]): Boolean =
-    if sessionToolCalls(messages) > 0 then false
-    else
-      val last = extractLastAssistantText(messages)
-      last.isEmpty || last.trim == Defaults.MaxTokensStubText
+    messages.lastOption match
+      case None => true
+      case Some(lastMsg) =>
+        val lastToolCalls = lastMsg.content.toOption.getOrElse(Nil).count(_.isInstanceOf[ContentBlock.ToolUse])
+        if lastToolCalls > 0 then false
+        else
+          val text = lastMsg.textContent
+          text.trim.isEmpty || text.trim == Defaults.MaxTokensStubText
 
   /**
    * 配额/额度类取消判据（错误冻结批 2026-11-01，纯函数判红锚）：`AgentEvent.Cancelled`
