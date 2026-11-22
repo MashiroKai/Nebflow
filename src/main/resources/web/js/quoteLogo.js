@@ -50,7 +50,10 @@ export const QUOTE_ENTRY_ICON_PATHS = [
 /** 引用入口图标的内联 SVG（footer 键 / footer 徽章引用钮 / 两类引用牌宿主同用这一份）。
  *  24 viewBox + `stroke-width="2"` = 该字形原生规格；在 16px 盒里等效描边 ≈1.33px，
  *  与上一批文字 logo 的 1.4 视觉同档，盒尺寸不受影响（`.nf-qicon svg` 撑满盒）。 */
-export const QUOTE_ENTRY_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+// `xmlns` 必须显式写：quoteEntryIconNode() 走 XML 解析（image/svg+xml），无命名空间的
+// <svg> 落在 null 命名空间 ⇒ 子 <path> 不是 SVG 元素，fill="none"/stroke 全不生效，
+// 图标渲染成黑色实心块或干脆不见（手机环带展开签的引用钮即此病：computed stroke=none）。
+export const QUOTE_ENTRY_ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
   + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round"'
   + ` data-icon="${QUOTE_ENTRY_ICON_ID}" aria-hidden="true" focusable="false">`
   + QUOTE_ENTRY_ICON_PATHS.map((d) => `<path d="${d}"/>`).join('')

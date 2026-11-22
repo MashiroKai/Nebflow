@@ -105,6 +105,10 @@ const INJECT_BREAK = `
 body.mobile-layer .mf-strip-quote { position: static; z-index: auto; }
 body.mobile-layer .mf-strip-quote svg { display: none; }
 `;
+// ③（R13 闸的注入）：xmlns 缺失的渲染后果 = path 失去描边、落黑填充 ⇒ R13 必红。
+const INJECT_XMLNS_BREAK = `
+body.mobile-layer .mf-strip-quote path { stroke: none; fill: #000; }
+`;
 
 const rows = [];
 let pass = 0, fail = 0;
@@ -245,6 +249,13 @@ const QUOTE_PROBE = `(() => {
     aria: q.getAttribute('aria-label'), role: q.getAttribute('role'), tabindex: q.getAttribute('tabindex'),
     title: q.getAttribute('title'),
     svgIcon: svg ? svg.getAttribute('data-icon') : null,
+    // R13 读数：图标必须是**真 SVG 命名空间**且路径按描边字形上色（改前 xmlns 缺失 ⇒
+    // path 落 null 命名空间，stroke=none、fill=黑 ⇒ 图标不可见）。
+    svgNs: svg ? svg.namespaceURI : null,
+    pathPaint: svg ? [...svg.querySelectorAll('path')].map((p) => {
+      const pc = getComputedStyle(p);
+      return { stroke: pc.stroke, fill: pc.fill };
+    }) : [],
     svgBox: (() => { if (!svg) return null; const b = svg.getBoundingClientRect(); return { w: R(b.width), h: R(b.height) }; })(),
     hits, hitAllQuote: hits.every(h => h === 'quote'),
     chipBox: (() => { const c = chip.getBoundingClientRect(); return { w: R(c.width), h: R(c.height), l: R(c.left), r: R(c.right) }; })(),
@@ -281,7 +292,7 @@ async function mobileLeg(tag, selftest) {
   await openDoc(page, DOCS[2], false);
   await page.locator('#mobile-dock .dock-key[data-dock="canvas"]').click({ timeout: 8000 }).catch(() => {});
   await sleep(1000);
-  if (selftest) await page.addStyleTag({ content: INJECT_BREAK });
+  if (selftest) await page.addStyleTag({ content: INJECT_BREAK + INJECT_XMLNS_BREAK });
 
   const tabCount = await page.evaluate(() => document.querySelectorAll('.mf-strip-chip').length);
 
@@ -310,6 +321,17 @@ async function mobileLeg(tag, selftest) {
     `svgIcon=${q.svgIcon} svgBox=${JSON.stringify(q.svgBox)} textNodes=${JSON.stringify(q.textNodes)}`
     + ` textContent=${JSON.stringify(q.text)} legacyLabel=${q.legacyLabelEl} accName=${JSON.stringify(q.accName)}`
     + ` aria=${JSON.stringify(q.aria)} role=${q.role} tabindex=${q.tabindex}`);
+
+  // ── R13 图标真可见：SVG 命名空间 + 路径描边上色、不填充（xmlns 缺失病根的闸）──
+  // 改前病根：QUOTE_ENTRY_ICON 无 xmlns ⇒ XML 解析后 path 不是 SVG 元素 ⇒ stroke=none、
+  // fill=黑 ⇒ 手机展开签的引用钮「看不见」（作者 22:31 报）。两条都要成立：
+  // ns 必须是 SVG 命名空间；每条 path 的 computed stroke ≠ none 且 fill = none。
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const r13ok = !!q.found && q.svgNs === SVG_NS && q.pathPaint.length > 0
+    && q.pathPaint.every((p) => p.stroke !== 'none' && p.fill === 'none');
+  record('R13', '图标真可见：svg 为 SVG 命名空间，路径 stroke≠none 且 fill=none（描边字形，非黑块/不可见）',
+    r13ok,
+    `svgNs=${q.svgNs} pathPaint=${JSON.stringify(q.pathPaint)}`);
 
   // ── R12 可见面零边框（作者令 2026-11-18 飞书逐字「canvas引用按钮不要边框」）────
   // 口径：钮的**可见面**不带边框 —— 元素本体与其两个伪元素逐点断
@@ -572,7 +594,8 @@ if (SELFTEST) {
   const r2 = rows.find((r) => r.id === 'R2');
   const r4 = rows.find((r) => r.id === 'R4');
   const r3 = rows.find((r) => r.id === 'R3');
-  const okBreak = r2 && r2.verdict === 'FAIL' && r4 && r4.verdict === 'FAIL' && r3 && r3.verdict === 'FAIL';
+  const r13 = rows.find((r) => r.id === "R13");
+  const okBreak = r2 && r2.verdict === "FAIL" && r4 && r4.verdict === "FAIL" && r3 && r3.verdict === "FAIL" && r13 && r13.verdict === "FAIL";
   console.log(`\nSELFTEST: R2(文字)=${r2 && r2.verdict} R3(可达)=${r3 && r3.verdict} R4(真手指)=${r4 && r4.verdict}`
     + `  ⇒ ${okBreak ? '注入后确实报红（闸有牙）' : '注入后仍绿 = 假绿！'}`);
   process.exit(okBreak ? 0 : 1);
