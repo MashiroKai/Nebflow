@@ -34,6 +34,14 @@ for (const file of ['js/viewers/readerChrome.js', 'js/viewers/annotations.js', '
 // Closed ask/note morph seeds must not paint a second glass layer below the FAB.
 const askCss = read('css/ask.css');
 if (!/\.ask-dock\.closed\s+\.ask-input\s*,\s*\.note-dock\.closed\s+\.note-body\s*\{[^}]*visibility:\s*hidden\s*;/s.test(askCss)) failures.push('closed ask/note glass seeds must be hidden');
+// 引用入口图标单源（mobile-tab-quote-icon 批 2026-11-19）：该字形经 XML 解析建节点
+// （quoteEntryIconNode），无 xmlns 的 <svg> 落 null 命名空间 ⇒ path 无描边、黑填充 ⇒ 图标不可见。
+// 门禁：单源字形串必须显式带 SVG 命名空间（运行期真渲染断言见 tests/canvas-tab-reference.spec.mjs R13）。
+{
+  const quoteLogo = read('js/quoteLogo.js');
+  const entry = quoteLogo.match(/export const QUOTE_ENTRY_ICON = '<svg([^']*)'/);
+  if (!entry || !/\bxmlns="http:\/\/www\.w3\.org\/2000\/svg"/.test(entry[1])) failures.push('js/quoteLogo.js: QUOTE_ENTRY_ICON <svg> must declare xmlns (XML-parsed node would lose stroke/fill)');
+}
 
 /* ── G-CB3 单一 Canvas 面（canvas-button-unify 批 2026-11-18）────────────────
    作者令逐字口径：「单枚 Canvas 按钮共用既有全站按钮几何/行中线/毛玻璃实现」+
