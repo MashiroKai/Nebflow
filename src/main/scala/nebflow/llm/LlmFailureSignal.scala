@@ -47,6 +47,14 @@ object LlmFailureSignal:
   def parentPayload(llmClass: Boolean, description: String)(verbatim: => String): String =
     if llmClass then s""""$description": $ParentNeutralNotice""" else verbatim
 
+  /**
+   * 上行失败消息的单点选择（致命路径 `AgentEvent.Failed` 的 message）：LLM 类 ⇒ 中性句，
+   * 原文不进上级/节点结果；非 LLM 类 ⇒ `verbatim` 原路径逐字不变。原文由卡片直呈用户，
+   * 不经本函数。
+   */
+  def upstreamMessage(llmClass: Boolean)(verbatim: => String): String =
+    if llmClass then ParentNeutralNotice else verbatim
+
   /** 是否为 LLM 类失败（true = 不得向上游 LLM 上下文注入其原文，改走卡片）。 */
   def isLlmClass(error: Throwable): Boolean = error match
     case null => false
