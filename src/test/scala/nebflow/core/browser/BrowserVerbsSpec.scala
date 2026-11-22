@@ -182,6 +182,12 @@ class BrowserVerbsSpec extends CatsEffectSuite:
     assertEquals(granted, nineNames)
   }
 
+  test("授权（分域，回灌 8f3521b6a）：未登记插件的 _engine 前缀不串授浏览器九动词") {
+    // 旧实现对任一 `_engine` 前缀授予整张白名单；分域后，未登记插件一个不授。
+    assertEquals(nebflow.core.plugin.PluginRegistry.engineGrantFor(List("plugin_other-plugin_engine")), Set.empty[String])
+    assertEquals(nebflow.core.plugin.PluginRegistry.EngineToolsByPlugin("browser-use"), nineNames)
+  }
+
   test("授权（未挂载态）：无引擎前缀来源 ⇒ 空集；他插件 MCP 前缀不误判为引擎挂载") {
     assertEquals(nebflow.core.plugin.PluginRegistry.engineGrantFor(Nil), Set.empty[String])
     assertEquals(
