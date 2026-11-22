@@ -1951,6 +1951,11 @@ class WebSocketRoutes(
   // 64MB 之上仍超限的帧走 :1719 的「有声拒绝」（messageTooLarge 错误帧），不再静默。
   private val MaxMessageSize = 64 * 1024 * 1024 // 64MB (base64 image batches; see attach-split batch note)
 
+  /** 多选引用批（2026-11-22）：单条用户帧可携带的被引消息快照上限 —— 与前端
+   *  引用态上限 `MAX_PENDING_QUOTES`（js/msgQuote.js）同值，作为**服务端**兜底：
+   *  失控/恶意帧不能把 refs 无限写进 `.ui.json` 与注入 prompt。 */
+  private val MaxPendingQuotes = 8
+
   /**
    * A2 (perf-481): per-connection outbound queue capacity, in frames.
    *
@@ -2248,10 +2253,16 @@ class WebSocketRoutes(
                                  )
                                }
                                // quote-message 一期（2026-10-09，spec §3.3）：帧 refs 里
-                               // refType==='chat-message' 的**首条**转成落盘 quote 快照
-                               // （至多 1 条；与 attJson 组装同段）。缺席 ⇒ None ⇒ 编码器
-                               // 不落 quote 键 ⇒ 无引用行字节形态与旧 .ui.json 逐字相同。
-                               val quoteJson = quoteFromRefs(json)
+                               // refType==='chat-message' 的快照落盘。多选引用批
+                               // （2026-11-22）起**全量有序**产出：
+                               //   · quote  = 首条（旧读法/旧前端逐字可用，单条行字节形态不变）
+                               //   · quotes = ≥2 条时的全量有序数组（新前端逐条渲染）
+                               // 缺席 ⇒ 两个键都不落 ⇒ 无引用行字节形态与旧 .ui.json 逐字相同。
+                               val quoteSnaps = quotesFromRefs(json)
+                               val quoteJson = quoteSnaps.headOption
+                               val quotesJson =
+                                 if quoteSnaps.sizeIs >= 2 then Some(io.circe.Json.fromValues(quoteSnaps))
+                                 else None
                                val injected = json.hcursor.downField("injected").as[Boolean].getOrElse(false)
                                // tool-card-leak-on-reload 批（2026-11-02）：与
                                // dispatchUserText 同一落盘判据——回合进行中送来的输入
@@ -2268,6 +2279,7 @@ class WebSocketRoutes(
                                          injected,
                                          timestamp = System.currentTimeMillis(),
                                          quote = quoteJson,
+                                         quotes = quotesJson,
                                          midTurn = if injected then None else midTurn
                                        )
                                      )
@@ -2748,10 +2760,21 @@ class WebSocketRoutes(
    * itemIndex（0 基，≤99）/itemTotal（该组张数，≤99）——两张量都是**位置标注**，
    * 引用目标仍是 refMessageId（寻址/降级矩阵不变）。缺失/非法 ⇒ 不落键（旧载荷
    * 落盘字节形态逐字不变，旧行渲染零变化）。
+   *
+   * 🔴 多选引用批（2026-11-22 作者令逐字「还有支持 多选引用 现在引用两个还做不到」）：
+   * 旧实现 `refs.find(...)` 只取**首条** chat-message ref —— 这是「一条回复只带一条
+   * 引用」在**落盘/历史重放**侧的唯一断点（投递侧 `processRefs` 经 `refs.traverse_`
+   * 本来就逐条注入，前端 refs 数组也一直是全量）。现改为按 refs 顺序**逐条**产出
+   * 快照数组（顺序 = 前端选择顺序 = 注入顺序），调用方据此落 `quote`（首条，旧读法
+   * 逐字可用）+ `quotes`（≥2 条时的全量有序数组，新读法逐条渲染）。条数 cap =
+   * MAX_PENDING_QUOTES（与前端引用态上限同值，防失控帧）。
    */
-  private def quoteFromRefs(frame: io.circe.Json): Option[io.circe.Json] =
+  private def quotesFromRefs(frame: io.circe.Json): List[io.circe.Json] =
     val refs = frame.hcursor.downField("refs").as[List[io.circe.Json]].getOrElse(Nil)
-    refs.find(r => r.hcursor.downField("refType").as[String].getOrElse("") == "chat-message").flatMap { ref =>
+    refs
+      .filter(r => r.hcursor.downField("refType").as[String].getOrElse("") == "chat-message")
+      .take(MaxPendingQuotes)
+      .flatMap { ref =>
       val c = ref.hcursor
       val src = c.downField("source")
       val mid = RefResolver.sanitize(src.downField("messageId").as[String].getOrElse(""))
@@ -2820,7 +2843,7 @@ class WebSocketRoutes(
       end if
     }
 
-  end quoteFromRefs
+  end quotesFromRefs
 
   /**
    * Search for a file by name and verify its SHA-256 hash matches.

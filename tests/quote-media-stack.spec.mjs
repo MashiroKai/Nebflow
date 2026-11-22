@@ -222,6 +222,9 @@ test.describe('Pop 引用入口亮暗主题截图与文件入口验收', () => {
         await expect(quoteChip).toHaveAttribute('data-ref-type', 'chat-message');
         await capture('expanded-item-footer');
 
+        // 多选引用批（2026-11-22）：引用态改追加语义 ⇒ 本态取证前先清项图那一条，
+        // 使「文件卡引用」仍是**单条整卡**（四种引用状态各自独立取证，不互相串味）。
+        await page.evaluate(() => window.__clearQuoteAll());
         await row('file').locator('.file-card .fc-quote-btn').evaluate(el => el.click());
         await page.waitForTimeout(200);
         const fileRef = await page.evaluate(() => {

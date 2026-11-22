@@ -429,7 +429,22 @@ object UiMessage:
      * 真源）。缺席即不落键（先例同款条件编码 ⇒ 非 ask 行与旧 `.ui.json` 行
      * 字节形态逐字不变；解码宽松回落 None）。
      */
-    askAddress: Option[String] = None
+    askAddress: Option[String] = None,
+    /**
+     * **多选引用快照（有序数组）**（多选引用批 2026-11-22，作者令逐字「还有支持
+     * 多选引用 现在引用两个还做不到」）：与本行 `quote` 同源同形，但携带**全部**
+     * 被引消息快照，顺序 = 用户选择顺序 = 前端 refs 数组顺序 = 引擎逐条注入顺序
+     * （`ConsoleQuoteResolver.structured` 经 `processRefs` 的 `refs.traverse_`
+     * 本来就是逐条注入，投递端零改动）。
+     *
+     * WHY 与 `quote` 并存而不是替换它：`quote` 是 2026-10-09 起落盘的**单条**快照
+     * 键，旧前端（任意历史版本）读它渲染一块引用牌；直接把它改成数组会让旧读法
+     * 整块塌成「无引用」。故：`quote` 保持「首条、原形状」逐字可用，`quotes`
+     * 只在**条数 ≥ 2** 时落键（新前端优先读它、逐条渲染；旧前端忽略它、照旧渲染
+     * 首条 ⇒ 降级但不丢面）。单条引用行的字节形态与旧行**逐字相同**（先例同款
+     * 条件编码：absence ⇒ 不落键；编码器只在 Some 时 deepMerge 该键）。
+     */
+    quotes: Option[Json] = None
   ) extends UiMessage:
     val typeName = "user"
 
@@ -614,9 +629,12 @@ object UiMessage:
       // quote-message 一期（2026-10-09，spec §3.3）：消息引用快照 —— 缺席即不落键
       // ⇒ 无引用行与旧字节形态逐字相同。
       val withQuote = m.quote.fold(withAnswerOf)(q => withAnswerOf.deepMerge(Json.obj("quote" -> q)))
+      // 多选引用批（2026-11-22）：全量有序快照数组 —— 缺席即不落键（单条引用行 /
+      // 旧行字节形态逐字不变）。
+      val withQuotes = m.quotes.fold(withQuote)(qs => withQuote.deepMerge(Json.obj("quotes" -> qs)))
       // file-diff → 委托结果行（bug #58 修 2026-10-09）：diff 载荷缺席即不落键
       // ⇒ 非 delegate 行与旧字节形态逐字相同。
-      val withFileChanges = m.fileChanges.fold(withQuote)(fc => withQuote.deepMerge(Json.obj("fileChanges" -> fc)))
+      val withFileChanges = m.fileChanges.fold(withQuotes)(fc => withQuotes.deepMerge(Json.obj("fileChanges" -> fc)))
       // askuser-dragdrop 实施批（2026-10-19，批 #551）：随卡回传的答复附件清单——
       // 缺席即不落键（既有行字节形态逐字不变）。
       val withAnswerAtts =
@@ -708,6 +726,9 @@ object UiMessage:
           // quote-message 一期：消息引用快照（旧行无本键 ⇒ None；形态不合同样回落
           // None —— 新增可选键绝不改变任何既有行的可解析性）
           quote <- cursor.downField("quote").as[Option[Json]]
+          // 多选引用批（2026-11-22）：全量有序快照数组（旧行无本键 ⇒ None，同上
+          // 兼容纪律 —— 新增可选键绝不改变任何既有行的可解析性）
+          quotes <- cursor.downField("quotes").as[Option[Json]]
           // file-diff → 委托结果行：diff 载荷（旧行无本键 ⇒ None，同上兼容纪律）
           fileChanges <- cursor.downField("fileChanges").as[Option[Json]]
           // askuser-dragdrop 实施批（2026-10-19，批 #551）：随卡回传的答复附件清单
@@ -741,7 +762,8 @@ object UiMessage:
           answerAttachments,
           schedule,
           midTurn,
-          askAddress.filter(_.nonEmpty)
+          askAddress.filter(_.nonEmpty),
+          quotes
         )
       case "ai" =>
         for

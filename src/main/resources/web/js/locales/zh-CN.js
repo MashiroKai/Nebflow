@@ -489,6 +489,22 @@ export default {
   'chat.quoteTypeTool': '[工具]',
   'chat.quoteTypeAsk': '[提问]',
   'chat.quoteTypeSystem': '[系统]',
+  // ── 多选引用批（2026-11-22 作者令「还有支持 多选引用 现在引用两个还做不到」）────
+  // 引用态非空时的**同一条消息**菜单项/动作名（再点 = 取消该条）。
+  'messages.unquote': '取消引用',
+  // 紧凑引用牌（选中 ≥2 条自动缩小的图标 chip）上的**短名**：按引用来源角色给
+  // 定长词，绝不靠 CSS 省略号截断（放不下的用缩略 + title，见 input.css 同名段）。
+  'chat.quoteShortAgent': 'Agent',
+  'chat.quoteShortTool': '工具',
+  'chat.quoteShortAsk': '提问',
+  'chat.quoteShortImage': '图片',
+  'chat.quoteShortFile': '文件',
+  // 紧凑引用牌的可访问名：顺序号 + 短名（读屏可辨「这是第几条引用」）。
+  'chat.quoteCompactAria': '引用 {n}：{name}',
+  'chat.quoteCompactOpenAria': '回看原消息：{name}',
+  'chat.quoteCompactHint': '点击回看原消息',
+  // 引用态条数上限（MAX_PENDING_QUOTES）触顶提示。
+  'chat.quoteLimitReached': '同时最多引用 {n} 条消息',
   // ── msgchip 批（消息身份牌带短名引用，作者令 2026-11-01）新增键 ─────────────
   'chat.msgTokenChipHint': '查看原消息',
   'chat.msgTokenPopTitle': '原消息',

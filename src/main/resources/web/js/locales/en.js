@@ -488,6 +488,22 @@ export default {
   'chat.quoteTypeTool': '[Tool]',
   'chat.quoteTypeAsk': '[Q&A]',
   'chat.quoteTypeSystem': '[System]',
+  // ── multi-quote batch (2026-11-22 author order: quote several messages at once) ──
+  // Same-message action name while the target is already quoted (click again = remove).
+  'messages.unquote': 'Unquote',
+  // Short names on the compact quote chips (auto-shrunk icon chips when ≥2 selected).
+  // Fixed-length words by source role — never CSS ellipsis truncation.
+  'chat.quoteShortAgent': 'Agent',
+  'chat.quoteShortTool': 'Tool',
+  'chat.quoteShortAsk': 'Q&A',
+  'chat.quoteShortImage': 'Image',
+  'chat.quoteShortFile': 'File',
+  // Accessible name of a compact quote chip: order number + short name.
+  'chat.quoteCompactAria': 'Quote {n}: {name}',
+  'chat.quoteCompactOpenAria': 'View original message: {name}',
+  'chat.quoteCompactHint': 'Click to view the original message',
+  // Quote cap (MAX_PENDING_QUOTES) reached.
+  'chat.quoteLimitReached': 'At most {n} messages can be quoted at once',
   // ── msgchip batch (msg-token short-name quote, author order 2026-11-01): new keys ──
   'chat.msgTokenChipHint': 'View original message',
   'chat.msgTokenPopTitle': 'Original message',

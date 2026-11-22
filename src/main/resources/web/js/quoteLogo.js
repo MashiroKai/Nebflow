@@ -147,3 +147,38 @@ export function quoteTypeIcon(spec, hostClass) {
   box.classList.add('is-glyph');
   return box;
 }
+
+// ── 紧凑引用牌短名（多选引用批 2026-11-22）──────────────────────────────────
+//
+// 作者令逐字：「还有支持 多选引用 现在引用两个还做不到」「多选的就自动缩小为小图标」。
+// 选中 ≥2 条 ⇒ composer 的引用牌自动缩成图标 chip，chip 上必须有**可读短名**（否则
+// 三枚一样的图标分不出谁是谁）。
+//
+// 🔴 纪律：短名由**本函数定长产出**（角色词表或 ≤N 字的发送方名），**零 CSS 省略号**
+// —— 作者铁律「不许为了好看而截断」（noclip-floating 台账只减不增）。放不下的信息走
+// hover title（完整发送方 + 摘要）与点开回看原消息，绝不新增单行截断声明。
+/** 直接采用发送方名的最大字数（> 此值 ⇒ 回落角色短名；按码点计，零 CSS 参与）。 */
+export const QUOTE_SHORT_NAME_MAX = 4;
+
+/**
+ * 引用牌短名（紧凑 chip 的唯一来源；与 `quoteTypeIcon` 同为「引用牌长什么样、
+ * 叫什么」的单点，对两个宿主都是叶子方向）。
+ * @param {{senderRole?:string, senderName?:string, excerpt?:string,
+ *          attachments?:Array, itemIndex?:number|null}} quote
+ * @returns {string} 定长短名（不含顺序号 —— 顺序号是 chip 宿主按选择序现算的）
+ */
+export function quoteShortNameOf(quote) {
+  const q = quote || {};
+  const role = String(q.senderRole || '');
+  const name = String(q.senderName || '').trim();
+  if (role === 'user') return t('chat.quoteSenderMe');
+  if (role === 'tool') return t('chat.quoteShortTool');
+  if (role === 'askUser') return t('chat.quoteShortAsk');
+  const kind = quoteKindOf(q);
+  if (kind === 'image') return t('chat.quoteShortImage');
+  if (kind === 'file') return t('chat.quoteShortFile');
+  // 发送方名足够短 ⇒ 直接用（作者视角最好认的就是这个名字，如「某某」）；
+  // 超长（如「主 Agent」）⇒ 角色短名，不留半截词。
+  if (name && Array.from(name).length <= QUOTE_SHORT_NAME_MAX) return name;
+  return t('chat.quoteShortAgent');
+}
