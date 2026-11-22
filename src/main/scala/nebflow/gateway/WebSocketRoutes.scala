@@ -2040,7 +2040,17 @@ class WebSocketRoutes(
         _ <- nebflow.core.UsageTracker.record("ws_message", sessionIdForTracking)
         _ <- WsDispatch.handlers.get(msgType) match
           case Some(handle) =>
-            handle(wsDispatchContext(sessionIdentity), text, wsSend, watchSession)
+            handle(
+              wsDispatchContext(
+                sessionIdentity,
+                handshakeCredential.collect { case Credential.ViaSession(record) =>
+                  OwnerAccess.fromAuthenticatedSession(record, attachmentOwnerStore)
+                }
+              ),
+              text,
+              wsSend,
+              watchSession
+            )
 
           case None =>
             val json = parsedJson(text)
@@ -2359,7 +2369,8 @@ class WebSocketRoutes(
    * (引用与 eta 展开,构建零副作用)。
    */
   private def wsDispatchContext(
-    sessionIdentity: Option[nebflow.bridge.SessionIdentity] = None
+    sessionIdentity: Option[nebflow.bridge.SessionIdentity] = None,
+    askOwner: Option[OwnerAccess] = None
   ): WsDispatchCtx =
     WsDispatchCtx(
       logger = logger,
@@ -2410,7 +2421,10 @@ class WebSocketRoutes(
       executeAskImpl = executeAsk,
       executeSkillImpl = executeSkill,
       resolveRootSessionIdImpl = resolveRootSessionId,
-      projectCreateBroadcastImpl = (json: io.circe.Json) => wsHub.broadcast(json)
+      projectCreateBroadcastImpl = (json: io.circe.Json) => wsHub.broadcast(json),
+      // canvas ask 附图批：附图提问腿 + 已认证主体（落盘登记所有权）。
+      handleAskUserTextImpl = handleAskUserText,
+      askOwnerAccess = askOwner
     )
   end wsDispatchContext
 
@@ -2559,6 +2573,20 @@ class WebSocketRoutes(
   end handleUserText
 
   /**
+   * canvas ask 附图批：附图提问腿。与 handleUserText 同一落盘/派发腿（dispatchUserText），
+   * 区别只在于允许「图+无正文」（有图不算空）并携带 UI 行件与模型侧块。
+   */
+  private def handleAskUserText(
+    sessionId: String,
+    content: String,
+    attachments: List[io.circe.Json],
+    blocks: List[ContentBlock]
+  ): IO[Unit] =
+    if sessionId.nonEmpty && (content.nonEmpty || blocks.nonEmpty) then
+      dispatchUserText(sessionId, content, "ask-dock", fromUser = true, attachments = attachments, mediaBlocks = blocks)
+    else IO.unit
+
+  /**
    * Normal message dispatch: user bubble + immediate injection into the
    * agent's turn pipeline. The ONLY path that enqueues user text — the
    * input-box AskUser passthrough that used to bypass it was retired
@@ -2580,7 +2608,11 @@ class WebSocketRoutes(
     // P3 磁盘邮箱批（作者 2026-11-05 10:46）：把 WS 边界 `:2005` 已解析出的客户端
     // 幂等键**穿到 ImmediateInput**——改前它在 Gateway→agent 转换处蒸发，真人文字
     // 主腿因此没有任何幂等面（重发同一帧 = 可能双跑）。加性尾参，缺席逐字现状。
-    clientMessageId: Option[String] = None
+    clientMessageId: Option[String] = None,
+    // canvas ask 附图批：UI 行件（UiMessage.User.attachments）与模型侧附加块
+    // （vision 块 + 标签线；正文块由本函数按解析后的 content 前置）。缺席 = Nil ⇒ 逐字现状。
+    attachments: List[io.circe.Json] = Nil,
+    mediaBlocks: List[ContentBlock] = Nil
   ): IO[Unit] =
     logger.info(s"User text ($source) for session $sessionId (${content.length} chars)") *>
       // tool-card-leak-on-reload 批（2026-11-02）：回合内插话判定在**落盘这一瞬**
@@ -2589,7 +2621,7 @@ class WebSocketRoutes(
       midTurnAtPersist(sessionId).flatMap { midTurn =>
         sessionStore.appendUiMessages(
           sessionId,
-          List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis(), midTurn = midTurn))
+          List(UiMessage.User(content, attachments, timestamp = System.currentTimeMillis(), midTurn = midTurn))
         )
       } *>
       // Hard-recovery P4: if the target turn is wedged (Processing + idle >
@@ -2601,9 +2633,15 @@ class WebSocketRoutes(
       (if fromUser then
          ConsoleQuoteResolver.resolve(content, sharedResources.scheduledTaskStore, sharedResources.msgTokens)
        else IO.pure(content)).flatMap { resolvedContent =>
+        // 附图批：带媒体块时块即整条模型输入（AgentIdle 以 blocks 为准、text 只作
+        // 无块回退），故正文块前置于附加块；无媒体 ⇒ blocks=None 逐字现状。
+        val inputBlocks =
+          if mediaBlocks.isEmpty then None
+          else Some((if resolvedContent.nonEmpty then List(ContentBlock.Text(resolvedContent)) else Nil) ++ mediaBlocks)
         ensureAgent(sessionId)(ref =>
           ref ! AgentCommand.ImmediateInput(
             device.fold(resolvedContent)(nebflow.bridge.DeviceProvenance.compose(_, resolvedContent)),
+            blocks = inputBlocks,
             fromUser = fromUser,
             clientMessageId = clientMessageId
           )

@@ -30,7 +30,11 @@
 
 import { h } from './dom.js';
 import { askBubbleClass, chatComposerClass } from './chatUi.js';
-import { renderMarkdownWithMath } from './utils.js';
+import { renderMarkdownWithMath, createIconsIn } from './utils.js';
+// 图片附件（ask 附图批）：压缩管线 = 主会话同款（input/attachments.js 单点导出），
+// 上行帧形状 = 主会话 userMessage.attachments 同形（name/mimeType/data/size）。
+import { imageAttachmentPayload } from './input/attachments.js';
+import { attachmentImageUrl } from './persistence.js';
 import { createTurnToggle, requestTurnInterrupt } from './input/composer.js';
 // 次级 LLM 输入框唯一模板（todo-mobile 批 2026-11-18 作者令「把 Canvas Ask 用的那一套
 // 输入框整理成统一模板，放进站内单源」）：本内核的输入条装配点与待办详情面共用同一份
@@ -133,6 +137,106 @@ function setMarkdownHtml(node, text, streaming) {
  * @property {string} [panelClass] 面板类（缺省 'ask-dock'）
  */
 
+/** 单条提问的图片件数上限（= 后端 AttachContract.MaxAttachmentsPerMessage，同值 9）。 */
+const ASK_MEDIA_MAX = 9;
+/** 单图字节上限（= 主会话图片上限 10MB，前端预检；后端 ImageInject 硬帽同族）。 */
+const ASK_MEDIA_MAX_BYTES = 10 * 1024 * 1024;
+
+/**
+ * 图片托盘（ask 附图批）：输入条上方的缩略件条 + 附件钮/粘贴/拖放三入口的单源。
+ * 每件 = {name, url(本地 objectURL 供气泡即时显示), payload(Promise，压缩后的 WS 载荷)}。
+ * take() 把待发件一次性交出（压缩未完成的等它完成；失败件静默出册并 toast）。
+ * @param {(zh:string,en:string)=>string} tt
+ */
+function createMediaTray(tt) {
+  /** @type {{name:string, url:string, payload:Promise<any>}[]} */
+  let items = [];
+  const strip = h('div', { class: 'ask-media-strip', 'data-ask-media-strip': true });
+  strip.style.display = 'none';
+  const fileInput = h('input', { type: 'file', accept: 'image/*', multiple: true, 'aria-hidden': 'true' });
+  fileInput.style.display = 'none';
+  const attachBtn = h('button', {
+    type: 'button',
+    class: 'ask-attach',
+    'aria-label': tt('附加图片', 'Attach image'),
+    title: tt('附加图片（也可粘贴 / 拖入）', 'Attach images (paste or drop also works)'),
+  }, [h('i', { 'data-lucide': 'paperclip' })]);
+  createIconsIn(attachBtn);
+  attachBtn.addEventListener('click', () => fileInput.click());
+
+  const render = () => {
+    strip.replaceChildren();
+    items.forEach((it) => {
+      const img = h('img', { class: 'ask-media-thumb', src: it.url, alt: it.name, title: it.name });
+      const rm = h('button', {
+        type: 'button',
+        class: 'ask-media-rm',
+        'aria-label': tt('移除 ', 'Remove ') + it.name,
+        'on:click': () => {
+          URL.revokeObjectURL(it.url);
+          items = items.filter((x) => x !== it);
+          render();
+        },
+      }, ['×']);
+      strip.appendChild(h('div', { class: 'ask-media-chip' }, [img, rm]));
+    });
+    strip.style.display = items.length ? '' : 'none';
+  };
+
+  const add = (files) => {
+    const imgs = Array.from(files || []).filter((f) => /^image\//.test(f.type || ''));
+    if (!imgs.length) return;
+    for (const file of imgs) {
+      if (items.length >= ASK_MEDIA_MAX) {
+        window.__showToast?.(tt(`最多附 ${ASK_MEDIA_MAX} 张图片`, `At most ${ASK_MEDIA_MAX} images`), 'error');
+        break;
+      }
+      if (file.size > ASK_MEDIA_MAX_BYTES) {
+        window.__showToast?.(tt(`图片过大（上限 10MB）：${file.name}`, `Image too large (max 10MB): ${file.name}`), 'error');
+        continue;
+      }
+      const payload = imageAttachmentPayload(file);
+      // 失败件：静默出册 + toast（take() 会跳过它）。
+      payload.catch(() => {
+        window.__showToast?.(tt(`图片读取失败：${file.name}`, `Failed to read image: ${file.name}`), 'error');
+      });
+      items.push({ name: file.name, url: URL.createObjectURL(file), payload });
+    }
+    render();
+  };
+
+  fileInput.addEventListener('change', () => {
+    add(fileInput.files);
+    fileInput.value = '';
+  });
+
+  return {
+    strip, fileInput, attachBtn,
+    add,
+    count: () => items.length,
+    /** 交出待发件（载荷 + 本地预览 url；tray 清空，url 归气泡所有、不在此回收）。 */
+    async take() {
+      const taken = items;
+      items = [];
+      render();
+      const settled = await Promise.all(taken.map((it) =>
+        it.payload.then((p) => ({ ...p, url: it.url }), () => null)));
+      return settled.filter(Boolean);
+    },
+    clear() {
+      items.forEach((it) => URL.revokeObjectURL(it.url));
+      items = [];
+      render();
+    },
+  };
+}
+
+/** 气泡内图片的可显示地址：live 件用本地 objectURL，回放件用 path → /uploads 路由。 */
+function imageSrcOf(img) {
+  if (img && img.url) return img.url;
+  return attachmentImageUrl((img && img.path) || '');
+}
+
 /** 卡行身份键（card-visible-reconcile 批 2026-11-21）：卡行的身份 = **载荷本身**
  *  ——同一份 `___<AGENT>_HTML___` 载荷重渲时复用同一个卡行节点（保住已挂载的
  *  iframe 文档），不同载荷/新增卡才建新行。键 = 长度 + FNV-1a 32 位 + 首 24 字
@@ -184,11 +288,16 @@ export function createAskDialog(cfg) {
     onSend: () => { dlg.submit(); },
   });
   const { root: inputRow, input, sendBtn: send, stopBtn: stop } = composer;
+  // 附图入口（ask 附图批）：附件钮位于输入条首位（文本框之前），缩略件条在输入条之上。
+  const media = createMediaTray(tt);
+  inputRow.insertBefore(media.attachBtn, input);
+  inputRow.appendChild(media.fileInput);
   const col = h('div', { class: 'ask-col' });
   const colwrap = h('div', { class: 'ask-colwrap' }, [col]);
   const panel = h('div', { class: (cfg.panelClass || 'ask-dock') + ' closed' }, [
     handle,
     colwrap,
+    media.strip,
     inputRow,
   ]);
 
@@ -214,6 +323,29 @@ export function createAskDialog(cfg) {
       wired = true;
       panel.addEventListener('click', (e) => e.stopPropagation());
       panel.addEventListener('pointerdown', (e) => e.stopPropagation());
+      // 粘贴图片进输入框 = 附图（纯文本粘贴零拦截，走浏览器默认）。
+      input.addEventListener('paste', (e) => {
+        const files = [];
+        for (const item of Array.from((e.clipboardData && e.clipboardData.items) || [])) {
+          if (item.kind === 'file' && /^image\//.test(item.type || '')) {
+            const f = item.getAsFile();
+            if (f) files.push(f);
+          }
+        }
+        if (!files.length) return;
+        e.preventDefault();
+        media.add(files);
+      });
+      // 拖放图片到面板 = 附图（非图片文件不接，不拦浏览器默认）。
+      const hasFiles = (e) => !!(e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files'));
+      panel.addEventListener('dragover', (e) => { if (hasFiles(e)) { e.preventDefault(); } });
+      panel.addEventListener('drop', (e) => {
+        if (!hasFiles(e)) return;
+        const files = Array.from(e.dataTransfer.files || []).filter((f) => /^image\//.test(f.type || ''));
+        if (!files.length) return;
+        e.preventDefault();
+        media.add(files);
+      });
       turnToggle = createTurnToggle({
         sendBtn: /** @type {HTMLElement} */ (send),
         stopBtn: /** @type {HTMLElement} */ (stop),
@@ -354,8 +486,15 @@ export function createAskDialog(cfg) {
           //  守卫锚定这条唯一落点，故行对象按原名 `m` 传下来。）
           const m = d.msg;
           const b = h('div', { class: askBubbleClass(m.role) });
-          if (m.role === 'user') b.textContent = m.text;
-          else setMarkdownHtml(b, m.text, false); // 唯一 HTML 落点见 setMarkdownHtml
+          if (m.role === 'user') {
+            // 附图行（ask 附图批）：图在正文之上；有图不算空正文——图+无文字的行照常成泡。
+            const srcs = (m.images || []).map(imageSrcOf).filter(Boolean);
+            if (srcs.length) {
+              b.appendChild(h('div', { class: 'ask-msg-imgs' },
+                srcs.map((src) => h('img', { class: 'ask-msg-img', src, alt: '', loading: 'lazy' }))));
+            }
+            if (m.text) b.appendChild(document.createTextNode(m.text));
+          } else setMarkdownHtml(b, m.text, false); // 唯一 HTML 落点见 setMarkdownHtml
           node = b;
         }
         col.insertBefore(node, ref);
@@ -449,11 +588,15 @@ export function createAskDialog(cfg) {
       const s = await cfg.ensureSession();
       if (!s) return;
       const v = input.value.trim();
-      if (!v) return;
+      // 附图批：图片是输入的一部分——「有图无字」也是一条可发的提问（有图不算空）。
+      const picked = await media.take();
+      if (!v && !picked.length) return;
       input.value = '';
       input.style.height = 'auto';
       // ④ 双泡修复批 2026-10-31：发问时**不再预压空 ai 泡**——等待期只有 typing。
-      s.msgs.push({ role: 'user', text: v });
+      const userRow = { role: 'user', text: v };
+      if (picked.length) userRow.images = picked.map((p) => ({ name: p.name, url: p.url }));
+      s.msgs.push(userRow);
       cfg.onPersist?.(s);
       dlg.render();
       dlg.settleCol([{ role: 'user', self: true }]); // Local sends are not unseen.
@@ -462,7 +605,8 @@ export function createAskDialog(cfg) {
       if (!s.stateSent) cfg.ensureBound(s);
       // 状态可见性批（通用挂钩）：send 的返回值原样回传消费者——canvas 档据它落
       // 「已提交排队 / 会话未连接」态；改前这个返回值在消费侧被当场丢弃。
-      const sent = cfg.send(s, v);
+      // 附图批：第三参 = 图片载荷（WS 帧 attachments 同形；无图 = []）。
+      const sent = cfg.send(s, v, picked.map(({ name, mimeType, data, size }) => ({ name, mimeType, data, size })));
       cfg.onQueued?.(s, sent);
     },
 
@@ -531,10 +675,19 @@ export function createAskDialog(cfg) {
           const serverMsgs = Array.isArray(msg.messages)
             ? msg.messages
               .filter((m) => m && typeof m.text === 'string')
-              .map((m) => ({
-                role: m.role === 'user' ? 'user' : m.role === 'sys' ? 'sys' : 'ai',
-                text: m.text,
-              }))
+              .map((m) => {
+                const row = {
+                  role: m.role === 'user' ? 'user' : m.role === 'sys' ? 'sys' : 'ai',
+                  text: m.text,
+                };
+                // 附图批：回放行的附件（服务端 .ui.json 的 {name,type,path}）→ 气泡图（path 寻址）。
+                const imgs = Array.isArray(m.attachments)
+                  ? m.attachments.filter((a) => a && typeof a.path === 'string' && a.path)
+                    .map((a) => ({ name: a.name || '', path: a.path }))
+                  : [];
+                if (row.role === 'user' && imgs.length) row.images = imgs;
+                return row;
+              })
             : entry.msgs;
           const localLastUser = entry.msgs.filter((m) => m.role === 'user').slice(-1)[0];
           const adopted = serverMsgs.length >= entry.msgs.length ? serverMsgs : entry.msgs;

@@ -982,3 +982,33 @@ body.mobile-layer .note-body textarea { font-size: var(--ds-fs-mobile-sub); } /*
   .ask-user-source { flex-wrap: wrap; white-space: normal; }
 }
 body.mobile-layer .ask-user-source { flex-wrap: wrap; white-space: normal; max-width: 100%; }
+
+/* ═══ 附图（ask 附图批 2026-11-22）═══════════════════════════════════════════
+ * 输入条附件钮（文本框之前的圆形图标钮）+ 待发件缩略条（输入条之上）+ 用户气泡
+ * 内的图片行。材质/输入条外壳仍归次级输入框模板（nf-glass），本段只定附图件的几何。 */
+.ask-attach {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; margin: 0 2px; padding: 0; border: none; border-radius: 50%;
+  background: transparent; color: var(--color-text-muted, #888); cursor: pointer;
+}
+.ask-attach:hover { color: var(--color-text, inherit); }
+.ask-attach:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
+.ask-media-strip {
+  display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px 6px;
+}
+.ask-media-chip { position: relative; width: 44px; height: 44px; border-radius: 8px; overflow: visible; }
+.ask-media-thumb {
+  width: 100%; height: 100%; object-fit: cover; border-radius: 8px; display: block;
+  border: 1px solid var(--color-border, rgba(128,128,128,0.35));
+}
+.ask-media-rm {
+  position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; padding: 0; line-height: 1;
+  border-radius: 50%; border: 1px solid var(--color-border, rgba(128,128,128,0.35));
+  background: var(--color-surface-2, rgba(127,127,127,0.25)); color: var(--color-text, inherit);
+  font-size: 12px; cursor: pointer;
+}
+.ask-msg-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.ask-msg-img {
+  max-width: 220px; max-height: 220px; width: auto; height: auto; border-radius: 10px; display: block;
+  border: 1px solid var(--color-border, rgba(128,128,128,0.35));
+}
