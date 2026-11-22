@@ -66,7 +66,7 @@ const slice = (from, to) => {
   const b = a >= 0 ? jsCode.indexOf(to, a) : -1;
   return a >= 0 && b > a ? jsCode.slice(a, b) : '';
 };
-const writerChangedBlock = slice('function writerChanged(', 'const writerRejectionNotices');
+const writerChangedBlock = slice('function writerChanged(', 'const canvasWriter = createCanvasWriterClient(');
 const captureBlock = slice('function captureSeatDraft(', 'function clearSeatDraft(');
 const restoreBlock = slice('function restoreSeatDraft(', 'function allowCanvasMutation(');
 
