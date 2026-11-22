@@ -29,7 +29,7 @@
 import state from './state.js';
 import { sendWs } from './ws.js';
 import { getLocale } from './i18n.js';
-import { createAskDialog } from './askDialog.js';
+import { createAskPanel } from './askPanel.js';
 import { SELECTION_CONTEXT_CHARS } from './msgQuote.js';
 
 /** @type {Map<string, {at: number}>} sid → 在飞提问（无请求号 ⇒ 每会话至多一个）。 */
@@ -49,6 +49,8 @@ function tt(zh, en) { return getLocale() === 'zh-CN' ? zh : en; }
 
 // ── 共用件对话框实例（第二消费者；座位 = 选区按钮旁边）─────────────────────
 let dlg = null;
+/** 门面句柄（askPanel.js）：开/收/是否开着经它；内核实例 = face.dialog。 */
+let face = null;
 /** @type {{sid: string, fileName: string, msgs: Array<{role: string, text: string}>, stateSent: boolean, unread: boolean, busy: boolean, lastFrameAt: number}|null} */
 let session = null;
 
@@ -72,7 +74,7 @@ function selectionFrameKind(msg) {
 
 function ensureDialog() {
   if (dlg) return dlg;
-  dlg = createAskDialog({
+  face = createAskPanel({ host: document.body, dialog: {
     tt,
     panelClass: 'ask-dock selection-dock',
     placeholder: tt('针对选中的文字提问…', 'Ask about the selection…'),
@@ -88,9 +90,8 @@ function ensureDialog() {
     frameKind: selectionFrameKind,
     onPersist: () => {},
     onUnread: () => {},
-  });
-  dlg.wire();
-  document.body.appendChild(dlg.panel);
+  } });
+  dlg = face.dialog;
   return dlg;
 }
 
@@ -110,7 +111,7 @@ export function openSelectionAsk(snapshot, anchor) {
   const d = ensureDialog();
   const s = ensureSession(sid);
   placeholderPosition(d, anchor);
-  d.openDom();
+  face.open();
   d.setTurnChrome(s);
   hideAnchor();
   d.render();
@@ -128,12 +129,12 @@ export function openSelectionAsk(snapshot, anchor) {
  *  （选区还在 ⇒ 按钮回来可再问一次；选区已散 ⇒ 收起）。 */
 export function closeSelectionAsk() {
   if (!dlg) return;
-  dlg.closeDom();
+  face.close();
   reanchor();
 }
 
 /** 当前是否开着选区 Ask 对话框。 */
-export function isSelectionAskOpen() { return !!dlg && dlg.isOpen(); }
+export function isSelectionAskOpen() { return !!face && face.isOpen(); }
 
 // ── ① 守卫：只留可真执行的两条真相（替代「会话忙碌或未连接，暂时无法 Ask。」）──
 function guardMessage(sid, s) {
