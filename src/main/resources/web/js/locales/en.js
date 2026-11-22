@@ -2475,9 +2475,11 @@ export default {
   'todo.entryTitle': 'To-Dos',
   'todo.entryEmpty': 'All clear',
   'todo.grpOverdue': 'Overdue',
-  'todo.grpDecision': 'Decisions',
+  // Separation discipline (2026-11-22): AskUser-converted immediate questions (ask-
+  // mirrors) are grouped apart from agent-raised suggestions / planned to-dos.
+  'todo.grpAskConverted': 'Asked · Awaiting',
   'todo.grpApproval': 'Approvals',
-  'todo.grpPlan': 'Planned',
+  'todo.grpPlan': 'Suggested · Planned',
   // Permission / McpPermission mirror rows (engine AskTodoBridge perm- product):
   // click jumps back to the approval card; the card's terminal state retires it.
   'todo.permChip': 'Approval',

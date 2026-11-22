@@ -2414,9 +2414,11 @@ export default {
   'todo.entryTitle': '待办事项',
   'todo.entryEmpty': '全部清零',
   'todo.grpOverdue': '已到期',
-  'todo.grpDecision': '待决策',
+  // 分离纪律（2026-11-22）：AskUser 转入的即时裁定条目（ask- 镜像）与 agent 派发的
+  // 建议 / 计划待办分组命名分开，避免把「即时问题」与「闲时建议」混为一谈。
+  'todo.grpAskConverted': '提问转入 · 待答',
   'todo.grpApproval': '待批准',
-  'todo.grpPlan': '计划',
+  'todo.grpPlan': '建议 · 计划',
   // Permission / McpPermission 镜像行（引擎 AskTodoBridge perm- 产物）：点击
   // 跳回批准卡处理，卡终态随行销账。
   'todo.permChip': '待批准',

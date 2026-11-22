@@ -91,7 +91,7 @@ object PromptCatalog:
 
 ## Question discipline
 
-- Todos / questions / decisions all go through AskUserQuestion.
+- Pending decisions the author must rule on go through AskUserQuestion first. Todos are for design recommendations and future plans, not for questions that need an answer now (author ruling 2026-11-18).
 
 ## Discipline
 - Credentials are read for diagnosis only - never exfiltrated, never rewritten; runtime data (sessions/logs/uploads) stays untouched unless the task is explicitly ops.

@@ -674,15 +674,21 @@ function surfacedItems() {
   return surfaced(items);
 }
 
+/** 计数面过滤（作者 2026-11-18 裁定：转入的问句条目「不再弹窗和计数气泡显示」）。
+ *  问句转入行仍在列表里可见、可作答，但不进任何角标 / 计数口径。 */
+function countable(list) {
+  return surfaced(list).filter((it) => it.source !== 'ask');
+}
+
 function openCount() {
   maybePull();
-  return surfaced(items).filter((it) => !it.completed).length;
+  return countable(items).filter((it) => !it.completed).length;
 }
 
 function overdueCount() {
   maybePull();
   const now = Date.now();
-  return surfaced(items).filter((it) => !it.completed && it.due != null && it.due < now).length;
+  return countable(items).filter((it) => !it.completed && it.due != null && it.due < now).length;
 }
 
 /** Due today (open items whose due falls inside the local calendar day: today 00:00 <= due < tomorrow 00:00). */
@@ -692,7 +698,7 @@ function dueTodayCount() {
   start.setHours(0, 0, 0, 0);
   const from = start.getTime();
   const to = from + 24 * 3600_000;
-  return surfaced(items).filter((it) => !it.completed && it.due != null && it.due >= from && it.due < to).length;
+  return countable(items).filter((it) => !it.completed && it.due != null && it.due >= from && it.due < to).length;
 }
 
 function completedCount() {
@@ -703,7 +709,7 @@ function completedCount() {
 /** Open item count under one tag (the count shown on the list card rows). */
 function openCountOf(tagId) {
   maybePull();
-  return surfaced(items).filter((it) => !it.completed && it.tagId === tagId).length;
+  return countable(items).filter((it) => !it.completed && it.tagId === tagId).length;
 }
 
 /** All items including completed ones (read-only copy; used by the completed matrix and smoke probes). */

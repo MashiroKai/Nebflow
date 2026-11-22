@@ -483,7 +483,7 @@ function renderTodoPage() {
 
   const groups = [
     ['todo.grpOverdue', visible.filter((r) => todoGroupOf(r) === 'overdue')],
-    ['todo.grpDecision', visible.filter((r) => todoGroupOf(r) === 'decision')],
+    ['todo.grpAskConverted', visible.filter((r) => todoGroupOf(r) === 'decision')],
     ['todo.grpApproval', visible.filter((r) => todoGroupOf(r) === 'approval')],
     ['todo.grpPlan', visible.filter((r) => todoGroupOf(r) === 'plan')],
   ];
