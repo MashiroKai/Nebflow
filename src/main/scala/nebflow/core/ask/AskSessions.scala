@@ -65,8 +65,20 @@ object AskSessions:
   val AllowedTools: Set[String] =
     AskExclusiveTools ++ Set("Read", "Glob", "Grep", "WebSearch", "WebFetch", "Bash")
 
-  /** Resolve only registered bindings; other roles retain their existing cwd selection. */
-  def sessionCwd(sessionId: String, registry: Option[AskSessionRegistry]): IO[Option[String]] =
+  /**
+   * Resolve only registered bindings; other roles retain their existing cwd selection.
+   *
+   * 读面裁定（2026-11-23，作者原话「ask 的读取面不做系统层约束 让它能正常读取各文件 分支 做调研等」）：
+   * file 域 ask 的会话 cwd（Bash 初始目录 / 只读执行器 cwd）= **工作区根**（调用方给出的
+   * `workspaceRoot`，与主会话读面同源），不再收窄到「绑定文件父目录」。`workspaceRoot`
+   * 缺省（无工作区信息的调用方）时回落到文件父目录（旧行为，fail-narrow）。
+   * 写面不受影响：AskPathBoundary 的相对拼写仍按绑定文件目录解析（独立判决面）。
+   */
+  def sessionCwd(
+    sessionId: String,
+    registry: Option[AskSessionRegistry],
+    workspaceRoot: Option[String] = None
+  ): IO[Option[String]] =
     if !isAskSession(sessionId) then IO.pure(None)
     else
       registry match
@@ -86,7 +98,12 @@ object AskSessions:
               IO.blocking {
                 val file = os.Path(binding.file)
                 require(isAskable(binding.file) && os.isFile(file), s"ask session $sessionId: invalid bound file")
-                Some(file / os.up).map(_.toString)
+                workspaceRoot.map(_.trim).filter(_.nonEmpty) match
+                  case Some(ws) =>
+                    val root = os.Path(ws)
+                    require(os.isDir(root), s"ask session $sessionId: workspace root is not a directory")
+                    Some(root.toString)
+                  case None => Some(file / os.up).map(_.toString)
               }
           }
 

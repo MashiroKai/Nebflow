@@ -90,7 +90,8 @@ final class AskToolFaceSpec extends munit.FunSuite:
     }
     assert(prompt.contains("QUERY-ONLY, fail-closed"), "the Bash face must stay documented as query-only")
     assert(prompt.contains("grep, rg, ls,"))
-    assert(prompt.contains("log/show/diff/status"))
+    assert(prompt.contains("log/show/diff/status/branch"))
+    assert(prompt.contains("工作目录 = 工作区根"), "the Bash cwd is the workspace root (read scope, 2026-11-23)")
     assert(prompt.contains("本会话只能编辑它对应的那份文档"), "constraint 1 (bound document only)")
     assert(prompt.contains("复杂任务转交主会话"), "constraint 2 (hand complex tasks to the main session)")
     assert(prompt.contains("task = 做什么"), "the structured handoff fields must be named")
