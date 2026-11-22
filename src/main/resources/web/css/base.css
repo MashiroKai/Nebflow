@@ -65,6 +65,10 @@
   --color-info: rgb(91, 127, 191);
   --status-error-icon: #d64545;   /* 图标档：亮 4.4:1（图形 ≥3:1 ✓） */
   --status-warn-icon: #b45309;    /* 图标档：亮 5.0:1 ✓（全案唯一新值） */
+  /* 文字档 warn 墨色（ask-status-glass 批 2026-11-22）：亮档叠 canvas 正文（玻璃 α .16）
+     后 #b45309 降到 p05 3.4–3.6，不达小字 4.5:1；加深一档到 amber-800 墨色（warn 仍是
+     琥珀系，不向 error 红靠拢）。暗档已过线，不动（见 dark 块 = 图标档同值）。 */
+  --status-warn-ink: #92400e;
   --status-success-icon: #2e7d32; /* 图标档：亮 5.1:1 ✓（仓内已有值） */
   --status-word: var(--color-frame-text-muted); /* 状态词中性字（零新值） */
   --st-ic-align: -0.125em; /* 状态图标行内基线微调 */
@@ -174,6 +178,7 @@ html[data-theme="dark"] {
   --color-danger: #f26b6b;
   --status-error-icon: #f26b6b;
   --status-warn-icon: #ffa83c;
+  --status-warn-ink: var(--status-warn-icon);
   --status-success-icon: #66bb6a;
 }
 html[data-theme="light"] {
@@ -208,6 +213,7 @@ html[data-theme="light"] {
   --color-danger: #c0392b;
   --status-error-icon: #d64545;
   --status-warn-icon: #b45309;
+  --status-warn-ink: #92400e;
   --status-success-icon: #2e7d32;
 }
 
@@ -262,6 +268,7 @@ html[data-theme="light"] {
        success 暗档 = 仓内既有 (#66bb6a, 7.0:1 ✓)。 */
     --status-error-icon: #f26b6b;
     --status-warn-icon: #ffa83c;
+    --status-warn-ink: var(--status-warn-icon);
     --status-success-icon: #66bb6a;
   }
 

@@ -544,7 +544,7 @@ body.mobile-layer .note-dock .ds-resize-handle {
   opacity: 0.85;
 }
 .ask-state-diag[hidden] { display: none; }
-.ask-state-line.is-warn { color: var(--ds-warn-icon); }
+.ask-state-line.is-warn { color: var(--ds-warn-ink); }
 .ask-state-line.is-error { color: var(--ds-danger-icon); }
 
 
