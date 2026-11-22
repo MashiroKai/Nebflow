@@ -628,7 +628,11 @@
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
-  border-radius: var(--ds-radius-badge);
+  /* 多选引用批合并期修正（2026-11-22）：本块原取 --ds-radius-badge（4px），低于
+     focus-ring-spec §2.6 标准档 —— 本批给 ✕ 钮新加了焦点环（可 Tab），环基座必须
+     ≥6px（--ds-radius-chip 档 = 「28px 图标钮、chip」）。18px 方形钮取 6px 与全站
+     图标钮同档；.att-ref-expand 与本钮同块同形，随之一并升档（不做半档分裂）。 */
+  border-radius: var(--ds-radius-chip);
   padding: 0;
 }
 .att-ref-expand:hover,
@@ -732,6 +736,11 @@
   max-height: 44px;
   overflow-y: auto;
 }
+/* 环基座圆角（focus-ring-spec.md §2.6 标准档，round2 起「方角登记」机制已废除）：
+   焦点环跟随组件自身半径 ⇒ 可 Tab 的牌面钮必须显式落 ≥6px 档。牌面钮本体透明无边框，
+   视觉半径来自 .att-ref 基座（--ds-radius-input 8px），此处显式声明 6px 只服务判据
+   与环形状（环内缩 2px 后贴着牌内侧走，不会溢出牌面）。 */
+.att-ref-open { border-radius: var(--ds-radius-chip); }
 /* 焦点环（全站单规则：--nf-focus-ring-w / --nf-focus-ring + 内缩 2px，禁光晕）——
    紧凑引用牌是本批新造的可 Tab 面，必须与站内同一条环；✕ 钮同族补环（同一条声明）。 */
 .att-ref-open:focus-visible,
