@@ -55,3 +55,36 @@ test('视图模型：空摘要给占位文案，缺模型名给「未知模型�
   assert.equal(m.title, '未知模型 调用失败');
   assert.ok(!JSON.stringify(m).includes('undefined'));
 });
+
+// ── 消失语义（2026-11-22 作者 23:24 报「点了不消失」）──
+import {
+  isLlmFailureControlTarget, createLlmDismissStore, SWITCH_FADE_MS, FADE_OUT_MS,
+} from '../src/main/resources/web/js/llmFailureCard.js';
+
+const fakeEl = (hits) => ({ closest: (sel) => (hits.some((h) => sel.includes(h)) ? {} : null) });
+
+test('消失：控件区（按钮/下拉/关闭钮/动作行）点击不触发正文消失', () => {
+  assert.equal(isLlmFailureControlTarget(fakeEl(['button'])), true);
+  assert.equal(isLlmFailureControlTarget(fakeEl(['select'])), true);
+  assert.equal(isLlmFailureControlTarget(fakeEl(['llm-failure-close'])), true);
+  assert.equal(isLlmFailureControlTarget(fakeEl(['llm-failure-actions'])), true);
+  assert.equal(isLlmFailureControlTarget(fakeEl([])), false);
+  assert.equal(isLlmFailureControlTarget(null), false);
+});
+
+test('消失：dismiss store 记录同组，recovered 清除后才允许再出', () => {
+  const s = createLlmDismissStore();
+  const k = llmFailureKey('root', 'p/a');
+  assert.equal(s.has(k), false);
+  s.add(k);
+  assert.equal(s.has(k), true);
+  assert.equal(s.has(llmFailureKey('team', 'p/a')), false, '不同层级互不影响');
+  s.clear(k);
+  assert.equal(s.has(k), false);
+  assert.equal(s.size(), 0);
+});
+
+test('消失：切换成功自动淡出的时长常量为正且淡出早于移除', () => {
+  assert.ok(SWITCH_FADE_MS > 0);
+  assert.ok(FADE_OUT_MS > 0 && FADE_OUT_MS < SWITCH_FADE_MS);
+});

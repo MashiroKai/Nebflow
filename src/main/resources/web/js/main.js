@@ -3,7 +3,7 @@
 // 的静态壳要在任何应用模块求值取节点之前填充完成（时序契约见 chatMount.js 头注）。
 import './chatMount.js';
 import { renderProviderFailureStatus } from './providerFailureStatus.js';
-import { renderLlmFailureCard, findLlmFailureCard, llmFailureKey } from './llmFailureCard.js';
+import { renderLlmFailureCard, findLlmFailureCard, llmFailureKey, createLlmDismissStore } from './llmFailureCard.js';
 import { saveSlotPreferredModel, getAllModelRefs } from './modelPanel.js';
 import { key } from './branding.js'; // MUST be first: storage-key migration runs at module init, before state.js/i18n.js read localStorage.
 import state from './state.js';
@@ -1912,16 +1912,21 @@ onMessage('modelUnavailable', (msg, view) => {
 function llmFailureHost() {
   return document.getElementById('chat');
 }
+// 已消失的组（正文点按 / 关闭钮 / 换模型成功淡出）：同组在本次失败期内不再复出；
+// llmFailureRecovered 清除该组记录。与卡片同口径，纯内存（不落盘；页面重载后以后端快照为准）。
+const llmDismissed = createLlmDismissStore();
 onMessage('llmFailure', (msg) => {
   try {
     const host = llmFailureHost();
     const key = llmFailureKey(msg.layer, msg.modelRef);
     if (!host) return console.warn('[llmFailure] no chat container; card not mounted', key);
+    if (llmDismissed.has(key)) return;
     const stale = findLlmFailureCard(host, key);
     if (stale) stale.remove();
     const card = renderLlmFailureCard(msg, {
       saveModel: saveSlotPreferredModel,
       modelRefs: getAllModelRefs,
+      onDismiss: (k) => llmDismissed.add(k),
     });
     host.appendChild(card);
     createIconsIn(card);
@@ -1932,8 +1937,10 @@ onMessage('llmFailure', (msg) => {
 
 onMessage('llmFailureRecovered', (msg) => {
   try {
+    const key = llmFailureKey(msg.layer, msg.modelRef);
+    llmDismissed.clear(key);
     const host = llmFailureHost();
-    const card = host && findLlmFailureCard(host, llmFailureKey(msg.layer, msg.modelRef));
+    const card = host && findLlmFailureCard(host, key);
     if (card) card.remove();
   } catch (e) {
     console.warn('[llmFailureRecovered] collapse failed', e);

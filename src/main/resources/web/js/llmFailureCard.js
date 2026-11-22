@@ -75,6 +75,34 @@ export function findLlmFailureCard(root, key) {
   return Array.from(root.querySelectorAll('.llm-failure-card')).find((el) => el.dataset.cardKey === key) || null;
 }
 
+/** 切换成功后脚注停留多久再淡出（毫秒）。下次该组成功（llmFailureRecovered）仍会即时清除。 */
+export const SWITCH_FADE_MS = 4000;
+/** 淡出动画时长（毫秒，须与 css `.llm-failure-card.is-fading` 的 transition 一致）。 */
+export const FADE_OUT_MS = 300;
+
+/**
+ * 点按是否落在「控件区」（按钮 / 下拉 / 关闭钮 / 动作行）。控件区点击不触发正文点按消失。
+ * @param {{closest?: (sel: string) => any}} target 事件目标（DOM 元素；无 closest 视为非控件）
+ */
+export function isLlmFailureControlTarget(target) {
+  return !!(target && typeof target.closest === 'function'
+    && target.closest('.llm-failure-actions, .llm-failure-close, button, select, option'));
+}
+
+/**
+ * 已消失（用户点按消失 / 关闭钮）的组键集合——同组在本次失败期内不再复出；
+ * llmFailureRecovered 收到该组后清除（下次真正失败才会再出卡）。纯内存口径，与卡片本身一致（不落盘）。
+ */
+export function createLlmDismissStore() {
+  const keys = new Set();
+  return {
+    has: (key) => keys.has(key),
+    add: (key) => { if (key) keys.add(key); },
+    clear: (key) => { keys.delete(key); },
+    size: () => keys.size,
+  };
+}
+
 /** 生成一个 lucide 图标占位（由挂载后的 createIconsIn 替换为 SVG）。 */
 function iconEl(name, cls) {
   const i = document.createElement('i');
@@ -92,8 +120,13 @@ function iconEl(name, cls) {
  *   摘要（小字，单行省略）
  *   按钮行（等待 · 模型下拉 + 换模型）
  *   状态（小字：自动重试中 / 结果提示）
+ * 消失途径（作者 23:24 报：点了不消失）：
+ *   · 正文区点按 ⇒ 消失（控件区不触发）；
+ *   · 标题行右侧关闭钮 ⇒ 消失（显式兜底）；
+ *   · 换模型成功 ⇒ 脚注「已切换」后 SWITCH_FADE_MS 自动淡出；下次该组成功（llmFailureRecovered）即时清除。
+ * 每种消失都经 deps.onDismiss(key) 通知宿主，宿主记入 dismiss store，同组不再复出。
  * @param {object} msg llmFailure 组快照帧
- * @param {{saveModel: (agent: string, modelRef: string) => Promise<any>, modelRefs: () => string[]}} deps
+ * @param {{saveModel: (agent: string, modelRef: string) => Promise<any>, modelRefs: () => string[], onDismiss?: (key: string) => void}} deps
  * @returns {HTMLElement}
  */
 export function renderLlmFailureCard(msg, deps) {
@@ -105,10 +138,39 @@ export function renderLlmFailureCard(msg, deps) {
   box.dataset.layer = m.layer;
   box.dataset.model = m.modelRef;
 
-  // 标题：大字主信息（同 .option-q）。
+  let gone = false;
+  const dismiss = () => {
+    if (gone) return;
+    gone = true;
+    if (deps && typeof deps.onDismiss === 'function') deps.onDismiss(m.key);
+    box.remove();
+  };
+  const fadeOut = () => {
+    if (gone) return;
+    gone = true;
+    if (deps && typeof deps.onDismiss === 'function') deps.onDismiss(m.key);
+    box.classList.add('is-fading');
+    setTimeout(() => box.remove(), FADE_OUT_MS);
+  };
+
+  // 正文区点按 ⇒ 消失；控件区（按钮/下拉/关闭钮/动作行）点击不触发。
+  box.addEventListener('click', (e) => {
+    if (isLlmFailureControlTarget(e.target)) return;
+    dismiss();
+  });
+
+  // 标题：大字主信息（同 .option-q）+ 右侧关闭钮。
   const q = document.createElement('div');
   q.className = 'option-q llm-failure-title';
   q.append(iconEl('triangle-alert', 'llm-failure-ico-title'), document.createTextNode(m.title));
+  const bClose = document.createElement('button');
+  bClose.type = 'button';
+  bClose.className = 'llm-failure-close';
+  bClose.setAttribute('aria-label', '关闭');
+  bClose.title = '关闭';
+  bClose.append(iconEl('x'));
+  bClose.onclick = (e) => { e.stopPropagation(); dismiss(); };
+  q.append(bClose);
 
   // 元信息：风险档徽标 + 层级 + 分类（小字，同 .perm-reason 语言）。
   const reason = document.createElement('div');
@@ -185,6 +247,9 @@ export function renderLlmFailureCard(msg, deps) {
       return;
     }
     bSwitch.disabled = false;
+    // 切换成功：脚注出现后短暂停留再淡出（下次该组成功仍会即时清除）。
+    box.classList.add('is-switched');
+    setTimeout(fadeOut, SWITCH_FADE_MS);
   };
   right.append(pick, bSwitch);
 
