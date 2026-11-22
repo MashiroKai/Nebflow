@@ -1534,6 +1534,37 @@ body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-card[data
   animation: qdCardDone var(--ds-dur-hover) var(--ds-ease-std) forwards;
   pointer-events: none;
 }
+/* ③ 糙点：决策行状态标记 + 作答控件触达 ≥44（设计稿 §2.1 触达契约） */
+body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-state {
+  color: var(--color-text-muted);
+}
+body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-state.is-answered {
+  color: rgb(var(--sapphire));
+}
+body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-option {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-submit {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 16px;
+}
+/* 列表行完成离场（P0 之后的动效批，2026-11-22）：圆钮填充 + 划线即刻发生（is-done），
+   整行 160ms 右移淡出（= --ds-dur-hover，与快速卡同档）；JS 在 160ms 后才销账。 */
+body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-item.is-leaving {
+  animation: taRowLeave var(--ds-dur-hover) var(--ds-ease-std) forwards;
+  pointer-events: none;
+}
+@keyframes taRowLeave {
+  0% { transform: translate3d(0, 0, 0); opacity: 1; }
+  100% { transform: translate3d(24px, 0, 0); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-item.is-leaving { animation: none; opacity: 0.4; }
+}
 @keyframes qdCardDone {
   0% { transform: translate3d(var(--qd-dx, 0px), 0, 0) scale(1); opacity: 1; }
   45% { transform: translate3d(var(--qd-dx, 0px), -4px, 0) scale(1.02); opacity: 1; }

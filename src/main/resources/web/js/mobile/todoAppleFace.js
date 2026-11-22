@@ -929,7 +929,13 @@ function buildList(root, section, nav) {
       check.addEventListener('click', (e) => {
         e.stopPropagation();
         if (askRow || gated) return;
-        todoStore.completeItem(it.id);
+        // 完成动效（iOS 提醒事项口径）：圆钮即刻填充 + 划线 ⇒ 整行右滑淡出 ⇒ 落定才销账。
+        // 时长 = LIST_LEAVE_MOTION.leaveMs（= --ds-dur-hover，与快速卡离场同档）。
+        if (row.classList.contains('is-leaving')) return;
+        row.classList.add('is-done', 'is-leaving');
+        const commit = () => todoStore.completeItem(it.id);
+        if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { commit(); return; }
+        setTimeout(commit, LIST_LEAVE_MOTION.leaveMs);
       });
       row.appendChild(check);
 
@@ -948,6 +954,11 @@ function buildList(root, section, nav) {
       elIn(bodyBtn, 'span', 'ta-item-title', it.title || '—');
       // 问句条目：标题旁一个「待答」标记（**行内**，不是列表上方区块）。
       if (askRow) elIn(bodyBtn, 'span', 'ta-item-due', t('askUser.todoBadge'));
+      // 决策行状态标记（③ 糙点：此前决策行无任何态标记，已答/未答肉眼不可辨）。
+      if (!askRow && it.decision) {
+        const st = it.decision.answer ? 'todoapple.decisionAnswered' : 'todoapple.decisionPending';
+        elIn(bodyBtn, 'span', `ta-item-due ta-decision-state${it.decision.answer ? ' is-answered' : ''}`, t(st));
+      }
       if (it.due != null) elIn(bodyBtn, 'span', 'ta-item-due', dueText(it.due));
       row.appendChild(bodyBtn);
       if (askRow) {
@@ -1312,6 +1323,9 @@ function saveDraft(nav) {
 
 /** Gesture/motion constants of the card. Exported so the gate can pin them
  *  against the tokens they mirror (single source = the CSS custom properties). */
+/** 列表行完成离场时长（= --ds-dur-hover，与快速卡离场同一档；CSS 同值，改此处需同改 css）。 */
+export const LIST_LEAVE_MOTION = { leaveMs: 160 };
+
 export const QUICK_DECISION_MOTION = {
   axisPx: 8,      // axis lock — same value as navController EDGE_AXIS_PX
   flickMs: 200,   // flick window — same value as navController EDGE_FLICK_MS
@@ -1578,13 +1592,18 @@ function buildQuick(root, section) {
         return;
       }
     }
-    // ② 投递给 agent（既有出口 sendTodoReply；投递 ≠ 作答，失败不回滚作答）。
+    // ② 决策行：投递由**后端**在作答成功时入 agent 信箱（P0 修复，见 WsTasks
+    // handleAnswerTodoDecision → SessionMailbox）。这里**不再**走 sendTodoReply，否则双投。
+    // 非决策行（不应出现在本卡）保留原投递腿。
     /** @type {{ok:boolean, mode?:string, reason?:string, sessionId?:string}} */
-    let res = { ok: false, reason: 'import' };
-    try {
-      const { sendTodoReply } = await import('../input.js');
-      res = sendTodoReply(`#${item.name}·${item.id} ${text}`, { sessionId: item.sessionId || null });
-    } catch (err) { console.error('[todoAppleFace] answer 出口不可得:', err); }
+    let res = { ok: true, mode: 'mailbox' };
+    if (!item.decision) {
+      res = { ok: false, reason: 'import' };
+      try {
+        const { sendTodoReply } = await import('../input.js');
+        res = sendTodoReply(`#${item.name}·${item.id} ${text}`, { sessionId: item.sessionId || null });
+      } catch (err) { console.error('[todoAppleFace] answer 出口不可得:', err); }
+    }
     answerSend.disabled = false;
     if (res.ok) {
       qdDrafts.delete(item.id);
@@ -1597,7 +1616,7 @@ function buildQuick(root, section) {
       answerError.textContent = t('todoapple.replyFailed');
     }
     card.dataset.qdAnswerLast = JSON.stringify({ itemId: item.id, ok: true, ...res, sent: text, typed, picked });
-    // ③ 作答即完成（期 2 编排）：作答已落库 + 已投递 ⇒ 划卡离场并销账（保持滑卡体验）。
+    // ③ 作答即完成（期 2 编排）：作答已落库（信箱已入箱）⇒ 划卡离场并销账。
     if (res.ok && item.decision) exitAndComplete(item);
   };
 
