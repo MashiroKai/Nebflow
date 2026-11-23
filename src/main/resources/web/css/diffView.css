@@ -553,6 +553,11 @@ span.nf-rcpt-note { cursor: default; }
   flex-direction: column;
   gap: var(--ds-space-1);
 }
+/* 显隐以 [hidden] 为唯一真值（syncEmptyState）：author display 规则不得覆盖。 */
+.nfp-empty[hidden],
+.nfp-list[hidden] {
+  display: none;
+}
 .nfp-list .nf-fc {
   cursor: pointer;
 }
