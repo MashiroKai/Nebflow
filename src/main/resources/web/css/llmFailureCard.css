@@ -77,6 +77,25 @@
   padding: var(--ds-space-1h) var(--ds-space-2);
   border-radius: var(--ds-radius-input);
 }
+/* 正文区点按即消失（控件区除外）：正文可点、控件保持原光标。 */
+.llm-failure-card { cursor: pointer; transition: opacity 300ms ease; }
+.llm-failure-card .llm-failure-actions,
+.llm-failure-card .llm-failure-close { cursor: default; }
+.llm-failure-card.is-fading { opacity: 0; }
+/* 标题行右侧关闭钮（显式兜底）。 */
+.llm-failure-close {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 0;
+  padding: var(--ds-space-1);
+  color: var(--ds-text-muted);
+  cursor: pointer;
+}
 @media (prefers-reduced-motion: reduce) {
   .llm-failure-spin { animation: none; }
+  .llm-failure-card { transition: none; }
 }
