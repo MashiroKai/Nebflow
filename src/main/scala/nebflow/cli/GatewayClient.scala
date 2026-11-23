@@ -226,7 +226,14 @@ object GatewayClient:
       .flatMap(_.hcursor.downField("code").as[String].toOption)
       .map(_.trim)
       .filter(_.nonEmpty)
-    s"Gateway request failed (HTTP $code): $detail${stableCode.map(c => s" (code: $c)").getOrElse("")}"
+    // #924 错误透传：登录舞步的失败腿名（step）随包装保留（仅 step 存在时追加，旧形态不变）。
+    val stepSuffix = parsed
+      .flatMap(_.hcursor.downField("step").as[String].toOption)
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .map(s => s" (step: $s)")
+      .getOrElse("")
+    s"Gateway request failed (HTTP $code): $detail$stepSuffix${stableCode.map(c => s" (code: $c)").getOrElse("")}"
 
   end requestError
 
