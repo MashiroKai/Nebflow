@@ -15,8 +15,9 @@
 //   （对齐 VS Code Copilot 习惯，见调研 §三）。
 //
 // 过期/并发：askEditResolved outcome:error（服务端盘上校验不等 = 审阅期间文件
-// 被改）→ 显式冲突条（绝不静默覆盖）：[重试] 重发同动作、[保留现状并关闭]
-// = askEditDismiss（零写盘清账）。
+// 被改）→ 显式冲突条（绝不静默覆盖）：[重试] = askEditResync（重拉盘上文件 +
+// 重算 diff，零写盘；成功后再由用户接受）、[保留现状并关闭] = askEditDismiss
+// （零写盘清账）。
 //
 // 会话问答路径已摘除：diff 审阅不再进 askDock 气泡列（本批把 canvas-ask-
 // restricted-edit ③ 的 diff 卡整体退役）；askDock 仅把 askEdit* 帧路由到本模块。
@@ -106,7 +107,8 @@ function send(action, sid, hunkId) {
   const api = liveApi.get(sid);
   if (api && typeof api.setWaiting === 'function') api.setWaiting(true);
   else render(sid);
-  const frame = { type: action === 'dismiss' ? 'askEditDismiss' : action === 'accept' ? 'askEditAccept' : 'askEditReject', sessionId: sid };
+  const frameType = { accept: 'askEditAccept', reject: 'askEditReject', dismiss: 'askEditDismiss', resync: 'askEditResync' }[action];
+  const frame = { type: frameType, sessionId: sid };
   if (hunkId) frame.hunkId = hunkId;
   sendWs(frame);
 }
@@ -267,10 +269,10 @@ export function initAskEditReview() {
     // 冲突条动作（重试 / 保留现状并关闭）。
     if (target.closest('.nf-ar-retry')) {
       const st = reviewState(sid);
-      if (st && st.waiting === null) {
-        // 重试 = 重发上一个失败动作（error 态已解锁 waiting；无记忆则等价全收）。
-        send('accept', sid);
-      }
+      // 重试 = 重拉盘上文件 + 重算 diff（askEditResync，零写盘）。成功后审阅态按盘上
+      // 现文重渲，用户再点接受即可；不是「把失败的动作再发一遍」（那会在过期态下
+      // 继续被拒，且全部接受语义过宽）。
+      if (st && !st.waiting) send('resync', sid);
       return;
     }
     if (target.closest('.nf-ar-dismiss')) { send('dismiss', sid); return; }

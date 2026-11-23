@@ -37,7 +37,9 @@ private[gateway] object WsAskHandlers:
     // hunkId 逐块；dismiss = 冲突逃生口）。
     "askEditAccept" -> handleAskEditAccept,
     "askEditReject" -> handleAskEditReject,
-    "askEditDismiss" -> handleAskEditDismiss
+    "askEditDismiss" -> handleAskEditDismiss,
+    // 审阅期间文件被改后的「重试」：重拉盘上 + 重算 diff（零写盘，不接受/拒绝）。
+    "askEditResync" -> handleAskEditResync
   )
 
   private def send(wsSend: Json => IO[Unit], payload: Json): IO[Unit] = wsSend(payload)
@@ -464,6 +466,7 @@ private[gateway] object WsAskHandlers:
         case "accept" => nebflow.core.ask.AskEditReviews.accept(sid, hunkId)
         case "reject" => nebflow.core.ask.AskEditReviews.reject(sid, hunkId)
         case "dismiss" => nebflow.core.ask.AskEditReviews.dismiss(sid)
+        case "resync" => nebflow.core.ask.AskEditReviews.resync(sid)
       outcome.flatMap {
         case Right(_) =>
           wsSend(
@@ -510,6 +513,13 @@ private[gateway] object WsAskHandlers:
     wsSend: Json => IO[Unit],
     watch: ExplorerWatchSession
   ): IO[Unit] = handleAskEditResolve("dismiss", text, wsSend)
+
+  private def handleAskEditResync(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: Json => IO[Unit],
+    watch: ExplorerWatchSession
+  ): IO[Unit] = handleAskEditResolve("resync", text, wsSend)
 
   // ── Note persistence ───────────────────────────────────────────────────
   // Two inbound frames and two outbound frames, with the same file identity as the ask session

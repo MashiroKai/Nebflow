@@ -5299,8 +5299,10 @@ body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .nf-dv-allbar {
      = 页底 = **视口底**，于是整条 62px 落进 dock 带区（实测 375×812：带 y750..812，
      dock y750..804 ⇒ 62px 重叠，枪测落在 `#mobile-dock` 的 svg 上 = 不可点）。
      留出 `--mf-row-bottom`（= dock-h 54 + --dock-inset-b 8 + safe + 16）后带缘落在
-     dock 上缘之上 16px，与同排 ① ② ③ 三条共用同一把尺（同一表达式，禁各写一份）。 */
-  margin-bottom: var(--mf-row-bottom, 0px);
+     dock 上缘之上 16px，与同排 ① ② ③ 三条共用同一把尺（同一表达式，禁各写一份）。
+     再加一颗 48 圆钮 + 8 呼吸：小点条（.mf-dots）居中落在 --mf-row-bottom 之上一行，
+     不抬则与「全部接受/全部拒绝」药丸同一水平带互相压住（作者截图 2026-11-22）。 */
+  margin-bottom: calc(var(--mf-row-bottom, 0px) + var(--mtap-lg, 48px) + var(--ds-space-2, 8px));
 }
 body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .canvas-find-toggle {
   left: var(--ds-space-4);
