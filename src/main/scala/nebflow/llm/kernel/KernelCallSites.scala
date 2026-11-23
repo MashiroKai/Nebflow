@@ -87,8 +87,18 @@ object KernelCallSites:
   val HealthProbeAbsence: String =
     "health probe: byte-frozen single-token probe body; there is no cross-call shared system prefix to cache"
 
+  /** 选区解释腿（`SelectionExplain`；small-llm 调用点，单次解释、非会话式）。
+   *  前缀 = 解释指令常量整体入 system（稳定前缀可复用）；选区正文留在 user 消息。 */
+  val SelectionExplain: Site = Site(
+    id = "selection-explain",
+    logName = "nebflow.llm.selection-explain",
+    logTag = "selection-explain",
+    systemPrefix =
+      "Stable(SelectionExplainLeg.Instruction) — the constant explanation instruction; the selected passage stays in the user message"
+  )
+
   /** 全部登记调用点。 */
-  val all: List[Site] = List(MainAgent, PluginAlloc, DelegateJudge, HealthProbe)
+  val all: List[Site] = List(MainAgent, PluginAlloc, DelegateJudge, HealthProbe, SelectionExplain)
 
   /** 白名单缺席理由全集（K2 闸的比对基准）。 */
   val absenceReasons: List[String] = List(MainLegAbsence, HealthProbeAbsence)

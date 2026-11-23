@@ -37,6 +37,7 @@ private[gateway] object WsSkillsAsksHandlers:
 
   private[gateway] val handlers: Map[String, WsDispatch.WsHandler] = Map(
     "ask" -> handleAsk,
+    "selectionExplain" -> handleSelectionExplain,
     "getSkills" -> handleGetSkills,
     "getTeams" -> handleGetTeams,
     "skill" -> handleSkill,
@@ -67,6 +68,51 @@ private[gateway] object WsSkillsAsksHandlers:
       }
     else IO.unit
   end handleAsk
+
+  /** 选区解释（r2 批 2026-11-23）：选中对话文字 → 专门小模型一次解释（非 /ask 会话）。
+   *  帧：入 `{type:'selectionExplain', requestId, question}`；出 `selectionExplain`
+   *  `{requestId, text}` 或 `selectionExplainError` `{requestId, message}`（requestId 回显，
+   *  前端据此配对并发的多次解释）。 */
+  private def handleSelectionExplain(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val body = parsedJson(text)
+    val question = body.hcursor.downField("question").as[String].getOrElse("")
+    val requestId = body.hcursor.downField("requestId").as[String].getOrElse("")
+    if question.trim.isEmpty || requestId.isEmpty then IO.unit
+    else
+      nebflow.llm.decision.SelectionExplainLeg.explain(sharedResources.providerRegistry, question).flatMap {
+        case Right(explained) =>
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "selectionExplain".asJson,
+              "requestId" -> requestId.asJson,
+              "text" -> explained.asJson
+            )
+          )
+        case Left(reason) =>
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "selectionExplainError".asJson,
+              "requestId" -> requestId.asJson,
+              "message" -> reason.take(200).asJson
+            )
+          )
+      }.handleErrorWith { e =>
+        logger.warn(s"selectionExplain failed: ${e.getMessage}")
+        wsSend(
+          io.circe.Json.obj(
+            "type" -> "selectionExplainError".asJson,
+            "requestId" -> requestId.asJson,
+            "message" -> s"explain failed: ${e.getMessage.take(160)}".asJson
+          )
+        )
+      }
+  end handleSelectionExplain
 
   private def handleGetSkills(
     ctx: WsDispatchCtx,
