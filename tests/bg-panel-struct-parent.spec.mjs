@@ -159,6 +159,7 @@ function dumpRows(page) {
       })),
       group: kids.some((el) => el.hasAttribute('data-bg-orphan-group')),
       listTotal: list.getAttribute('data-bg-row-total'),
+      running: list.getAttribute('data-bg-running-count'),
     };
   }, LIST);
 }
@@ -249,15 +250,15 @@ test('①②⑦ 活跃后代 ⇒ 结构父显示（注册行身份/零计数）�
   expect(live.rail.trim().length).toBeGreaterThan(0); // tree rail (parent-child edge)
   expect(live.orphan).toBe(null);                     // parent visible → not orphan-faced
 
-  // ① counts: 4 real rows are retained (LIVE + DONE + DONE_LIVE + WILD); labels excluded.
-  //    Rendered = 3 — DONE_LIVE sits under the collapsed all-terminal struct
-  //    (collapse prunes DOM, never the totals: header/row-total keep 4).
-  //    The badge counts ACTIVE rows only: LIVE + WILD = 2. The completed store child and the terminal
-  //    claimer stay visible without being counted, and the structural labels never count.
+  // ① counts（2026-11-23 作者裁定 = running 口径）: 4 real rows in the row set (LIVE + DONE +
+  //    DONE_LIVE + WILD); rendered = 3 — DONE_LIVE sits under the collapsed all-terminal struct.
+  //    Running = LIVE + WILD = 2: the header/sign read running, unchanged by folding; the
+  //    completed rows never count; the structural labels never count.
   expect(dump.rows).toHaveLength(3);
-  expect(dump.listTotal).toBe(String(dump.rows.length)); // 计数对账 2026-11-23：头计数 = 可见行
+  expect(Number(dump.listTotal)).toBeGreaterThanOrEqual(dump.rows.length); // 行集 ≥ 可见（折叠子树计入行集）
+  expect(dump.running).toBe('2');
   expect(String(counts.badge).trim()).toBe('2');
-  expect(String(counts.section)).toContain('· 3'); // section label counts rendered rows
+  expect(String(counts.section)).toContain('· 2'); // 智能体签 = running
   expect(errors).toEqual([]);
 });
 
@@ -290,13 +291,20 @@ test('⑤ 同一会话双通路（live + store）⇒ 收敛一行', async ({ pag
   await seedBase(page);
   // DONE_CHILD also arrives as a live main-bucket row (same session id).
   await inject(page, rootStart(DONE_CHILD, { status: 'Completed', name: '侦察乙', taskDescription: '已完成侦察', parentSessionId: PARENT }));
+  // 终态信号 = agentDone 写入的 done:true（agentStart 的 status 字样不构成终态）；同 ①②⑦ 的装置。
+  await page.evaluate(async (aid) => {
+    const s = (await import('/js/state.js')).default;
+    for (const bucket of Object.values(s.sessionBgAgents)) {
+      if (bucket[aid]) { bucket[aid].done = true; bucket[aid].status = 'Completed'; }
+    }
+  }, DONE_CHILD);
   await openPanel(page);
 
   const dump = await dumpRows(page);
   const dup = dump.rows.filter((r) => r.sid === DONE_CHILD);
   console.log('[⑤] rows=' + JSON.stringify(dump.rows.map((r) => r.sid)) + ' total=' + dump.listTotal);
   expect(dup).toHaveLength(1);
-  expect(dump.listTotal).toBe(String(dump.rows.length)); // 计数对账 2026-11-23：头计数 = 可见行
+  expect(dump.running).toBe('2'); // running 口径：LIVE + WILD（已完成的同会话行不计）
   expect(errors).toEqual([]);
 });
 
@@ -307,7 +315,7 @@ test('⑥ 镜像更新（delegate-chain-mirror-updated）⇒ 新 store 子行上
   await bootApp(page, 'zh-CN');
   await seedBase(page);
   await openPanel(page);
-  expect((await dumpRows(page)).listTotal).toBe('3'); // 可见行口径（计数对账 2026-11-23）· LIVE + DONE + DONE_LIVE + WILD
+  expect((await dumpRows(page)).running).toBe('2'); // running 口径（2026-11-23）· LIVE + WILD 在跑
 
   // Mirror gains another completed child of PARENT.
   await setFixture(page, {
@@ -327,7 +335,8 @@ test('⑥ 镜像更新（delegate-chain-mirror-updated）⇒ 新 store 子行上
   const dump = await dumpRows(page);
   console.log('[⑥] rows=' + JSON.stringify(dump.rows.map((r) => r.sid)) + ' total=' + dump.listTotal);
   expect(dump.rows.filter((r) => r.sid === 'subagent-55556666')).toHaveLength(1);
-  expect(dump.listTotal).toBe(String(dump.rows.length)); // 计数对账 2026-11-23：头计数 = 可见行
+  // 新增已完成子行不改 running（仍 LIVE + WILD = 2）——上屏但不计入在跑数。
+  expect(dump.running).toBe('2');
   expect(errors).toEqual([]);
 });
 
