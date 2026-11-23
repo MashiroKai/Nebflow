@@ -52,6 +52,9 @@ export const CHECKS = [
     argv: [process.execPath, 'tests/mobile-overlap-sweep.spec.mjs'] },
   nodeCheck('design-tokens', 'check-design-tokens'),
   // 文档收藏纯逻辑闸（2026-11-23 前端功能批）：收藏切换 / 同文档去重=置顶 / 归一化 / 上限。
+  // 主会话多选合并 Ask 现场探针（loopback mock LLM + 隔离网关；CI 安全）。
+  { name: 'selection-ask-multi-live', profiles: ['static'], timeoutMs: 300_000,
+    argv: [process.execPath, 'tests/selection-ask-multi-live.mjs'] },
   { name: 'canvas-favorites-core', profiles: ['static'], timeoutMs: 60_000,
     argv: [process.execPath, '--test', 'tests/canvas-favorites-core.test.mjs'] },
   // 面板缺陷批（2026-11-23）防回归·静态档：失败卡服务商名读回（④）+ 标题回填契约（③⑤）。

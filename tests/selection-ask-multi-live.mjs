@@ -27,8 +27,9 @@ import { establishSession } from './helpers/session-rail.mjs';
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = `/private/tmp/qa-selmulti-live-${process.pid}`;
 const privateHome = `/private/tmp/qa-selmulti-user-${process.pid}`;
-// 证据落项目 .stand/tmp/<wt>/evidence（工件规则；主检出 = 项目根）。
-const artifacts = process.env.SELMULTI_EVIDENCE || `/Users/kaiyu/Claude code/Stand/.stand/tmp/multi-select-ask/evidence/${process.pid}`;
+// 证据落项目 .stand/tmp/<wt>/evidence（工件规则）：worktree 下取其项目根，主检出即项目根。
+const project = repo.includes('/.stand/worktrees/') ? repo.split('/.stand/worktrees/')[0] : repo;
+const artifacts = process.env.SELMULTI_EVIDENCE || path.join(project, '.stand/tmp', path.basename(repo), 'evidence', String(process.pid));
 const jar = process.env.STAND_JAR || '/Users/kaiyu/Claude code/Stand/target/scala-3.5.2/stand-assembly-2026.11.8-beta.1.jar';
 const JAVA = process.env.STAND_JAVA || '/Library/Java/JavaVirtualMachines/temurin-23.jdk/Contents/Home/bin/java';
 if (root === '/Users/kaiyu/.stand' || !root.startsWith('/private/tmp/')) throw Error('unsafe root');
@@ -98,6 +99,9 @@ const PROBE = () => {
     side: btn ? btn.dataset.askSide || null : null,
     spanCount: btn ? btn.dataset.spanCount || null : null,
     centerDelta: r && segMid != null ? Math.round((r.top + r.height / 2) - segMid) : null,
+    // 夹紧判据：覆盖段中点若在会话列之外（小视口下多段选区常见），按钮必须被夹在列内（不许飞出）。
+    segMidInCol: (() => { const cr = document.getElementById('chat')?.getBoundingClientRect(); return cr && segMid != null ? segMid >= cr.top && segMid <= cr.bottom : null; })(),
+    btnInCol: (() => { const cr = document.getElementById('chat')?.getBoundingClientRect(); return cr && r ? r.top >= cr.top && r.bottom <= cr.bottom : null; })(),
     menuCount: document.querySelectorAll('.fm-context-menu').length,
     mergeStrips: document.querySelectorAll('.ask-merge-strip').length,
     selected: sel ? sel.toString() : '',
@@ -132,9 +136,15 @@ try {
   if (!created.ok) throw Error(`session create ${created.status}`);
   browser = await chromium.launch({ headless: true });
   const report = [];
-  for (const mobile of [false, true]) {
-    const label = mobile ? 'mobile' : 'desktop';
-    const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1200, height: 900 }, isMobile: mobile, hasTouch: mobile });
+  // 视口：桌面 1200 / 手机 390 / 手机 375（新 UI 不得在 375 档新增红）。
+  const VIEWPORTS = [
+    { label: 'desktop', mobile: false, width: 1200, height: 900 },
+    { label: 'mobile', mobile: true, width: 390, height: 844 },
+    { label: 'mobile375', mobile: true, width: 375, height: 812 },
+  ];
+  for (const vp of VIEWPORTS) {
+    const { label, mobile } = vp;
+    const context = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, isMobile: mobile, hasTouch: mobile });
     const page = await context.newPage();
     page.on('pageerror', error => console.log('pageerror', String(error)));
     await page.addInitScript(() => {
@@ -192,7 +202,9 @@ try {
     const line = {
       viewport: label, sel: sel.ok, pre,
       M1_btnVisibleAcrossBubbles: !!pre.visible,
-      M2_centered: pre.centerDelta != null && Math.abs(pre.centerDelta) <= 6,
+      // M2 = 居中（中点在列内 ⇒ |偏差| ≤ 6px）或 夹紧（中点在列外 ⇒ 按钮仍在列内）。
+      M2_centered: pre.segMidInCol === true ? Math.abs(pre.centerDelta) <= 6 : pre.btnInCol === true,
+      M2_mode: pre.segMidInCol === true ? 'centered' : 'clamped',
       M2_centerDelta: pre.centerDelta,
       M3_dialogOpen: dlgOpen,
       // 顺序 = DOM 顺序（本 fixture 的 ai 行在前），断言两条来源都在、编号连续、计数为 2。
@@ -207,10 +219,43 @@ try {
     report.push(line);
     console.log(`[${label}] ${JSON.stringify(line)}`);
     await page.keyboard.press('Escape');
+    if (mobile) {
+      // M8 真触摸长按：CDP 合成 touch 源的长按（duration 700ms，非 DOM 造 Range）→ 原生长按选词
+      // →（touchend / selectionchange）→ 选区按钮出场。手机端既有的选区入口 = 原生长按选择；
+      // 长按菜单已在 2026-10-31 退役（msgQuote.js:526-531 / mobileLayer.css:2373），不另造入口。
+      await page.evaluate(() => { getSelection().removeAllRanges(); document.querySelector('#chat .row[data-msg-id="multi-fixture-user"]')?.scrollIntoView({ block: 'center' }); });
+      await page.waitForTimeout(200);
+      const pt = await page.evaluate(() => {
+        const row = document.querySelector('#chat .row[data-msg-id="multi-fixture-user"]');
+        const bubble = row && row.querySelector('.bubble');
+        if (!bubble) return null;
+        const w = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT);
+        let n = w.nextNode(); while (n && !n.textContent.trim()) n = w.nextNode();
+        if (!n) return null;
+        const r = document.createRange(); r.setStart(n, 0); r.setEnd(n, Math.min(5, n.textContent.length));
+        const b = r.getBoundingClientRect();
+        return { x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2) };
+      });
+      const cdp = await context.newCDPSession(page);
+      let touchSel = '', touchBtn = false;
+      if (pt) {
+        await cdp.send('Input.synthesizeTapGesture', { x: pt.x, y: pt.y, duration: 700, tapCount: 1, gestureSourceType: 'touch' });
+        try { await page.waitForFunction(() => { const b = document.querySelector('.selection-ask-btn'); return !!b && !b.hidden; }, null, { timeout: 4000 }); } catch {}
+        touchSel = await page.evaluate(() => String(getSelection()));
+        touchBtn = await page.evaluate(() => { const b = document.querySelector('.selection-ask-btn'); return !!b && !b.hidden; });
+        await page.screenshot({ path: `${artifacts}/${label}-touch-longpress.png` });
+      }
+      line.M8_touchLongPressSelects = touchSel.length > 0;
+      line.M8_touchLongPressBtn = touchBtn;
+      line.M8_selectedText = touchSel.slice(0, 40);
+      console.log(`[${label}] M8 ${JSON.stringify({ sel: line.M8_touchLongPressSelects, btn: touchBtn, text: line.M8_selectedText })}`);
+    }
+    await page.keyboard.press('Escape');
     await context.close();
   }
   writeFileSync(`${artifacts}/selection-ask-multi-live-report.json`, JSON.stringify({ repo, report, mockHits: hits }, null, 2));
-  const ok = report.every(l => l.M1_btnVisibleAcrossBubbles && l.M2_centered && l.M3_dialogOpen && l.M4_questionIsMerged && l.M5_noMergeStrip && l.M6_termHookRan && l.M6_answerShown && l.M7_menuZero);
+  const ok = report.every(l => l.M1_btnVisibleAcrossBubbles && l.M2_centered && l.M3_dialogOpen && l.M4_questionIsMerged && l.M5_noMergeStrip && l.M6_termHookRan && l.M6_answerShown && l.M7_menuZero
+    && (!l.viewport.startsWith('mobile') || (l.M8_touchLongPressSelects && l.M8_touchLongPressBtn)));
   console.log(`VERDICT=${ok ? 'PASS' : 'FAIL'} report=${artifacts}/selection-ask-multi-live-report.json`);
   if (!ok) process.exitCode = 1;
 } finally {
