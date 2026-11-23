@@ -450,7 +450,7 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu {
   width: 208px;
   padding: 6px;
   box-sizing: border-box;
-  border-radius: 14px;
+  border-radius: var(--ds-radius-card-md);
   z-index: 7;
   /* 动效收敛批（2026-11-18）：展开面入场 = 站内唯一 modalIn 档（改前硬切）。 */
   animation: modalIn var(--ds-dur-layer) var(--ds-ease-enter);

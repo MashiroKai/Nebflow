@@ -1462,14 +1462,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
      字色（bubble-contrast 批 2026-11-07）：我方绿底正文吃 --nf-bub-ours-ink
      （两档深墨绿字），不吃 --color-text —— 暗档浅字在绿底只有 1.21:1。 */
   color: var(--nf-bub-ours-ink);
-  border-bottom-right-radius: 4px;
+  border-bottom-right-radius: var(--ds-radius-badge);
 }
 /* Injected bubble（工具/Delegate/节点/后台任务注入行）：same silhouette as
    `.bubble.user` —— 它在归属上就是**我方**（代表本机账号发出），故底色与
    `.bubble.user` 同档（绿），不再自带第三色。色值归宿见 glass.css 单点块。 */
 .bubble.injected {
   color: var(--color-text);
-  border-bottom-right-radius: 4px;
+  border-bottom-right-radius: var(--ds-radius-badge);
 }
 .bubble.injected .injected-source-label {
   display: flex;
@@ -1766,7 +1766,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: var(--color-text);
   /* Whisper edge — separates bubble from background without feeling deliberate */
   border: 1px solid var(--glass-bub-ai-border);
-  border-bottom-left-radius: 4px;
+  border-bottom-left-radius: var(--ds-radius-badge);
   box-shadow: var(--glass-bub-ai-shadow);
 }
 .bubble.ai img, .bubble.peer img, .bubble.injected img, .ask-bub.ai img { max-width: 220px; max-height: 220px; border-radius: var(--ds-radius-input); display: block; margin-top: var(--ds-space-1); }
@@ -3359,7 +3359,7 @@ body:not(.mobile-layer) .option-preview-media {
   background: var(--nf-bub-theirs-bg);
   border: 1px solid var(--glass-bub-ai-border);
   border-radius: var(--ds-radius-card-lg);
-  border-bottom-left-radius: 4px;
+  border-bottom-left-radius: var(--ds-radius-badge);
   box-shadow: var(--glass-bub-ai-shadow);
 }
 /* 题干（卡引言）在浮层语言里抬一档：15px/600（BRIEF §4.4 下限之上） */
@@ -3383,7 +3383,7 @@ body:not(.mobile-layer) .option-preview-media {
   padding: var(--ds-space-2) var(--ds-space-1h);
   border: none;
   border-top: 1px solid var(--ask-line);
-  border-radius: 0;
+  border-radius: var(--ds-radius-button);
   background: transparent;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
@@ -4653,7 +4653,7 @@ body:not(.mobile-layer) .option-preview-media {
   padding: var(--ds-space-2) var(--ds-space-3);
   border: none;
   border-bottom: 1px solid var(--color-frame-border-light);
-  border-radius: 0;
+  border-radius: var(--ds-radius-chip);
   background: none;
   font-family: inherit;
   font-size: var(--ds-fs-body);
@@ -6016,7 +6016,7 @@ body:not(.mobile-layer) .option-preview-media {
 .row.user-media .pop-media-flat,
 .fm-msg.out .fm-att-list .pop-media-flat {
   border-radius: var(--ds-radius-card-lg);
-  border-bottom-right-radius: 4px;
+  border-bottom-right-radius: var(--ds-radius-badge);
   box-shadow: none;
 }
 
@@ -6059,7 +6059,7 @@ body:not(.mobile-layer) .option-preview-media {
 .row.user-media .pop-stack-view .media-layer,
 .fm-msg.out .fm-att-list .pop-stack-view .media-layer {
   border-radius: var(--ds-radius-card-lg);
-  border-bottom-right-radius: 4px;
+  border-bottom-right-radius: var(--ds-radius-badge);
   box-shadow: none;
 }
 /* 入向叠卡层：底色同样归 glass.css 单点块（对方白）；本行只保留「媒体元素自身

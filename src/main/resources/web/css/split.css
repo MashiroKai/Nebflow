@@ -2921,7 +2921,7 @@ mark.nf-anno[data-anno-stale] {
     max-height: 60%;
     border-right: none;
     border-top: 1px solid var(--glass-border);
-    border-radius: 12px 12px 0 0;
+    border-radius: var(--ds-radius-xl) var(--ds-radius-xl) 0 0;
   }
 }
 

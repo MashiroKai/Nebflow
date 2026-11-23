@@ -237,7 +237,7 @@ function addChip(c, file) {
   rm.title = t('askUser.removeAttachment', { name: file.name });
   rm.setAttribute('aria-label', t('askUser.removeAttachment', { name: file.name }));
   rm.style.cssText =
-    'position:absolute;top:-1px;right:-1px;width:18px;height:18px;border-radius:0 10px 0 8px;border:none;' +
+    'position:absolute;top:-1px;right:-1px;width:18px;height:18px;border-radius:0 var(--ds-radius-button) 0 var(--ds-radius-input);border:none;' +
     'background:var(--color-surface-2,rgba(127,127,127,0.08));border-left:1px solid var(--color-border,rgba(128,128,128,0.35));' +
     'border-bottom:1px solid var(--color-border,rgba(128,128,128,0.35));color:var(--color-text-muted,#888);' +
     'font-size:var(--ds-fs-meta);line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;';

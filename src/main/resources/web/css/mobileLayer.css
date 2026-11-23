@@ -2903,7 +2903,7 @@ body.mobile-layer .mf-me-entry {
   min-height: 148px;
   padding: var(--ds-space-4) var(--ds-space-4) calc(var(--ds-space-4) + var(--ds-space-1));
   border: none;
-  border-radius: 0;
+  border-radius: var(--ds-radius-button);
   background: transparent;
   box-shadow: none;
   color: var(--color-text);
