@@ -85,6 +85,62 @@ async function runOnce(browser, negative, draftLines = 0) {
   return res;
 }
 
+// 真实发送形（作者 IMG_2036 同款路径）：草稿输入 6 行 → 点发送 → 尾消息（约 160–230px 绿气泡）
+// 落在末尾。断言 O3：尾气泡 bottom ≤ 输入框 top（气泡下半不得被输入框盖住）。
+// keyboard=true 时先把视口压到 520px（软键盘弹起），再断言同一条。
+const TAIL = Array.from({ length: 6 }, (_, i) => `尾消息第${i + 1}行，撑出约一百六十像素的高度。`).join('\n');
+const BUBBLE_MEASURE = () => {
+  const chat = document.getElementById('chat');
+  const ia = document.getElementById('input-area');
+  chat.style.scrollBehavior = 'auto';
+  chat.scrollTop = chat.scrollHeight;
+  const rows = [...chat.querySelectorAll('.row')].filter((e) => e.getClientRects().length);
+  const last = rows.at(-1);
+  const bub = last ? (last.querySelector('.bubble') || last) : null;
+  const out = { violations: [] };
+  if (!bub || !ia) { out.violations.push({ rule: 'O0', what: 'tail bubble missing (vacuous)' }); return out; }
+  const br = bub.getBoundingClientRect();
+  const ir = ia.getBoundingClientRect();
+  out.bubbleBottom = +br.bottom.toFixed(1);
+  out.inputTop = +ir.top.toFixed(1);
+  out.bubbleH = +br.height.toFixed(1);
+  out.reserve = parseFloat(chat.style.paddingBottom) || 0;
+  out.inputH = +ir.height.toFixed(1);
+  if (br.bottom > ir.top + 0.5) out.violations.push({ rule: 'O3', what: 'tail bubble under composer', overlapPx: +(br.bottom - ir.top).toFixed(1) });
+  return out;
+};
+
+async function runSend(browser, { negative = false, keyboard = false }) {
+  const s = await createSession(browser, { width: VIEW.width, height: VIEW.height, colorScheme: 'light', clock: CLOCK });
+  s.page.on('pageerror', (e) => { throw new Error('pageerror ' + e.message); });
+  await s.boot({ config: { llm: { providers: {} }, features: {} }, sessionId: 'occlusion-send', messages: HISTORY });
+  await settle(s.page, 400);
+  if (negative) {
+    // 修前形态负对照：reserve 冻结在 8px（小于输入框高度 130px），屏蔽本页对 #chat
+    // padding-bottom 的后续 RO 重写 ⇒ 尾气泡必被输入框盖住（O3 必红）。
+    await s.page.evaluate(() => {
+      const chat = document.getElementById('chat');
+      const orig = chat.style.setProperty.bind(chat.style);
+      chat.style.setProperty = (prop, val, pri) => (prop === 'padding-bottom' ? undefined : orig(prop, val, pri));
+      orig('padding-bottom', '8px', 'important');
+    });
+  }
+  await s.page.evaluate((t) => { const i = document.getElementById('input'); i.value = t; i.dispatchEvent(new Event('input', { bubbles: true })); }, TAIL);
+  await settle(s.page, 300);
+  await s.page.click('#send-btn');
+  await settle(s.page, 500);
+  if (keyboard) {
+    await s.page.setViewportSize({ width: VIEW.width, height: 520 });
+    await settle(s.page, 500);
+  }
+  await settle(s.page, 150);
+  const res = await s.page.evaluate(BUBBLE_MEASURE);
+  const tag = `${negative ? '-negative' : ''}${keyboard ? '-keyboard' : ''}`;
+  await s.page.screenshot({ path: join(OUT, `composer-send-tail${tag}.png`), animations: 'disabled', scale: 'css' });
+  await s.close();
+  return res;
+}
+
 async function main() {
   const pwRes = loadPlaywright();
   const pw = pwRes.mod.playwright || pwRes.mod;
@@ -100,6 +156,15 @@ async function main() {
   const draft = await runOnce(browser, false, 8);
   if (draft.violations.length) { failed++; console.error('FAIL draft8:', JSON.stringify(draft)); }
   else console.log(`PASS draft8: lastBottom=${draft.lastBottom} inputTop=${draft.inputTop} reserve=${draft.reserve} inputH=${draft.inputH}`);
+  const send = await runSend(browser, {});
+  if (send.violations.length) { failed++; console.error('FAIL send-tail:', JSON.stringify(send)); }
+  else console.log(`PASS send-tail: bubbleBottom=${send.bubbleBottom} inputTop=${send.inputTop} reserve=${send.reserve} inputH=${send.inputH}`);
+  const kbd = await runSend(browser, { keyboard: true });
+  if (kbd.violations.length) { failed++; console.error('FAIL send-tail-keyboard:', JSON.stringify(kbd)); }
+  else console.log(`PASS send-tail-keyboard: bubbleBottom=${kbd.bubbleBottom} inputTop=${kbd.inputTop} reserve=${kbd.reserve} inputH=${kbd.inputH}`);
+  const sendNeg = await runSend(browser, { negative: true });
+  if (sendNeg.violations.length) console.log(`PASS send-tail negative-control (red as expected: ${sendNeg.violations.map((v) => v.rule).join(',')})`);
+  else { failed++; console.error('FAIL send-tail negative-control: gate blind', JSON.stringify(sendNeg)); }
   const neg = await runOnce(browser, true);
   if (neg.violations.length) console.log(`PASS negative-control (red as expected: ${neg.violations.map((v) => v.rule).join(',')})`);
   else { failed++; console.error('FAIL negative-control: gate blind (no overlap on pre-fix form)', JSON.stringify(neg)); }
