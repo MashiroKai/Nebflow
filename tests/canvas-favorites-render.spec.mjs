@@ -13,8 +13,9 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, loadPlaywright, launchBrowser, createSession, settle } from '../scripts/lib/visual-harness.mjs';
 
-// ROOT = <primary>/.stand/worktrees/<wt>；三级 .. 回到 primary 根。
-const SHOT_DIR = process.env.FAV_SHOT_DIR || join(ROOT, '..', '..', '..', '.stand', 'tmp', 'canvas-favorites', 'evidence', 'screenshots');
+// 主检出根：worktree 内 ROOT = <primary>/.stand/worktrees/<wt>，主检出内 ROOT 即 primary。
+const PRIMARY = ROOT.includes('/.stand/worktrees/') ? ROOT.split('/.stand/worktrees/')[0] : ROOT;
+const SHOT_DIR = process.env.FAV_SHOT_DIR || join(PRIMARY, '.stand', 'tmp', 'canvas-favorites', 'evidence', 'screenshots');
 // 手机断言一律限定在工作台收藏块内：桌面侧栏的收藏区同在 DOM（隐藏），不限定会重复命中。
 const HUB = '.mobile-page[data-page="workbench"] .mf-hub-fav';
 const BOOT = { config: { llm: { providers: {} }, features: {} }, sessionId: 'fav-root', messages: [] };
