@@ -1,6 +1,7 @@
 .PHONY: compile run assembly clean install \
   lint fmt fix fmt-check check quality-gate check-visual visual-baseline frontend-gates component-contract \
   flat-buttons glass toggle toggle-geometry scroll-pill input-surface mobile-canvas-strip badge-words \
+  ack-phrases \
   mobile-dock-float \
   ui-structure copy-budget button-source \
   plugin-seed-parity check-static check-sdd test-scripts lint-tools
@@ -111,6 +112,12 @@ lint-tools:
 # tests/term-unify-badge-words.spec.mjs（W1-W5，桌面三层 + 手机层）。
 badge-words:
 	node scripts/check-badge-words.mjs
+
+# ── 零 report 块回合 ✻ 字句池：单闸入口（ack-badge-pool 批 2026-11-23）────────
+# 判据 = 池非空且两语言对齐（A）+ {d} 占位与字数上限（B）+ 取词分派单点
+# （C，零块→ack 池 / 有块→think 池）+ 轮换沿用现机制（D，pickFromPool 同构）。
+ack-phrases:
+	node scripts/check-ack-phrases.mjs
 
 # ── 按钮扁平化：单闸入口（CI 同名 step 调的就是它，单一真源别在 CI 里另抄一遍）──
 flat-buttons:

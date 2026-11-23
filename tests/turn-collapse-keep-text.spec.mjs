@@ -492,10 +492,11 @@ test.describe('decompression model — history rebuild path (验收 ②⑤)', ()
 
     // Turn-1 header counts both tools + 2 distinct files (a.md, report.html);
     // history has no thinking timing → the 思考 segment is omitted. The ✻
-    // design phrase rides the done badge (seed = message index 6 → think.6,
-    // deterministic) and leads the header (2026-09-06 restoration).
+    // design phrase rides the done badge (seed = message index 6 → ack.6 —
+    // the reply carries no <report> block ⇒ ack pool, ack-badge-pool batch
+    // 2026-11-23; deterministic) and leads the header (2026-09-06 restoration).
     const h1 = await page.locator('.turn-header-text').nth(0).textContent();
-    expect(h1).toContain('✻ 从这颗星逛到那颗星，溜达了 3s');
+    expect(h1).toContain('✻ 对讲机应了一声，用了 3s');
     expect(h1).toContain('test-model');
     expect(h1).toContain('工具 2 次');
     expect(h1).toContain('读写 2 文件');
