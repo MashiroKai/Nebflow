@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026.11.24-beta.1
+
+### Changes
+
+- Restore the archive-revive batch and unify installer handling.
+- Improve canvas favorites (r2 and r3), the model rule engine, and multi-selection Ask interactions.
+- Include the integrated six-fix batch and repair twelve historical test failures.
+
+### Known issue and verification
+
+- The full Scala suite reported one failure in `DelegateFreezeE2ESpec.scala:419` (10,978 total, 10,948 passed, 29 skipped; 16 ignored). The same test passed on an isolated rerun (1/1). The reported attribution is a suite-run difference; this does not establish that the underlying issue is fixed. The release owner accepted this residual risk.
+- Local evidence: `/Users/kaiyu/.stand/bg-task-logs/b262b06d.log` (full suite) and `/Users/kaiyu/.stand/bg-task-logs/f706cc22.log` (isolated rerun).
+
 ## Unreleased — beta candidate (source tip not finalized)
 
 Candidate baseline `beed5aa486bed847f086a98258903dc42f7d6c60`, compared with `v2026.10.24-beta.1`. This is a review candidate, not a release approval or a statement about the eventual release tip. Assign the version from the release-day date only after the final source tip and duplicate-tag check are known.
