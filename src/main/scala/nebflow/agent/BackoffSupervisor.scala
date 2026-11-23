@@ -39,23 +39,6 @@ object BackoffSupervisor:
    */
   private val InFlightChildStatuses = Set("running", "restarting")
 
-  /**
-   * 终态代际解析单点（送达链路修复批 2026-11-23 P0①，纯函数 = spec 判红锚）。
-   *
-   * 顺序：completion-debt 的代际（真实执行/续轮完成时铸造）> capturedRun（本轮
-   * runId，信封与任务行同一持久值）。**绝不再回落空串**——空代际会让终态身份
-   * 退化为裸 sessionId，撞上上一轮已消费墓碑后被 `mailOnce` 静默去重（实证
-   * 18 支批约 36 份续轮终报丢失的根因）。两者皆缺（legacy subtask 轨无 runId）
-   * 才保持空串（升级前行为逐字兼容）。
-   */
-  private[agent] def resolveTerminalGeneration(
-    debtGeneration: Option[String],
-    capturedRun: Option[String]
-  ): String =
-    debtGeneration.map(_.trim).filter(_.nonEmpty)
-      .orElse(capturedRun.map(_.trim).filter(_.nonEmpty))
-      .getOrElse("")
-
   private[agent] def completionDiagnosticText(
     turns: Int,
     toolCalls: Int,
@@ -2100,21 +2083,16 @@ object BackoffSupervisor:
         //   - Mail 续轮的新完成 ⇒ 新代 ⇒ 新 identity ⇒ **不再被上一代已消费墓碑
         //     吞掉**（beed5aa 实证三轮 resume 漏报根因：裸 subagentId 身份命中
         //     delivered.json 墓碑 ⇒ AlreadyPresent 假去重）；
-        //   - 旧格式债（无代）**不再回落裸 subagentId**：2026-11-23 送达链路修复批
-        //     P0①——续轮（resume-in-place）不重建 completion-debt ⇒ 查债得空 ⇒
-        //     代际退化为空 ⇒ 终态身份退化为裸 sessionId ⇒ 撞第一轮墓碑**静默丢弃**
-        //     （实证 18 支批约 36 份续轮终报从未到达父会话）。改由 capturedRun
-        //     （本轮 runId，信封/任务行同一持久值）兜底：每轮 runId 必不同 ⇒ 每轮
-        //     终态独立身份 ⇒ 续轮不再撞墓碑，且同轮崩溃重放仍幂等（同 runId）。
+        //   - 旧格式债（无代）回落裸 subagentId 身份，升级前行为逐字兼容。
         val completionGenerationIO: IO[String] =
           if source == "delegate" then
             nebflow.core.mail.CompletionDebtStore
               .pending(subagentId)
               .map {
-                case Right(Some(debt)) => resolveTerminalGeneration(Some(debt.generation), capturedRun)
-                case _ => resolveTerminalGeneration(None, capturedRun)
+                case Right(Some(debt)) => debt.generation
+                case _ => ""
               }
-              .handleErrorWith(_ => IO.pure(resolveTerminalGeneration(None, capturedRun)))
+              .handleErrorWith(_ => IO.pure(""))
           else IO.pure(capturedRun.getOrElse(""))
 
         def terminalEventFor(completionGeneration: String): AgentCommand.ExternalEvent =
@@ -2200,11 +2178,8 @@ object BackoffSupervisor:
                     SessionMailbox.scanTaken(parentSessionId),
                     SessionMailbox.deliveredContains(parentSessionId, Set(terminalIdentity))
                   ).mapN { (pending, taken, delivered) =>
-                    // 墓碑语义硬化（P0②）：同身份不同载荷会被强制换为 `identity#f<指纹>` 入箱，
-                    // 确认腿须同时认该强制身份，否则每次重放都误报「身份冲突」。
                     delivered.contains(terminalIdentity) || (pending ++ taken).exists(entry =>
-                      (entry.identity == terminalIdentity || entry.identity.startsWith(s"$terminalIdentity#f")) &&
-                        entry.event.source == source &&
+                      entry.identity == terminalIdentity && entry.event.source == source &&
                         entry.event.eventType == eventType && entry.event.payload == payload
                     )
                   }.flatMap { confirmed =>

@@ -2069,13 +2069,6 @@ object Defaults:
    *   - held 回执催注扫描（`HeldDeliveryWatchdog.run` 不进 boot 链）。
    * system prop `nebflow.mail.process.enabled`（每次调用现读——`MemoryRecallEnabled`
    * 同款 kill-switch 先例，测试/运维可即时翻转）。
-   *
-   * **裁定（送达链路修复批 2026-11-23 P1④，作者 09:45 令「都做」）**：2026-11-03
-   * seal 批把 held 回执催注腿归入本开关属**误伤**——该腿不是邮件投递进程，是
-   * **投递可靠性自检**（周期催注/穷尽置旗/徽标广播，见 [[HeldDeliveryWatchdog]]）。
-   * 本机 dev/sbt 启动配置（build.sbt javaOptions）自本批起显式
-   * `-Dnebflow.mail.process.enabled=true` ⇒ watchdog 重新进 boot 链；发布面仍可
-   * 显式 `=false` 封存（打包级）。
    */
   def MailProcessEnabled: Boolean =
     sys.props.getOrElse("nebflow.mail.process.enabled", "false").toBoolean

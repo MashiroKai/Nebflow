@@ -237,15 +237,7 @@ lazy val root = (project in file("."))
         // 进程树形态零变化），产品面（assembly jar）不设此属性 ⇒ 走 daemon 分支。
         // 刻意加在本裸块 Seq 末尾（同一机制同一路径，零新 scope —— 新开
         // `(Compile, run) / javaOptions` scope 有委托链断链风险）。
-        "-Dnebflow.start.foreground=true",
-        // 邮件后台面开关（送达链路修复批 2026-11-23 P1④，作者 09:45 令「都做」）：
-        // 2026-11-03 seal 批（邮件后台投递进程封存）把 HeldDeliveryWatchdog 一并
-        // 关停——裁断：held 回执催注腿 ≠ 邮件投递进程，是**投递可靠性自检**，
-        // 11-03 封存令对本腿属误伤（见 GatewayMain boot 链注释与 Defaults
-        // MailProcessEnabled 注）。本机 dev/sbt 链显式开启：HeldDeliveryWatchdog
-        // 重新进 boot 链（gateway 重启后生效）。发布面如需封存，打包脚本显式
-        // `-Dnebflow.mail.process.enabled=false`（同一 mainClass，装配级默认）。
-        "-Dnebflow.mail.process.enabled=true"
+        "-Dnebflow.start.foreground=true"
       )
     },
 

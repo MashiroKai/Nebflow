@@ -718,39 +718,10 @@ object SubAgentStartupRecovery:
     repairCommittedProjections(
       store,
       rs.executionCommitPort
-    ) *> recoverDeliveredLegacy *> recoverActiveEnvelopes *> markUnresolved *>
-      deliverPendingNotifications(store, sessionStore, rs, onlyPending = false)
-  }
-
-  /**
-   * 挂账终态通知的消费腿（送达链路修复批 2026-11-23 P0③）——**非 boot 期**周期面。
-   *
-   * 背景（诊断书 §C）：重启闸强终（zero-notify by author order 2026-11-06）给
-   * delegate 行写 `notificationPending=true` 挂账，唯一消费者就是本块；可它原先
-   * 只在 boot sweep / 手动恢复里跑（[[recoverPendingInternal]] 尾部）。23c910c6
-   * 轮 21 于 19:38 强终、下一次 boot 之后才可能有消费者 ⇒ 挂账行至今无人消费。
-   * 本批起 [[run]]（GatewayMain 已装配的 60s 周期 fiber）每拍也跑这条腿 ⇒
-   * 挂账行在**同一进程生命周期内**必然被下一次扫描消费并投递。
-   *
-   * 覆盖边界：本腿只认 executor=nebflow（delegate 轨；`ExternalSessionRunner.
-   * recoverPendingNotifications` 的 `executor != DefaultId` 过滤保留给外置执行器
-   * 轨，二者互补不重叠——同一身份重复投递由 `SessionMailbox.mailOnce` 幂等键 +
-   * 载荷指纹闸兜住）。
-   */
-  private[agent] def deliverPendingNotifications(
-    store: SubAgentTaskStore,
-    sessionStore: SessionStore,
-    rs: SharedResources,
-    onlyPending: Boolean
-  ): IO[Unit] =
-    store
+    ) *> recoverDeliveredLegacy *> recoverActiveEnvelopes *> markUnresolved *> store
       .findAllTasks()
       .flatMap(
-        _.filter(t =>
-          t.executor.contains("nebflow") && t.runId.nonEmpty && t.notificationId.nonEmpty &&
-            // 周期腿只消费**真挂账**行（notificationPending=true）；boot 腿保持全量形态。
-            (!onlyPending || t.notificationPending.contains(true))
-        ).traverse_ {
+        _.filter(t => t.executor.contains("nebflow") && t.runId.nonEmpty && t.notificationId.nonEmpty).traverse_ {
           task =>
             rs.executionProtection(task.taskId).flatMap {
               case nebflow.shared.ExecutionProtection.Unprotected if task.notificationPending.contains(true) =>
@@ -875,6 +846,7 @@ object SubAgentStartupRecovery:
             }
         }
       )
+  }
 
   /** Loss of monitoring is not proof that the external process died or failed its task. */
   private[agent] def interruptExternalRuns(store: SubAgentTaskStore): IO[List[String]] =
@@ -1206,18 +1178,7 @@ object SubAgentStartupRecovery:
       )
         .handleErrorWith(e =>
           logger.warn(s"[restarting-watchdog] sweep failed (will retry next cycle): ${e.getMessage}").as(Nil)
-        ) *>
-        // P0③（送达链路修复批 2026-11-23）：挂账终态通知的非 boot 周期消费腿——
-        // 强终（zero-notify）挂账行在本进程生命周期内经下一拍必被消费投递。
-        deliverPendingNotifications(
-          resources.subAgentTaskStore,
-          resources.sessionStore,
-          resources,
-          onlyPending = true
-        )
-          .handleErrorWith(e =>
-            logger.warn(s"[startup-recovery] pending-notification reconcile failed (will retry next cycle): ${e.getMessage}")
-          ) *> IO.sleep(interval) >> loop
+        ) *> IO.sleep(interval) >> loop
     loop
 
   private def recoverOne(
