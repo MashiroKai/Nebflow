@@ -795,7 +795,12 @@ const DECK_SIDE_STEP_RATIO = 0.66;  // 邻卡中心距 = 卡宽 × 0.66（露约
 const DECK_SCALE_SIDE = 0.84;    // 邻卡缩径
 const DECK_SCALE_FAR = 0.72;     // 第二邻卡缩径
 const DECK_SWITCH_PX = 56;       // 横拖过阈即换中央卡（松手吸附）
-const DECK_AXIS_PX = 8;          // 轴锁死区（内 = 点按）
+// 轴锁（2026-11-23 作者报「斜滑被误判成滚动/误触发」）：死区 = 合位移半径 14px
+// （max(|dx|,|dy|) 越出即判轴）；判轴 = 越出那一刻的主导轴（|dx| vs |dy|），
+// 一次性锁定到本次手势生命周期（touchend/cancel 才解锁，中途不翻转）。
+// 14 而非 8/10：斜向手指常在头 2–3 帧带出 10–12px 的反向分量（实测 dy=12 先于
+// dx=−130 的横滑），8px 档会在那一刻把斜滑误锁成纵轴。
+const DECK_AXIS_PX = 14;         // 轴锁死区（内 = 点按）
 const DECK_SWIPE_Y_PX = 48;      // 纵拖过阈：上滑或下滑关闭当前标签
 
 // ── 手势仲裁（内容操作优先，作者令 2026-11-01「拖动图谱、调整图片大小这类
@@ -1556,12 +1561,16 @@ function buildDeckView(wrap) {
 function bindDeckSwipe(stage) {
   /** @type {{id: number, x0: number, y0: number, axis: string|null}|null} */
   let g = null;
+  /** 只读 QA 探针：本次手势锁定的轴（x|y|null）与累计判轴次数。 */
+  const probe = { axis: /** @type {string|null} */ (null), claims: 0 };
+  (/** @type {any} */ (window)).__nfDeckSwipe = probe;
   stage.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (performance.now() < deckDragEndedAt) return;  // 拖后松手的 click 抑制窗内不再武装
     const t = /** @type {Element} */ (e.target);
     if (t.closest('button')) return;         // 卡内 ✕ 不参与翻页
     g = { id: e.pointerId, x0: e.clientX, y0: e.clientY, axis: null };
+    probe.axis = null;
     // capture 延到轴锁后才抢：一上手就 setPointerCapture 会把 pointerup 整体
     // 重定向到舞台 ⇒ 卡面（含卡内 ✕ / 点卡换入）的 click 永不触发（探针实证）。
   });
@@ -1569,8 +1578,12 @@ function bindDeckSwipe(stage) {
     if (!g || e.pointerId !== g.id) return;
     const dx = e.clientX - g.x0;
     const dy = e.clientY - g.y0;
-    if (!g.axis && (Math.abs(dx) > DECK_AXIS_PX || Math.abs(dy) > DECK_AXIS_PX)) {
+    // 一次性判轴：越出死区（合位移 max(|dx|,|dy|) > DECK_AXIS_PX）那一刻取主导轴，
+    // 之后 g.axis 不再改写 ⇒ 本次手势内轴恒定（不因后续斜向分量翻转）。
+    if (!g.axis && Math.max(Math.abs(dx), Math.abs(dy)) > DECK_AXIS_PX) {
       g.axis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+      probe.axis = g.axis;
+      probe.claims += 1;
       if (g.axis) {
         try { stage.setPointerCapture(e.pointerId); } catch { /* 合成事件无 capture */ }
         stage.dataset.dragging = '1';             // CSS 关过渡（直写变量即跟手）
