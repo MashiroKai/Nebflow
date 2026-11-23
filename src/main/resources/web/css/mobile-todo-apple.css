@@ -954,8 +954,9 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-reply-error {
    页 —— 两页是**同一条规则、同一颗键**（不改值、不复制第二套），差别只在该页自己
    的胶囊让位（见 E6 的 `.ta-pill` 位移）。 */
 body.mobile-layer .mobile-page:is([data-page="todo-apple-item"], [data-page="todo-quick-decision"]) .ta-save {
-  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
-  border-radius: var(--ds-radius-chip);
+  /* 圆钮 = g2-fab 族圆（50%，glass.css 单源），与左上返回钮同形（2026-11-23 作者令「按钮统一是圆的」，
+     修正 f62594fc7 沿用的 --ds-radius-chip 6px 方角）。 */
+  border-radius: 50%;
   position: absolute;
   top: 0;
   right: 0;
@@ -969,8 +970,7 @@ body.mobile-layer .mobile-page:is([data-page="todo-apple-item"], [data-page="tod
   color: var(--ctl-send-ink);
 }
 body.mobile-layer .mobile-page:is([data-page="todo-apple-item"], [data-page="todo-quick-decision"]) .ta-save:hover {
-  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
-  border-radius: var(--ds-radius-chip);
+  border-radius: 50%;
   background: rgb(var(--sapphire));
   transform: none;
 }
