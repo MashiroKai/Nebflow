@@ -4,6 +4,9 @@
 // 断言：① 窗口受限卡出卡（标题带 provider+窗口）；② 无等待/换模型按钮、有「去设置」；
 //      ③ 点「去设置」触发注入的 openSettings；④ 失败组（providerGroups）走卡族面；
 //      ⑤ 普通失败卡不变（等待/换模型仍在）。
+// 增量（作者 09:48「卡片上应该要可以直接设置」）：⑥ 卡内显示当前窗口值 + 快捷动作；
+//      ⑦ 快捷动作先出确认条（取消 = 零写入），确认后经注入的 saveWindows 写入，
+//      成功后当前值刷新 + 状态提示（收卡仍由 llmFailureRecovered 完成，零定时器）。
 // 截图落到 EVIDENCE_DIR（默认 <项目>/.stand/tmp/provider-notice-unify/evidence）。
 // 运行：node tests/provider-notice-card-unify.spec.mjs
 import http from 'node:http';
@@ -31,11 +34,22 @@ import { renderProviderFailureStatus } from '/js/providerFailureStatus.js';
 window.__F = F;
 window.__renderStatus = renderProviderFailureStatus;
 window.__settingsOpened = 0;
+// 卡内直接设置（作者 09:48 增量令）：live 窗口值可改 + 写入留痕（模拟 saveProviderWithAck 链路出口）
+window.__currentWindows = [{ from: '06:00', to: '01:00' }];
+window.__saved = [];
+window.__saveOk = true;
 window.__deps = {
   saveModel: async () => {},
   modelRefs: () => ['UTSC/glm-5.3-flash', 'Irical/DeepSeek-V4.1-Flash-1017'],
   onDismiss: () => {},
   openSettings: () => { window.__settingsOpened += 1; },
+  getWindows: () => window.__currentWindows,
+  saveWindows: async (provider, windows) => {
+    window.__saved.push({ provider, windows });
+    if (!window.__saveOk) return false;
+    window.__currentWindows = windows;
+    return true;
+  },
 };
 window.mountFailure = (msg) => {
   const c = F.renderLlmFailureCard(msg, window.__deps);
@@ -92,11 +106,60 @@ try {
   await page.screenshot({ path: path.join(EVIDENCE_DIR, 'state1-window-card.png') });
 
   console.log('[2] 无等待/换模型按钮，有「去设置」');
-  ok((await card.locator('.option-cancel').count()) === 0, '无等待按钮');
+  ok((await card.locator('.option-cancel', { hasText: '等待' }).count()) === 0, '无等待按钮');
   ok((await card.locator('.llm-failure-pick').count()) === 0, '无换模型下拉');
   const bSettings = card.locator('button', { hasText: '去设置' });
   ok(await bSettings.isVisible(), '「去设置」按钮在场');
   await page.screenshot({ path: path.join(EVIDENCE_DIR, 'state2-window-actions.png') });
+
+  console.log('[2b] 卡内直接设置：当前窗口值 + 快捷动作 + 确认一步');
+  const winBox = card.locator('.llm-failure-window');
+  ok(await winBox.isVisible(), '卡内设置区在场');
+  ok((await winBox.locator('.llm-failure-window-value').textContent()).includes('当前：06:00-01:00（每天）'), '显示当前 unavailableWindows（provider 取自 modelRef）');
+  const bClear = winBox.locator('[data-preset="clear"]');
+  const bNight = winBox.locator('[data-preset="night"]');
+  ok(await bClear.isVisible(), '快捷动作「清除窗口」在场');
+  ok((await bNight.textContent()).includes('仅深夜 01:00-06:00'), '快捷动作「仅深夜 01:00-06:00」在场');
+  const confirmBar = winBox.locator('.llm-failure-window-confirm');
+  ok(!(await confirmBar.isVisible()), '确认条初始隐藏');
+  await page.screenshot({ path: path.join(EVIDENCE_DIR, 'state5-window-inline-controls.png') });
+
+  await bClear.tap();
+  ok(await confirmBar.isVisible(), '点「清除窗口」先出确认条（防误触）');
+  ok((await confirmBar.textContent()).includes('把 UTSC 的不可用窗口改为「无（随时可用）」，确认？'), '确认条写明目标 provider 与目标值');
+  ok((await page.evaluate(() => window.__saved.length)) === 0, '未确认前零写入');
+  await page.screenshot({ path: path.join(EVIDENCE_DIR, 'state6-window-inline-confirm.png') });
+  await confirmBar.locator('.option-cancel').tap();
+  ok(!(await confirmBar.isVisible()), '取消后确认条收起');
+  ok((await page.evaluate(() => window.__saved.length)) === 0, '取消 = 零写入');
+
+  await bClear.tap();
+  await confirmBar.locator('.llm-failure-window-yes').tap();
+  await page.waitForFunction(() => window.__saved.length === 1);
+  const saved1 = await page.evaluate(() => window.__saved[0]);
+  ok(saved1.provider === 'UTSC' && Array.isArray(saved1.windows) && saved1.windows.length === 0, '确认后写入 = provider UTSC / 空段列表');
+  await page.waitForFunction(() => document.querySelector('.llm-failure-window-value')?.textContent.includes('未配置窗口'));
+  ok(true, '写入成功后卡内当前值刷新（未配置窗口）');
+  ok((await card.locator('.llm-failure-status').textContent()).includes('已更新窗口配置'), '状态行提示已更新（收卡仍由 recovered 帧完成）');
+  ok((await card.count()) === 1, '写入不手工收卡（等 llmFailureRecovered 自动清卡）');
+  await page.screenshot({ path: path.join(EVIDENCE_DIR, 'state7-window-inline-saved.png') });
+
+  await bNight.tap();
+  ok((await confirmBar.textContent()).includes('01:00-06:00'), '深夜预设确认条带目标时段');
+  await confirmBar.locator('.llm-failure-window-yes').tap();
+  await page.waitForFunction(() => window.__saved.length === 2);
+  const saved2 = await page.evaluate(() => window.__saved[1]);
+  ok(saved2.provider === 'UTSC' && saved2.windows.length === 1 && saved2.windows[0].from === '01:00' && saved2.windows[0].to === '06:00', '深夜预设写入 01:00-06:00');
+  await page.waitForFunction(() => document.querySelector('.llm-failure-window-value')?.textContent.includes('01:00-06:00'));
+
+  // 失败腿：写入 ack=false ⇒ 状态报错、本地值不变。
+  await page.evaluate(() => { window.__saveOk = false; });
+  await bClear.tap();
+  await confirmBar.locator('.llm-failure-window-yes').tap();
+  await page.waitForFunction(() => window.__saved.length === 3);
+  ok((await card.locator('.llm-failure-status').textContent()).includes('保存失败'), 'ack 失败时状态行报错');
+  ok((await winBox.locator('.llm-failure-window-value').textContent()).includes('01:00-06:00'), '失败不篡改显示值');
+  await page.evaluate(() => { window.__saveOk = true; });
 
   console.log('[3] 点「去设置」触发 openSettings');
   await bSettings.tap();

@@ -12,6 +12,14 @@
  *   C4 provider id 兜底：ProviderFailureGroups 无逐行明细时从正文提取 provider/model 形状。
  *   C5 「去设置」接线：main.js 给卡 deps.openSettings（openSettingsPanel 同一入口）。
  *
+ * 增量（作者 09:48「卡片上应该要可以直接设置」）：
+ *   C6 卡内设置区：窗口受限卡内嵌该 provider 当前 unavailableWindows（provider 取自
+ *      modelRef）+ 快捷动作预设（清除窗口 / 仅深夜 01:00-06:00）。
+ *   C7 确认一步：快捷动作只 arm 确认条，写入只在二次「确认」后发生（deps.saveWindows）；
+ *      取消 = 零写入。
+ *   C8 写入链路单点：卡内写入 = providersUi.saveProviderWindowsWithAck → saveProviderWithAck
+ *      （设置面板同一条），main.js 注入 getWindows/saveWindows；「去设置」跳转保留。
+ *
  * 用法：node scripts/check-provider-notice-unify.mjs [--root <dir>]；退出码 0 = 绿，1 = 有缺失。
  */
 import fs from 'node:fs';
@@ -28,6 +36,7 @@ const read = (rel) => {
 const CARD = read('src/main/resources/web/js/llmFailureCard.js');
 const MAIN = read('src/main/resources/web/js/main.js');
 const STATUS = read('src/main/resources/web/js/providerFailureStatus.js');
+const PROVIDERS_UI = read('src/main/resources/web/js/sidebar/providersUi.js');
 const SIGNAL = read('src/main/scala/nebflow/llm/LlmFailureSignal.scala');
 const GROUPS = read('src/main/scala/nebflow/shared/ProviderFailureGroups.scala');
 
@@ -47,6 +56,22 @@ const checks = [
     /providerFallback/.test(GROUPS) && /受限：/.test(GROUPS)],
   ['C5 去设置接线（openSettingsPanel 单点入口）',
     /openSettings: openSettingsPanel/.test(MAIN)],
+  ['C6 卡内设置区（当前窗口值 + provider 取自 modelRef）',
+    /className = 'llm-failure-window'/.test(CARD) && /当前：\$\{formatWindows\(/.test(CARD)
+      && /providerOfModelRef\(m\.modelRef\)/.test(CARD)],
+  ['C6 快捷动作预设（清除窗口 / 仅深夜 01:00-06:00）',
+    /label: '清除窗口'/.test(CARD) && /label: '仅深夜 01:00-06:00'/.test(CARD)
+      && /windows: \[\{ from: '01:00', to: '06:00' \}\]/.test(CARD)],
+  ['C7 确认一步（快捷动作只 arm，写入只在确认后）',
+    /b\.onclick = \(e\) => \{ e\.stopPropagation\(\); arm\(preset\); \}/.test(CARD)
+      && /bYes\.onclick = async[\s\S]{0,400}await deps\.saveWindows\(providerId, preset\.windows\)/.test(CARD)
+      && /bNo\.onclick[\s\S]{0,120}disarm\(\)/.test(CARD)],
+  ['C8 写入链路单点（saveProviderWindowsWithAck → saveProviderWithAck）',
+    /export function saveProviderWindowsWithAck[\s\S]{0,600}return saveProviderWithAck\(name, data, ''\)/.test(PROVIDERS_UI)
+      && /saveWindows: saveProviderWindowsWithAck/.test(MAIN)
+      && /getWindows: getProviderWindows/.test(MAIN)],
+  ['C8 去设置跳转保留（高级编辑入口）',
+    /去设置/.test(CARD) && /openSettings/.test(CARD)],
 ];
 
 let bad = 0;

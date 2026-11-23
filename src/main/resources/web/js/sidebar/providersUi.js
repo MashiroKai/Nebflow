@@ -90,6 +90,38 @@ export function saveProviderWithAck(name, data, existingName) {
   });
 }
 
+/**
+ * 卡内快捷设置面（provider-notice-card-unify 批 2026-11-23 增量；作者 09:48
+ * 「卡片上应该要可以直接设置」）：读该 provider 的 live unavailableWindows
+ * （`state.parsedConfig` 快照；configData 刷新即同步）。返回副本，调用方不可改快照。
+ * @param {string} providerName
+ * @returns {Array<{from:string, to:string, days?:number[]}>}
+ */
+export function getProviderWindows(providerName) {
+  const p = state.parsedConfig?.llm?.providers?.[String(providerName || '')];
+  const list = Array.isArray(p && p.unavailableWindows) ? p.unavailableWindows : [];
+  return list.map((w) => ({ ...w }));
+}
+
+/**
+ * 卡内快捷动作的唯一写入口：读当前 provider 条目 → 只改 `unavailableWindows` →
+ * 走 `saveProviderWithAck`（= 设置面板同一条 `updateConfig` 写入链路，requestId ack；
+ * 其余字段原样保留，不做覆盖式写入）。true = 服务端已确认；false = 配置快照缺失 /
+ * 连接断 / 超时失败（调用方保持卡面并提示，不改本地值）。
+ * @param {string} providerName
+ * @param {Array<{from:string, to:string, days?:number[]}>} windows
+ * @returns {Promise<boolean>}
+ */
+export function saveProviderWindowsWithAck(providerName, windows) {
+  const name = String(providerName || '');
+  const p = state.parsedConfig?.llm?.providers?.[name];
+  if (!p || typeof p !== 'object') return Promise.resolve(false);
+  const data = JSON.parse(JSON.stringify(p));
+  // 空段列表 = 显式 null（与设置面板 uwOut 同口径：深合并删键，不留空数组）。
+  data.unavailableWindows = Array.isArray(windows) && windows.length ? windows : null;
+  return saveProviderWithAck(name, data, '');
+}
+
 function flushConfigToServer() {
   const json = JSON.stringify(state.parsedConfig, null, 2);
   state.configText = json;

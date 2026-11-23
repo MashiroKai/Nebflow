@@ -120,3 +120,42 @@ test('窗口受限：聚合键仍为层级+模型（窗口描述不进键，同�
   const b = buildLlmFailureModel({ layer: 'root', modelRef: 'UTSC/glm-5.3-flash', failureClass: 'llm-schedule-window', windowDesc: '06:00-02:00' });
   assert.equal(a.key, b.key);
 });
+
+// ── 卡内直接设置（provider-notice-card-unify 增量批；作者 09:48「卡片上应该要可以直接设置」）──
+import {
+  providerOfModelRef, formatWindows, WINDOW_PRESETS,
+} from '../src/main/resources/web/js/llmFailureCard.js';
+
+test('卡内设置：模型引用取 provider 段（写入口按 provider 名落盘）', () => {
+  assert.equal(providerOfModelRef('UTSC/glm-5.3-flash'), 'UTSC');
+  assert.equal(providerOfModelRef('Irical/DeepSeek-V4.1-Flash-1017'), 'Irical');
+  assert.equal(providerOfModelRef('solo'), 'solo');
+  assert.equal(providerOfModelRef(''), '');
+  assert.equal(providerOfModelRef(undefined), '');
+});
+
+test('卡内设置：当前窗口展示串（段/星期/空态），不出现 undefined', () => {
+  assert.equal(formatWindows([]), '未配置窗口');
+  assert.equal(formatWindows(null), '未配置窗口');
+  assert.equal(formatWindows([{ from: '06:00', to: '01:00' }]), '06:00-01:00（每天）');
+  assert.equal(formatWindows([{ from: '01:00', to: '06:00', days: [1, 3] }]), '01:00-06:00（周一、周三）');
+  const multi = formatWindows([{ from: '01:00', to: '06:00' }, { from: '12:00', to: '13:00', days: [7] }]);
+  assert.equal(multi, '01:00-06:00（每天）；12:00-13:00（周日）');
+  assert.ok(!multi.includes('undefined'));
+});
+
+test('卡内设置：快捷预设 = 一键清除 + 仅深夜 01:00-06:00（两动作都在，段结构合法）', () => {
+  assert.equal(WINDOW_PRESETS.length, 2);
+  const clear = WINDOW_PRESETS.find((p) => p.id === 'clear');
+  const night = WINDOW_PRESETS.find((p) => p.id === 'night');
+  assert.ok(clear && Array.isArray(clear.windows) && clear.windows.length === 0, '清除 = 空段列表');
+  assert.equal(night.label, '仅深夜 01:00-06:00');
+  assert.deepEqual(night.windows, [{ from: '01:00', to: '06:00' }]);
+  // 段结构 = 引擎 unavailableWindows 契约（from/to HH:mm）
+  for (const p of WINDOW_PRESETS) {
+    for (const w of p.windows) {
+      assert.match(w.from, /^\d{2}:\d{2}$/);
+      assert.match(w.to, /^\d{2}:\d{2}$/);
+    }
+  }
+});

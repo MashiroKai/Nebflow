@@ -114,6 +114,10 @@ import {
   openSettingsPanel
 } from './sidebar.js';
 import { initOnboarding } from './onboarding.js';
+// 卡内快捷设置（provider-notice-card-unify 增量批；作者 09:48「卡片上应该要可以直接设置」）：
+// 窗口受限卡直接读写 provider unavailableWindows —— 写走 sidebar/providersUi.js 的
+// saveProviderWindowsWithAck（与设置面板同一条 saveProviderWithAck 写入链路）。
+import { getProviderWindows, saveProviderWindowsWithAck } from './sidebar/providersUi.js';
 import { rootDisplayName, initRootNameProbe, reprobeRootName } from './rootName.js';
 import {
   showNewSessionModal, hideModals, confirmNewSession,
@@ -1930,6 +1934,10 @@ onMessage('llmFailure', (msg) => {
       onDismiss: (k) => llmDismissed.add(k),
       // 窗口受限型「去设置」：同一设置面板打开入口（活动栏同款，单点接线）。
       openSettings: openSettingsPanel,
+      // 窗口受限型卡内直接设置（作者 09:48 增量令）：读 live 配置 + 写走设置面板同一链路；
+      // 写入确认后不手工收卡 —— 配置生效 ⇒ 引擎重试成功 ⇒ llmFailureRecovered 自动清卡。
+      getWindows: getProviderWindows,
+      saveWindows: saveProviderWindowsWithAck,
     });
     host.appendChild(card);
     createIconsIn(card);
