@@ -833,18 +833,35 @@ private[agent] object AgentProcessing:
             state.execution.outstandingSubagentResults
           )
         val boundaryEvents = drainedEvents ++ mailboxTaken
-        val eventMessages = boundaryEvents match
-          case Nil => Nil
-          case events =>
-            logAgentEvent(
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "pending-events-injected-at-tools-complete",
-              s"events=${events.size} remaining=${remainingEvents.size} mailbox=${mailboxTaken.size} mailboxHeld=${mailboxHeld}"
-            )
-            List(buildEventReminder(events))
+        // P1⑤（送达链路修复批 2026-11-23）：delegate 终态事件逐件独立成 user 消息——
+        // 不再并入工具结果批的编号 system-reminder（作者极易漏看，实证 11-22 按钮批
+        // R1）；其余事件保持既有合批形（buildEventReminder）。
+        val (terminalReportMessages, batchedBoundaryEvents) =
+          boundaryEvents.partition(MailboxDrain.isDelegateTerminal)
+        val eventMessages =
+          (if batchedBoundaryEvents.nonEmpty then
+             logAgentEvent(
+               agentDef,
+               depth,
+               state.sessionId,
+               state.sessionName,
+               "pending-events-injected-at-tools-complete",
+               s"events=${batchedBoundaryEvents.size} remaining=${remainingEvents.size} mailbox=${mailboxTaken.size} " +
+                 s"mailboxHeld=${mailboxHeld} terminalOwn=${terminalReportMessages.size}"
+             )
+             List(buildEventReminder(batchedBoundaryEvents))
+           else
+             logAgentEvent(
+               agentDef,
+               depth,
+               state.sessionId,
+               state.sessionName,
+               "pending-events-injected-at-tools-complete",
+               s"events=0 remaining=${remainingEvents.size} mailbox=${mailboxTaken.size} mailboxHeld=${mailboxHeld} " +
+                 s"terminalOwn=${terminalReportMessages.size}"
+             )
+             Nil
+          ) ++ terminalReportMessages.map(e => MailboxDrain.injectionMessages(List(e)).head)
         // ── 注入时机判定**单点**（midturn-injection-timing 批 2026-11-05）─────────
         // 三条注入腿（用户输入 / Mail delegate / dispatcher→node）在本工具边界
         // 「即注入」还是「留队等下一个边界」，**唯一**由

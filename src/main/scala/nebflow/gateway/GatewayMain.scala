@@ -2739,6 +2739,11 @@ object GatewayMain extends IOApp:
                                                             // 经 ProcessSeal 引导——封存下零注册、只留一行 `[seal]` 说明；
                                                             // 同拍搭车的 DelegateDeliveryReceipts 等邻居
                                                             // 不属邮件/心跳，不动（见 TaskStuckWatcher 注）。
+                                                            // 裁定（送达链路修复批 2026-11-23 P1④）：11-03 封存令对
+                                                            // 本腿属**误伤**——held 催注是投递可靠性自检，不是邮件
+                                                            // 投递进程；dev/sbt 启动配置（build.sbt javaOptions）已显式
+                                                            // `-Dnebflow.mail.process.enabled=true`，gateway 重启后本腿
+                                                            // 重新进 boot 链（封存/开启两档语义与 ProcessSeal 不变）。
                                                             _ <- ProcessSeal.launch(
                                                               ProcessSeal.Realm.Mail,
                                                               "HeldDeliveryWatchdog"

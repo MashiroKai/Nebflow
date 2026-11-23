@@ -203,6 +203,24 @@ private[agent] object MailboxDrain:
       case many => buildEventReminder(many)
   end mailboxMessage
 
+  /**
+   * 终报独立注入单点（送达链路修复批 2026-11-23 P1⑤）：delegate 终态事件
+   * （completed/failed/cancelled/crashed）**逐件成独立 user 消息**，不再并入
+   * 工具结果批的编号 system-reminder——实证（11-22 按钮批 R1）终报以
+   * `<system-reminder>1. …` 形态挤进工具结果批，作者面板上极易漏看。
+   * 非终态事件保持既有合批形。无终态件 ⇒ 逐字回落 [[mailboxMessage]] 原形态。
+   * 气泡面不动：notifyBatch → visibility 本就逐件发射（前端 renderInjectedBubble
+   * 逐行渲染 delegate 完工卡），本批只修模型面/转录形态。
+   */
+  def injectionMessages(events: List[AgentCommand.ExternalEvent]): List[Message] =
+    val (terminals, others) = events.partition(isDelegateTerminal)
+    terminals.map(e => mailboxMessage(List(e))) ++
+      (if others.nonEmpty then List(mailboxMessage(others)) else Nil)
+
+  /** delegate 终态事件判据（与 terminalNotifications / TurnBoundaryDrains.isSubagentResult 同族）。 */
+  private[agent] def isDelegateTerminal(e: AgentCommand.ExternalEvent): Boolean =
+    e.source == "delegate" && Set("completed", "failed", "cancelled", "crashed").contains(e.eventType)
+
   /** 接收可见性（流事件 + 注入泡）——与 idle 直投腿同点同形。 */
   private def visibility(
     resources: SharedResources,
@@ -434,7 +452,7 @@ private[agent] object MailboxDrain:
             depth,
             parentRef,
             baseState
-              .withMessages(baseState.messages :+ mailboxMessage(events))
+              .withMessages(baseState.messages ++ injectionMessages(events))
               .withOutstandingSubagentResults(newOutstanding)
               .withNextLoopTurn, // Block 3：邮箱注入 = 新 turn
             contReplyTo // idle 直投腿同位：屏障依赖唤醒轮的 Completed 复检投递集
@@ -516,7 +534,7 @@ private[agent] object MailboxDrain:
         if events.isEmpty then state
         else
           state
-            .withMessages(state.messages :+ mailboxMessage(events))
+            .withMessages(state.messages ++ injectionMessages(events))
             .withOutstandingSubagentResults(math.max(0, state.execution.outstandingSubagentResults - takenSub))
     }
 end MailboxDrain
