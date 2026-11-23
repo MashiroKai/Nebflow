@@ -103,6 +103,10 @@ export const CHECKS = [
     argv: [process.execPath, 'tests/canvas-tab-handover.spec.mjs'] },
   { name: 'mobile-decision-preview-occlusion', profiles: ['frontend'], timeoutMs: 120_000,
     argv: [process.execPath, 'tests/mobile-decision-preview-occlusion.spec.mjs'] },
+  // 叠卡视图一次性轴锁闸（作者 2026-11-23 10:23 报：斜滑被误判成纵向）：真触屏 CDP
+  // 序列 A1–A4 + 负对照 N1 + touch-action 静态钉；修前 A3/A3b 红、修后全绿。
+  { name: 'mobile-stack-swipe-axis-lock', profiles: ['frontend'], timeoutMs: 240_000,
+    argv: [process.execPath, 'tests/mobile-stack-swipe-axis-lock.spec.mjs'] },
   // 滚域末端净空单源批（2026-11-18 作者令「滚到底底部内容必须完整显示」）：17 个
   // 全屏页逐页 E1–E5（过底 / 末行 ≤ dock 上缘 − 8 / 净空在内容级且 = token /
   // token 非零 / dock 带内无卡死件）+ E0 静态单源。改到哪页漏净空即红。
