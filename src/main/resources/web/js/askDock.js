@@ -115,7 +115,8 @@ import { define } from './component.js';
 // 流式/提交/中断/贴底跟随）抽成共用件 askDialog.js —— canvas 档与选区档各自 new 一份
 // 实例（同一实现、两份座位/绑定），本文件只留画布侧脚手架（入口钮/记事本/可见性闸/
 // 座位/会话账与落盘/拖拽改尺寸/画布专属帧）。
-import { createAskDialog, svgNode } from './askDialog.js';
+import { svgNode } from './askDialog.js';
+import { createAskPanel } from './askPanel.js';
 // canvas-inline-diff-review（2026-11-16）：diff 审阅退出会话问答路径（提案 diff
 // 卡整体退役），ask_edit/ask_write 的直接落盘审阅态由 askEditReview 模块在 canvas
 // 审阅页签呈现——本模块只把 askEdit* 帧路由过去，不再自持任何审阅态。
@@ -224,7 +225,9 @@ let wired = false; // 元素级监听/观察器已绑（节点复用 ⇒ 只绑�
 // 抽取批（2026-11-18）：气泡列贴底跟随 latch / 胶囊 / typing / 中断状态机实例
 // 全部随「Ask 对话框内核」搬进 askDialog.js —— 本文件经 dlg.* 驱动（同一条腿，
 // 只是所有者换成了对话框实例）。
-/** @type {ReturnType<typeof createAskDialog>|null} */
+/** 门面句柄（askPanel.js）：开/收/是否开着一律经它；内核实例 = askFace.dialog。 */
+let askFace = null;
+/** @type {ReturnType<typeof createAskPanel>['dialog']|null} */
 let dlg = null;
 let currentFile = ''; // absPath of the active file entry ('' = 非文件卡)
 let inited = false;
@@ -296,9 +299,22 @@ function loadPersisted(sid) {
     if (!v || !Array.isArray(v.msgs)) return null;
     const msgs = v.msgs
       .filter((m) => m && typeof m.text === 'string' && PERSISTED_ROLES.includes(m.role))
-      .map((m) => ({ role: m.role, text: m.text }));
+      .map(persistRow);
     return msgs;
   } catch { return null; }
+}
+
+/** 转录行 → 落盘行（附图批：images 只落 {name,path}——live 件的 objectURL 不可落盘）。 */
+function persistRow(m) {
+  const row = { role: m.role, text: m.text };
+  // 时间戳随行落盘（canvas ask 时间分隔线批）：缺席不落键，旧行形态不变。
+  if (typeof m.ts === 'number' && Number.isFinite(m.ts) && m.ts > 0) row.ts = m.ts;
+  if (Array.isArray(m.images) && m.images.length) {
+    const kept = m.images.filter((i) => i && typeof i.path === 'string' && i.path)
+      .map((i) => ({ name: i.name || '', path: i.path }));
+    if (kept.length) row.images = kept;
+  }
+  return row;
 }
 
 /** 写某会话的本地转录（write-through 单点；任何突变后调用）。 */
@@ -308,7 +324,7 @@ function persistSession(s) {
     const rows = s.msgs
       .filter((m) => PERSISTED_ROLES.includes(m.role))
       .slice(-SESS_MAX_MSGS)
-      .map((m) => ({ role: m.role, text: m.text }));
+      .map(persistRow);
     localStorage.setItem(key(SESS_STORE_PREFIX + s.sid), JSON.stringify({ ts: Date.now(), msgs: rows }));
     pruneSessionStore();
   } catch { /* 私密模式 / quota —— 体验加速面，静默降级 */ }
@@ -437,7 +453,7 @@ function buildFab() {
  *   <button class="ask-stop ds-turn-btn ds-turn-btn--stop">
  */
 function buildDialog() {
-  dlg = createAskDialog({
+  askFace = createAskPanel({ dialog: {
     tt,
     panelClass: 'ask-dock',
     placeholder: tt('针对这份文件提问…', 'Ask about this file…'),
@@ -449,7 +465,13 @@ function buildDialog() {
     // cfg.onQueued 原样回传）——false = 连接未开、帧进了 ws.js 的 pending 队列
     //（有界，连接恢复后按序补发）⇒ 落「已提交排队 / 会话未连接」态，界面直说现状
     // 并给出路（改前这一处境零可见性：问完就一个转圈）。
-    send: (s, v) => sendWs({ type: 'askQuestion', sessionId: s.sid, content: v, mainSessionId: state.activeSessionId || '' }),
+    // 附图批：第三参 = 图片载荷（主会话 userMessage.attachments 同形）；无图 ⇒ 帧不带该键。
+    send: (s, v, media) => sendWs({ type: 'askQuestion',
+      sessionId: s.sid,
+      content: v,
+      mainSessionId: state.activeSessionId || '',
+      ...(media && media.length ? { attachments: media } : {}),
+    }),
     // 帧入队可见性（上同）：挂钩本体是通用的，这里只把回调指到本文件的上报单点。
     onQueued: (s, sent) => { noteAskQueued(s, !sent); },
     // 帧事实喂入口（状态可见性与失败上报批）：内核 consume 每收一帧就回调一次
@@ -464,7 +486,8 @@ function buildDialog() {
     onUnread: () => syncUnreadDot(),
     onPersist: (s) => persistSession(s),
     onStateExtra: (msg) => consumeAskState(msg),
-  });
+  } });
+  dlg = askFace.dialog;
   // 状态行（状态可见性与失败上报批）：面板自己的独立一行，坐落在 `.ask-colwrap`
   // 与输入条之间（与记事本 `.note-status` 同一处方）；DOM 归本文件造，槽位用的是
   // 内核已暴露的输入条引用——不在内核里再添一套状态展示。
@@ -1284,7 +1307,7 @@ function onTabClosed() {
 //    移动端让位切换条同口径。）
 
 /** 记事本种子落点对账（P2 续批④ 位置感知液态形变）：闭态种子的落点 = **note
- *  入口钮圆心**（stand-dev 插件包 `references/frontend/` 的苹果设计语言文档 §5.2「起点取被操作真实控件的 rect 中心」；
+ *  入口钮圆心**（stand-dev 插件包 `references/frontend/apple-design-language.md` §5.2「起点取被操作真实控件的 rect 中心」；
  *  改前种子恒 `translateY(…)` 只落 dock 右下角正下方 = ask 钮位——note 钮在
  *  ask 钮左邻一格，形变起手读作「ask 钮长出记事本」）。两条位移以**实测 rect**
  *  派生写进 --note-seed-dx/--note-seed-dy（座位 fixed/absolute、epub 阅读器
@@ -1373,7 +1396,7 @@ function syncSeat() {
 
 // ── 开合（作者令⑧：transform-origin 锚定按钮圆心，开合同一曲线）───────────
 
-function isOpen() { return !!dlg && dlg.isOpen(); }
+function isOpen() { return !!askFace && askFace.isOpen(); }
 
 // ── FAB 通知点（作者令 2026-10-29「三修②」：绿点=未读通知，无未读不显示）──
 // 旧口径「has-sess = 会话有过消息 → 紫点常显」退役。未读判定单点：AI/注入帧
@@ -1399,7 +1422,7 @@ async function open() {
   if (!s) return;
   s.unread = false; // 打开即读：通知点熄灭（ask 三修 2026-10-29 未读语义）
   restoreSize(el.askSurface); // 持久化缺陷批：尺寸偏好与记事本同一条恢复腿
-  dlg.openDom();
+  askFace.open();
   el.fab.classList.add('open');
   el.fab.classList.remove('pulse');
   dlg.render();
@@ -1415,7 +1438,7 @@ async function open() {
 /** 组件方法 close()：收起对话框（原型 close() 的对外契约，签名不变）。 */
 function close() {
   if (!el) return;
-  dlg.closeDom();
+  askFace.close();
   el.fab.classList.remove('open');
   syncTurnStatus(); // 收起即隐状态行（isOpen() 参与判定，收起点零残留）
   renderHandoff(); // ask-scope 批：收起即隐转交状态行（同一条判定腿）

@@ -10,6 +10,7 @@ function showBatchDeleteModalLazy() {
   import('./modal.js').then(({ showBatchDeleteModal }) => showBatchDeleteModal());
 }
 import { renderMarkdownWithMath, smartScroll, stopSpinner, createIconsIn, statusIcon } from './utils.js';
+import { applyReplayFace } from './outputTag.js';
 import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF, bindCollapsibleToggle } from './chat.js';
 import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTodoTaskList } from './todoFace.js';
@@ -72,6 +73,7 @@ import { bindProviderPanel, PROVIDER_PANEL_HOST_ID } from './sidebar/providerPan
 // 同批②：设置页「模型回退链」节——/model 面板的回退链编辑器原样再放一份，
 // 内容面/状态/保存通道与面板同源（modelPanel.js 单点实现）。
 import { mountModelChainSection } from './modelPanel.js';
+import { mountModelRulesSection } from './sidebar/modelRulesPanel.js';
 // 连接性测试钮已随 settings-panel-fourfix 批 ②件（2026-10-29 作者令「连接性
 // 测试按钮应放到 LLM provider 配置页面里」）迁入 provider 编辑弹窗——设置页
 // provider 卡模型行不再携带测试钮；模块 = sidebar/modelTestButton.js（弹窗面
@@ -495,6 +497,7 @@ let ttlAdvanceExpanded = false;
 /** 模型回退链节上一任卸载函数（配置面风格统一批②：renderSettings 重渲前
  *  先卸上一任 mountModelChainSection 的监听，不叠订阅）。 */
 let modelChainUnmount = /** @type {(() => void)|null} */ (null);
+let modelRulesUnmount = /** @type {(() => void)|null} */ (null);
 
 /** Backend defaults — mirrors ToolResultTtlConfig.parseStrict bounds. Used
  *  both for rendering before the first echo and for local pre-validation. */
@@ -865,19 +868,17 @@ export function renderSettings() {
   // 造型单点 = css/settingsRows.css（令牌 --set-* 落在 css/stand-tokens.css）。
   // 「能进下一面板」的行一律 setNavRow（图标位 + 主标题 + 单个副值 + chevron），
   // 读数/控件行一律 setRow（同一高度网格）；动作按钮一律 .set-btn（同尺寸令牌）。
+  // ── 通用 + 运行时 融合为单块（作者令 2026-11-22 18:51「把设置面板里的通用和运行时融合为
+  // 一个块」）：原「通用」（语言 / 外观）与「运行时」（思考 / 日志 / 工作时段 / 语音 / 工具
+  // 结果缓存 / 开机自启）两个分区 + 两张白卡 ⇒ 一个分区（标题「通用」）+ 一张白卡。两组设置
+  // 项在卡内各自成组（setGroup），组间靠 settingsRows.css 的组间分隔线区分。
+  // 卡内不再发射第二个卡标题（栏目名去重：分区头 = 唯一栏目名，机检见
+  // scripts/check-settings-section-dedupe.mjs）。
   content.innerHTML = `
     <section class="sp-panel-group" data-panel-group="general"><h2>${t('settings.general')}</h2>
-      ${setCard({ body: setGroup(setRow({ title: t('settings.language'), control: `<select class="cfg-select set-field" id="cfg-language" style="width:auto">${langOpts}</select>` })) })}
-      ${ORB_SETTINGS_VISIBLE ? setCard({ title: t('settings.appearance'), body: renderAppearanceSection() }) : ''}
-    </section>
-    <section class="sp-panel-group" data-panel-group="runtime"><h2>${t('settings.runtime')}</h2>
-    <!-- 栏目名去重批（2026-11-18 作者实拍报障「每一栏都出现两次栏目名 比如高级 高级」）：
-         单卡分区的卡内标题与 section 标题逐字相同 ⇒ 二取一，保留**卡外**的 section
-         标题（它是全页分组节奏的唯一承载体，删掉会让本组脱离「组标题 + 白卡」的版式），
-         卡内标题整件撤除。多卡分区（模型与服务：服务商 / 模型（按会话类别）/ 密钥）
-         的卡内标题与 section 标题不同名 ⇒ 一个不动。机检：
-         scripts/check-settings-section-dedupe.mjs 逐对核（红/绿自证）。 -->
     ${setCard({ body: `
+      ${setGroup(setRow({ title: t('settings.language'), control: `<select class="cfg-select set-field" id="cfg-language" style="width:auto">${langOpts}</select>` }))}
+      ${ORB_SETTINGS_VISIBLE ? renderAppearanceSection() : ''}
       ${setGroup(
         setRow({
           title: t('settings.thinkingMode'),
@@ -923,6 +924,9 @@ export function renderSettings() {
         <div class="set-row-hint" id="model-chain-hint">${t('settings.modelChainSectionHint')}</div>
         <div id="model-chain-section-body"></div>
       </div>` })}
+    ${setCard({ title: t('settings.modelRulesTitle'), id: 'model-rules-section', body: `
+      <div class="set-row-hint">${t('settings.modelRulesHint')}</div>
+      <div id="model-rules-section-body"></div>` })}
       <!-- 🔴 provider-add-tabs 批（2026-11-06 作者令）：原 Jev 卡（setNavRow
            #jev-advance-toggle + #jev-advance-body）与生图卡（#imagegen-advance-toggle
            + #imagegen-section-wrap）两节随三入口统一整件退役——生图收进上方唯一
@@ -997,7 +1001,7 @@ export function renderSettings() {
       </div>
     ` })}</section>`;
 
-  for (const name of ['general', 'models', 'runtime', 'advanced', 'about']) {
+  for (const name of ['general', 'models', 'advanced', 'about']) {
     const group = content.querySelector(`[data-panel-group="${name}"]`);
     if (group) content.appendChild(group);
   }
@@ -1014,6 +1018,9 @@ export function renderSettings() {
   modelChainUnmount = settingsDisclosure.models
     ? mountModelChainSection(document.getElementById('model-chain-section-body'))
     : () => {};
+  // 模型规则节（P5）：先卸后挂，重渲不叠监听。
+  modelRulesUnmount?.();
+  modelRulesUnmount = mountModelRulesSection(document.getElementById('model-rules-section-body'));
   // 设置页 apikey 明文回读预取（作者令 2026-10-27「设置里配置的 apikey 直接
   // 显示」）：进页即拉已存 provider key 真值（owner 鉴权单点
   // GET /api/config/provider-keys；providersUi 模块内 60s 缓存 + 单飞），编辑
@@ -2058,7 +2065,13 @@ export function resetChatForActiveSession() {
       row.className = 'row ai';
       pv.stream.currentAiBubble = document.createElement('div');
       pv.stream.currentAiBubble.className = 'bubble ai';
-      pv.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(pv.stream.aiText, true, { cache: !isStreaming, stream: isStreaming }) + (isStreaming ? '<span class="cursor"></span>' : '');
+      // 追加批（2026-11-22）：身份取服务端戳（sessionTextIdentity 与 sessionTexts 同写；
+      // 仅剩 pendingRestore 时取其落盘的 isRoot）。root ⇒ 报告面（与主腿同款）；
+      // 非 root / 缺戳 ⇒ 下方原全文渲染逐字不变。
+      const txtRoot = state.sessionTexts[sid] ? state.sessionTextIdentity[sid] === true : pendingData?.isRoot === true;
+      if (!applyReplayFace(pv.stream.currentAiBubble, pv.stream.aiText, { root: txtRoot, streaming: isStreaming, cache: !isStreaming })) {
+        pv.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(pv.stream.aiText, true, { cache: !isStreaming, stream: isStreaming }) + (isStreaming ? '<span class="cursor"></span>' : '');
+      }
       row.appendChild(pv.stream.currentAiBubble);
       chat.appendChild(row);
       if (!isStreaming) {

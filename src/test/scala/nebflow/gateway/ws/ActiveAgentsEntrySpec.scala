@@ -24,7 +24,7 @@ import nebflow.shared.SessionMeta
  *
  * `task` mirrors the live agentStart taskDescription (= session display
  * name, "team/agent" for mounted team sessions) so restored rows render
- * with the same team attribution as live ones.
+ * with the same root attribution as live ones.
  */
 class ActiveAgentsEntrySpec extends FunSuite:
 
@@ -53,17 +53,18 @@ class ActiveAgentsEntrySpec extends FunSuite:
     )
 
   test("contract: agentId equals sessionId — restore and live key spaces merge") {
-    val json = WebSocketRoutes.activeAgentEntryJson(rec("sid-123", AgentKind.Team), None)
+    val json = WebSocketRoutes.activeAgentEntryJson(rec("sid-123", AgentKind.Delegate), None)
     assertEquals(json.hcursor.get[String]("agentId"), Right("sid-123"))
     assertEquals(json.hcursor.get[String]("sessionId"), Right("sid-123"))
   }
 
-  test("mounted team session restores with team attribution (task = session name)") {
+  test("mounted team session restores with root attribution (task = session name)") {
     val m = meta("sid-123", "nebflow-project/Frontend", Some("Frontend"))
-    val json = WebSocketRoutes.activeAgentEntryJson(rec("sid-123", AgentKind.Team), Some(m))
+    // B5：Mail 激活的挂载会话登记为 Root（Team 枚举值已删）。
+    val json = WebSocketRoutes.activeAgentEntryJson(rec("sid-123", AgentKind.Root), Some(m))
     assertEquals(json.hcursor.get[String]("agentName"), Right("Frontend"))
     assertEquals(json.hcursor.get[String]("task"), Right("nebflow-project/Frontend"))
-    assertEquals(json.hcursor.get[String]("kind"), Right("Team"))
+    assertEquals(json.hcursor.get[String]("kind"), Right("Root"))
   }
 
   test("missing meta falls back: agentName = sessionId, task empty") {
@@ -86,7 +87,7 @@ class ActiveAgentsEntrySpec extends FunSuite:
   }
 
   test("panel refresh fields: status/startedAt/retryCount reflect record+taskStore") {
-    val r = rec("sid-r2", AgentKind.SubTask).copy(
+    val r = rec("sid-r2", AgentKind.Delegate).copy(
       status = nebflow.actor.AgentStatus.Processing,
       startedAt = 1724336000000L
     )
@@ -128,10 +129,10 @@ class ActiveAgentsEntrySpec extends FunSuite:
     assertEquals(json.hcursor.get[String]("agentName"), Right("实施-节点命名验证"))
   }
 
-  test("indexed meta takes precedence over displayName (team attribution unchanged)") {
+  test("indexed meta takes precedence over displayName (root attribution unchanged)") {
     // team/主会话既有归属语义零回归：meta.agentName 恒优先。
     val m = meta("sid-team", "nebflow-project/Frontend", Some("Frontend"))
-    val r = rec("sid-team", AgentKind.Team).copy(displayName = Some("不应胜出"))
+    val r = rec("sid-team", AgentKind.Delegate).copy(displayName = Some("不应胜出"))
     val json = WebSocketRoutes.activeAgentEntryJson(r, Some(m))
     assertEquals(json.hcursor.get[String]("agentName"), Right("Frontend"))
   }
@@ -170,7 +171,7 @@ class ActiveAgentsEntrySpec extends FunSuite:
 
   test("display-name contract: precedence meta > displayName > delegateTitle > sessionId (node/team face untouched)") {
     val m = meta("sid-team", "nebflow-project/Frontend", Some("Frontend"))
-    val r = rec("sid-team", AgentKind.Team).copy(displayName = Some("不应胜出"))
+    val r = rec("sid-team", AgentKind.Delegate).copy(displayName = Some("不应胜出"))
     val json = WebSocketRoutes.activeAgentEntryJson(r, Some(m), delegateTitle = Some("也不应胜出"))
     assertEquals(json.hcursor.get[String]("agentName"), Right("Frontend"))
     // displayName 档仍压 delegateTitle（Project 域行零回归）
@@ -201,12 +202,15 @@ class ActiveAgentsEntrySpec extends FunSuite:
   test("delegateDisplayTitle: blank values never surface; SubTask takes store description only") {
     assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.Delegate, Some("   "), Some("任务记录批名")), Some("任务记录批名"))
     assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.Delegate, Some(""), None), None)
-    assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.SubTask, Some("注册表批名"), Some("任务记录批名")), Some("任务记录批名"))
-    assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.SubTask, None, None), None)
+    // B5：SubTask 分支删除后，子代理会话（Delegate kind、DelegateRegistry 无记录）走
+    // registryTitle=None → orElse(storeDescription)，效果与原 SubTask 分支逐字相同。
+    assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.Delegate, None, Some("任务记录批名")), Some("任务记录批名"))
+    assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.Delegate, None, None), None)
   }
 
   test("delegateDisplayTitle: non-task kinds untouched (Team/Flow/External → None)") {
-    assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.Team, Some("X"), Some("Y")), None)
+    // B5：Team 枚举值已删，非 Delegate kind 的 None 分支改由 Flow 承载（同一判据）。
+    assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.Flow, Some("X"), Some("Y")), None)
     assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.Flow, Some("X"), Some("Y")), None)
     // 裁定4：外部 CLI 腿（ref=null，无 actor）也不参与批名解析
     assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.External, Some("X"), Some("Y")), None)
@@ -217,7 +221,7 @@ class ActiveAgentsEntrySpec extends FunSuite:
   test("panel tree: parentSessionId echoes the registry record (frontend derivation key)") {
     // Delegate/SubTask/BlockingSubagent/FlowDag(dag-) 注册点均写 parentSessionId；
     // 快照 face 原样出帧——前端按它建派生树（delegate 组头 + 缩进子行）。
-    val r = rec("subagent-ab12cd34", AgentKind.SubTask).copy(parentSessionId = "delegate-nebflow-12345678")
+    val r = rec("subagent-ab12cd34", AgentKind.Delegate).copy(parentSessionId = "delegate-nebflow-12345678")
     val json = WebSocketRoutes.activeAgentEntryJson(r, None)
     assertEquals(json.hcursor.get[String]("parentSessionId"), Right("delegate-nebflow-12345678"))
   }

@@ -169,7 +169,7 @@ class SubagentCrashRecoverySpec extends CatsEffectSuite:
         _ + ("subagent-orphan1" -> AgentRecord(
           sessionId = "subagent-orphan1",
           ref = childRef,
-          kind = AgentKind.SubTask,
+          kind = AgentKind.Delegate,
           rootSessionId = "delegate-crashed",
           parentSessionId = "delegate-crashed"
         ))

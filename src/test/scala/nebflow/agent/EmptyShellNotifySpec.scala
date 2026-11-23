@@ -22,13 +22,7 @@ import scala.concurrent.duration.*
  * 空壳通知回归测试（message-truncation-report.md 方案 A ＋ 四修① 2026-10-07 更订
  * ＋ P5 静默完成治理第二波更新）：
  *
- *  - 四修①后，「纯空白尾＋全会话零工具调用」= 空烧形态 → 不再是干净完成：
- *    监督者走重启/续推预算（maxRestarts=2），预算耗尽 → 照常交付完成回执
- *    （直接交付批 dcc430e42），但空回执**显式非静默**：payload 携带结构化
- *    `[delegate-diagnostic] no-final-text; …; empty-run` 行（判定机判词行已随
- *    直接交付批退役——引擎不伪造判词，诚实面 = 诊断行）。
- *  - trim guard 的存续面：**有工具调用**、终文纯空白 → 非空烧（真的干了活）→
- *    照常完成，payload 仍是 "(no text output)"（原方案的空壳防护不变）。
+ *  - 空白且无工具调用的末轮经过重试预算后明确失败；历史轮次的工具调用不豁免末轮。
  *  - 正常文本尾 → `"描述":\n<text>` 形态（原契约不变）。
  */
 class EmptyShellNotifySpec extends CatsEffectSuite:
@@ -101,7 +95,8 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
    */
   private def runCompletedPayload(
     testName: String,
-    messages: List[Message]
+    messages: List[Message],
+    eventType: String = "completed"
   ): String =
     val system = ActorSystem(s"empty-shell-$testName")
     val tmp = os.temp.dir()
@@ -172,11 +167,11 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
           SessionMailbox
             .scanPending(s"$testName-parent-session")
             .map(
-              _.exists(_.event.eventType == "completed")
+              _.exists(_.event.eventType == eventType)
             )
         )
         events <- SessionMailbox.scanPending(s"$testName-parent-session")
-      yield events.find(_.event.eventType == "completed").get.event.payload
+      yield events.find(_.event.eventType == eventType).get.event.payload
 
       program.unsafeRunSync()
     finally
@@ -189,7 +184,7 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
   end runCompletedPayload
 
   test(
-    "四修①: whitespace-only tail + zero tools = empty burn → restart chain, budget exhausted ⇒ completion delivered but EXPLICITLY marked: payload carries the no-final-text diagnostic with empty-run (never a fake silent completion)"
+    "whitespace-only final turn exhausts retries and delivers explicit failure"
   ) {
     // Last assistant message: thinking block + whitespace-only text ("\n\n")
     val messages = List(
@@ -199,21 +194,8 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
         Right(List(ContentBlock.Thinking("analysis..."), ContentBlock.Text("\n\n")))
       )
     )
-    val payload = runCompletedPayload("ws", messages)
-    // 空回执显式化（P5 第二波重钉现行语义）：空烧终态 = 完成回执 + 结构化诊断行
-    // （空烧 → empty-run 标记在场）；trim guard 面与 blocked 退役面保持。
-    assert(
-      payload.contains("(no text output)"),
-      s"trim-guard face must survive, got: ${payload.take(200)}"
-    )
-    assert(
-      payload.contains("[delegate-diagnostic] no-final-text"),
-      s"the silent completion must carry the structured diagnostic, got: ${payload.take(300)}"
-    )
-    assert(
-      payload.contains("empty-run"),
-      s"zero-tool burn must be marked empty-run, got: ${payload.take(300)}"
-    )
+    val payload = runCompletedPayload("ws", messages, "failed")
+    assert(payload.contains("empty-final-turn"), s"explicit empty-turn failure required: $payload")
     assert(
       !payload.contains("[delegate-judge] verdict: blocked"),
       "blocked 判词已按 #566 退役 —— delegate 面不得再产出 blocked 终态"
@@ -221,7 +203,7 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
   }
 
   test(
-    "tools were called + whitespace tail ⇒ NOT an empty burn: trim guard keeps '(no text output)' on the completion path"
+    "prior tool use does not exempt a whitespace-only final turn from failure"
   ) {
     val messages = List(
       Message(MessageRole.User, Left("do the thing")),
@@ -232,19 +214,8 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
         Right(List(ContentBlock.Thinking("analysis..."), ContentBlock.Text("\n\n")))
       )
     )
-    val payload = runCompletedPayload("ws2", messages)
-    assert(payload.contains("(no text output)"), s"expected '(no text output)' marker, got: ${payload.take(120)}")
-    assert(
-      !payload.trim.endsWith(":"),
-      s"payload must not end with bare colon (empty shell), got: ${payload.take(120)}"
-    )
-    // P5 第二波：干了活没说话的完成（非空烧）诊断行随行——toolCalls 计数、
-    // 无 empty-run 标记（任意工具调用即排除空烧）。
-    assert(
-      payload.contains("[delegate-diagnostic] no-final-text") && payload.contains("toolCalls=1"),
-      s"textless-but-worked completion must carry the diagnostic, got: ${payload.take(300)}"
-    )
-    assert(!payload.contains("empty-run"), s"tool work disqualifies empty-run, got: ${payload.take(300)}")
+    val payload = runCompletedPayload("ws2", messages, "failed")
+    assert(payload.contains("empty-final-turn"), s"prior tool use must not mask an empty final turn: $payload")
   }
 
   test("normal text tail still produces '\"desc\":\\n<text>' form") {

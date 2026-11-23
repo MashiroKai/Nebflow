@@ -39,6 +39,23 @@ object BackoffSupervisor:
    */
   private val InFlightChildStatuses = Set("running", "restarting")
 
+  /**
+   * 终态代际解析单点（送达链路修复批 2026-11-23 P0①，纯函数 = spec 判红锚）。
+   *
+   * 顺序：completion-debt 的代际（真实执行/续轮完成时铸造）> capturedRun（本轮
+   * runId，信封与任务行同一持久值）。**绝不再回落空串**——空代际会让终态身份
+   * 退化为裸 sessionId，撞上上一轮已消费墓碑后被 `mailOnce` 静默去重（实证
+   * 18 支批约 36 份续轮终报丢失的根因）。两者皆缺（legacy subtask 轨无 runId）
+   * 才保持空串（升级前行为逐字兼容）。
+   */
+  private[agent] def resolveTerminalGeneration(
+    debtGeneration: Option[String],
+    capturedRun: Option[String]
+  ): String =
+    debtGeneration.map(_.trim).filter(_.nonEmpty)
+      .orElse(capturedRun.map(_.trim).filter(_.nonEmpty))
+      .getOrElse("")
+
   private[agent] def completionDiagnosticText(
     turns: Int,
     toolCalls: Int,
@@ -1114,27 +1131,25 @@ object BackoffSupervisor:
             else
               val now = System.currentTimeMillis()
               val recent = restartHistory.filter(t => now - t < withinTimeRange.toMillis)
+              // 回合级空终轮（末轮零工具 ∧ 终文空/stub）：先重试（respawn 续推，
+              // 指数退避，fresh LLM 调用）；预算耗尽 ⇒ 显式失败（retryable），绝不
+              // 静默 completed（取代旧 delegate 轨 completeNormally 收尾）。
               if recent.length < maxRestarts then
                 logger.warn(
-                  s"BackoffSupervisor: child $childName completed EMPTY (no text, zero tool calls — empty burn), " +
-                    s"restarting #${recent.length + 1}/$maxRestarts instead of reporting completion"
+                  s"BackoffSupervisor: child $childName ended with an EMPTY final turn (no text, zero tool calls this turn — empty burn), " +
+                    s"retry #${recent.length + 1}/$maxRestarts instead of reporting completion"
                 )
                 respawnSafely(ctx, "empty-completion", now, recent)
-              else if source == "delegate" then
-                logger.warn(
-                  s"BackoffSupervisor: child $childName completed EMPTY with restart budget exhausted ($maxRestarts) — terminal verdict left to the deterministic precheck (blocked)"
-                )
-                completeNormally(messages)
               else
                 logger.warn(
-                  s"BackoffSupervisor: child $childName completed EMPTY with restart budget exhausted ($maxRestarts) — honest failed terminal"
+                  s"BackoffSupervisor: child $childName ended with an EMPTY final turn; retry budget exhausted ($maxRestarts) — explicit failed terminal (empty-final-turn), never a silent completion"
                 )
                 notifyParentAndStop(
                   "failed",
-                  s""""$description": empty completion — the worker produced no text and made no tool calls (empty burn), unresolved after $maxRestarts restarts""",
+                  s""""$description": empty-final-turn (provider stream empty after $maxRestarts retries) — the final turn produced no text and made no tool calls (empty burn)""",
                   JsonObject(
                     "failedSessionId" -> subagentId.asJson,
-                    "retryable" -> false.asJson,
+                    "retryable" -> true.asJson,
                     "failureType" -> "empty-burn".asJson
                   )
                 )
@@ -1185,9 +1200,14 @@ object BackoffSupervisor:
                 if source == "delegate" then settlementFace().map(f => (f._1.deepMerge(failureMeta), f._2, Some(f._3)))
                 else IO.pure((failureMeta, Nil, None))
               withFcAndFace.flatMap { case (fc, countedOids, partial) =>
+                // LLM 类失败（卡片批 2026-11-21）：上级邮箱正文只给中性句，provider 原文
+                // 零注入（屏障仍经同一 failed 事件释放）；非 LLM 类逐字原路径。
                 notifyParentAndStop(
                   "failed",
-                  s""""$description": ${error.message}$sessionInfo""",
+                  nebflow.llm.LlmFailureSignal.parentPayload(
+                    error.llmClass,
+                    description
+                  )(s"${error.message}$sessionInfo"),
                   fc,
                   roundCountedOids = countedOids,
                   roundPartial = partial
@@ -1765,7 +1785,10 @@ object BackoffSupervisor:
             val fallback = AgentRecord(
               sessionId = subagentId,
               ref = newChild,
-              kind = if source == "subtask" then AgentKind.SubTask else AgentKind.Delegate,
+              // B4 去 SubTask 名（§4.1 Q3 / 衍生清单 2：恢复机制保留、只去名）——
+              // ghost respawn 重建的条目统一为 Delegate kind；`source`（"subagent"/
+              // "subtask"/"delegate"）仍按原样区分通知轨与任务行域，逐字不动。
+              kind = AgentKind.Delegate,
               rootSessionId = parentSessionId,
               supervisorRef = Some(ctx.self),
               parentSessionId = parentSessionId
@@ -2077,16 +2100,21 @@ object BackoffSupervisor:
         //   - Mail 续轮的新完成 ⇒ 新代 ⇒ 新 identity ⇒ **不再被上一代已消费墓碑
         //     吞掉**（beed5aa 实证三轮 resume 漏报根因：裸 subagentId 身份命中
         //     delivered.json 墓碑 ⇒ AlreadyPresent 假去重）；
-        //   - 旧格式债（无代）回落裸 subagentId 身份，升级前行为逐字兼容。
+        //   - 旧格式债（无代）**不再回落裸 subagentId**：2026-11-23 送达链路修复批
+        //     P0①——续轮（resume-in-place）不重建 completion-debt ⇒ 查债得空 ⇒
+        //     代际退化为空 ⇒ 终态身份退化为裸 sessionId ⇒ 撞第一轮墓碑**静默丢弃**
+        //     （实证 18 支批约 36 份续轮终报从未到达父会话）。改由 capturedRun
+        //     （本轮 runId，信封/任务行同一持久值）兜底：每轮 runId 必不同 ⇒ 每轮
+        //     终态独立身份 ⇒ 续轮不再撞墓碑，且同轮崩溃重放仍幂等（同 runId）。
         val completionGenerationIO: IO[String] =
           if source == "delegate" then
             nebflow.core.mail.CompletionDebtStore
               .pending(subagentId)
               .map {
-                case Right(Some(debt)) => debt.generation
-                case _ => ""
+                case Right(Some(debt)) => resolveTerminalGeneration(Some(debt.generation), capturedRun)
+                case _ => resolveTerminalGeneration(None, capturedRun)
               }
-              .handleErrorWith(_ => IO.pure(""))
+              .handleErrorWith(_ => IO.pure(resolveTerminalGeneration(None, capturedRun)))
           else IO.pure(capturedRun.getOrElse(""))
 
         def terminalEventFor(completionGeneration: String): AgentCommand.ExternalEvent =
@@ -2172,8 +2200,11 @@ object BackoffSupervisor:
                     SessionMailbox.scanTaken(parentSessionId),
                     SessionMailbox.deliveredContains(parentSessionId, Set(terminalIdentity))
                   ).mapN { (pending, taken, delivered) =>
+                    // 墓碑语义硬化（P0②）：同身份不同载荷会被强制换为 `identity#f<指纹>` 入箱，
+                    // 确认腿须同时认该强制身份，否则每次重放都误报「身份冲突」。
                     delivered.contains(terminalIdentity) || (pending ++ taken).exists(entry =>
-                      entry.identity == terminalIdentity && entry.event.source == source &&
+                      (entry.identity == terminalIdentity || entry.identity.startsWith(s"$terminalIdentity#f")) &&
+                        entry.event.source == source &&
                         entry.event.eventType == eventType && entry.event.payload == payload
                     )
                   }.flatMap { confirmed =>
@@ -2481,16 +2512,27 @@ object BackoffSupervisor:
     messages.flatMap(_.content.toOption).flatten.count(_.isInstanceOf[ContentBlock.ToolUse])
 
   /**
-   * 空烧完成判据：全会话零工具调用 **且** 终文不可用——终文为空（thinking-only
-   * / 静默空轮，`turn-ended-empty` 形态）或止于 max_tokens 空烧 stub
-   * （[[Defaults.MaxTokensStubText]]，与 handleEmptyResponse 收尾文案同串）。
-   * 有真实终文（哪怕零工具）不算空烧——那是判定机的正常输入。
+   * 空终轮判据（回合级，2026-11-22 语义修复）：`messages` 末条即本轮收尾的
+   * assistant 回合（finishTurn 以 `messages :+ Assistant` 落盘）。它**本回合零
+   * tool_use** 且**终文不可用**——终文为空（thinking-only / 静默空轮，
+   * `turn-ended-empty` 形态）或止于 max_tokens 空烧 stub（[[Defaults.MaxTokensStubText]]）。
+   *
+   * 旧判据是全会话零工具，多工具重会话（7–167 次工具）末轮空烧被守卫整体放过、
+   * 静默判 completed（17 例团灭根因）。回合级判据下：
+   *  - 末轮带 tool_use ⇒ 非空终轮（正常中间态，原样走完成闸）；
+   *  - 末轮有真实终文 ⇒ 非空终轮（判定机的正常输入）；
+   *  - 之前回合有过工具调用**不再**豁免末轮空烧。
+   * 无任何消息（Nil）⇒ 视为空终轮（无产出即无终文）。
    */
   private[agent] def isEmptyBurnCompletion(messages: List[Message]): Boolean =
-    if sessionToolCalls(messages) > 0 then false
-    else
-      val last = extractLastAssistantText(messages)
-      last.isEmpty || last.trim == Defaults.MaxTokensStubText
+    messages.lastOption match
+      case None => true
+      case Some(lastMsg) =>
+        val lastToolCalls = lastMsg.content.toOption.getOrElse(Nil).count(_.isInstanceOf[ContentBlock.ToolUse])
+        if lastToolCalls > 0 then false
+        else
+          val text = lastMsg.textContent
+          text.trim.isEmpty || text.trim == Defaults.MaxTokensStubText
 
   /**
    * 配额/额度类取消判据（错误冻结批 2026-11-01，纯函数判红锚）：`AgentEvent.Cancelled`

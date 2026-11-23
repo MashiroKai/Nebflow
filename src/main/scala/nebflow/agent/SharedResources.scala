@@ -456,29 +456,9 @@ case class SharedResources(
    * 零新选择路径）；配置源 = `providerRegistry.currentConfig`（同一份热读 configRef）。
    */
   private[agent] def assignFallbackChain(actorId: String, agentDef: AgentDef): IO[Option[nebflow.llm.PinnedChain]] =
-    if providerRegistry == null then
-      nebflow.llm.ProviderConcurrency
-        .logAssign(actorId, agentDef.name, None, None, Some("registry-absent"))
-        .as(None)
-    else
-      for
-        cfg <- providerRegistry.currentConfig
-        chain <- providerRegistry.getCandidatesForAgentUnfiltered(agentDef.model)
-        configuredHead = chain.headOption.map(c => s"${c.providerId}/${c.model}")
-        pin <- nebflow.llm.ProviderConcurrency.assign(
-          providerConcurrency,
-          cfg,
-          actorId,
-          chain.map(c => c.providerId -> c.model)
-        )
-        _ <- nebflow.llm.ProviderConcurrency.logAssign(
-          actorId,
-          agentDef.name,
-          pin,
-          configuredHead,
-          Some(if chain.isEmpty then "empty-chain" else "all-full")
-        )
-      yield pin
+    nebflow.llm.ModelDecision
+      .spawnPin(providerRegistry, providerConcurrency, actorId, agentDef.name, agentDef.model)
+      .map(_.pin)
 
   /**
    * 钉链失效判读（model-404-freeze 批 2026-11-07）——纯判据在
@@ -772,7 +752,7 @@ case class SharedResources(
 
   /** 共享 spawn:readTracker/fileHistory 创建 + AgentActor spawn(NodeRunner 原体)。 */
   def spawnAgentActor(system: ActorSystem, p: NodeRunner.SpawnParams): IO[ActorRef[AgentCommand]] =
-    if p.protectedExecution.nonEmpty || protectedExecutions.contains(p.sessionId) then spawnActor(system, p)
+    if p.protectedExecution.nonEmpty || protectedExecutions.contains(p.sessionId) || !p.admissionGuard then spawnActor(system, p)
     else executionCommitPort.withUnprotectedSession(p.sessionId)(spawnActor(system, p))
 
   private def spawnActor(system: ActorSystem, p: NodeRunner.SpawnParams): IO[ActorRef[AgentCommand]] =
@@ -787,18 +767,20 @@ case class SharedResources(
       // 零行为变化：无父/未解析/非 kernel 身份一律放行（dispatcher 是本闸之后
       // 唯一被允许派生的 delegate 形态）。
       // The sole kernel exemption is the exact builtin subagent name, passed below.
-      _ <- nebflow.core.delegate.KernelChildSpawnGate.check(
-        agentRegistry,
-        p.parentRef,
-        p.sessionId,
-        p.agentDef.name
+      _ <- IO.whenA(p.kernelGate)(
+        nebflow.core.delegate.KernelChildSpawnGate.check(
+          agentRegistry,
+          p.parentRef,
+          p.sessionId,
+          p.agentDef.name
+        )
       )
       readTracker <- ReadTracker.create
       fileHistory <- FileHistory.create()
       // ── provider 并发上限 · 派发时刻分配（provider-concurrency 批）──────────────
       // 全仓唯一 assign 调用点（壳方法 private[agent]）。pin = None ⇒ 零行为变化。
       // spawn 失败 ⇒ onError 回滚占坑（幂等 release，不泄漏）。
-      providerChainPin <- assignFallbackChain(p.sessionId, p.agentDef)
+      providerChainPin <- if p.pinProvider then assignFallbackChain(p.sessionId, p.agentDef) else IO.pure(None)
       ref <- system.spawn(
         AgentActor(
           agentDef = p.agentDef,
@@ -807,11 +789,15 @@ case class SharedResources(
           depth = p.depth,
           parentRef = p.parentRef,
           sessionId = Some(p.sessionId),
-          sessionName = Some(p.sessionName),
+          sessionName = p.sessionNameOpt,
           initialMessages = p.initialMessages,
           readTracker = if p.withTracking then Some(readTracker) else None,
           fileHistory = if p.withTracking then Some(fileHistory) else None,
-          contextWindow = contextWindow,
+          contextWindow = p.contextWindowOverride.getOrElse(contextWindow),
+          rulesMd = p.rulesMd,
+          folderId = p.folderId,
+          gitBranch = p.gitBranch,
+          compactThresholdRatio = p.compactThresholdRatio,
           projectRoot = p.projectRoot,
           safetyMode = p.safetyMode,
           rootSessionId = p.rootSessionId,

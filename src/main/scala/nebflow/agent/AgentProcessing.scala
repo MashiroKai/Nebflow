@@ -123,7 +123,15 @@ private[agent] object AgentProcessing:
                       .warn(s"usage record failed: ${e.getMessage}")
                   )
               case _ => IO.unit
-          usageEvent *> usageRecordIO *> handleLlmCompleteBranch(
+          // 卡片批收卡钩子（2026-11-21 补接）：成功调用 ⇒ 若本代理在失败表内则发
+          // llmFailureRecovered / 收窄后的组快照；无失败态 ⇒ None，零刷帧。
+          val recoveredIO: IO[Unit] =
+            updatedState.sessionId.fold(IO.unit)(sid =>
+              nebflow.llm.LlmFailureCard.recordSuccess(sid, agentDef.name) match
+                case Some(frame) => updatedState.wsSend(frame).handleErrorWith(_ => IO.unit)
+                case None => IO.unit
+            )
+          usageEvent *> usageRecordIO *> recoveredIO *> handleLlmCompleteBranch(
             agentDef,
             resources,
             depth,
@@ -420,7 +428,28 @@ private[agent] object AgentProcessing:
                       .max(LlmFailBackoffBaseMs * (1L << math.max(state.llmFailRetries, 1) - 1), OverloadBackoffMinMs),
                     LlmFailBackoffMaxMs
                   ) + jitter
-              enterErrorFrozen(agentDef, resources, depth, parentRef, state, replyTo, errReason, resumeInMs, error)
+              // 卡片批（2026-11-21）：LLM 类冻结 ⇒ 发 llmFailure 卡（非阻塞：发帧即返回，
+              // 退避到期自动续跑，续跑成功由 recordSuccess 发 recovered 收卡）。
+              // provider-notice-card-unify 批（2026-11-23）：失败分类与窗口描述经
+              // LlmFailureCard 单点投影——时段窗全受限出 `llm-schedule-window` 卡态。
+              (if nebflow.llm.LlmFailureSignal.isLlmClass(error) then
+                 state.sessionId.fold(IO.unit)(sid =>
+                   state
+                     .wsSend(
+                       nebflow.llm.LlmFailureCard.recordFailure(
+                         sid,
+                         agentDef.name,
+                         Option(error.getMessage).getOrElse("unknown").take(300),
+                         LlmFailureCard.failureClassOf(error, errCls.reason.toString),
+                         LlmFailureCard.layerOf(depth, replyTo.isEmpty && parentRef.isDefined),
+                         LlmFailureCard.modelRefOf(error, agentDef.model.flatMap(_.preferred)),
+                         LlmFailureCard.windowDescOf(error).getOrElse("")
+                       )
+                     )
+                     .handleErrorWith(_ => IO.unit)
+                 )
+               else IO.unit) *>
+                enterErrorFrozen(agentDef, resources, depth, parentRef, state, replyTo, errReason, resumeInMs, error)
             else
               // 2026-11-02「循环检测误杀整批任务」批 ③：L1 终止路径的**交付面
               // 文本** = 终止原因 + 被终止那一轮已产出的助手输出（salvagedText）。
@@ -439,7 +468,9 @@ private[agent] object AgentProcessing:
                   depth,
                   AgentErrorType.LlmFailed,
                   errorText,
-                  retryable = Some(AgentActor.llmFailureRetryable(error))
+                  retryable = Some(AgentActor.llmFailureRetryable(error)),
+                  // 判据单点：LlmFailureSignal（卡片批）。团队路径与 subtask 路径共读此位。
+                  llmClass = nebflow.llm.LlmFailureSignal.isLlmClass(error)
                 )
               val errMsg = error match
                 case e: FallbackExhaustedError =>
@@ -493,13 +524,38 @@ private[agent] object AgentProcessing:
                   resources.sessionStore.durableSwapMessages(sid, cleanedState.messages) *>
                     resources.sessionStore.flushIndex
                 }
+                // 卡片批（2026-11-21）：致命 LLM 类失败 ⇒ llmFailure 卡（非阻塞）。判据 = agentError.llmClass
+                // （单点 LlmFailureSignal），与上级注入的 llmClass 同源。
+                // provider-notice-card-unify 批：分类/窗口描述同上方冻结腿（单点投影）。
+                _ <- cleanedState.sessionId.fold(IO.unit)(sid =>
+                  if agentError.llmClass then
+                    cleanedState
+                      .wsSend(
+                        nebflow.llm.LlmFailureCard.recordFailure(
+                          sid,
+                          agentDef.name,
+                          Option(error.getMessage).getOrElse("unknown").take(300),
+                          LlmFailureCard.failureClassOf(error, errCls.reason.toString),
+                          LlmFailureCard.layerOf(depth, replyTo.isEmpty && parentRef.isDefined),
+                          LlmFailureCard.modelRefOf(error, agentDef.model.flatMap(_.preferred)),
+                          LlmFailureCard.windowDescOf(error).getOrElse("")
+                        )
+                      )
+                      .handleErrorWith(_ => IO.unit)
+                  else IO.unit
+                )
                 // #25: a fatal failure must discharge the completion debt with
                 // Failed — a parked requester (supervisor/bridge waiting for the
                 // post-batch answer) would otherwise hang forever, and the clone
                 // would sit registered as running. Targets = this turn's replyTo
                 // plus any parked debt (deduped).
                 failTargets = (replyTo.toList ++ state.execution.owedCompletion).distinct
-                _ <- failTargets.traverse_(_ ! AgentEvent.Failed(cleanedState.sessionId.getOrElse(""), agentError))
+                // 卡片批（2026-11-21）：上行 Failed 的 message 是上级 LLM / 节点结果的输入，LLM 类只给
+                // 中性句（原文已由上方 recordFailure 卡片直呈用户）；非 LLM 类逐字原路径。
+                upstreamError = agentError.copy(message =
+                  nebflow.llm.LlmFailureSignal.upstreamMessage(agentError.llmClass)(agentError.message)
+                )
+                _ <- failTargets.traverse_(_ ! AgentEvent.Failed(cleanedState.sessionId.getOrElse(""), upstreamError))
                 // Mail team members have no replyTo (their turns are driven by
                 // UserInput(replyTo=None)), so the notification above is a no-op
                 // for them and a fatal LLM failure evaporated silently — the
@@ -521,8 +577,15 @@ private[agent] object AgentProcessing:
                     parent ! AgentCommand.ExternalEvent(
                       source = "team",
                       eventType = "failed",
-                      payload = s""""${agentDef.name}" (team member) hit a fatal LLM failure: """ +
-                        s"${Option(error.getMessage).getOrElse("unknown").take(200)}$sessionInfo",
+                      // LLM 类（卡片批 2026-11-21）：provider 原文零注入，只给中性句；
+                      // 非 LLM 类（代码异常等）逐字保留原文。
+                      payload =
+                        if agentError.llmClass then
+                          s""""${agentDef.name}" (team member) hit a fatal LLM failure: """ +
+                            s"${nebflow.llm.LlmFailureSignal.ParentNeutralNotice}$sessionInfo"
+                        else
+                          s""""${agentDef.name}" (team member) hit a fatal LLM failure: """ +
+                            s"${Option(error.getMessage).getOrElse("unknown").take(200)}$sessionInfo",
                       metadata = JsonObject(
                         "failedSessionId" -> sid.asJson,
                         "retryable" -> true.asJson,
@@ -725,7 +788,7 @@ private[agent] object AgentProcessing:
         val toolCalls = tc.results.map((call, _) => call)
         val assistantBlocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
         tc.thinking.foreach(t => assistantBlocks += ContentBlock.Thinking(t, tc.thinkingSignature))
-        if tc.originalText.nonEmpty then assistantBlocks += ContentBlock.Text(tc.originalText)
+        if !tc.originalText.isBlank then assistantBlocks += ContentBlock.Text(tc.originalText)
         toolCalls.foreach(c => assistantBlocks += ContentBlock.ToolUse(c.id, c.name, c.input))
         val assistantMsg = Message(MessageRole.Assistant, Right(assistantBlocks.toList))
         val resultBlocks = tc.results.map { (call, r) =>
@@ -780,18 +843,35 @@ private[agent] object AgentProcessing:
             state.execution.outstandingSubagentResults
           )
         val boundaryEvents = drainedEvents ++ mailboxTaken
-        val eventMessages = boundaryEvents match
-          case Nil => Nil
-          case events =>
-            logAgentEvent(
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "pending-events-injected-at-tools-complete",
-              s"events=${events.size} remaining=${remainingEvents.size} mailbox=${mailboxTaken.size} mailboxHeld=${mailboxHeld}"
-            )
-            List(buildEventReminder(events))
+        // P1⑤（送达链路修复批 2026-11-23）：delegate 终态事件逐件独立成 user 消息——
+        // 不再并入工具结果批的编号 system-reminder（作者极易漏看，实证 11-22 按钮批
+        // R1）；其余事件保持既有合批形（buildEventReminder）。
+        val (terminalReportMessages, batchedBoundaryEvents) =
+          boundaryEvents.partition(MailboxDrain.isDelegateTerminal)
+        val eventMessages =
+          (if batchedBoundaryEvents.nonEmpty then
+             logAgentEvent(
+               agentDef,
+               depth,
+               state.sessionId,
+               state.sessionName,
+               "pending-events-injected-at-tools-complete",
+               s"events=${batchedBoundaryEvents.size} remaining=${remainingEvents.size} mailbox=${mailboxTaken.size} " +
+                 s"mailboxHeld=${mailboxHeld} terminalOwn=${terminalReportMessages.size}"
+             )
+             List(buildEventReminder(batchedBoundaryEvents))
+           else
+             logAgentEvent(
+               agentDef,
+               depth,
+               state.sessionId,
+               state.sessionName,
+               "pending-events-injected-at-tools-complete",
+               s"events=0 remaining=${remainingEvents.size} mailbox=${mailboxTaken.size} mailboxHeld=${mailboxHeld} " +
+                 s"terminalOwn=${terminalReportMessages.size}"
+             )
+             Nil
+          ) ++ terminalReportMessages.map(e => MailboxDrain.injectionMessages(List(e)).head)
         // ── 注入时机判定**单点**（midturn-injection-timing 批 2026-11-05）─────────
         // 三条注入腿（用户输入 / Mail delegate / dispatcher→node）在本工具边界
         // 「即注入」还是「留队等下一个边界」，**唯一**由
@@ -2040,11 +2120,7 @@ private[agent] object AgentProcessing:
       "mail-reminder",
       s"agent finished without Mail (reminder ${state.mailReminders + 1}/$MaxMailReminders)"
     )
-    val assistantContent = (result.thinking, result.text) match
-      case (None, _) => Left(result.text)
-      case (Some(t), "") => Right(List(ContentBlock.Thinking(t, result.thinkingSignature)))
-      case (Some(t), txt) =>
-        Right(List(ContentBlock.Thinking(t, result.thinkingSignature), ContentBlock.Text(txt)))
+    val assistantContent = AgentFinishTurn.assistantContentOf(result.thinking, result.thinkingSignature, result.text)
     val assistantMsg = Message(MessageRole.Assistant, assistantContent)
     val reminderMsg = Message(
       MessageRole.User,
@@ -2261,7 +2337,7 @@ private[agent] object AgentProcessing:
     val toolCalls = tc.results.map((call, _) => call)
     val assistantBlocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
     tc.thinking.foreach(t => assistantBlocks += ContentBlock.Thinking(t, tc.thinkingSignature))
-    if tc.originalText.nonEmpty then assistantBlocks += ContentBlock.Text(tc.originalText)
+    if !tc.originalText.isBlank then assistantBlocks += ContentBlock.Text(tc.originalText)
     toolCalls.foreach(c => assistantBlocks += ContentBlock.ToolUse(c.id, c.name, c.input))
     val resultBlocks = tc.results.map { (call, r) =>
       ContentBlock.ToolResult(call.id, r.content, Some(r.isError))

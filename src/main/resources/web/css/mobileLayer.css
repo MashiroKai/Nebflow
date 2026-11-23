@@ -80,7 +80,8 @@
  *      --dock-inset-x 12 / --dock-inset-b 8、r999 全圆角、safe-area 避让照旧），
  *      材质 = glass.css 面级毛玻璃档（--glass-bg + blur24 + --cv-shadow，
  *      #input-bar 同配方单源，双主题自适应）；页面/输入卡让位面扩为胶囊
- *      全带，#mobile-pages::before 承载面背板防带区透出聊天根。五栏位/中键/
+ *      全带（承载面背板 `#mobile-pages::before` 已随 2026-11-21 dock 悬浮批整族
+ *      退役 —— 容器零背景，内容真穿到玻璃背后，见下方该块注释）。五栏位/中键/
  *      选中态/切换逻辑/角标行为零变化（几何契约随批钉进 mobile-dock.spec D13）。
  *
  * dock 头像边缘统一批（作者令 2026-11-01 22:3x）落位 —— 中键块改写：
@@ -601,8 +602,9 @@ body.mobile-layer .mh-chrome-badge[hidden] { display: none; }
    徽标行为零变化照旧）。五栏位/中键/选中态/切换逻辑/角标零变化。
    no-backdrop 降级（微信/X5）与 @supports 双保险在 glass.css 文件尾两块
    同步列名（实底档 = --glass-bg 原值，blur 摘除）。
-   dock 承载面（胶囊身后到底缘的带区）由 #mobile-pages::before 背景带承底
-   （下块）—— 收编根页的带区不再露出聊天根；胶囊毛玻璃即采样该平坦底。 */
+   dock 承载面（胶囊身后到底缘的带区）**不垫底**：`#mobile-pages` 是零背景零交互壳，
+   带区里画的就是宿主聊天根 / .live 页面自己的真实内容 ⇒ 胶囊毛玻璃采到的是内容
+   而不是常量色（垫层族 2026-11-21 dock 悬浮批整族退役，见下块注释）。 */
 /* 冷启动批⑧（2026-10-30 作者令「dock 中间对话钮缩小一档」）：50 → 44
    （4px 栅格下一档）。收形批⑤（作者令 10-31 22:50）：lift 12 → 0 —— 中键圆
    收回 dock 边界内（不再探出顶缘，悬浮感收口）。悬浮胶囊批：输入卡底距
@@ -847,35 +849,32 @@ body.mobile-layer #mobile-pages {
   inset: 0;
   z-index: 156;
   pointer-events: none; /* 容器永不拦截 —— 只有 .live 页面接收事件 */
+  background: none;     /* D-4：容器是零交互壳，一上色就盖住宿主聊天根（见下块） */
 }
-/* dock 承载面背板（悬浮胶囊批）：胶囊身后到底缘的整条带区补一层页面底色 ——
-   收编根页（.mobile-page 止于胶囊上缘）的带区不再透出下层聊天根；聊天根页
-   本底同 token，视觉零差。胶囊毛玻璃 backdrop 即采样该平坦底（浅暗双主题
-   自适应）。::before 先于子节点绘制（页 section 几何上不与本带重叠），
-   pointer-events 随容器继承 none，零交互感知。
-   ── 社交对话浮层三件批修订（作者令 2026-11-18 16:36「不是真透过」）──────
-   实测（375×812，修前）：本带**盖在页 section 之上**（不再是「先于子节点绘制」）
-   ⇒ dock 的 backdrop 在这一带恒为**平坦的 --color-bg**：
-     · 隐藏消息流（visibility:hidden）前后，dock 带像素逐值相同
-       （mean 24.86 → 24.86，sd 8.72 → 8.72）；把 backdrop-filter 关掉同样零变化
-       ⇒ 玻璃无内容可糊，读起来就是作者说的「半透明实底覆盖」；
-     · 把本带摘掉并把 .mobile-page 底色改红，dock 带立刻跟着变
-       （mean 24.86 → 48.12）⇒ 本带就是挡住内容的那个面。
-   修法 = 只把本带压到**页 section 之下**（z-index:-1，仍在本容器内、仍在聊天根
-   之上）：live 页是全高不透明面，天然盖住它（内容于是真正滚到 dock 玻璃背后）；
-   聊天根（无 .live 页）时本带照旧挡住宿主 #chat —— 原守卫语义一字不动。 */
-body.mobile-layer #mobile-pages::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: -1;
-  /* dock 座 = 单源 token（改前 = dock-h + inset-b + safe 的手写展开）。 */
-  height: var(--mobile-dock-top);
-  background: var(--color-bg);
-}
+/* ── dock 承载面背板：整族退役（作者裁定 2026-11-21 10:41「手机端 dock 在其他页面
+   都是悬浮效果，但主会话却是截断的 —— 都得是悬浮的」）──────────────────────────
+   退役件 = `body.mobile-layer #mobile-pages::before`（`position:absolute; bottom:0;
+   height: var(--mobile-dock-top); background: var(--color-bg)` 这条**扁平不透明带**）。
+  它此前有两个说法，两个都只是把缺陷挪了位置：
+     · 初版「::before 先于子节点绘制，胶囊毛玻璃采样该平坦底」；
+     · 社交对话浮层三件批（2026-11-18 16:36「不是真透过」）把它压到 z-index:-1。
+  实测（375×812 / 390×844 双档、亮暗双主题）：**只要页面不是 .live（= 聊天根 / 消息页），
+  这条带就是 `#mobile-pages`（z 156）里唯一上色的东西**，而该容器整层压在 `#chat` 之上
+  ⇒ 滚进带区（375×812 = y750–812）的聊天气泡被硬切遮住，dock 玻璃采样到平坦常量色 =
+  读起来「半透明实底覆盖 / 截断」；带区开/关逐行差 86–284 px，带底色改红 dock 带跟着
+  变红 ⇒ 它就是作者看到的那个面。有 .live 页时页面是全视口不透明面（.mobile-page
+  top:0/bottom:0 + --color-bg），天然承底，本带零贡献 —— 这正是「其他页面悬浮、
+  主会话截断」的唯一机制。
+   修法 = **删掉这条带**，容器回归零背景零交互壳：
+     · live 页：全高不透明面照旧承底，零视觉变化；
+     · 聊天根：容器透明 ⇒ #chat 内容真正滚到 dock 玻璃背后（与 canvas 同一「真透过」），
+       带区不再有任何垫层可切内容。
+   单源判据落 `design-language/references/frontend/mobile-chrome-spec.md` §1.1 D-4
+   （「#mobile-pages 容器含伪元素零背景」是硬判据，不是豁免位）；闸 =
+   `scripts/check-mobile-dock-float.mjs` F3。 */
 body.mobile-layer .mobile-page {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute;
   top: 0;
   bottom: 0;
@@ -1294,10 +1293,16 @@ body.mobile-layer .mh-tpanel .tp-glyph {
   border-radius: 50%;
   flex: none;
 }
-body.mobile-layer .mh-tpanel .tp-g-run { background: rgb(var(--brand-green)); }
-body.mobile-layer .mh-tpanel .tp-g-queue { background: var(--ds-dot-idle); }
+body.mobile-layer .mh-tpanel .tp-g-run {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: rgb(var(--brand-green)); }
+body.mobile-layer .mh-tpanel .tp-g-queue {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--ds-dot-idle); }
 /* 重启对账批 2026-10-22：已中断灰点（灰态语言——禁借 done 勾绿）。 */
-body.mobile-layer .mh-tpanel .tp-g-stop { background: var(--ds-dot-idle); opacity: 0.55; }
+body.mobile-layer .mh-tpanel .tp-g-stop {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--ds-dot-idle); opacity: 0.55; }
 body.mobile-layer .mh-tpanel .tp-ttl {
   flex: 1;
   min-width: 0;
@@ -1430,21 +1435,11 @@ body.mobile-layer .mh-search-head-ic {
   color: var(--color-frame-text-muted);
 }
 body.mobile-layer .mh-search-head-ic svg { width: 15px; height: 15px; }
-/* 角色行：类型·日期 tabs 之下第二筛选行（v3.6 筛选两行口径）。 */
-body.mobile-layer #mh-search-kind-row {
-  display: flex;
-  align-items: center;
-  height: 32px;
-}
-body.mobile-layer #mh-search-kind {
-  width: 100%;
-  height: 30px;
-  font-size: var(--mfs-min);
-  border-radius: var(--ds-radius-input);
-}
-/* F 批 2026-11-17（下拉统一）：select 被 .nf-select 包裹后，本行的填充职责
-   （width:100% 于 flex 行）上移到包裹层。 */
-body.mobile-layer #mh-search-kind-row .nf-select { flex: 1; min-width: 0; }
+/* 🔴 角色行整件退役（search-page-density 批 2026-11-21 作者令①）：
+   `#mh-search-kind-row` / `#mh-search-kind`（「全部来源」大下拉框）与来源 chips
+   行功能重复 —— 作者令「删掉下拉框，来源筛选只用小标签 chips……保留一行」。
+   DOM 由 js/mobile/searchFace.js 同批删除（**不是 display:none**），故这里不留
+   任何规则：无 DOM 即无死样式。chips 的落位/紧凑档见本段末「来源筛选行」。 */
 /* 🔴 三点入口批（2026-11-05 作者令「把搜索和搜索聊天记录结合，把胶囊的内容改为
    搜索聊天记录……下面的文字不要」）：页面名胶囊（`.mobile-page-title` = 「搜索聊天
    记录」）是本页**唯一**标题 ⇒ 面板头那枚重复标题整块退场。
@@ -1462,6 +1457,117 @@ body.mobile-layer #search-modal .search-result {
   padding: var(--ds-space-2) var(--ds-space-inline-x);
   margin-bottom: var(--ds-space-1h);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   🔴 搜索页空间瘦身（search-page-density 批 2026-11-21）
+
+   作者报障逐字：「搜索界面空间设计太浪费，功能与内容重复，要给内容可视空间让路。」
+   四条需求 → 本块的落点（原则只有一条：内容可视空间最大化）：
+
+     ① 去重复：来源筛选只剩 chips 一行（大下拉框 `#mh-search-kind-row` 整件退役，
+        DOM 已由 searchFace.js 删除 —— 这里零规则 = 零死样式）；
+     ② 同行化：「选择文件」钮不再独占一行，与 chips 同一行（右端紧凑钮）；
+     ③ 打开钮紧凑化：「打开所选文件 (N)」不再占位成一行 —— 未选中不出现，
+        选中后以**底部悬浮条**形态浮在结果之上（零布局高度）；
+     ④ 计数行压缩：`主会话 · N 条结果` 收到最小字号单行，内距贴到底。
+
+   改前竖向开销（390×844 实测，见批报告）：关键词行 + tabs 32 + 下拉行 40 + chips 34
+   + 计数 20 + 选择文件 46 + 打开所选 46 ≈ 再吃掉一个小屏的一屏内容的一半；改后
+   只剩 关键词行 + tabs 32 + 筛选行 34 + 计数 16。
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* 落位锚：③ 的悬浮条与手机层日期滚轮都以内容面为坐标系（收编页面化后
+   #search-modal 是 position:static 的流内件 ⇒ 这里给它一个相对锚）。 */
+body.mobile-layer #search-modal { position: relative; }
+
+/* ① / ② 关键词行下的一切都收一档内距：tabs 与筛选行之间不再各吃一份 12px。 */
+body.mobile-layer #search-modal .search-controls {
+  padding: var(--ds-space-1h) var(--ds-space-4) var(--ds-space-half);
+  gap: 4px;
+}
+
+/* ② 来源 chips 行 = 唯一筛选行（chips 左端 + 「选择文件」右端紧凑钮）。 */
+body.mobile-layer #search-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+}
+body.mobile-layer #search-filter-row .search-source-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 var(--ds-space-2);
+  font-size: var(--mfs-min);
+  line-height: 1;
+  position: relative;
+  flex: none;
+}
+/* 触控热区：30px 视觉高 → 44px 命中盒（::before 外扩，与站内圆钮族同一手法；
+   纵向外扩 7px 不压上下行，横向各 2px 不吞相邻 chip 的间隙）。 */
+body.mobile-layer #search-filter-row .search-source-chip::before,
+body.mobile-layer #search-filter-row #search-select-files::before {
+  content: '';
+  position: absolute;
+  inset: -7px -2px;
+}
+body.mobile-layer #search-filter-row #search-select-files {
+  flex: none;
+  margin: 0 0 0 auto;   /* 同行右端（作者令②：与来源 chips 同一行） */
+  min-height: 30px;
+  height: 30px;
+  padding: 0 var(--ds-space-2);
+  font-size: var(--mfs-min);
+  line-height: 1;
+  position: relative;
+  border-radius: var(--ds-radius-pill);
+}
+
+/* ④ 计数行压缩：字号**不动**（沿用桌面 meta 档 11px —— 加粗反而违背「压缩」），
+   只把内距/行高收到最小：'主会话 · N 条结果' 一行贴着筛选行，不再各吃 4px。 */
+body.mobile-layer #search-modal #search-status {
+  padding: var(--ds-space-half) var(--ds-space-4);
+  line-height: 1.25;
+}
+
+/* ③ 「打开所选文件 (N)」= 底部悬浮条（待办收件箱批的悬浮控件同一条设计语言：
+   胶囊 + 唯一毛玻璃材质 + 浮影；未选中时 DOM 上 hidden ⇒ 不占位、不出现）。
+   零布局高度：absolute 浮在结果流之上，不给 #search-results 让位（只在它出现
+   时给结果流补一个底部内距，最后一行不被条压住）。 */
+body.mobile-layer #search-modal #search-open-selected-files {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--mobile-dock-top) + var(--ds-space-3));
+  transform: translateX(-50%);
+  margin: 0;
+  z-index: 15;
+  /* min-height 不是 height：胶囊随内容长高、不设上限 ⇒ 不会裁切（noclip 铁律 9）。 */
+  min-height: 38px;
+  padding: 0 var(--ds-space-4);
+  border-radius: var(--ds-radius-pill);
+  font-size: var(--ds-fs-hint);
+  white-space: nowrap;
+  box-shadow: var(--cv-shadow), 0 8px 20px rgba(0, 0, 0, 0.16);
+  animation: searchFloatIn 0.18s cubic-bezier(0.32, 0.72, 0, 1);
+}
+body.mobile-layer #search-modal #search-open-selected-files[hidden] { display: none; }
+/* 触控热区：38px 视觉高 → 44px 命中盒（纵向各外扩 3px）。 */
+body.mobile-layer #search-modal #search-open-selected-files::before {
+  content: '';
+  position: absolute;
+  inset: -3px 0;
+}
+@keyframes searchFloatIn {
+  from { opacity: 0; transform: translate(-50%, 10px) scale(0.96); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+body.mobile-layer #search-modal:has(#search-open-selected-files:not([hidden])) #search-results {
+  padding-bottom: calc(var(--mobile-dock-top) + 56px);
+}
+
+
+
 /* 登录墙卡：内容面宽安全边距。 */
 body.mobile-layer .nebflow-login-modal {
   max-width: calc(100vw - 24px);
@@ -2366,6 +2472,8 @@ body.mobile-layer .mf-swipe-ring.right { right: -20px; }
    旧「纵向卡叠」（一叠向下、错位 12px）整条退役：形态差在**方向**（纵 →
    横）与**露法**（叠边 → 左右裁切邻卡）—— 这正是作者附图与旧形态的实质差。 */
 body.mobile-layer .mf-stack-view {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute;
   inset: 0;
   z-index: 40;
@@ -2386,6 +2494,8 @@ body.mobile-layer .mf-stack-view[hidden] { display: none; }
    用一层独立元素承载「重度模糊 + 压暗」，不吃浮面自身的 backdrop-filter
    配平问题 —— 两者相加只会更糊，不会互相抵消。 */
 body.mobile-layer .mf-stack-view::before {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: inherit;
   content: '';
   position: absolute;
   inset: 0;
@@ -2514,6 +2624,8 @@ body.mobile-layer .mf-deck-x:active { background: var(--ds-wash-16); }
    .deck-card 作用域，这里补一份同几何手机档 —— 令牌同样 --bar-1/2/3/--th-border
    单源，深浅双主题自动）。 */
 body.mobile-layer .mf-deck-thumb {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: relative;
   flex: 1;
   min-height: 0;
@@ -2527,6 +2639,8 @@ body.mobile-layer .mf-deck-thumb .ln.w55 { width: 55%; } body.mobile-layer .mf-d
 body.mobile-layer .mf-deck-thumb .ln.w85 { width: 85%; } body.mobile-layer .mf-deck-thumb .ln.w100 { width: 100%; }
 body.mobile-layer .mf-deck-thumb .thumb-pad { position: absolute; inset: 14px 16px; }
 body.mobile-layer .mf-deck-thumb .thumb-grid {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute;
   inset: 0;
   background:
@@ -2534,11 +2648,15 @@ body.mobile-layer .mf-deck-thumb .thumb-grid {
     repeating-linear-gradient(90deg, var(--bar-3) 0 1px, transparent 1px 38px);
 }
 body.mobile-layer .mf-deck-thumb .thumb-grid .ghead {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute; top: 0; left: 0; right: 0; height: 24px;
   background: rgb(var(--sapphire, 96 165 250) / 0.10);
   border-bottom: 1px solid rgb(var(--sapphire, 96 165 250) / 0.18);
 }
 body.mobile-layer .mf-deck-thumb .thumb-img {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute;
   inset: 0;
   background: linear-gradient(135deg, rgb(var(--sapphire, 96 165 250) / 0.38), rgb(var(--sapphire, 96 165 250) / 0.10) 60%, rgb(var(--sapphire, 96 165 250) / 0.22));
@@ -2573,6 +2691,8 @@ body.mobile-layer .mf-deck-thumb .thumb-browser .blk.b2 { width: 64%; }
    只读）。.mf-deck-snap = 裁切框；.mf-deck-snap-inner = 原尺寸面 + scale。
    快照子树 pointer-events 全关（纯展示，手势归舞台/卡面）。 */
 body.mobile-layer .mf-deck-snap {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute;
   inset: 0;
   overflow: hidden;
@@ -2661,11 +2781,15 @@ body.mobile-layer .mf-cv-empty-sub { font-size: var(--mfs-min); opacity: 0.8; }
 
 /* ── 设置/用量 = 页面体收编（r3 p4fix 沿袭；overlay 原地保留为状态载体）─ */
 body.mobile-layer #settings-overlay {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   z-index: 155;
   background: var(--color-bg);
   padding: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px);
 }
 body.mobile-layer #usage-overlay {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   z-index: 155;
   align-items: stretch;
   background: var(--color-bg);
@@ -2740,6 +2864,8 @@ body.mobile-layer .mf-hub-row {
 /* 行间 hairline：左缩进对齐文案列（行内距 16 + 图标 18 + 间隙 12 = 46），
    右收进行内距（16）；首末行不留线（末行 = :last-child 零线）。 */
 body.mobile-layer .mf-hub-row:not(:last-child)::after {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: inherit;
   content: '';
   position: absolute;
   left: 46px;
@@ -2749,6 +2875,8 @@ body.mobile-layer .mf-hub-row:not(:last-child)::after {
   background: var(--color-frame-border-light);
 }
 body.mobile-layer .mf-hub-row:active {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: color-mix(in srgb, var(--color-text) 6%, transparent);
 }
 body.mobile-layer .mf-hub-row > i svg { width: 18px; height: 18px; }
@@ -2775,7 +2903,7 @@ body.mobile-layer .mf-me-entry {
   min-height: 148px;
   padding: var(--ds-space-4) var(--ds-space-4) calc(var(--ds-space-4) + var(--ds-space-1));
   border: none;
-  border-radius: 0;
+  border-radius: var(--ds-radius-button);
   background: transparent;
   box-shadow: none;
   color: var(--color-text);
@@ -2893,14 +3021,10 @@ body.mobile-layer .mf-me-card {
     box-shadow: var(--ds-shadow-card-dark);
   }
 }
-body.mobile-layer .mf-me-names {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--ds-space-half);
-}
-body.mobile-layer .mf-me-card .mf-me-name { font-size: var(--mfs-body); }
+/* `.mf-me-names` / `.mf-me-card .mf-me-name` 随资料卡名块退役（disclosure-dedup-spec.md
+   §3.2 表 2 · U2「同一信息组只允许 1 个渲染点」）：卡内名/邮箱零发射点，身份读数只留
+   读数行 `.mf-me-fields`。`.mf-me-name` / `.mf-me-sub` 本体规则保留 —— 它们属工作台
+   hero（`.mf-me-entry`，本页之外的另一个面）。 */
 body.mobile-layer .mf-me-login { flex: none; }
 /* 分组标签与账号行沿用 mf-hub 家族（mf-me-grouplabel 复用 mf-hub-label 口径，
    个人主页分组与 hub 分组视觉同族）。 */
@@ -2949,6 +3073,8 @@ body.mobile-layer .mf-me-field {
   color: var(--color-text);
 }
 body.mobile-layer .mf-me-field:not(:last-child)::after {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: inherit;
   content: '';
   position: absolute;
   left: 16px;
@@ -3165,17 +3291,25 @@ body.mobile-layer .ds-turn-btn {
       钉死），动它 = 全站手机腿一起变；输入条这一族是独立的「40:64 视觉盒」档。 */
 /* The main composer shares a 40:64 visual-box scale with the voice orb.
    Keep send and stop equal; the component retains its 44px expanded hit area.
-   The Canvas Ask dock's input row consumes the same declaration. */
+   The Canvas Ask dock's input row consumes the same declaration.
+   待办收件箱 UI 批（作者令 2026-11-21 ①「与 ask 的输入框样式功能一致」）：
+   快速决策卡页悬浮控件带的发送键 = 同一个 ds-turn-btn 组件实例 ⇒ 收成**同一份
+   声明的第三个成员**（不再由页面 CSS 另喂一组 token）。
+   social-chat-input-unify 批 2026-11-21（作者令「社交对话窗口的输入框完全与主会话
+   输入框保持一致——包括语音气泡、发送按钮」）：三面 composer 的发送键同样是本声明成员。 */
 body.mobile-layer #input-bar > .ds-turn-btn,
-body.mobile-layer .ask-dock .ds-turn-btn {
+body.mobile-layer .ask-dock .ds-turn-btn,
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-answer-input > .ds-turn-btn,
+body.mobile-layer .fm-input-bar > .ds-turn-btn {
   --ds-turn-btn-size: 40px;
   --ds-turn-btn-icon: 18px;
 }
 /* Absolute insets use the padding box, one pixel inside the 1px border.
    Four pixels there give a symmetric 3px expansion beyond the border box.
-   Same two hosts: the hit capsule is one value, not one per surface. */
+   Same hosts: the hit capsule is one value, not one per surface. */
 body.mobile-layer #input-bar > .ds-turn-btn::after,
-body.mobile-layer .ask-dock .ds-turn-btn::after {
+body.mobile-layer .ask-dock .ds-turn-btn::after,
+body.mobile-layer .fm-input-bar > .ds-turn-btn::after {
   inset: -4px;
 }
 
@@ -3208,7 +3342,8 @@ body.mobile-layer .fm-input-bar {
      视口差异只留纵向（4px），横向两面/两档一致（两侧各让 2px）。 */
   padding: var(--ds-space-1) var(--ds-space-1h);
 }
-body.mobile-layer #mic-orb-wrap {
+body.mobile-layer #mic-orb-wrap,
+body.mobile-layer .fm-input-bar .mic-orb-wrap {
   margin: -8px 0;
 }
 
@@ -3424,6 +3559,7 @@ body.mobile-layer #settings-modal .cfg-btn-primary {
   border-color: transparent;
   font-weight: 500;
   transition: background 0.18s ease;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   body.mobile-layer #settings-modal .cfg-btn-primary:hover {
@@ -3435,6 +3571,7 @@ body.mobile-layer #settings-modal .cfg-btn-primary {
   body.mobile-layer #settings-modal .cfg-btn-primary {
     background: var(--color-text);
     color: var(--color-bg);
+  box-shadow: var(--btn-shadow);
   }
 @media (hover: hover) {
     body.mobile-layer #settings-modal .cfg-btn-primary:hover {
@@ -3846,18 +3983,84 @@ body.mobile-layer #main [data-nf-search-return="1"] { z-index: 170; }
 body.mobile-layer .mfs-back { z-index: 40; }
 body:not(.mobile-layer) .mfs-back { display: none !important; }
 
-/* ── A 族：透明承接层 + 居中玻璃盒，手机端铺平 ── */
+/* ── A 族：透明承接层 + 居中玻璃盒，手机端铺平 ──
+   例外：#takeover-box（强制二选一系统中断卡）不铺平——回到居中浮层卡（2026-11-22
+   历史基线回补：`#modal-overlay:not(.takeover-live)` 摘出，接管卡手机形态块单列于下）。 */
 body.mobile-layer .bgt-overlay,
 body.mobile-layer #secrets-overlay,
 body.mobile-layer .wsp-overlay,
-body.mobile-layer #modal-overlay,
+body.mobile-layer #modal-overlay:not(.takeover-live),
 body.mobile-layer #rules-overlay,
 body.mobile-layer .cfg-modal-overlay,
 body.mobile-layer .flow-agent-overlay.fullscreen {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: var(--color-bg);
   padding: 0;
   align-items: stretch;
   justify-content: stretch;
+}
+/* ── 接管卡手机形态（接管提示卡片化批 2026-11-02 作者令①）───────────────
+   作者报障：「手机端这个应该是一个卡片 现在显示很不好看」——实拍：标题+正文+
+   两钮全部挤在屏幕上部 1/3，下面 2/3 全空、无卡片容器、无边框、无背景区隔，
+   就是裸文字铺在整页深色底上。成因 = 上面的 A 族「弹窗退场」规则把
+   #takeover-box 与其余桌面模态同批铺平（width/height 100% + radius 0 +
+   border 退役 + padding-top 64）、并且 #modal-overlay 拿到不透明页面底。
+   裁定：接管提示是**系统中断卡**（强制二选一），不是页面化面板——它是**一个
+   组件**，桌面/手机只差卡片最大宽度与内边距，不是两套实现。故本块把该盒从 A 族
+   里摘出来（:not 排除），回到「居中浮层卡」：实色卡片底 + 圆角 + 边框 + 软影，
+   四周留白 ≥16px，内容垂直居中（下方不再有 2/3 空白）。
+   移动端规范：热区 ≥44px、正文字号 ≥17px、可读小字 ≥13px；两钮等宽平分一行
+   （主次只靠材质区分——保留 g2 药丸族的主/次墨白两档，不改成两枚小胶囊）。 */
+body.mobile-layer #modal-overlay #takeover-box {
+  width: min(var(--nfc-width), calc(100vw - 32px)) !important;
+  max-width: none !important;
+  height: auto !important;
+  max-height: calc(100vh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)) !important;
+  margin: auto !important;
+  border-radius: var(--nfc-radius) !important;
+  border: 1px solid var(--nfc-border) !important;
+  transform: none !important;
+  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  padding: var(--ds-space-8) var(--ds-space-6) 28px;
+  overflow-y: auto;
+}
+/* 手机档字阶（家族 token 的移动档：标题 21→20 收一档，正文 14→17 抬到可读线）。 */
+body.mobile-layer #takeover-box .nfc-title { font-size: var(--ds-fs-display); }
+body.mobile-layer #takeover-box .nfc-body {
+  font-size: var(--ds-fs-lead);
+  line-height: 1.45;
+  max-width: none;
+}
+body.mobile-layer #takeover-box .nfc-error { font-size: var(--ds-fs-body); }
+/* 动作行：等宽双钮一行（窄屏不挤压），热区 48px ≥ 44px 规范线。 */
+body.mobile-layer #takeover-box .nfc-actions {
+  justify-content: stretch;
+  gap: var(--ds-space-3);
+  margin-top: 28px;
+}
+body.mobile-layer #takeover-box .nfc-actions .g2-pill {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 48px;
+  min-height: 48px;
+  padding: 0 var(--ds-space-3);
+  font-size: var(--ds-fs-mobile-sub);
+}
+/* 承接层：卡片四周留白（不贴边）+ 内容垂直居中（消灭下方 2/3 空白）。 */
+body.mobile-layer #modal-overlay.takeover-live {
+  background: var(--color-bg);
+  padding: calc(16px + env(safe-area-inset-top, 0px)) var(--ds-space-4)
+    calc(16px + env(safe-area-inset-bottom, 0px)) !important;
+  align-items: center;
+  justify-content: center;
+}
+/* 超窄屏兜底（<360px）：两钮改纵向全宽，仍 ≥44px 热区。 */
+@media (max-width: 359px) {
+  body.mobile-layer #takeover-box .nfc-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 body.mobile-layer .bgt-overlay .bgt-modal,
 body.mobile-layer #secrets-modal,
@@ -4534,13 +4737,13 @@ body.mobile-layer #usage-dashboard .ud-colormode {
    此处不再重复声明，视觉单源一处）。 */
 
 /* 搜索范围 chips / 类型选择：30px → 44（胶囊形态保持）。 */
-body.mobile-layer .mh-scope-chip,
-body.mobile-layer #mh-search-kind {
+body.mobile-layer .mh-scope-chip {
   min-height: var(--mtap);
   padding-left: var(--mpad-x);
   padding-right: var(--mpad-x);
 }
-body.mobile-layer #mh-search-kind-row { height: auto; }
+/* `#mh-search-kind` / `#mh-search-kind-row` 的 44 档随角色行整件退役
+   （search-page-density 批 2026-11-21 作者令①）——DOM 已删，规则同时摘除。 */
 
 /* 搜索结果行：44 触控行 + 8px 纵向内距。 */
 body.mobile-layer .mh-sr-row {
@@ -4602,23 +4805,26 @@ body.mobile-layer #attachment-preview .att-file .att-remove::after { inset: -11p
 /* ── 输入卡附件圆键：36×36 → 48 ───────────────────────────────────────
    与发送键（本文件上方 #send-btn 块，已一并升到 --mtap-lg）同档——两者是
    输入条上**全局最高频**的触控目标，36 明显偏小。图标本体同步 --micon。 */
-/* 四会话统一批 2026-11-05：三种会话窗输入条的两枚图标键（附件 `.fm-attach-btn` /
-   话筒 `.fm-mic-btn`）与主会话 `#attach-btn` **同一条规则**——同一组件族、同一
-   48 档、同一 `--micon` 图标档。改前它们停在桌面档 32/36（`.icon-btn` 底档），
-   与主会话 48 相差一整档（本批截图 + 读数）。 */
+/* 四会话统一批 2026-11-05：三种会话窗输入条的附件键与主会话 `#attach-btn`
+   **同一条规则**——同一组件族、同一 48 档、同一 `--micon` 图标档。
+   social-chat-input-unify 批（2026-11-21）：微信面语音键已改为**主会话同一枚
+   液态光球**（`.micbubble` 64×64，自己的档位见 css/input.css，不再属图标键族）
+   ⇒ 本节只余附件键，且改用**宿主选择器**命名两面的同一枚键（与上方
+   `.fm-input-bar > .ds-turn-btn` 同形态）：主会话 `#attach-btn` + 消息面
+   `.fm-input-bar > .icon-btn`（纸夹键）逐值同源，改一处两面同时变。 */
 body.mobile-layer #attach-btn,
+body.mobile-layer .ask-attach,
 body.mobile-layer #quote-item-btn,
-body.mobile-layer .fm-attach-btn,
-body.mobile-layer .fm-mic-btn {
+body.mobile-layer .fm-input-bar > .icon-btn {
   width: var(--mtap-lg);
   height: var(--mtap-lg);
   min-width: var(--mtap-lg);
   min-height: var(--mtap-lg);
 }
 body.mobile-layer #attach-btn svg,
+body.mobile-layer .ask-attach svg,
 body.mobile-layer #quote-item-btn svg,
-body.mobile-layer .fm-attach-btn svg,
-body.mobile-layer .fm-mic-btn svg {
+body.mobile-layer .fm-input-bar > .icon-btn svg {
   width: var(--micon);
   height: var(--micon);
 }
@@ -5049,8 +5255,8 @@ body.mobile-layer .mf-canvas-page {
      报障逐字：「canvas 的左侧按钮和中间三个点都没了现在」。根因不在按钮自身
      （今天那批 canvas 按钮统一只改 flatButtons/glass/split —— 改前/改后本行几何
      逐值相同，见 tests/canvas-controls-dock-clearance.spec.mjs 的读数），而在
-     **这把底锚尺**：本页宿主是全视口高（.mobile-page = top:0/bottom:0 +
-     #mobile-pages::before 只在 dock 带区垫底），dock 是 fixed z200 的实体浮层压
+     **这把底锚尺**：本页宿主是全视口高（.mobile-page = top:0/bottom:0，且
+     #mobile-pages 容器零背景、不在 dock 带区垫任何面），dock 是 fixed z200 的实体浮层压
      在页底上 ⇒ 行内件写「bottom:16」的落点是**视口底**，不是**页内容底**。
      实测 375×812（打桩真 DOM）：dock y750..804；左下两钮（引用 72/查找 16）
      y748..796、三点条 y759..785 ⇒ 整条落进 dock 带区，被画在 dock 底下
@@ -5133,8 +5339,10 @@ body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .nf-dv-allbar {
      = 页底 = **视口底**，于是整条 62px 落进 dock 带区（实测 375×812：带 y750..812，
      dock y750..804 ⇒ 62px 重叠，枪测落在 `#mobile-dock` 的 svg 上 = 不可点）。
      留出 `--mf-row-bottom`（= dock-h 54 + --dock-inset-b 8 + safe + 16）后带缘落在
-     dock 上缘之上 16px，与同排 ① ② ③ 三条共用同一把尺（同一表达式，禁各写一份）。 */
-  margin-bottom: var(--mf-row-bottom, 0px);
+     dock 上缘之上 16px，与同排 ① ② ③ 三条共用同一把尺（同一表达式，禁各写一份）。
+     再加一颗 48 圆钮 + 8 呼吸：小点条（.mf-dots）居中落在 --mf-row-bottom 之上一行，
+     不抬则与「全部接受/全部拒绝」药丸同一水平带互相压住（作者截图 2026-11-22）。 */
+  margin-bottom: calc(var(--mf-row-bottom, 0px) + var(--mtap-lg, 48px) + var(--ds-space-2, 8px));
 }
 body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .canvas-find-toggle {
   left: var(--ds-space-4);
@@ -5293,7 +5501,7 @@ body.mobile-layer :is(.bubble pre, .bubble pre code, .bubble .md code, .bubble .
      · 孤立小图标键（待办面 .tfl-icon-btn 族：一行一键、四周空白）：本体视觉
        不动，::after 外扩命中盒到 --mhit（既有解法，单点不另造）。 */
 body.mobile-layer :is(
-  .mh-search-input, .wg-search-input, #search-keyword, .ap-name-input, .cfg-input,
+  .mh-search-input, .wg-search-input, #search-keyword, .ap-name-input, .cfg-input:not(.fm-input),
   .team-empty-cta, .wg-switch-select, .plugins-card-head,
   .merged-tab, .mf-me-login, .cfg-btn, .cfg-eye-btn
 ) {
@@ -5647,6 +5855,8 @@ body.mobile-layer #reminder-panel .reminder-fab-add {
   background: transparent;
 }
 .mf-drawer-box {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: relative;
   display: flex;
   flex-direction: column;
@@ -5865,6 +6075,7 @@ body.mobile-layer .tfl-menu-sub {
 
 /* ── 行（一级/二级共用）─────────────────────────────────────────────── */
 body.mobile-layer .tfl-menu-row {
+  border-radius: var(--ds-radius-chip); /* 圆角标准批 2026-11-22（作者令「要圆角的框」「落为标准」· 规范 §2.6）：F7 判据下的环基座。 */
   position: relative;
   display: flex;
   align-items: center;
@@ -5927,8 +6138,8 @@ body.mobile-layer .tfl-menu-row .lucide-chevron-right {
 }
 body.mobile-layer .tfl-menu-row:active { opacity: 0.6; }
 body.mobile-layer .tfl-menu-row:focus-visible {
-  outline: 2px solid var(--ds-focus-ring);
-  outline-offset: -2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 /* 危险项（删除类）：红字走既有语义色令牌（base.css 亮/暗两档） */
 body.mobile-layer .tfl-menu-row.is-danger,
@@ -6034,7 +6245,9 @@ body.mobile-layer .mobile-page .tfl-hit {
   flex-direction: column;
   box-sizing: border-box;
   overflow: hidden;
-  border-radius: var(--ds-radius-badge);   /* 起点 = 行盒圆角 */
+  /* 圆角标准批（2026-11-22；§2.6）：起点 = 行盒圆角 = 6px（.tfl-menu-row 同批改档），
+     动画展开到 .is-open 的卡档 —— 两点同源，展开过程不会出现「先变方再变圆」。 */
+  border-radius: var(--ds-radius-chip);
   box-shadow: none;                         /* 起点 = 行（无浮影） */
 }
 body.mobile-layer .mobile-page .tfl-hit.is-open {
@@ -6202,7 +6415,7 @@ body.mobile-layer .bgagent-overlay .bgagent-status-pill {
   align-items: center;
   gap: 5px;
   padding: 0 12px;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   background: var(--cv-bg, var(--glass-bg));
   border: 1px solid var(--cv-border, var(--glass-border));
   font-size: var(--ds-fs-hint);
@@ -6213,6 +6426,7 @@ body.mobile-layer .bgagent-overlay .bgagent-status-pill {
   pointer-events: none;
   user-select: none;
   transition: width 200ms ease, background-color 200ms ease, border-color 200ms ease;
+  box-shadow: var(--btn-shadow);
 }
 body.mobile-layer .bgagent-overlay .bgagent-pill-status {
   display: inline-flex;
@@ -6367,6 +6581,13 @@ body.mobile-layer .bgagent-overlay .bgagent-stop-fab svg {
   display: block;
   width: var(--micon-sm, 20px);
   height: var(--micon-sm, 20px);
+}
+/* 消息流底部让位（截断巡检批 2026-11-24，作者截图「停止钮压在 BG-LIFECYCLE 气泡文字上」）：
+   终止悬浮钮与消息流同处右下，流末端必须为它留出足迹（钮底离距 + 钮径 + 一档缝），
+   与「发起群聊」面板主体让位同一公式（令牌同源）；滚到底末条可完整读且不被钮压。 */
+body.mobile-layer .bgagent-overlay .flow-agent-chat {
+  padding-bottom: calc(var(--ask-fab-bottom, 24px) + var(--mtap-lg, 48px) + var(--ds-space-3));
+  scroll-padding-bottom: calc(var(--ask-fab-bottom, 24px) + var(--mtap-lg, 48px) + var(--ds-space-3));
 }
 /* 只读 kinds（Team/Root）灰档：权限矩阵语义照旧（syncManageControls 挂 readonly）。 */
 body.mobile-layer .bgagent-overlay .bgagent-stop-fab.readonly {

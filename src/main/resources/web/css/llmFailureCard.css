@@ -1,0 +1,151 @@
+/* LLM 失败卡片（风格重做 2026-11-21；第 3 轮 2026-11-21：图标化压缩、大字置顶）。
+   卡面 / 阴影 / 按钮 / 问句 / 理由行全部复用 chat.css 既有规则（.option-box、.option-q、
+   .option-btn-row、.option-cancel、.option-confirm、.perm-reason、.perm-risk-badge），
+   本文件只补卡专属部件：标题图标、层级标签、代理行、摘要、状态、换模型下拉。
+   颜色一律走 token（var(--…)），尺寸用 em（图标随字号走），不引入字面量（check-interaction-card-family 守卫）。 */
+.llm-failure-ico {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  flex: 0 0 auto;
+  vertical-align: -0.125em;
+}
+.llm-failure-ico-title {
+  color: var(--ask-green-deep);
+  margin-right: var(--ds-space-1h);
+}
+.llm-failure-title {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.llm-failure-reason {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-text-muted);
+}
+.llm-failure-layer {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  color: var(--ds-text-muted);
+}
+.llm-failure-agents,
+.llm-failure-summary {
+  font-size: var(--ds-fs-hint);
+  color: var(--ds-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.llm-failure-agents {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  margin-top: var(--ds-space-1);
+}
+.llm-failure-summary {
+  margin-top: var(--ds-space-1);
+}
+.llm-failure-status {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-text-muted);
+  margin-top: var(--ds-space-2);
+}
+.llm-failure-spin {
+  animation: spin 1s linear infinite;
+}
+/* 窗口受限型状态行图标（hourglass 静置，不旋转——等待不是进行中动作）。 */
+.llm-failure-spin-off { animation: none; }
+.llm-failure-switch {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-width: 0;
+}
+.llm-failure-pick {
+  max-width: 200px;
+  min-width: 0;
+  font-size: var(--ds-fs-body);
+  color: var(--color-text);
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  border-radius: var(--ds-radius-input);
+}
+/* 正文区点按即消失（控件区除外）：正文可点、控件保持原光标。 */
+.llm-failure-card { cursor: pointer; transition: opacity 300ms ease; }
+.llm-failure-card .llm-failure-actions,
+.llm-failure-card .llm-failure-close { cursor: default; }
+.llm-failure-card.is-fading { opacity: 0; }
+/* 项 3（2026-11-23）：恢复信号到达 ⇒ 过期卡转灰（失败状态已不成立，保留以告知结果）。 */
+.llm-failure-card--expired { opacity: 0.6; filter: grayscale(1); }
+.llm-failure-card .option-cancel.is-expired { opacity: 0.55; text-decoration: line-through; pointer-events: none; }
+/* 标题行右侧关闭钮（显式兜底）。 */
+.llm-failure-close {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 0;
+  padding: var(--ds-space-1);
+  color: var(--ds-text-muted);
+  cursor: pointer;
+}
+/* 卡内直接设置区（provider-notice-card-unify 批 2026-11-23 增量；作者 09:48
+   「卡片上应该要可以直接设置」）：当前 unavailableWindows 值 + 快捷动作 + 确认条。
+   颜色全走 token、尺寸随字号（卡族面守卫 check-interaction-card-family）。 */
+.llm-failure-window {
+  margin-top: var(--ds-space-2);
+}
+.llm-failure-window-label {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-text-muted);
+}
+.llm-failure-window-value {
+  margin-top: var(--ds-space-1);
+  font-size: var(--ds-fs-body);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+.llm-failure-quick-row {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+.llm-failure-quick {
+  padding-left: 0;
+  font-size: var(--ds-fs-meta);
+}
+.llm-failure-window-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-1);
+}
+.llm-failure-window-confirm[hidden] { display: none; }
+.llm-failure-window-confirm-text {
+  flex: 1 1 100%;
+  font-size: var(--ds-fs-meta);
+  color: var(--color-text);
+}
+.llm-failure-window-yes {
+  font-size: var(--ds-fs-meta);
+  padding: var(--ds-space-1h) var(--ds-space-3);
+}
+.llm-failure-card .llm-failure-window { cursor: default; }
+@media (prefers-reduced-motion: reduce) {
+  .llm-failure-spin { animation: none; }
+  .llm-failure-card { transition: none; }
+}

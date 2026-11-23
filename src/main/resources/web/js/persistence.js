@@ -16,11 +16,10 @@ import { dropDeviceMessageCache } from './fmDropboxCache.js';
 import { evict as evictLocalStore } from './localStore.js';
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
-import { permissionDetails } from './permissionDetails.js';
 import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, appendUserTextWithFences, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId, shouldFollowBottom, deviceTagHtml } from './utils.js';
 // output 块语法批（作者令 2026-10-31）：历史重放腿同 live 腿一个 output 面——
 // 平衡 <output> 对 ⇒ 正常态只渲染块内，角标展开回原文（turnGroup toggle）。
-import { applyOutputFace, hasOutputBlock } from './outputTag.js';
+import { applyOutputFace, hasOutputBlock, markZeroBlockFace, outputFirstPaintText } from './outputTag.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 // schedule-created-card 批（2026-11-05）：历史重放两腿与 live renderTool 共用
 // 同一个卡片行 builder（零第二套判据）。
@@ -759,6 +758,9 @@ export function restoreFromStorage(opts = {}) {
       if (m.text || isTurnTerminal || hasDuration) {
         const row = document.createElement('div');
         row.className = 'row ai';
+        // 零正文终轮行（footer-leak 批 2026-11-22）：无气泡、仅余徽章 ⇒ 整行收起
+        // （display:none，DOM 保留：turnGroup 仍读 terminal/nfPhrase 判 done）。
+        if (!m.text) row.classList.add('row-empty-final');
         if (m.text) {
           const bubble = document.createElement('div');
           bubble.className = 'bubble ai';
@@ -769,6 +771,7 @@ export function restoreFromStorage(opts = {}) {
           const rootFace = m.isRoot === true;
           if (!rootFace || !applyOutputFace(bubble, m.text || '')) {
             bubble.innerHTML = renderMarkdownWithMath(m.text || '', true, rootFace ? { report: true } : undefined);
+            if (rootFace && m.text) markZeroBlockFace(bubble, m.text || '');
           }
           row.appendChild(bubble);
         }
@@ -960,7 +963,6 @@ export function restoreFromStorage(opts = {}) {
       chat.appendChild(row);
       const box = document.createElement('div');
       box.className = 'permission-pending-box option-box';
-      if (m.toolName === 'Edit' || m.toolName === 'Write') box.appendChild(permissionDetails(m.toolName, m.input));
       const q = document.createElement('div');
       q.className = 'option-q';
       q.textContent = t('chat.allowTool', { tool: m.toolName || '?' });
@@ -977,7 +979,7 @@ export function restoreFromStorage(opts = {}) {
       });
       box.appendChild(optsDiv);
       bubble.appendChild(box);
-      renderPermDetail(box, histDetail, t, { level, before: q });
+      renderPermDetail(box, histDetail, t, { before: q, labelShown: level >= 2 && !!(histDetail.reason && (histDetail.reason.label || histDetail.reason.levelLabel)) });
     } else if (m.type === 'ask') {
       // Ask question (user side)
       const qRow = document.createElement('div');
@@ -1147,14 +1149,21 @@ function buildHistoryRow(m, i, ctx) {
       // 引用块宽度约束（2026-10-20 作者令「引用文字不要超过用户发送的文字」）：
       // 与 live 腿同一包裹规则 —— 引用块 + 文本气泡同时在场 ⇒ .msg-quote-composite
       // 气泡驱宽复合盒（规则单点 = chat.css 同名段）；仅引用无文本不包裹。
-      const quoteBox = (m.quote && typeof m.quote === 'object') ? renderQuoteBlock(m.quote) : null;
+      // 🔴 多选引用批（2026-11-22）：单条走 `m.quote`（旧行形态逐字不变）；多条走
+      // `m.quotes` 有序数组（引擎落盘的白名单快照列表，顺序 = 用户选择顺序）——
+      // 逐条同一渲染器渲染，与 live 腿同序同面。旧前端读不到 `quotes` 时只塌回
+      // `m.quote`（首条），不崩、不空。
+      const quoteSnaps = Array.isArray(m.quotes)
+        ? m.quotes.filter(q => q && typeof q === 'object')
+        : (m.quote && typeof m.quote === 'object' ? [m.quote] : []);
+      const quoteBoxes = quoteSnaps.map(q => renderQuoteBlock(q)).filter(Boolean);
       let composite = null;
-      if (quoteBox && m.text) {
+      if (quoteBoxes.length && m.text) {
         composite = document.createElement('div');
         composite.className = 'msg-quote-composite';
         row.appendChild(composite);
       }
-      if (quoteBox) (composite || row).appendChild(quoteBox);
+      quoteBoxes.forEach((box) => (composite || row).appendChild(box));
       // 媒体统一适配批（2026-10-20）：存量「已存至」行级换算（单点
       // unifyUserMediaFace，与缓存恢复腿同源）——识别命中 ⇒ 媒体行接管、
       // 文本气泡隐去；否则逐字现状。
@@ -1234,6 +1243,8 @@ function buildHistoryRow(m, i, ctx) {
       if (m.text || isTurnTerminal || hasDuration) {
         const row = document.createElement('div');
         row.className = 'row ai';
+        // 零正文终轮行（footer-leak 批 2026-11-22）：同上，收起整行、DOM 保留。
+        if (!m.text) row.classList.add('row-empty-final');
         if (m.text) {
           // quote-message 一期：助手文本行挂 id + 右键（复制 + 引用）。
           row.dataset.msgId = historyMsgId(i);
@@ -1245,7 +1256,10 @@ function buildHistoryRow(m, i, ctx) {
           bubble.className = 'bubble ai';
           // report 面标记：升级批渲染时走 applyOutputFace（与 live/sync 两腿同面）。
           // 只对源头身份为 root 的行落标（非 root / 旧存量行逐字保留原展示）。
-          if (m.isRoot === true && hasOutputBlock(m.text || '')) bubble.dataset.nfDeferOutput = '1';
+          if (m.isRoot === true && m.text) {
+            if (hasOutputBlock(m.text)) bubble.dataset.nfDeferOutput = '1';
+            else markZeroBlockFace(bubble, m.text); // 零块 root：折进角标（戳 + hidden；角标展开见原文）
+          }
           deferMd(bubble, m.text || '', true, m.isRoot === true ? { report: true } : undefined);
           row.appendChild(bubble);
         }
@@ -1466,7 +1480,6 @@ function buildHistoryRow(m, i, ctx) {
       fragment.appendChild(row);
       const box = document.createElement('div');
       box.className = 'permission-pending-box option-box';
-      if (m.toolName === 'Edit' || m.toolName === 'Write') box.appendChild(permissionDetails(m.toolName, m.input));
       const q = document.createElement('div');
       q.className = 'option-q';
       q.textContent = t('chat.allowTool', { tool: m.toolName || '?' });
@@ -1483,7 +1496,7 @@ function buildHistoryRow(m, i, ctx) {
       });
       box.appendChild(optsDiv);
       bubble.appendChild(box);
-      renderPermDetail(box, histDetail, t, { level, before: q });
+      renderPermDetail(box, histDetail, t, { before: q, labelShown: level >= 2 && !!(histDetail.reason && (histDetail.reason.label || histDetail.reason.levelLabel)) });
     } else if (m.type === 'ask') {
       // Ask question (user side)
       const qRow = document.createElement('div');
@@ -1622,8 +1635,11 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
    *  block visibility batch passes `{ report: true }` for root-source rows only,
    *  so the transparent face reads blocks for root and leaves tags literal for
    *  every other session. */
+  // 第一相（textContent 纯文本）同样按该 opts 收口（outputTag.outputFirstPaintText）：
+  // 升级批落地前气泡也绝不暴露 `<report>` 源语法（作者 2026-11-22 09:04 报障实证
+  // —— 手机端这一窗口可观且可长）。
   const deferMd = (el, text, parseVoice = true, opts) => {
-    el.textContent = text;
+    el.textContent = outputFirstPaintText(text, opts);
     pendingRenders.push({ el, text, parseVoice, opts });
   };
   const rowCtx = { msgs, fragment, deferMd, chatEl: chat, ownerSessionId, skip: false };
@@ -1672,8 +1688,12 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       try {
         // report 块可见性批：root 源行优先走摘除面（只显块内；角标展开在
         // turnGroup），无平衡块则按 `opts.report` 过透明面（散标签字面化）。
-        if (el.dataset && el.dataset.nfDeferOutput === '1') applyOutputFace(el, text);
-        else el.innerHTML = renderMarkdownWithMath(text, parseVoice, opts);
+        // 摘除面拒收（无平衡块）⇒ 必须落到透明面：留成第一相纯文本 = 气泡永久
+        // 停在「裸标签 + 未渲染 markdown」态（report-filter-gap 批，作者 11-22 报障）。
+        // 短路由 && 承担：未标记行不调摘除面，标记行拒收时同一处赋值回落（不新增
+        // 第二处裸 innerHTML 赋值点——component-contract R5「只许减不许增」）。
+        const faced = el.dataset && el.dataset.nfDeferOutput === '1' && applyOutputFace(el, text);
+        if (!faced) el.innerHTML = renderMarkdownWithMath(text, parseVoice, opts);
       } catch (e) {
         el.textContent = text; // 回落纯文本（renderer 自身另有永不抛护栏，双保险）
       }
@@ -1753,7 +1773,14 @@ export async function mountHistoryPageChunked(msgs, opts = {}, hooks = {}) {
     const pendingToolBodies = [];
     const ctx = {
       msgs, fragment: container,
-      deferMd: (el, text, parseVoice = true) => { el.textContent = text; pendingRenders.push({ el, text, parseVoice }); },
+      // 🔴 四参必须齐（report-filter-gap 批 2026-11-22）：本腿此前把行渲染点传来的
+      // 第 4 参 `opts` 就地丢掉 ⇒ 上滑分页腿的 root 行既拿不到 `{report:true}`
+      // 透明面（散标签按 HTML 元素吞掉块内 markdown），第一相又吐源文本 ⇒ 分页
+      // 页里的 root report 气泡显示为裸标签 + 未渲染 markdown。与同步腿同一收口。
+      deferMd: (el, text, parseVoice = true, opts) => {
+        el.textContent = outputFirstPaintText(text, opts);
+        pendingRenders.push({ el, text, parseVoice, opts });
+      },
       chatEl: activeView.dom.chat,
       ownerSessionId,
       skip: false,
@@ -1782,8 +1809,10 @@ export async function mountHistoryPageChunked(msgs, opts = {}, hooks = {}) {
     for (const j of pendingRenders) jobs.push(() => {
       // report 块可见性批：标记泡走摘除面（与 upgradeBatch 同处置）；其余按行
       // 自己的 opts 过透明面（root 源行 = `{report:true}`，非 root = 无选项）。
-      if (j.el.dataset && j.el.dataset.nfDeferOutput === '1') applyOutputFace(j.el, j.text);
-      else j.el.innerHTML = renderMarkdownWithMath(j.text, j.parseVoice, j.opts);
+      // 摘除面拒收 ⇒ 同一处赋值回落透明面（不得留在第一相纯文本态；report-filter-gap
+      // 批）。短路由 && 承担，赋值点仍只有一处（component-contract R5 零新增）。
+      const faced = j.el.dataset && j.el.dataset.nfDeferOutput === '1' && applyOutputFace(j.el, j.text);
+      if (!faced) j.el.innerHTML = renderMarkdownWithMath(j.text, j.parseVoice, j.opts);
     });
     for (let ji = 0; ji < jobs.length; ji += MOUNT_UPGRADE_BATCH) {
       const end = Math.min(ji + MOUNT_UPGRADE_BATCH, jobs.length);

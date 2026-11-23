@@ -34,7 +34,7 @@ final class AskBashExecutionSpec extends CatsEffectSuite:
       }
       .map(_._1)
 
-  test("Ask cwd uses only its registered file directory") {
+  test("Ask cwd is the workspace root (read scope, 2026-11-23) and falls back to the file directory without one") {
     fixture.use { root =>
       val registry = new AskSessionRegistry(root)
       val directory = root / "documents"
@@ -45,8 +45,15 @@ final class AskBashExecutionSpec extends CatsEffectSuite:
           os.write(file, "Ask fixture")
         }
         binding <- registry.bind(file.toString, file.last)
-        cwd <- AskSessions.sessionCwd(binding.id, Some(registry))
-      yield assertEquals(cwd, Some(directory.toString))
+        cwd <- AskSessions.sessionCwd(binding.id, Some(registry), Some(root.toString))
+        fallback <- AskSessions.sessionCwd(binding.id, Some(registry))
+        blankWs <- AskSessions.sessionCwd(binding.id, Some(registry), Some("  "))
+        missingWs <- AskSessions.sessionCwd(binding.id, Some(registry), Some((root / "no-such-ws").toString)).attempt
+      yield
+        assertEquals(cwd, Some(root.toString))
+        assertEquals(fallback, Some(directory.toString))
+        assertEquals(blankWs, Some(directory.toString))
+        assert(missingWs.isLeft, "a non-directory workspace root must fail closed")
     }
   }
 
@@ -90,7 +97,11 @@ final class AskBashExecutionSpec extends CatsEffectSuite:
         "echo $(rm victim-cmdsub.md)",
         "ls; rm victim-semi.md"
       )
-      val green = List("grep -n ASK-BASH-EVIDENCE notes.md", "cat notes.md | grep ASK-BASH-EVIDENCE")
+      // cwd = 工作区根（2026-11-23 读面裁定）：绿样本按工作区相对路径引用绑定文件。
+      val green = List(
+        "grep -n ASK-BASH-EVIDENCE documents/notes.md",
+        "cat documents/notes.md | grep ASK-BASH-EVIDENCE"
+      )
       val all = unsafe.map(cmd => (cmd, true)) ++ green.map(cmd => (cmd, false))
 
       (for
@@ -100,7 +111,7 @@ final class AskBashExecutionSpec extends CatsEffectSuite:
           (victims :+ "victim-rm.md").foreach(v => os.write(directory / v, "victim\n"))
         }
         binding <- registry.bind(file.toString, file.last)
-        cwd <- AskSessions.sessionCwd(binding.id, Some(registry))
+        cwd <- AskSessions.sessionCwd(binding.id, Some(registry), Some(root.toString))
         requests <- IO.ref(List.empty[LlmRequest])
         events <- IO.ref(List.empty[Json])
         done <- Deferred[IO, Unit]
@@ -200,7 +211,7 @@ final class AskBashExecutionSpec extends CatsEffectSuite:
           os.write(file, s"Ask fixture $marker line\nplain line\n")
         }
         binding <- registry.bind(file.toString, file.last)
-        cwd <- AskSessions.sessionCwd(binding.id, Some(registry))
+        cwd <- AskSessions.sessionCwd(binding.id, Some(registry), Some(root.toString))
         requests <- IO.ref(List.empty[LlmRequest])
         events <- IO.ref(List.empty[Json])
         done <- Deferred[IO, Unit]
@@ -222,8 +233,8 @@ final class AskBashExecutionSpec extends CatsEffectSuite:
                       toolId,
                       "Bash",
                       JsonObject(
-                        // cwd = 绑定文件目录：-r 让输出回显 ./notes.md 路径——
-                        // 裸相对名命中即 cwd 证据（查询面绿样本）。
+                        // cwd = 工作区根：-r 让输出回显 ./documents/notes.md 路径——
+                        // 相对路径命中即 cwd 证据（查询面绿样本）。
                         "command" -> s"grep -rn $marker .".asJson,
                         "run_in_background" -> false.asJson
                       )
@@ -285,7 +296,7 @@ final class AskBashExecutionSpec extends CatsEffectSuite:
             .getOrElse(fail("Ask must receive the allowlisted Bash result"))
           assert(!err1.contains(true), out1)
           assert(out1.contains(marker), out1)
-          assert(out1.contains("notes.md"), s"cwd must be the bound file directory: $out1")
+          assert(out1.contains("documents/notes.md"), s"cwd must be the workspace root (read scope): $out1")
           val (_, out2, err2) = results
             .collectFirst { case (i, c, e) if i == "ask-printf" => (i, c, e) }
             .getOrElse(fail("Ask must receive the printf result"))

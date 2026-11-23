@@ -366,6 +366,7 @@ const poseX = (pose) => {
    几何全部相对卡片可视盒量：问题「可见」= 其盒落在卡内且卡未滚动；
    输入框「不被 dock 截断」= 其底缘不越过 dock 上缘。 */
 const readAnswer = () => `(() => {
+  const pageEl = document.querySelector('${CARD_SEL}');
   const card = document.querySelector('${CARD_SEL} .ta-qd-card');
   if (!card) return null;
   const cardBox = card.getBoundingClientRect();
@@ -373,15 +374,21 @@ const readAnswer = () => `(() => {
     return { top: +b.top.toFixed(2), bottom: +b.bottom.toFixed(2), left: +b.left.toFixed(2), right: +b.right.toFixed(2), h: +b.height.toFixed(2) }; };
   const q = card.querySelector('.ta-qd-q');
   const content = card.querySelector('.ta-qd-content');
-  const ta = card.querySelector('.ta-qd-answer-input');
-  const send = card.querySelector('.ta-qd-answer-send');
+  // 悬浮控件带（作者令 2026-11-21 ⑥）：回答输入件已搬出卡片，落在页面级
+  // .ta-qd-float 流内页脚里 ⇒ 本读数腿从页取件，几何判据随之改写（反引号是
+  // 模板串的定界符，脚本体内不得再出现）。
+  const band = pageEl.querySelector('.ta-qd-float');
+  const ta = pageEl.querySelector('.ta-qd-answer-input textarea');
+  const send = pageEl.querySelector('.ta-qd-answer-send');
   const dock = document.querySelector('#mobile-dock');
   const scroll = card.querySelector('.ta-qd-scroll');
   const qr = q ? q.getBoundingClientRect() : null;
   const tr = ta ? ta.getBoundingClientRect() : null;
   const dr = dock ? dock.getBoundingClientRect() : null;
+  const br = band ? band.getBoundingClientRect() : null;
   return {
     card: { top: +cardBox.top.toFixed(2), bottom: +cardBox.bottom.toFixed(2) },
+    band: br ? { top: +br.top.toFixed(2), bottom: +br.bottom.toFixed(2), h: +br.height.toFixed(2) } : null,
     dock: dr ? { top: +dr.top.toFixed(2), bottom: +dr.bottom.toFixed(2) } : null,
     scrollTop: scroll ? +scroll.scrollTop.toFixed(1) : null,
     q: box(q), content: box(content),
@@ -395,15 +402,19 @@ const readAnswer = () => `(() => {
       sendPresent: !!send, sendText: send ? send.textContent : null,
       sendTag: send ? send.tagName.toLowerCase() : null,
       ...box(ta),
+      inBand: !!(band && tr.top >= br.top - 1 && tr.bottom <= br.bottom + 1),
       inCard: tr.top >= cardBox.top - 1 && tr.bottom <= cardBox.bottom + 1,
+      outsideCard: !card.contains(ta),
       aboveDock: !dr || tr.bottom <= dr.top + 0.5,
       maxHeight: getComputedStyle(ta).maxHeight,
       cls: ta.className,
+      composerShell: ta.parentElement ? ta.parentElement.className : '',
     } : { present: false },
     status: (card.querySelector('.ta-qd-status') || {}).textContent || '',
-    error: (card.querySelector('.ta-qd-answer-error') || {}).textContent || '',
+    error: (pageEl.querySelector('.ta-qd-answer-error') || {}).textContent || '',
     lastAnswer: card.dataset.qdAnswerLast || null,
-    answerInScroller: !!card.querySelector('.ta-qd-scroll .ta-qd-answer'),
+    answerInScroller: !!card.querySelector('.ta-qd-scroll .ta-qd-answer-input, .ta-qd-scroll .ta-qd-float'),
+    bandPosition: band ? getComputedStyle(band).position : null,
   };
 })()`;
 
@@ -853,21 +864,23 @@ ok('D1 问题在卡首屏可见（未滚动时 .ta-qd-q 完整落在卡片可视
   JSON.stringify({ q: qa0.q, card: qa0.card, scrollTop: qa0.scrollTop, text: qa0.questionText, inCard: qa0.qInCard }));
 ok('D2 问题/选项排在长正文之前（长正文不再把问题顶到折叠线下）',
   qa0.order.qBeforeContent === true, JSON.stringify(qa0.order));
-ok('D3 回答输入框在场（卡内真 textarea + 真发送键）',
+ok('D3 回答输入框在场（真 textarea + 真发送键，出自次级输入框模板）',
   qa0.answer.present === true && qa0.answer.tag === 'textarea'
   && qa0.answer.sendPresent === true && qa0.answer.sendTag === 'button',
-  JSON.stringify({ present: qa0.answer.present, tag: qa0.answer.tag, send: qa0.answer.sendText, sendTag: qa0.answer.sendTag }));
-ok('D4 输入区 = 卡底固定带：在卡内 + 底缘不被底部 dock 截断',
-  qa0.answer.inCard === true && qa0.answer.aboveDock === true,
-  JSON.stringify({ answer: { top: qa0.answer.top, bottom: qa0.answer.bottom, h: qa0.answer.h },
-    card: qa0.card, dock: qa0.dock }));
+  JSON.stringify({ present: qa0.answer.present, tag: qa0.answer.tag, send: qa0.answer.sendText, sendTag: qa0.answer.sendTag, shell: qa0.answer.composerShell }));
+ok('D4 输入区 = 悬浮控件带：在页面级浮带内 + 已搬出卡片 + 底缘不被底部 dock 截断'
+  + '（作者令 2026-11-21 ⑥ 改写本判据：改前要求在「卡内」，恰恰是卡片底缘裁掉输入框的成因）',
+  qa0.answer.inBand === true && qa0.answer.outsideCard === true && qa0.answer.aboveDock === true
+  && qa0.bandPosition === 'static',
+  JSON.stringify({ answer: { top: qa0.answer.top, bottom: qa0.answer.bottom, h: qa0.answer.h, inBand: qa0.answer.inBand, outsideCard: qa0.answer.outsideCard },
+    band: qa0.band, card: qa0.card, dock: qa0.dock, bandPosition: qa0.bandPosition }));
 ok('D4 输入区不在滚动面内（长内容滚动时输入框不跟着走）',
   qa0.answerInScroller === false, String(qa0.answerInScroller));
 
 // 没修源码这一支根本没有回答框：后面每条输入腿直接判红（不挂起、不误报超时），
 // 「对未修源码直跑应报红」因此是一组干净的 FAIL，而不是一次崩溃。
 if (qa0.answer.present === true) {
-  await page.locator(`${CARD_SEL} .ta-qd-answer-input`).fill(ANSWER_TEXT);
+  await page.locator(`${CARD_SEL} .ta-qd-answer-input textarea`).fill(ANSWER_TEXT);
   await page.waitForTimeout(160);
   const typed = await page.evaluate(readAnswer());
   probe.typed = typed;
@@ -889,16 +902,16 @@ if (qa0.answer.present === true) {
     afterSend.answer.value === '' && afterSend.error === '',
     JSON.stringify({ value: afterSend.answer.value, error: afterSend.error }));
 
-  // 长正文滚到底：输入区仍钉在卡底、仍在卡内、仍不被 dock 截断
+  // 长正文滚到底：浮带仍在原位、仍不被 dock 截断（悬浮控件带 = 不随内容走）
   await page.evaluate(`(() => { const s = document.querySelector('${CARD_SEL} .ta-qd-scroll'); s.scrollTop = s.scrollHeight; })()`);
   await page.waitForTimeout(220);
   const deep = await page.evaluate(readAnswer());
   probe.answerDeepScroll = deep;
-  ok('D8 长正文滚到底后输入框仍在卡内 + 不被 dock 截断 + 位置不动（滚动面 ≠ 输入区）',
-    deep.scrollTop > 0 && deep.answer.inCard === true && deep.answer.aboveDock === true
+  ok('D8 长正文滚到底后输入框仍在浮带内 + 不被 dock 截断 + 位置不动（滚动面 ≠ 控件带）',
+    deep.scrollTop > 0 && deep.answer.inBand === true && deep.answer.aboveDock === true
     && Math.abs(deep.answer.top - qa0.answer.top) <= 1,
     JSON.stringify({ scrollTop: deep.scrollTop, answerTop: deep.answer.top, beforeTop: qa0.answer.top,
-      card: deep.card, dock: deep.dock }));
+      band: deep.band, card: deep.card, dock: deep.dock }));
   await page.screenshot({ path: join(SHOTS, '11-content-bottom-answer-pinned.png') });
   await page.evaluate(`(() => { const s = document.querySelector('${CARD_SEL} .ta-qd-scroll'); s.scrollTop = 0; })()`);
   await page.waitForTimeout(180);
@@ -1205,13 +1218,18 @@ await push(page, 'todo-quick-decision');
 const emptyState = await page.evaluate(`(() => {
   const card = document.querySelector('${CARD_SEL} .ta-qd-card');
   const empty = document.querySelector('${CARD_SEL} .ta-qd-empty');
-  const head = document.querySelector('${CARD_SEL} .ta-qd-head');
-  return { cardHidden: card.hidden, emptyHidden: empty.hidden, emptyText: empty.textContent, headHidden: head.hidden };
+  // 计数（作者令 2026-11-21 ④）已搬进顶带胶囊：空态读它，不再读退役的
+  // .ta-qd-head（那一行整行退役；脚本体内不得出现反引号）。
+  const countEl = document.querySelector('${CARD_SEL} .ta-qd-count');
+  const bnd = document.querySelector('${CARD_SEL} .ta-qd-float');
+  return { cardHidden: card.hidden, emptyHidden: empty.hidden, emptyText: empty.textContent,
+    countHidden: countEl ? countEl.hidden : null, countText: countEl ? countEl.textContent : null,
+    bandHidden: bnd ? bnd.hidden : null };
 })()`);
 probe.emptyState = emptyState;
 ok('E3 零待办：卡不落地，只留空态事实行（不渲染空壳卡）',
-  emptyState.cardHidden === true && emptyState.headHidden === true
-  && emptyState.emptyHidden === false && emptyState.emptyText === '全部完成',
+  emptyState.cardHidden === true && emptyState.emptyHidden === false
+  && emptyState.emptyText === '全部完成' && emptyState.countHidden === true && emptyState.bandHidden === true,
   JSON.stringify(emptyState));
 await page.screenshot({ path: join(SHOTS, '09-quick-empty.png') });
 
@@ -1255,8 +1273,8 @@ try {
     await sleep(400);
   }
   // 拍③2：回答区（本批新增）—— 有输入框就真填字 + 真提交（未修源码这一支跳过）
-  if (await page.evaluate(() => !!document.querySelector('.ta-qd-answer-input'))) {
-    await page.locator('.ta-qd-answer-input').fill('选 A：先把待办数据模型的字段对齐做完');
+  if (await page.evaluate(() => !!document.querySelector('.ta-qd-answer-input textarea'))) {
+    await page.locator('.ta-qd-answer-input textarea').fill('选 A：先把待办数据模型的字段对齐做完');
     await sleep(700);
     await page.locator('.ta-qd-answer-send').click();
     await sleep(700);

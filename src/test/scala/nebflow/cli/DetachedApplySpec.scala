@@ -401,6 +401,38 @@ class DetachedApplySpec extends CatsEffectSuite:
     assertEquals(got, Some("/opt/x/stand"))
   }
 
+  test("缺陷⑥: resolveLauncher honours INSTALL_DIR so an isolated install can still update") {
+    // 2026-11-21 跨机 E2E 实测：隔离实例装在 C:\stand-e2e\bin（INSTALL_DIR 给的就是它），
+    // 而 resolveLauncher 只认 STAND_LAUNCHER 与平台缺省 ⇒ `stand update --from <jar>`
+    // 直接报 "stand launcher not found"。装得下却更新不了 = 安装面验收不成立。
+    val root = sandbox()
+    val bin = root / "custom-install-dir"
+    os.makeDir.all(bin)
+    os.write.over(bin / "stand", "#!/bin/sh\n") // posix launcher 名 = 品牌 lowerName
+    val got = DetachedApply.resolveLauncher(
+      Map("INSTALL_DIR" -> bin.toString),
+      "/home/u",
+      isWindows = false
+    )
+    assertEquals(got, Some((bin / "stand").toString))
+
+    // 负控：INSTALL_DIR 指向没有 launcher 的目录 ⇒ 不静默接受，继续落到平台缺省判定
+    val empty = root / "no-launcher-here"
+    os.makeDir.all(empty)
+    val fallback = DetachedApply.resolveLauncher(Map("INSTALL_DIR" -> empty.toString), "/home/u", isWindows = false)
+    assert(!fallback.exists(_.startsWith(empty.toString)), s"空目录不得被当成安装根：$fallback")
+
+    // STAND_LAUNCHER 仍然最优先（既有契约不被这条补丁改动）
+    assertEquals(
+      DetachedApply.resolveLauncher(
+        Map("STAND_LAUNCHER" -> "/opt/x/stand", "INSTALL_DIR" -> bin.toString),
+        "/home/u",
+        isWindows = false
+      ),
+      Some("/opt/x/stand")
+    )
+  }
+
   test("defaultPlan wires layout detection from the launcher directory") {
     val root = sandbox()
     val bin = root / "bin"

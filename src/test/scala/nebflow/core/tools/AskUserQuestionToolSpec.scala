@@ -18,6 +18,18 @@ class AskUserQuestionToolSpec extends FunSuite:
   private def questionJson(fields: (String, Json)*): Json =
     Json.obj(fields*)
 
+  test("merge configuration survives parse and JSON answer stays intact") {
+    val config = Json.obj("target" -> "main".asJson, "branches" -> Json.arr(Json.obj("name" -> "feat/a".asJson)))
+    val item = AskUserQuestionTool
+      .parseItems(List(questionJson("question" -> "Merge?".asJson, "multiple" -> true.asJson, "merge" -> config)))
+      .head
+    assertEquals(item.merge, Some(config))
+    assertEquals(item.multiple, false)
+    val answer =
+      """{"decision":"approve","branches":[{"name":"feat/b","note":"first"},{"name":"feat/a","note":"second"}],"target":"main","text":"ok"}"""
+    assertEquals(AskUserQuestionTool.formatAnswer(List(item), List(answer)), answer)
+  }
+
   // ============================================================
   // parseItems — multiple three states
   // ============================================================

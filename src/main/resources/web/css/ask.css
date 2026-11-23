@@ -230,14 +230,16 @@ nf-ask-dock { display: contents; }
 }
 .selection-ask-btn[hidden] { display: none; }
 .selection-ask-btn:hover { border-color: var(--ds-text-muted); }
-.selection-ask-btn:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.7); outline-offset: 1px; }
+.selection-ask-btn:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 .ask-dock.selection-dock {
   position: fixed;
   right: auto;
   bottom: auto;
   max-height: min(60vh, 420px);
+  pointer-events: none;
 }
+.ask-dock.selection-dock > * { pointer-events: auto; }
 
 /* ═══ 覆盖层（作者令④无窗体）：气泡列 + 输入条，z < 顶行（v2.1：徽标退场）═══
  * 记事本批（2026-11-05）：`.note-dock` 是本规则的**成员**（不是副本）——同一座位
@@ -498,10 +500,13 @@ body.mobile-layer .note-dock .ds-resize-handle {
  * 观感两类（作者令点名的区分）：正常干活 = 中性 dim（不抢注意力）；前置不可用 =
  * warn 档；失败 = error 档。三段是并列的 flex 项，右对齐（面板右缘钉位）。 */
 .ask-state-line {
-  align-self: stretch;
-  width: 100%;
+  /* 毛玻璃胶囊（ask-status-glass 批）：内容宽、右缘钉位，材质由 glass.css 成员登记表
+     （`.ask-dock .ask-state-line`）供给 —— 单一配方，本块零材质声明。 */
+  align-self: flex-end;
+  max-width: 100%;
   box-sizing: border-box;
-  padding: 0 var(--ds-space-1h);
+  padding: var(--ds-space-hair) var(--ds-space-2);
+  border-radius: var(--ds-radius-pill);
   font-size: var(--ds-fs-hint);
   line-height: 1.4;
   display: flex;
@@ -509,7 +514,7 @@ body.mobile-layer .note-dock .ds-resize-handle {
   justify-content: flex-end;
   align-items: baseline;
   gap: 0 var(--ds-space-1);
-  color: var(--cv-hint-color-dim);
+  color: var(--ds-text);
   opacity: 1;
 }
 .ask-state-line[hidden] { display: none; }
@@ -541,7 +546,7 @@ body.mobile-layer .note-dock .ds-resize-handle {
   opacity: 0.85;
 }
 .ask-state-diag[hidden] { display: none; }
-.ask-state-line.is-warn { color: var(--ds-warn-icon); }
+.ask-state-line.is-warn { color: var(--ds-warn-ink); }
 .ask-state-line.is-error { color: var(--ds-danger-icon); }
 
 
@@ -641,6 +646,50 @@ body.mobile-layer .note-dock .ds-resize-handle {
  * 防复活钉：tests/ask-dock-card-leg.spec.mjs C3（iframe 盒宽 = 列内容盒宽）。 */
 .ask-card-row { width: 100%; }
 .ask-card-host { width: 100%; }
+
+/* 回合标记（canvas ask 状态可视批 2026-11-21）：最后一条用户问下方的常驻一行
+ * 「处理中 / 已回复 / 已中止 / 失败」。右贴（与用户气泡同侧）、小字、弱色，不抢正文。 */
+.ask-reply-mark {
+  align-self: flex-end;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-text-muted, #888);
+  margin: 2px 4px 6px 0;
+}
+.ask-reply-mark[data-nf-reply-state="working"] { color: var(--color-primary, #5e6ad2); }
+.ask-reply-mark[data-nf-reply-state="failed"] { color: var(--color-error, #d0342c); }
+
+/* ═══ 时间分隔线（canvas ask 时间分隔线批）═════════════════════════════════
+ * 微信式：段界处居中一条细横线，线上是时间。细线 + 浅色小字，不抢内容；
+ * 颜色走既有 muted 槽（同 .ask-reply-mark），零新材质。 */
+.ask-time-divider {
+  /* 列是 flex 纵向且气泡按 flex-end 贴右：分隔线必须自己拉满整列宽，细线才横贯。 */
+  align-self: stretch;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  user-select: none;
+}
+.ask-time-divider::before,
+.ask-time-divider::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  border-radius: var(--ds-radius-thin);
+  background: currentColor;
+  opacity: 0.15;
+}
+.ask-time-divider {
+  color: var(--color-text-muted, #888);
+}
+.ask-time-divider-label {
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 
 /* ═══ 会话地址行（ask-mail 批 2026-11-16）═══════════════════════════════════
  * ask 会话的 Mail 可达地址（`ask:<sessionId>`）常驻面板头部右贴：编排方经
@@ -964,9 +1013,51 @@ body.mobile-layer .note-body textarea { font-size: var(--ds-fs-mobile-sub); } /*
 }
 /* 可点（仅两段时挂 role=button）——键盘可达性靠 tabIndex，焦点框沿用既有平台默认。 */
 .ask-user-source[role="button"] { cursor: pointer; }
-.ask-user-source[role="button"]:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.ask-user-source[role="button"]:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 /* 窄屏允许段间折行；各段仍使用桌面上限和省略规则。 */
 @media (max-width: 520px) {
   .ask-user-source { flex-wrap: wrap; white-space: normal; }
 }
 body.mobile-layer .ask-user-source { flex-wrap: wrap; white-space: normal; max-width: 100%; }
+
+/* ═══ 附图（ask 附图批 2026-11-22）═══════════════════════════════════════════
+ * 输入条附件钮（文本框之前的圆形图标钮）+ 待发件缩略条（输入条之上）+ 用户气泡
+ * 内的图片行。材质/输入条外壳仍归次级输入框模板（nf-glass），本段只定附图件的几何。 */
+/* 附件钮（UI 小修 2026-11，作者令「ask canvas的附件按钮尺寸和位置应该和主会话保持一致」）：
+   零本地形态——元素挂主会话同一组件类 `.icon-btn`（36/手机 48 档、图标档、hover 玻璃、
+   焦点环全部单源于 input.css / keyboard.css / mobileLayer.css 的 `.icon-btn` 族），
+   位置次序 = 文本框之后、发送钮之前（js/askDialog.js）。`.ask-attach` 仅为身份钩子，本文件零规则。 */
+.ask-media-strip {
+  display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px 6px;
+}
+.ask-media-chip { position: relative; width: 44px; height: 44px; border-radius: var(--ds-radius-input); overflow: visible; }
+.ask-media-thumb {
+  width: 100%; height: 100%; object-fit: cover; border-radius: var(--ds-radius-input); display: block;
+  border: 1px solid var(--color-border, rgba(128,128,128,0.35));
+}
+.ask-media-rm {
+  position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; padding: 0; line-height: 1;
+  border-radius: 50%; border: 1px solid var(--color-border, rgba(128,128,128,0.35));
+  background: var(--color-surface-2, rgba(127,127,127,0.25)); color: var(--color-text, inherit);
+  font-size: 12px; cursor: pointer;
+}
+.ask-msg-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.ask-msg-img {
+  max-width: 220px; width: auto; height: auto; border-radius: var(--ds-radius-button); display: block;
+  border: 1px solid var(--color-border, rgba(128,128,128,0.35));
+}
+
+/* ── 选区解释：原始气泡里的选中文字（r2 作者令 point 3）──────────────────
+   绿色 + 实线下划线，颜色取 canvas 词条同一 token（--ds-link-term），不另写色值。 */
+.bubble a.nf-term.selection-explain-chip {
+  color: var(--ds-link-term);
+  text-decoration: underline;
+  text-decoration-color: currentColor;
+  text-underline-offset: 2px;
+  border-bottom: 0;
+  cursor: pointer;
+}
+.bubble a.nf-term.selection-explain-chip.active { text-decoration-thickness: 2px; }
+
+/* 解释弹窗（canvas 词条弹窗同族 .nf-term-tip；定位见 selectionAsk.js explainTipShow）。 */
+.nf-term-tip.selection-explain-tip { max-width: 320px; }

@@ -43,7 +43,7 @@
         },
         {
           "path": "src/test/scala/nebflow/core/ask/AskEditReviewSpec.scala",
-          "name": "accept and reject both refuse explicitly when the file changed during review; dismiss is the escape"
+          "name": "an external edit overlapping a pending block is refused explicitly; dismiss is the escape"
         }
       ]
     },

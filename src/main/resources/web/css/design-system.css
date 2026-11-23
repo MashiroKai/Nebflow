@@ -51,17 +51,25 @@
   --ds-border: var(--color-frame-border);
   --ds-accent: var(--color-primary);            /* 身份/状态绿（2026-10-30 降级语义） */
   --ds-accent-ink: rgb(var(--brand-green));     /* 开关 ON / 圆钮实心 */
-  --ds-focus-ring: var(--btn-focus-ring);
-  /* 词条引用字色（term-system-v2 词条视觉面批 2026-11-05，作者令「词条被使用
-     的时候，应该是一个蓝色的文字」）：语义角色 = 「词条」这一实体的字色。
-     值 = 蓝族 ink 双档（stand-tokens.css 的 --term-link-ink；亮 70 99 156 /
-     暗 sapphire-glow），本层只做一拍别名，零字面量。消费点 =
-     split.css a.nf-wikilink.nf-wikilink-term / a.nf-term。对比度实测见
-     tests/_term-face-harness.mjs（**阅读面合成底**实测：亮 5.76:1 / 暗 6.52:1，
-     两侧均 ≥ 正文门槛 4.5:1；数字由 harness 每次跑打印，不手填）。 */
-  --ds-link-term: rgb(var(--term-link-ink));
+  /* 焦点色锚 = 全站唯一 `--nf-focus-ring`（css/keyboard.css）；原 `--ds-focus-ring`
+     别名已收编（focus-ring-unify 批 2026-11-22），0 引用由 check-focus-ring.mjs F6 钉住。 */
+  /* 可点击标记字色（ask-ref-marks-green 批 2026-11-22，作者更正令原话：
+     「ask引用做错了 需要回退 我说的是这种 可点击的下划线标记 现在是紫色
+     在暗色模式下可见性很差」）：语义角色 = canvas 文档面所有**可点击下划线
+     标记**的字色（文档链接 / 手写词条引用 / 正文裸词自动链 / 词条索引条目）。
+     值 = 仓内既有成功绿双档 `--status-success-icon`（base.css：亮 #2e7d32 /
+     暗 #66bb6a）——「与已绿标记同族」，且双档实测均 ≥ 正文门槛 4.5:1
+     （亮 4.6:1 / 暗 7.5:1，tests/ask-ref-marks-shots.mjs 真截图像素打印）。
+     为什么不用品牌绿 `--color-primary`（#07c160，原 nf-wikilink 值）：亮档
+     实测仅 2.21:1，当字色不合格（它本用于按钮底/描边）。
+     前身 = 蓝族 `rgb(var(--term-link-ink))`（term-system-v2 2026-11-05 作者令
+     「词条被使用的时候，应该是一个蓝色的文字」；该作者令由 11-22 更正令
+     取代本文件消费面，`--term-link-ink` 仍供 mobile-todo-apple.css 待办
+     快捷钮）。本层只做一拍别名，零字面量。 */
+  --ds-link-term: var(--status-success-icon);
   --ds-danger-icon: var(--status-error-icon);
   --ds-warn-icon: var(--status-warn-icon);
+  --ds-warn-ink: var(--status-warn-ink);   /* 文字档 warn（小字 4.5:1）；图标档仍用 --ds-warn-icon */
   --ds-success-icon: var(--status-success-icon);
   --ds-status-word: var(--status-word);         /* 状态词永远中性字 */
   --ds-control-bg: var(--glass-control-bg);
@@ -234,6 +242,11 @@
      不是装饰。文字位禁 box-shadow 判据另记（非 token）。 */
   --ds-shadow-float: var(--cv-shadow);            /* 浮件三档栈（悬浮控件单源，亮暗已在 sapphire.css） */
   --ds-shadow-press: var(--ig-shadow-press);      /* 墨玻璃按压影单源（glass.css） */
+  /* 按钮面统一阴影 = canvas 基准配方（作者令 2026-11-22 22:54「以 canvas 为准统一」）。
+     全站按钮面（有实底的静止态）只消费这一枚令牌；值 = canvas `.canvas-button` 同源
+     （--ds-shadow-float → --cv-shadow，亮暗双档在 sapphire.css）。改阴影只改这一行。
+     门禁：scripts/check-button-style-unify.mjs（裸写 box-shadow 的按钮面即红）。 */
+  --btn-shadow: var(--ds-shadow-float);
 
   /* ── ⑦ 动效（别名既有 token；SKILL.md §6）── */
   --ds-dur-micro: var(--dur-1);    /* 120ms 微变换（Carbon fast-02 110ms 同语义档） */
@@ -258,8 +271,9 @@
      1px 为四家共识（Apple/IBM/NVIDIA/SpaceX hairline 全 1px），玻璃描边亦 1px。 */
   --ds-border-width: 1px;
   --ds-border-glass: var(--glass-border);   /* 玻璃描边单源别名（不复制值） */
-  --ds-focus-width: 2px;                    /* IBM / NVIDIA focus 双源 2px */
-  /* focus 色锚 = 既有 --ds-focus-ring（var(--btn-focus-ring)），草案条目精确归属，不另立槽 */
+  /* focus 的宽度与颜色都不在本文件立槽：唯一一条焦点规则 + 唯一色源在
+     `css/keyboard.css` 的 `--nf-focus-ring-w / --nf-focus-ring`（focus-ring-unify 批
+     2026-11-22；原 --ds-focus-width / --ds-focus-ring 已收编，0 引用）。 */
 
   /* ── ⑩ 聊天流面既有值档（ui-unification-20261103-chat-stream）──
      缺槽先扩再消费：以下四槽 = chat.css .bubble / .tool-card 的**现盘读数逐字搬迁**
@@ -509,7 +523,7 @@
   --ds-resize-hit: 44px;             /* 拖柄热区边长（HIG / WCAG 2.5.5 下限） */
   --ds-resize-grip: 18px;            /* 可见抓手本体边长（= ::before 直角弧的臂长） */
   --ds-resize-ink: var(--ds-text-muted);        /* 静息把手色（低对比，不争焦点） */
-  --ds-resize-ink-active: var(--ds-focus-ring); /* hover / 拖拽态把手色 */
+  --ds-resize-ink-active: var(--nf-focus-ring); /* hover / 拖拽态把手色 */
   --ds-resize-bg-active: var(--ds-veil-focus);  /* hover / 拖拽态底（极低调洗选） */
   --ds-resize-border: var(--ds-etched-border);  /* hover / 拖拽态描边 */
   --ds-resize-min-w: 260px;          /* 拖拽宽度下限（≤ 此宽度列内气泡已不可读） */
@@ -710,6 +724,7 @@
                 color var(--btn-dur-state) var(--ds-ease-std),
                 opacity var(--btn-dur-state) var(--ds-ease-std),
                 transform var(--btn-dur-press) var(--ds-ease-std);
+  box-shadow: var(--btn-shadow);
   }
 }
 
@@ -717,6 +732,7 @@
   color: var(--btn-primary-ink);
   background: var(--btn-primary-bg);
   border-color: var(--btn-primary-bg-hover);
+  box-shadow: var(--btn-shadow);
 }
 .ds-btn--danger { color: var(--ds-danger-icon); background: transparent; border-color: transparent; }
 /* hover 两态：底色升一档（触屏无 hover ⇒ 包在媒体查询里，按下态照样可见） */
@@ -731,8 +747,8 @@
 .ds-btn--danger:active { color: var(--btn-danger-ink); border-color: var(--btn-danger-stroke); }
 /* 键盘焦点：描边环（不用 box-shadow —— 环是「线」不是「影」） */
 .ds-btn:focus-visible {
-  outline: var(--btn-ring-w) solid var(--btn-ring);
-  outline-offset: var(--btn-ring-offset);
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 /* 禁用：只降不透明 + not-allowed */
 .ds-btn:disabled,
@@ -799,13 +815,14 @@
   /* 本体 < 44 ⇒ 负 inset 外扩；本体 ≥ 44 ⇒ 收到 0（不减缩、不外溢） */
   inset: min(0px, calc((100% - var(--ds-turn-hit)) / 2));
 }
-.ds-turn-btn:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 2px; }
+.ds-turn-btn:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 /* 发送档：微信绿实底（--ctl-send-* 一跳别名，亮暗同值） */
 .ds-turn-btn--send,
 .ds-turn-btn--send:disabled {
   background: var(--ds-turn-send-bg);
   color: var(--ds-turn-send-ink);
   border-color: var(--ds-turn-send-border);
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .ds-turn-btn--send:hover {
@@ -827,6 +844,7 @@
   color: var(--ds-turn-stop-ink);
   border-color: transparent;
   display: none;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .ds-turn-btn--stop:hover { background: var(--ds-turn-stop-bg-hover); }
@@ -870,11 +888,19 @@
               color var(--ds-dur-hover) var(--ds-ease-std);
 }
 .ds-resize-handle:hover,
-.ds-resize-handle:focus-visible,
 .ds-resize-handle[data-resizing='true'] {
   opacity: 1;
   color: var(--ds-resize-ink-active);
   outline: none;
+}
+/* 键盘焦点单独一条（focus-ring-unify 批 2026-11-22）：原先与 hover/拖拽态共用
+   一条规则，`outline:none` 会把键盘态也压成零反馈 —— 拖柄是键盘可达控件
+   （方向键调宽），必须看得见环。 */
+.ds-resize-handle:focus-visible {
+  opacity: 1;
+  color: var(--ds-resize-ink-active);
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 /* 可见形态 = 左上角直角弧（L 形拐角 + 拐角圆角）：两条边臂沿面板上缘/左缘
    走到 18px 处收头，拐角 7px 圆角（--ds-radius-chip 档）。紧贴面板外缘
@@ -886,6 +912,8 @@
    线糊成「叠起来的正方形」，本批整族退役（规则与 DOM 节点同时摘除）：
    「只要一个小边框就行」。 */
 .ds-resize-handle::before {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: inherit;
   content: '';
   position: absolute;
   /* 臂原点 = 面板左上角在把手盒内的坐标（桌面把手外挂 14px ⇒ 臂落 14/14；
@@ -920,7 +948,9 @@
 }
 .ds-row:last-child { border-bottom: none; }
 .ds-row--link { cursor: pointer; width: 100%; text-align: left; background: none; border-left: 0; border-right: 0; border-top: 0; font-family: inherit; }
-.ds-row--link:hover { background: var(--color-frame-hover); }
+.ds-row--link:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--color-frame-hover); }
 .ds-row__label { font-size: var(--ds-fs-body); color: var(--ds-text); }
 .ds-row__value { font-size: var(--ds-fs-hint); color: var(--ds-text-muted); font-variant-numeric: tabular-nums; }
 
@@ -1036,6 +1066,8 @@
 .ds-tool-card .label .tool-detail { color: var(--ds-text-dim); font-size: var(--ds-fs-meta); }
 /* 设备角标：旧「金属渐变字」收编语义档（muted→dim→muted），三色随主题。 */
 .ds-tool-card .label .tool-device-tag {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   display: inline-block;
   font-size: var(--ds-fs-meta);
   font-weight: var(--ds-fw-btn);
@@ -1137,10 +1169,16 @@
   background: color-mix(in srgb, var(--ds-text) 25%, transparent);
 }
 .ds-tool-card .diff-line { display: flex; gap: var(--ds-space-1); }
-.ds-tool-card .diff-line:hover { background: var(--ds-veil-focus); }
+.ds-tool-card .diff-line:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--ds-veil-focus); }
 .ds-tool-card .diff-lineno { color: var(--ds-text-dim); min-width: 28px; text-align: right; user-select: none; }
-.ds-tool-card .diff-add { color: var(--ds-success-icon); background: color-mix(in srgb, var(--ds-success-icon) 12%, transparent); }
-.ds-tool-card .diff-del { color: var(--ds-danger-icon); background: color-mix(in srgb, var(--ds-danger-icon) 12%, transparent); }
+.ds-tool-card .diff-add {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); color: var(--ds-success-icon); background: color-mix(in srgb, var(--ds-success-icon) 12%, transparent); }
+.ds-tool-card .diff-del {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); color: var(--ds-danger-icon); background: color-mix(in srgb, var(--ds-danger-icon) 12%, transparent); }
 .ds-tool-card .diff-content { flex: 1; }
 .ds-tool-card .detail-cmd {
   color: var(--ds-text-muted);
@@ -1232,7 +1270,7 @@
   color: var(--ds-text-muted);
   background: var(--ds-control-bg-hover);
   border: none;
-  border-radius: var(--ds-radius-badge);
+  border-radius: var(--ds-radius-chip); /* 圆角标准批 2026-11-22（作者令「要圆角的框」「落为标准」· 规范 §2.6）：F7 判据下的环基座。 */
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
@@ -1240,7 +1278,7 @@
   transition: background var(--ds-dur-hover) var(--ds-ease-std), color var(--ds-dur-hover) var(--ds-ease-std);
 }
 .ds-tool-card .tool-img-ref:hover { color: var(--ds-text); background: var(--ds-veil-focus); }
-.ds-tool-card .tool-img-ref:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 1px; }
+.ds-tool-card .tool-img-ref:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 /* ══ ⑧ 侧栏族（.ds-side-*）——ui-unification-20261103-sidebar ═══════════
    侧栏导航项的**形态唯一家**：行基座 / 紧凑树行 / 行主文案 / 行 meta /
@@ -1437,6 +1475,7 @@
   cursor: pointer;
   user-select: none;
   transition: background var(--ds-dur-hover), transform var(--ds-dur-micro);
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .ds-media-stack__pill:hover { background: var(--ds-media-pill-bg-hover); }
@@ -1497,6 +1536,8 @@
    六处外部消费方按名字引用它；键帧全局解析、与加载序无关 ⇒ 迁址零破面，
    单点在此）。 */
 .ds-overlay {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: fixed;
   inset: 0;
   align-items: center;
@@ -1594,6 +1635,8 @@ body:not(.mobile-layer) .sp-panel-header > .g2-fab svg {
    本类**不定高**（消费面自行声明，现盘 = 聊天根 `--ds-fade-height` 88px）、
    **不定 z 序**、**不定左右缩进** —— 由消费面声明。 */
 .ds-edge-fade {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute;
   top: 0;
   left: 0;

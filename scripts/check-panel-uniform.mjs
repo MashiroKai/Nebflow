@@ -24,7 +24,7 @@ check(/\.sp-identity\s*\{[^}]*flex-direction:\s*column;[^}]*align-items:\s*cente
 check(/pf-edit-bar ds-chrome-band/.test(profile) && /g2-fab pf-edit-submit/.test(profile) && /g2-fab pf-edit-cancel/.test(profile), 'registered profile bottom controls must use canvas outlets');
 check(/bar\.hidden = !dirty/.test(profile) && /save\.hidden = true/.test(profile), 'pending actions only; no duplicate inline save');
 check(/if \(!isMobileLayer\(\)\)\s*\{[^}]*profile-face-close/s.test(profile), 'mobile back and desktop close must not duplicate');
-for (const group of ['general', 'models', 'runtime', 'advanced', 'about']) check(sidebar.includes(`data-panel-group="${group}"`), `missing settings group ${group}`);
+for (const group of ['general', 'models', 'advanced', 'about']) check(sidebar.includes(`data-panel-group="${group}"`), `missing settings group ${group}`);
 // 账户/账号栏整件退役（作者令 2026-11-18）：「设置页不得出现账户栏/账号卡」的源码级判据。
 // 只判代码，不判注释（退役理由注释里保留旧选择器名以留档）⇒ 先剥注释再测。
 const stripComments = (src) => src

@@ -144,8 +144,6 @@ object ResetAudit:
         base + s" target=${t.id} targetKind=Delegate targetStatus=${statusOpt.map(_.toString).getOrElse("unknown")} " +
           s"targetTask=${quote(t.title)}"
 
-  end line
-
   /**
    * 审计入口（BashTool 执行腿唯一调用点）：解析 + 组装 + 逐行发射。
    *
@@ -158,7 +156,7 @@ object ResetAudit:
     ctx: ToolContext,
     runtime: Option[AgentRegistryPort],
     ts: Long = System.currentTimeMillis(),
-    emit: String => IO[Unit] = s => IO(logger.info(s))
+    emit: String => IO[Unit] = s => logger.info(s)
   ): IO[Unit] =
     val callerSid = ctx.sessionId.getOrElse("-")
     val callerAgent = ctx.agentDef.map(_.name).orElse(ctx.sessionName).getOrElse("-")
@@ -196,10 +194,8 @@ object ResetAudit:
           if targets.isEmpty then List(line(command, callerSid, callerAgent, seat, ts, target = None))
           else targets.map(t => line(command, callerSid, callerAgent, seat, ts, target = Some((t, statuses.get(t.id)))))
         lines.traverse_(l =>
-          emit(l)
-            .handleErrorWith(e => IO(logger.warn(s"ResetAudit: emit failed (command unaffected): ${e.getMessage}")))
+          emit(l).handleErrorWith(e => logger.warn(s"ResetAudit: emit failed (command unaffected): ${e.getMessage}"))
         )
       }
-      .handleErrorWith(e => IO(logger.warn(s"ResetAudit: audit failed (command unaffected): ${e.getMessage}")))
-  end record
+      .handleErrorWith(e => logger.warn(s"ResetAudit: audit failed (command unaffected): ${e.getMessage}"))
 end ResetAudit

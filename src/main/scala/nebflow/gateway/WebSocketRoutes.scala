@@ -125,14 +125,10 @@ class WebSocketRoutes(
         case Some(agentName) =>
           sharedResources.agentLibrary.get(agentName).flatMap {
             case Some(defn) => IO.pure(defn)
-            case None =>
-              metaOpt.flatMap(_.flowName) match
-                case Some(fn) =>
-                  nebflow.core.entity.EntityLoader.loadTeamAgent(fn, agentName).flatMap {
-                    case Some(entry) => IO.pure(entry.toAgentDef)
-                    case None => rootFallback(agentName)
-                  }
-                case None => rootFallback(agentName)
+            // 团队类型面删除批阶段 B2（作者裁定 Q2：teams/ 盘上遗留直接丢弃）：
+            // 原 flowName → EntityLoader.loadTeamAgent 的团队局部定义查找腿删除，
+            // 全局 agent 库缺席时直接走 Nebula 兜底（不再读 teams/<flowName>/agents/）。
+            case None => rootFallback(agentName)
           }
         case None =>
           sharedResources.agentLibrary.get(RootAgentIdentity.Name).flatMap {
@@ -192,12 +188,6 @@ class WebSocketRoutes(
       history <- sharedResources.sessionStore.loadMessagesForSession(sessionId)
       metaOpt <- sharedResources.sessionStore.getSessionMeta(sessionId)
       agentDef <- resolveAgentDef(sessionId, metaOpt, sharedResources)
-      sessionCwd <- nebflow.core.ask.AskSessions.sessionCwd(
-        sessionId,
-        nebflow.core.ask.AskGatewayServices.instance.map(_.registry)
-      )
-      readTracker <- nebflow.shared.ReadTracker.create
-      fileHistory <- nebflow.shared.FileHistory.create()
       modelOverrides <- sharedResources.sessionModelOverrides.get
       contextWindow = modelOverrides.get(sessionId).map(_.contextWindow).getOrElse(sharedResources.contextWindow)
       // ── ctxthresh 批（2026-09-15 方案 A，作者卡答「按方案A实施」）─────────────
@@ -224,6 +214,13 @@ class WebSocketRoutes(
           IO.blocking {
             if !os.exists(projectsDir) then os.makeDir.all(projectsDir)
           }.as(Some(projectsDir.toString))
+      // ask 读面裁定（2026-11-23）：file 域 ask 的 cwd = 工作区根（与主会话同源的
+      // effectiveProjectRoot），须在其求得之后取值。非 ask 会话恒 None（判据单点不变）。
+      sessionCwd <- nebflow.core.ask.AskSessions.sessionCwd(
+        sessionId,
+        nebflow.core.ask.AskGatewayServices.instance.map(_.registry),
+        effectiveProjectRoot
+      )
       // 2026-09-13（permshield S1）权限档位 = **应用级持久值**：agent 参数取唯一有效
       // 档位（`SharedResources.effectiveSafetyMode` ⇒ `nebflow.json` 的
       // `safety.defaultMode`）。这里既不消费 `SessionMeta.safetyMode`（盘上遗留值，
@@ -237,19 +234,22 @@ class WebSocketRoutes(
           id => sharedResources.sessionStore.getFolderParentId(id)
         )
       }.flatten
-      ref <- rootSystem.spawn(
-        AgentActor(
-          agentDef,
-          sharedResources,
-          recordingWsSend,
+      // 阶段 A（G1 收口）：root 创建改经唯一入口 spawnAgentActor；旧直连的全部差异以
+      // 等价旋钮声明（rulesMd/folderId/gitBranch/compactThresholdRatio/contextWindow 覆盖、
+      // sessionName 缺 meta ⇒ None、actorName=agent-<sid>；不占 provider 坑、不过准入闸、不过 kernel 闸）。
+      ref <- sharedResources.spawnAgentActor(
+        rootSystem,
+        nebflow.core.node.NodeRunner.SpawnParams(
+          agentDef = agentDef,
+          resources = sharedResources,
+          sessionId = sessionId,
+          sessionName = metaOpt.map(_.name).getOrElse(""),
+          sessionNameAbsent = metaOpt.isEmpty,
           depth = 0,
           parentRef = None,
-          sessionId = Some(sessionId),
-          sessionName = metaOpt.map(_.name),
+          wsSend = recordingWsSend,
           initialMessages = history,
-          readTracker = Some(readTracker),
-          fileHistory = Some(fileHistory),
-          contextWindow = contextWindow,
+          contextWindowOverride = Some(contextWindow),
           projectRoot = effectiveProjectRoot,
           sessionCwd = sessionCwd,
           rulesMd = resolvedRules,
@@ -266,9 +266,12 @@ class WebSocketRoutes(
           // sandboxEnabled=false 现状零变化；沙箱 root 推导仍归 AgentCore。
           sandboxEnabled = agentDef.name == RootAgentIdentity.Name,
           // ctxthresh 批：会话级压缩阈值比例覆盖（仅本 root spawn 注入，见上方注释）。
-          compactThresholdRatio = compactThresholdRatio
-        ),
-        s"agent-$sessionId"
+          compactThresholdRatio = compactThresholdRatio,
+          actorName = s"agent-$sessionId",
+          pinProvider = false,
+          admissionGuard = false,
+          kernelGate = false
+        )
       )
       pr = effectiveProjectRoot.getOrElse("")
       safetyMode = nebflow.core.SafetyMode.toString(effectiveMode)
@@ -361,7 +364,7 @@ class WebSocketRoutes(
     pendingEvent: AgentCommand.ExternalEvent
   ): IO[BgSessionActivator.ActivationResult] =
     kind match
-      case AgentKind.Delegate | AgentKind.SubTask =>
+      case AgentKind.Delegate =>
         IO.pure(
           BgSessionActivator.Deferred(
             s"session family $kind revival is owned by its supervisor respawn / boot-sweep legs"
@@ -1193,9 +1196,22 @@ class WebSocketRoutes(
                       takeoverHolderRef = new java.util.concurrent.atomic.AtomicReference[Option[String]](
                         takeoverSession.map(sid => ConsoleTakeover.holderOf(sid, takeoverClient))
                       )
-                      // Conflict detection must never suppress content delivery.
-                      // Write authorization is enforced separately by the Canvas API.
-                      gatedWsSend = (text: String, isStream: Boolean) => perConnWsSend(text, isStream)
+                      // 单实例四修批（2026-10-29 作者令 · 隐私面）：被顶出连接的
+                      // 内容帧闸——ConsoleTakeover.gateFrame 按**实例**裁决（owner 非本
+                      // 实例 ⇒ 只放行 takeover/takeoverResult 接管协议帧，对话内容帧
+                      // 断喂）。误报根修批（2026-11-02）：闸键与入账键同为 holder
+                      // （clientId 优先），否则同浏览器换会话后自己的新连接会被自己掐死。
+                      // Bearer 轨（takeoverSession=None）与总闸关闭 ⇒ 恒放行（零漂移）。
+                      // 心跳面不受影响：pong 走 perConnJsonSend 旁路，不经本闸。
+                      // 在带声明批：闸键改读本连接实例键（握手腿初值 / identify 换轨）。
+                      gatedWsSend = (text: String, isStream: Boolean) =>
+                        takeoverHolderRef.get match
+                          case None => perConnWsSend(text, isStream)
+                          case Some(holder) =>
+                            takeover.gateFrame(holder, text).flatMap {
+                              case true => perConnWsSend(text, isStream)
+                              case false => IO.unit
+                            }
                       hubConnId <- wsHub.register(gatedWsSend)
 
                       // A1: the hub now hands connections pre-serialized text. The
@@ -1257,7 +1273,12 @@ class WebSocketRoutes(
                               // 声明腿同键（holderOf）⇒ 闭包三态经下方识别后归还本管、
                               // 后续帧照常进常规分派（takeoverIdentify 不是常规帧型）。
                               val handled =
-                                if takeover.enabled && ConsoleTakeover.isIdentifyFrame(text) then
+                                if takeover.enabled && ConsoleTakeover.isRetakeFrame(text) then
+                                  takeover.handleRetake(hubConnId, perConnJsonSend)
+                                else if takeover.enabled && ConsoleTakeover.isAckFrame(text) then
+                                  // 接管通知确认（补推账清账）：客户端渲染后回 at，服务端只认同 at。
+                                  ConsoleTakeover.ackAt(text).fold(IO.unit)(at => takeover.ackNotice(hubConnId, at))
+                                else if takeover.enabled && ConsoleTakeover.isIdentifyFrame(text) then
                                   (ConsoleTakeover.declaredClientId(text), takeoverSession) match
                                     case (Some(cid), Some(sid)) =>
                                       // 迁移 + 重裁决（kick 与否在 ConsoleTakeover.settle 内定），
@@ -1398,13 +1419,9 @@ class WebSocketRoutes(
                       )
                       activeMeta <- sessionStore.getActiveMeta
                       agentName = activeMeta.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
-                      // ⑦ (2026-08-24): 原为「WS connect 即恢复已挂团队」——挂在
-                      // initFlowTree → 树 actor 的 restoreTeams 上。团队功能删除批
-                      // 阶段 1 已断掉 initFlowTree（见 :490 注），此处**只保留** root
-                      // agent 的确保（ensureRootAgent 幂等，冷启 spawn / 热路径原样返回）；
-                      // 团队恢复腿随之不存在。/api/teams/mounted 在阶段 1 的中间态见
-                      // reports-evidence/team-feature-deletion/stage1/README.md §4；
-                      // 该路由本身已在阶段 2 退役（见 PresenceRoutes 同位墓碑注）。
+                      // ⑦ (2026-08-24) 的「WS connect 即恢复已挂团队」腿已随团队面删除
+                      // （团队功能删除批阶段 1），此处**只保留** root agent 的确保
+                      // （ensureRootAgent 幂等，冷启 spawn / 热路径原样返回）。
                       _ <- activeMeta.traverse_(meta =>
                         ensureRootAgent(meta.id).void.handleErrorWith(e =>
                           logger.warn(s"WS-connect root agent ensure failed for session ${meta.id}: ${e.getMessage}")
@@ -1937,6 +1954,11 @@ class WebSocketRoutes(
   // 64MB 之上仍超限的帧走 :1719 的「有声拒绝」（messageTooLarge 错误帧），不再静默。
   private val MaxMessageSize = 64 * 1024 * 1024 // 64MB (base64 image batches; see attach-split batch note)
 
+  /** 多选引用批（2026-11-22）：单条用户帧可携带的被引消息快照上限 —— 与前端
+   *  引用态上限 `MAX_PENDING_QUOTES`（js/msgQuote.js）同值，作为**服务端**兜底：
+   *  失控/恶意帧不能把 refs 无限写进 `.ui.json` 与注入 prompt。 */
+  private val MaxPendingQuotes = 8
+
   /**
    * A2 (perf-481): per-connection outbound queue capacity, in frames.
    *
@@ -2026,7 +2048,17 @@ class WebSocketRoutes(
         _ <- nebflow.core.UsageTracker.record("ws_message", sessionIdForTracking)
         _ <- WsDispatch.handlers.get(msgType) match
           case Some(handle) =>
-            handle(wsDispatchContext(sessionIdentity), text, wsSend, watchSession)
+            handle(
+              wsDispatchContext(
+                sessionIdentity,
+                handshakeCredential.collect { case Credential.ViaSession(record) =>
+                  OwnerAccess.fromAuthenticatedSession(record, attachmentOwnerStore)
+                }
+              ),
+              text,
+              wsSend,
+              watchSession
+            )
 
           case None =>
             val json = parsedJson(text)
@@ -2132,9 +2164,8 @@ class WebSocketRoutes(
                                   }
                               case _ =>
                                 blocks += ContentBlock.Image(data, mimeType)
-                                IO(
-                                  logger
-                                    .warn(s"Image '$name' was not persisted: owner access unavailable or invalid data")
+                                logger.warn(
+                                  s"Image '$name' was not persisted: owner access unavailable or invalid data"
                                 )
                             end match
                           else if mimeType.startsWith("image/") then
@@ -2197,10 +2228,8 @@ class WebSocketRoutes(
                                           logger.warn(s"Failed to save attachment '$name': ${error.getMessage}")
                                       }
                                   case _ =>
-                                    IO(
-                                      logger.warn(
-                                        s"Attachment '$name' was not persisted: owner access unavailable or invalid data"
-                                      )
+                                    logger.warn(
+                                      s"Attachment '$name' was not persisted: owner access unavailable or invalid data"
                                     )
                                 end match
                               case None =>
@@ -2237,10 +2266,16 @@ class WebSocketRoutes(
                                  )
                                }
                                // quote-message 一期（2026-10-09，spec §3.3）：帧 refs 里
-                               // refType==='chat-message' 的**首条**转成落盘 quote 快照
-                               // （至多 1 条；与 attJson 组装同段）。缺席 ⇒ None ⇒ 编码器
-                               // 不落 quote 键 ⇒ 无引用行字节形态与旧 .ui.json 逐字相同。
-                               val quoteJson = quoteFromRefs(json)
+                               // refType==='chat-message' 的快照落盘。多选引用批
+                               // （2026-11-22）起**全量有序**产出：
+                               //   · quote  = 首条（旧读法/旧前端逐字可用，单条行字节形态不变）
+                               //   · quotes = ≥2 条时的全量有序数组（新前端逐条渲染）
+                               // 缺席 ⇒ 两个键都不落 ⇒ 无引用行字节形态与旧 .ui.json 逐字相同。
+                               val quoteSnaps = quotesFromRefs(json)
+                               val quoteJson = quoteSnaps.headOption
+                               val quotesJson =
+                                 if quoteSnaps.sizeIs >= 2 then Some(io.circe.Json.fromValues(quoteSnaps))
+                                 else None
                                val injected = json.hcursor.downField("injected").as[Boolean].getOrElse(false)
                                // tool-card-leak-on-reload 批（2026-11-02）：与
                                // dispatchUserText 同一落盘判据——回合进行中送来的输入
@@ -2257,6 +2292,7 @@ class WebSocketRoutes(
                                          injected,
                                          timestamp = System.currentTimeMillis(),
                                          quote = quoteJson,
+                                         quotes = quotesJson,
                                          midTurn = if injected then None else midTurn
                                        )
                                      )
@@ -2348,7 +2384,8 @@ class WebSocketRoutes(
    * (引用与 eta 展开,构建零副作用)。
    */
   private def wsDispatchContext(
-    sessionIdentity: Option[nebflow.bridge.SessionIdentity] = None
+    sessionIdentity: Option[nebflow.bridge.SessionIdentity] = None,
+    askOwner: Option[OwnerAccess] = None
   ): WsDispatchCtx =
     WsDispatchCtx(
       logger = logger,
@@ -2399,7 +2436,10 @@ class WebSocketRoutes(
       executeAskImpl = executeAsk,
       executeSkillImpl = executeSkill,
       resolveRootSessionIdImpl = resolveRootSessionId,
-      projectCreateBroadcastImpl = (json: io.circe.Json) => wsHub.broadcast(json)
+      projectCreateBroadcastImpl = (json: io.circe.Json) => wsHub.broadcast(json),
+      // canvas ask 附图批：附图提问腿 + 已认证主体（落盘登记所有权）。
+      handleAskUserTextImpl = handleAskUserText,
+      askOwnerAccess = askOwner
     )
   end wsDispatchContext
 
@@ -2548,6 +2588,20 @@ class WebSocketRoutes(
   end handleUserText
 
   /**
+   * canvas ask 附图批：附图提问腿。与 handleUserText 同一落盘/派发腿（dispatchUserText），
+   * 区别只在于允许「图+无正文」（有图不算空）并携带 UI 行件与模型侧块。
+   */
+  private def handleAskUserText(
+    sessionId: String,
+    content: String,
+    attachments: List[io.circe.Json],
+    blocks: List[ContentBlock]
+  ): IO[Unit] =
+    if sessionId.nonEmpty && (content.nonEmpty || blocks.nonEmpty) then
+      dispatchUserText(sessionId, content, "ask-dock", fromUser = true, attachments = attachments, mediaBlocks = blocks)
+    else IO.unit
+
+  /**
    * Normal message dispatch: user bubble + immediate injection into the
    * agent's turn pipeline. The ONLY path that enqueues user text — the
    * input-box AskUser passthrough that used to bypass it was retired
@@ -2569,7 +2623,11 @@ class WebSocketRoutes(
     // P3 磁盘邮箱批（作者 2026-11-05 10:46）：把 WS 边界 `:2005` 已解析出的客户端
     // 幂等键**穿到 ImmediateInput**——改前它在 Gateway→agent 转换处蒸发，真人文字
     // 主腿因此没有任何幂等面（重发同一帧 = 可能双跑）。加性尾参，缺席逐字现状。
-    clientMessageId: Option[String] = None
+    clientMessageId: Option[String] = None,
+    // canvas ask 附图批：UI 行件（UiMessage.User.attachments）与模型侧附加块
+    // （vision 块 + 标签线；正文块由本函数按解析后的 content 前置）。缺席 = Nil ⇒ 逐字现状。
+    attachments: List[io.circe.Json] = Nil,
+    mediaBlocks: List[ContentBlock] = Nil
   ): IO[Unit] =
     logger.info(s"User text ($source) for session $sessionId (${content.length} chars)") *>
       // tool-card-leak-on-reload 批（2026-11-02）：回合内插话判定在**落盘这一瞬**
@@ -2578,7 +2636,7 @@ class WebSocketRoutes(
       midTurnAtPersist(sessionId).flatMap { midTurn =>
         sessionStore.appendUiMessages(
           sessionId,
-          List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis(), midTurn = midTurn))
+          List(UiMessage.User(content, attachments, timestamp = System.currentTimeMillis(), midTurn = midTurn))
         )
       } *>
       // Hard-recovery P4: if the target turn is wedged (Processing + idle >
@@ -2590,9 +2648,15 @@ class WebSocketRoutes(
       (if fromUser then
          ConsoleQuoteResolver.resolve(content, sharedResources.scheduledTaskStore, sharedResources.msgTokens)
        else IO.pure(content)).flatMap { resolvedContent =>
+        // 附图批：带媒体块时块即整条模型输入（AgentIdle 以 blocks 为准、text 只作
+        // 无块回退），故正文块前置于附加块；无媒体 ⇒ blocks=None 逐字现状。
+        val inputBlocks =
+          if mediaBlocks.isEmpty then None
+          else Some((if resolvedContent.nonEmpty then List(ContentBlock.Text(resolvedContent)) else Nil) ++ mediaBlocks)
         ensureAgent(sessionId)(ref =>
           ref ! AgentCommand.ImmediateInput(
             device.fold(resolvedContent)(nebflow.bridge.DeviceProvenance.compose(_, resolvedContent)),
+            blocks = inputBlocks,
             fromUser = fromUser,
             clientMessageId = clientMessageId
           )
@@ -2737,10 +2801,21 @@ class WebSocketRoutes(
    * itemIndex（0 基，≤99）/itemTotal（该组张数，≤99）——两张量都是**位置标注**，
    * 引用目标仍是 refMessageId（寻址/降级矩阵不变）。缺失/非法 ⇒ 不落键（旧载荷
    * 落盘字节形态逐字不变，旧行渲染零变化）。
+   *
+   * 🔴 多选引用批（2026-11-22 作者令逐字「还有支持 多选引用 现在引用两个还做不到」）：
+   * 旧实现 `refs.find(...)` 只取**首条** chat-message ref —— 这是「一条回复只带一条
+   * 引用」在**落盘/历史重放**侧的唯一断点（投递侧 `processRefs` 经 `refs.traverse_`
+   * 本来就逐条注入，前端 refs 数组也一直是全量）。现改为按 refs 顺序**逐条**产出
+   * 快照数组（顺序 = 前端选择顺序 = 注入顺序），调用方据此落 `quote`（首条，旧读法
+   * 逐字可用）+ `quotes`（≥2 条时的全量有序数组，新读法逐条渲染）。条数 cap =
+   * MAX_PENDING_QUOTES（与前端引用态上限同值，防失控帧）。
    */
-  private def quoteFromRefs(frame: io.circe.Json): Option[io.circe.Json] =
+  private def quotesFromRefs(frame: io.circe.Json): List[io.circe.Json] =
     val refs = frame.hcursor.downField("refs").as[List[io.circe.Json]].getOrElse(Nil)
-    refs.find(r => r.hcursor.downField("refType").as[String].getOrElse("") == "chat-message").flatMap { ref =>
+    refs
+      .filter(r => r.hcursor.downField("refType").as[String].getOrElse("") == "chat-message")
+      .take(MaxPendingQuotes)
+      .flatMap { ref =>
       val c = ref.hcursor
       val src = c.downField("source")
       val mid = RefResolver.sanitize(src.downField("messageId").as[String].getOrElse(""))
@@ -2809,7 +2884,7 @@ class WebSocketRoutes(
       end if
     }
 
-  end quoteFromRefs
+  end quotesFromRefs
 
   /**
    * Search for a file by name and verify its SHA-256 hash matches.
@@ -3406,14 +3481,15 @@ object WebSocketRoutes:
    *
    * 团队功能删除批（team-feature-deletion-20261104）阶段 3：原有第二条腿「Team
    * 记录按 busyMap 过滤」随 busy 标记面整体退役（busyMap 的唯一读者就是它，而
-   * `AgentKind.Team` 记录的唯一生产者是以团队会话登记表为底座的冷激活腿 ⇒ 两侧
+   * Team 记录的唯一生产者是以团队会话登记表为底座的冷激活腿 ⇒ 两侧
    * 同时失去数据源）。呈现面因此零变化：本仓再也产生不出 Team 记录。
    *
    * Standalone (zero class deps) so it is directly unit-testable
    * (ActiveAgentsFilterSpec).
    */
   def filterActiveAgents(registry: Map[String, AgentRecord]): IO[List[AgentRecord]] =
-    val taskKinds = Set(AgentKind.Delegate, AgentKind.Flow, AgentKind.SubTask)
+    // B5：SubTask kind 已删（子代理会话在 B3 换标为 Delegate）；Team 亦然。
+    val taskKinds = Set(AgentKind.Delegate, AgentKind.Flow)
     IO.pure(registry.values.toList.filter(r => taskKinds.contains(r.kind)))
 
   /**
@@ -3471,7 +3547,8 @@ object WebSocketRoutes:
    * 本就持有批次标题，此处对齐为单一解析缝。
    *
    * - `AgentKind.Delegate`：registryTitle 优先（跨重启权威），storeDescription 回填。
-   * - `AgentKind.SubTask`：DelegateRegistry 只装 delegate——只走 storeDescription。
+   * - 子代理会话（B3 换标后 kind=Delegate，DelegateRegistry 无记录）：registryTitle 为
+   *   None ⇒ 走 storeDescription。
    * - 其余 kind：None（既有三档链逐字不动）。
    *
    * 纯函数、零类依赖（`handleGetActiveAgents` 薄调用；IO 包装在调用方）。
@@ -3483,8 +3560,9 @@ object WebSocketRoutes:
     storeDescription: Option[String]
   ): Option[String] =
     val store = storeDescription.filter(_.trim.nonEmpty)
+    // B5：SubTask 分支删除（子代理会话是 Delegate；DelegateRegistry 只装真 delegate ⇒
+    // registryTitle 对它为 None，`.orElse(store)` 已承担原 SubTask 分支的全部效果）。
     if kind == AgentKind.Delegate then registryTitle.filter(_.trim.nonEmpty).orElse(store)
-    else if kind == AgentKind.SubTask then store
     else None
 
   /**

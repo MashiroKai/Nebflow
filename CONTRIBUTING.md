@@ -58,7 +58,34 @@ sbt test                                  # full suite: ~2000+ cases, expect rou
 sbt "testOnly nebflow.core.BrandingSpec"  # directed run — fast inner loop
 ```
 
-Tests execute sequentially (`Test / parallelExecution := false`) because suites share some global state — don't re-enable parallelism casually. Scope with `testOnly <package>.<SpecName>` for iteration; run the full suite before opening a PR.
+Tests execute sequentially (`Test / parallelExecution := false`) because suites share some global state — don't re-enable parallelism casually. Scope with `testOnly <package>.<SpecName>`; the full suite is **not** a per-branch condition any more (see the staged gates below).
+
+### Test gates by state (author ruling, revised 2026-11-22)
+
+Suite breadth is staged by state, never by branch. A green branch proves only the branch's own tree; the defects that matter at merge time — symbol/route/token collisions, duplicated single sources, conflicting defaults — exist only in the merged tree. So the merged tree is pinned by a cheap smoke, while the full suite runs on an auditable cadence instead. The authoritative text is the installed `stand-dev` plugin's `skills/stand-dev/references/engine/merge-pipeline.md` ("Test and verification gates"); this section is the repository-side summary and wins where it is more concrete.
+
+| Gate | When | What runs |
+|---|---|---|
+| Branch gate | Every `feat/*` / `bug/*` branch before it is offered for merge | `sbt compile` (or `make compile`) + directed `testOnly` covering the touched scope + `make fmt-check` + `sbt "scalafix --check"` + `npm run check:static` (design/static legs: focus-ring F7/F8, flat-buttons, glass, input-surface, panel-unify, ui-structure, copy-budget, button-source, mobile-dock-float, test-hermetic, SDD) |
+| Merge gate | Immediately after each `--no-ff` merge into `feat/base` | `sbt compile` on the merged `feat/base` tree + `testOnly` for the touched scope, recorded in the merge commit message as `merge gate: compile PASS; testOnly <scope> PASS; tree <sha>` |
+| Full gate | Every 100 accumulated merges; always before a deployment; always before a release/beta line update | Full `sbt test` (serial, ~35–40 min) plus the browser legs the release procedure requires |
+
+Do not run the full suite on a feature branch. Do not defer a merge gate past the next merge: a red merge gate blocks further merges — fix forward through a normal branch or revert that merge commit.
+
+Counter (git-authored — no hand-kept counter file):
+
+```bash
+# merges since the last witnessed full gate (counts every merge, so it errs toward triggering early)
+git rev-list --count --merges "$(git tag --list 'fullgate-[0-9]*' --sort=-v:refname | head -1)^..feat/base"
+# audit the witnessed gates
+git for-each-ref refs/tags/fullgate-* --format='%(refname:short) %(objectname:short) %(contents:subject)'
+```
+
+The chain starts at the `fullgate-000` anchor tag on the commit that introduced this rule (2026-11-22). At 100, run the full gate on `feat/base` and witness a green run with `git tag -a fullgate-<NNN>-<YYYYMMDD> -m "<date, JDK, command, exit, counts, evidence path, merge range>"`. Scheduling: the full gate and any other long sbt run or heavy suite must not run inside **02:00–10:00 local time** (host-pressure window: compressed memory peaks ~7.8 GB, swap ~25 GB). Defer a trigger that lands in the window and record the deferral; the pre-deploy/pre-release gate moves, it is not waived.
+
+A red full gate blocks merges; localize the break by block search (test the 25-merge block boundaries in a separate worktree, then bisect inside the identified block), never by repeated whole-suite guesses. Never rewrite or delete an existing `fullgate-*` tag.
+
+Staging changes suite width and frequency only, not acceptance: author word-for-word review, real-application full-shell evidence (screenshots, geometry/numeric assertions, motion recordings) and isolated-instance smoke for a changed surface stay mandatory, and no green gate of any kind is acceptance.
 
 ### Frontend (Playwright)
 
@@ -205,6 +232,27 @@ profile). It judges every linked worktree of `git worktree list --porcelain` aga
 primary checkout with no linked worktree passes while explicitly reporting that there was nothing to
 judge.
 
+#### Worktree branch cap (工作树分支上限 — author ruling, 18:28)
+
+Author ruling, verbatim: 「除了我们这些固定的分支之外，就是在用的这个 work tree 分支不可以超过 10 个，不然就得合并」.
+
+1. **Fixed branches are not counted.** The long-lived branches — `main`, `feat/base`, `develop`,
+   `release/*` — sit outside the cap. Every other local branch that has a linked worktree is an
+   「在用」 worktree branch.
+2. **Cap: at most 10 in-use worktree branches.** When the count exceeds 10, each excess branch must
+   either be **merged** into `feat/base` (landing, then reclaim the tree under rule 2 above) or
+   **cleaned up** (tree removed and branch retired). Neither may wait indefinitely.
+   Exception to "the branch is always kept" (rule 2 above): a patch-equivalent branch
+   (`git cherry feat/base <branch>` shows 0 unlanded patches) that has been explicitly authorized
+   may be deleted with `git branch -D`. Re-run the `git cherry` check immediately before each
+   deletion; skip and record any branch that is no longer at 0.
+3. **Retirement of merged branches.** This cap ruling refines rule 2 above for branches whose tip is
+   an ancestor of `feat/base`: after `git worktree remove` (never `--force`), `git branch -d` (never
+   `-D`) may retire the branch. Branches not merged into `feat/base` are not retired by this rule
+   and are listed for an author decision instead.
+4. **Protected in-flight branches** are never removed by a cleanup pass until the author releases
+   them.
+
 #### Current-state anchors (现状锚点 — 2026-11-19)
 
 | Item | Ref | Note |
@@ -226,7 +274,7 @@ release-line concern, never an integration-line admission requirement.
 
 ### Release flow
 
-The authoritative text of the release procedure lives on the **externalized spec surface** — the Stand Dev package's spec set, the same surface the eight `SKIP` checks of `check:static` resolve through `scripts/lib/design-spec-source.mjs`. A dedicated release spec is being added there and wired to a gate. **Where wording conflicts, that spec surface wins**: this section is only an operation summary and holds no definition authority.
+The authoritative text of the release procedure lives on the **spec surface of the Stand Dev package**. A dedicated release spec is being added there and wired to a gate. The frontend design gates of `check:static` resolve their own text from the in-repo `design-language/` set through `scripts/lib/design-spec-source.mjs` (in-repo since 2026-11-21; they are never `SKIP`ped). **Where wording conflicts, that spec surface wins**: this section is only an operation summary and holds no definition authority.
 
 Operation summary (author, 2026-11-19) — after the integration line is approved and promoted to `main` (rule 2 above), the author alone controls the release:
 

@@ -199,34 +199,98 @@ final class AskEditReviewSpec extends CatsEffectSuite:
   }
 
   // ── 过期/并发闸（显式冲突，绝不静默覆盖）──────────────────────────────────
-  test("accept and reject both refuse explicitly when the file changed during review; dismiss is the escape") {
-    val (_, _, _, binding) = setup("stale")
+  // 外部改动（不与审阅块重叠）：吸收进基线，拒绝只撤审阅块，外部行保留。
+  test("reject(all) during an external append keeps the external line; only the agent block is reverted") {
+    val (_, _, _, binding) = setup("stale-reject")
     val file = os.Path(binding.file)
     val run = for
-      applied <- AskEditReviews.applyChange(
-        binding.id,
-        binding,
-        binding.file,
-        "ask_write",
-        s => Right(s.replace("alpha", "ALPHA"))
-      )
-      _ <- IO.blocking(os.write.over(file, "externally changed\n")) // 审阅期间外部改动
+      applied <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", s => Right(s.replace("alpha", "ALPHA")))
+      _ <- IO.blocking(os.write.over(file, "ALPHA\nbeta\ngamma\nexternal\n")) // 审阅期间外部追加
+      rejected <- applied.fold(_ => IO.pure(Left("?")), _ => AskEditReviews.reject(binding.id, None))
+    yield rejected
+    run.map { rejected =>
+      rejected match
+        case Right(ResolveResult.Cleared(_)) =>
+          assertEquals(os.read(file), "alpha\nbeta\ngamma\nexternal\n", "reject keeps the external change and reverts only the agent block")
+        case other => fail(s"unexpected: $other")
+    }
+  }
+
+  test("accept(all) during an external append performs zero writes and keeps the external line") {
+    val (_, _, _, binding) = setup("stale-accept")
+    val file = os.Path(binding.file)
+    val run = for
+      applied <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", s => Right(s.replace("alpha", "ALPHA")))
+      _ <- IO.blocking(os.write.over(file, "ALPHA\nbeta\ngamma\nexternal\n"))
+      accepted <- applied.fold(_ => IO.pure(Left("?")), _ => AskEditReviews.accept(binding.id, None))
+    yield accepted
+    run.map { accepted =>
+      accepted match
+        case Right(ResolveResult.Cleared(_)) =>
+          assertEquals(os.read(file), "ALPHA\nbeta\ngamma\nexternal\n", "accept performs zero disk writes")
+        case other => fail(s"unexpected: $other")
+    }
+  }
+
+  test("reject(hunk) during an external append reverts only that block and keeps the external line") {
+    val (_, _, _, binding) = setup("stale-reject-hunk")
+    val file = os.Path(binding.file)
+    val run = for
+      applied <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", s => Right(s.replace("alpha", "ALPHA")))
+      _ <- IO.blocking(os.write.over(file, "ALPHA\nbeta\ngamma\nexternal\n"))
+      rejected <- applied.fold(_ => IO.pure(Left("?")), _ => AskEditReviews.reject(binding.id, Some("h0")))
+    yield rejected
+    run.map { rejected =>
+      rejected match
+        case Right(ResolveResult.Cleared(_)) =>
+          assertEquals(os.read(file), "alpha\nbeta\ngamma\nexternal\n", "reject(hunk) keeps the external line")
+        case other => fail(s"unexpected: $other")
+    }
+  }
+
+  // 外部改动与审阅块重叠：无法安全分离 ⇒ 显式冲突，绝不覆盖；dismiss 为逃生口。
+  test("an external edit overlapping a pending block is refused explicitly; dismiss is the escape") {
+    val (_, _, _, binding) = setup("stale-overlap")
+    val file = os.Path(binding.file)
+    val run = for
+      applied <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", s => Right(s.replace("alpha", "ALPHA")))
+      _ <- IO.blocking(os.write.over(file, "EXTERNAL\nbeta\ngamma\n")) // 改动落在审阅块上
       staleAccept <- applied.fold(_ => IO.pure(Left("?")), _ => AskEditReviews.accept(binding.id, None))
       staleReject <- applied.fold(_ => IO.pure(Left("?")), _ => AskEditReviews.reject(binding.id, None))
       _ <- IO {
-        assert(staleAccept.left.exists(_.contains("stale")), staleAccept.toString)
-        assert(staleReject.left.exists(_.contains("stale")), staleReject.toString)
-        assertEquals(os.read(file), "externally changed\n", "stale actions must not overwrite the external change")
-        assert(AskEditReviews.reviewFor(binding.id).isDefined, "review survives a stale refusal (retry path)")
+        assert(staleAccept.left.exists(_.contains("overlaps")), staleAccept.toString)
+        assert(staleReject.left.exists(_.contains("overlaps")), staleReject.toString)
+        assertEquals(os.read(file), "EXTERNAL\nbeta\ngamma\n", "refused actions must not overwrite the external change")
+        assert(AskEditReviews.reviewFor(binding.id).isDefined, "review survives the refusal")
       }
       dismissed <- AskEditReviews.dismiss(binding.id)
     yield dismissed
     run.map { dismissed =>
       dismissed match
         case Right(ResolveResult.Cleared(_)) =>
-          assertEquals(os.read(file), "externally changed\n", "dismiss keeps the on-disk state")
+          assertEquals(os.read(file), "EXTERNAL\nbeta\ngamma\n", "dismiss keeps the on-disk state")
           assertEquals(AskEditReviews.reviewFor(binding.id), None)
         case other => fail(s"unexpected: $other")
+    }
+  }
+
+  // 重试（resync）：重拉盘上 + 吸收外部改动 + 重算块表（只剩 agent 块），零写盘。
+  test("resync re-pulls the disk, keeps the agent block pending and performs zero writes") {
+    val (_, _, _, binding) = setup("resync")
+    val file = os.Path(binding.file)
+    val run = for
+      applied <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", s => Right(s.replace("alpha", "ALPHA")))
+      _ <- IO.blocking(os.write.over(file, "ALPHA\nbeta\ngamma\nexternal\n"))
+      synced <- AskEditReviews.resync(binding.id)
+    yield (applied, synced)
+    run.map { case (applied, synced) =>
+      synced match
+        case Right(ResolveResult.Kept(r)) =>
+          assertEquals(os.read(file), "ALPHA\nbeta\ngamma\nexternal\n", "resync performs zero disk writes")
+          assertEquals(r.currentText, "ALPHA\nbeta\ngamma\nexternal\n", "current = fresh disk text")
+          assertEquals(r.hunks.length, 1, "only the agent block remains reviewable")
+          assertEquals(r.hunks.head.newCount, 1)
+        case other => fail(s"unexpected: $other ${applied.isRight}")
     }
   }
 

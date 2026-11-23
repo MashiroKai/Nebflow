@@ -31,7 +31,23 @@ object WebSearchTool extends Tool:
     "document.cookie",
     "window.location",
     "location.href",
-    "antispider"
+    "antispider",
+    // 2026-11-22 end-to-end evaluation (.stand/tmp/websearch-eval/probe2.log):
+    // Sogou switched to a "SourceVerifyCode" captcha variant. Real page text:
+    //   "返回首页>> IP：210.45.118.3 … SourceVerifyCode：fbe5087f4e21 From：www.sogou.com
+    //    此验证码用于确认这些请求是您的正常行为而不是自动程序发出的，需要您协助验证。
+    //    验证码： 提交 …"
+    // None of the 2026-08-22 fingerprints matched, so the entire captcha page was
+    // shipped to the agent as a "successful" Sogou result (6/6 queries, "可用 0 条").
+    // The 2026-08-22 fix added literals for one captcha variant; this set covers the
+    // CN interstitial vocabulary (Sogou SourceVerifyCode / 安全验证, Baidu wappass).
+    "sourceverifycode",
+    "此验证码用于确认",
+    "请输入验证码",
+    "验证码",
+    "安全验证",
+    "captcha",
+    "wappass"
   )
 
   /**
@@ -72,18 +88,27 @@ object WebSearchTool extends Tool:
   case class SearchEngine(name: String, url: String, region: String)
 
   /**
-   * General engines that currently serve anti-bot interstitial pages in the
-   * CN network (Sogou antispider / Baidu captcha — verified 2026-08-25).
-   * They stay in the roster (their behavior may change; a pinned engine= is
-   * still honored) but sink below the primary batch in orderedEngines so a
-   * known-dead slot never occupies a racing position that 360/DDG could use.
+   * General engines that serve anti-bot interstitial pages in the CN network
+   * (Sogou antispider / SourceVerifyCode captcha, Baidu wappass captcha —
+   * verified 2026-08-25 and again 2026-11-22). They stay in the roster (their
+   * behavior may change; a pinned engine= is still honored) but racePlan()
+   * never schedules them in the first racing group.
+   *
+   * 2026-11-22 audit: this set used to be declared and NEVER read (grep found
+   * one hit: the declaration itself), while orderedEngines fixed Sogou into
+   * slot 3 of a BATCH_SIZE=3 race. A captcha page answering in 1.0 s beat a
+   * real page answering in 2.6 s, so 6/6 general queries returned Sogou's
+   * captcha page labelled "OK". Declaration must now equal effect: the
+   * partition below is the only ordering authority.
    */
   private val ANTI_BOT_PRONE: Set[String] = Set("Sogou", "Baidu")
 
-  // P1 engine priority (2026-08-25, empirical): 360 is the only consistently
-  // reachable general engine in the CN network (467KB real results); DDG is
-  // reachable through the platform proxy; Sogou/Baidu serve anti-bot pages;
-  // WeChat results are JS-rendered (no parseable <a href^=http> links).
+  // Historical engine priority (2026-08-25, empirical): 360 was the only
+  // consistently reachable general engine in the CN network (467KB real
+  // results); DDG is reachable through the platform proxy; Sogou/Baidu serve
+  // anti-bot pages; WeChat results are JS-rendered (no parseable <a href^=http>
+  // links). These lists now express LANGUAGE preference only — anti-bot-prone
+  // engines are partitioned out of the primary group below.
   private val ENGLISH_FIRST: List[String] = List("360", "DuckDuckGo", "Sogou", "Baidu", "WeChat")
   private val CHINESE_FIRST: List[String] = List("360", "Sogou", "Baidu", "WeChat", "DuckDuckGo")
 
@@ -99,18 +124,32 @@ object WebSearchTool extends Tool:
   )
 
   /**
-   * Engine ordering by query language (P1-5, 2026-08-25): 360 leads for both
-   * languages (the only consistently-reachable general engine); English /
-   * technical queries put DuckDuckGo second (reachable via the platform
-   * proxy), Chinese queries put the CN engines next. Anti-bot-prone engines
-   * sink to the tail. Returns only the general (non-academic) engines.
+   * Engine ordering by query language. The language lists express preference
+   * only: the result is PARTITIONED so anti-bot-prone engines come after every
+   * engine that can plausibly return real results. A known-dead slot must never
+   * occupy a racing position it can win on latency alone (2026-11-22 audit:
+   * Sogou's 1.0 s captcha page beat 360's 2.6 s real page 6/6).
+   * Returns only the general (non-academic) engines.
    */
   private[tools] def orderedEngines(query: String): List[SearchEngine] =
     val latin = query.count(c => c.isLetter && c < 128)
     val total = query.count(_.isLetter)
     val englishHeavy = total == 0 || latin.toDouble / total > 0.5
     val names = if englishHeavy then ENGLISH_FIRST else CHINESE_FIRST
-    names.flatMap(n => engineMap.get(n))
+    val (deferred, primary) = names.flatMap(n => engineMap.get(n)).partition(e => ANTI_BOT_PRONE.contains(e.name))
+    primary ::: deferred
+
+  /**
+   * Racing plan for a general query: real-result-capable engines race first, in
+   * BATCH_SIZE groups; anti-bot-prone engines are scheduled ONLY in the trailing
+   * groups, so they act as a last-resort fallback and never as a competitor that
+   * can win the race on latency. Extracted (pure) so the invariant is testable
+   * without network.
+   */
+  private[tools] def racePlan(query: String): List[List[SearchEngine]] =
+    val (deferred, primary) = orderedEngines(query).partition(e => ANTI_BOT_PRONE.contains(e.name))
+    val primaryBatches = if primary.nonEmpty then primary.grouped(BATCH_SIZE).toList else Nil
+    primaryBatches ::: deferred.grouped(BATCH_SIZE).toList
 
   private val engineMap: Map[String, SearchEngine] = ENGINES.map(e => e.name -> e).toMap
   private val ACADEMIC_NAMES = Set("arXiv", "Crossref")
@@ -270,6 +309,112 @@ Usage:
     else HttpUtils.stripHtmlTags(html).take(DEFAULT_MAX_CHARS)
   end extractGenericLinks
 
+  // ── Navigation/boilerplate filtering ──────────────────────────────
+
+  /**
+   * Chrome a search page carries around its result list. An interstitial page
+   * yields ONLY these, and because their link text is longer than the 12-char
+   * floor, extractGenericLinks returns them as if they were results — which is
+   * one of the two reasons probe2.log's Sogou captcha page passed the length
+   * check ("返回首页>>", "意见反馈", "企业推广", "关于搜狗", "免责声明" are all
+   * extractable links on that page). Chinese markers are contains-matched
+   * (real link text is "返回首页>>"), English ones must equal the whole title
+   * so a genuine result like "Sign in with Google best practices" survives.
+   */
+  private val NavBoilerplateCn = List(
+    "返回首页",
+    "返回主页",
+    "意见反馈",
+    "企业推广",
+    "关于搜狗",
+    "关于我们",
+    "免责声明",
+    "上一页",
+    "下一页",
+    "查看更多",
+    "更多>>",
+    "相关搜索"
+  )
+
+  private val NavBoilerplateEn = Set(
+    "sign in",
+    "sign-in",
+    "login",
+    "log in",
+    "register",
+    "privacy policy",
+    "terms of use",
+    "about us",
+    "feedback",
+    "advanced search",
+    "settings",
+    "help",
+    "home"
+  )
+
+  /** Engine-owned hosts whose root page is a navigation target, not a result. */
+  private val EngineHosts: Set[String] =
+    Set(
+      "sogou.com",
+      "www.sogou.com",
+      "wx.sogou.com",
+      "baidu.com",
+      "www.baidu.com",
+      "so.com",
+      "www.so.com",
+      "duckduckgo.com",
+      "www.duckduckgo.com",
+      "html.duckduckgo.com"
+    )
+
+  private def entryTitle(entry: String): String =
+    entry.linesIterator.map(_.trim).find(_.nonEmpty).getOrElse("").replace("*", "").trim
+
+  private def entryUrl(entry: String): String =
+    entry.linesIterator.map(_.trim).find(_.startsWith("http")).getOrElse("")
+
+  /** A bare engine root (scheme://host/ with no path or query) carries no result. */
+  private def isBareEngineRoot(url: String): Boolean =
+    try
+      val u = java.net.URI.create(url)
+      val host = Option(u.getHost).map(_.toLowerCase).getOrElse("").stripPrefix("www.")
+      val path = Option(u.getPath).getOrElse("")
+      val query = Option(u.getQuery).getOrElse("")
+      EngineHosts.contains(host) && (path.isEmpty || path == "/") && query.isEmpty
+    catch case _: Exception => false
+
+  private[tools] def isNavigationEntry(entry: String): Boolean =
+    val title = entryTitle(entry)
+    if title.isEmpty then false
+    else
+      val lower = title.toLowerCase
+      val cnHit = NavBoilerplateCn.exists(title.contains)
+      val enHit = NavBoilerplateEn.contains(lower.stripSuffix("»").trim)
+      cnHit || enHit || isBareEngineRoot(entryUrl(entry))
+
+  /**
+   * Drop navigation/boilerplate entries from an extraction. Runs AFTER the
+   * garbage-fingerprint strip: fingerprints catch anti-bot machinery, this
+   * catches the "a page with no results still has a header and a footer"
+   * residue. Both feed the same contract — an engine whose extraction loses
+   * everything is FAILED, not silently returned as a thin "success".
+   */
+  private[tools] def dropNavigationEntries(text: String, engine: String): String =
+    text
+      .split("\n\n")
+      .filter { entry =>
+        val nav = entry.trim.nonEmpty && isNavigationEntry(entry)
+        if nav then
+          logger.warnSync(
+            s"dropped navigation entry from $engine (boilerplate link, not a result): " +
+              entry.replaceAll("\\s+", " ").take(120)
+          )
+        !nav
+      }
+      .mkString("\n\n")
+
+  end dropNavigationEntries
+
   // ── Single-engine fetch ───────────────────────────────────────────
 
   /**
@@ -277,16 +422,65 @@ Usage:
    * "No meaningful results" with the actual failure mode so the agent/user
    * can act on it (anti-bot page → try another engine / pinned engine;
    * JS-rendered → the engine is unusable by keyless scraping).
+   *
+   * 2026-11-22: the captcha branch now covers the CN interstitial vocabulary
+   * observed in probe2.log (`SourceVerifyCode`, `此验证码用于确认`, `安全验证`)
+   * and not just the literal `验证码` of the older Sogou variant.
    */
   private[tools] def classifyEmpty(html: String, engine: SearchEngine): String =
     val lower = html.toLowerCase
     val mode =
       if lower.contains("antispider") then "anti-bot blocked (antispider)"
-      else if lower.contains("wappass") || lower.contains("captcha") || lower.contains("验证码") then
-        "anti-bot blocked (captcha)"
+      else if isCaptchaPage(lower) then "anti-bot blocked (captcha)"
       else if engine.name == "WeChat" || lower.contains("javascript:void(0)") then "no parseable links (JS-rendered)"
       else "no parseable results"
     s"${engine.name}: $mode"
+
+  private def isCaptchaPage(lowerHtml: String): Boolean =
+    lowerHtml.contains("wappass") ||
+      lowerHtml.contains("captcha") ||
+      lowerHtml.contains("验证码") ||
+      lowerHtml.contains("sourceverifycode") ||
+      lowerHtml.contains("安全验证")
+
+  /**
+   * Minimum usable result entries for an engine response to count as a result
+   * list. Threshold rationale: a real search page returns 5–8 result blocks in
+   * this codebase's extractors (probe2.log: arXiv 8, Crossref 8, 360 8); a
+   * page with 0–1 entries is a header/footer residue or the plain-text
+   * fallback (extractGenericLinks' stripHtmlTags tail), never a result list.
+   * The DDG region-selector page and the Sogou captcha page both fell in that
+   * bucket while being reported as successful answers.
+   */
+  private[tools] val MIN_USABLE_ENTRIES = 2
+
+  /**
+   * Verdict on one engine's response, before it can be raced as a success.
+   * Extracts → strips anti-bot garbage → drops navigation residue → requires a
+   * credible result list. Left(reason) means "this engine failed"; the caller
+   * moves on to the next engine instead of shipping the page text.
+   *
+   * Negative controls are pinned in WebSearchToolAntiBotSpec: the real Sogou
+   * SourceVerifyCode page must be Left; real arXiv/Crossref result payloads
+   * must be Right.
+   */
+  private[tools] def assessEngineResult(engine: SearchEngine, html: String): Either[String, String] =
+    val extracted = extractSearchResults(html, engine.name)
+    val cleaned = dropNavigationEntries(stripGarbageResults(extracted, engine.name), engine.name)
+    val entries = cleaned.split("\n\n").count(_.trim.nonEmpty)
+    if cleaned.trim.isEmpty || cleaned.trim.length < 50 then Left(classifyEmpty(html, engine))
+    else if entries < MIN_USABLE_ENTRIES then
+      logger.warnSync(
+        s"$engine response has only $entries usable entr${if entries == 1 then "y" else "ies"} " +
+          "(below the result-list floor) — treating the engine as failed"
+      )
+      Left(
+        s"${engine.name}: only $entries usable result${if entries == 1 then "" else "s"} " +
+          s"(< $MIN_USABLE_ENTRIES) — no parseable result list"
+      )
+    else Right(cleaned)
+
+  end assessEngineResult
 
   private def searchOne(query: String, engine: SearchEngine): Either[String, (SearchEngine, String)] =
     try
@@ -304,11 +498,7 @@ Usage:
       val response = request.send(backend)
 
       if !response.code.isSuccess then Left(s"${engine.name}: HTTP ${response.code}")
-      else
-        val html = response.body
-        val text = stripGarbageResults(extractSearchResults(html, engine.name), engine.name)
-        if text.trim.isEmpty || text.trim.length < 50 then Left(classifyEmpty(html, engine))
-        else Right((engine, text))
+      else assessEngineResult(engine, response.body).map(text => (engine, text))
     catch
       case e: Exception =>
         val raw = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
@@ -567,7 +757,9 @@ Usage:
         case Some(_) if enginesToTry.nonEmpty =>
           List(enginesToTry.head) :: enginesToTry.tail.grouped(BATCH_SIZE).toList
         case _ =>
-          enginesToTry.grouped(BATCH_SIZE).toList
+          // Auto mode: anti-bot-prone engines are scheduled only in trailing
+          // groups (racePlan) — they are a fallback, never a race competitor.
+          racePlan(query)
 
       def raceBatch(batch: List[SearchEngine]): IO[Either[String, (SearchEngine, String)]] =
         raceFirstSuccess(batch.map(e => IO.blocking(searchOne(query, e))))

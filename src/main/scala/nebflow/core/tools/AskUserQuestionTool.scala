@@ -158,6 +158,50 @@ Behavior:
                 ),
                 "required" -> io.circe.Json.arr("ref".asJson, "equals".asJson)
               ),
+              "merge" -> io.circe.Json.obj(
+                "type" -> "object".asJson,
+                "description" -> "Merge approval question. Answer arrives asynchronously as a JSON string with decision, ordered selected branches (name and note), target and text. Supply target-specific relations; missing relations are unknown.".asJson,
+                "properties" -> io.circe.Json.obj(
+                  "target" -> io.circe.Json.obj("type" -> "string".asJson),
+                  "targets" -> io.circe.Json
+                    .obj("type" -> "array".asJson, "items" -> io.circe.Json.obj("type" -> "string".asJson)),
+                  "candidates" -> io.circe.Json
+                    .obj("type" -> "array".asJson, "items" -> io.circe.Json.obj("type" -> "string".asJson)),
+                  "operations" -> io.circe.Json.obj(
+                    "type" -> "object".asJson,
+                    "properties" -> io.circe.Json.obj(
+                      "add" -> io.circe.Json.obj("type" -> "boolean".asJson),
+                      "delete" -> io.circe.Json.obj("type" -> "boolean".asJson),
+                      "reorder" -> io.circe.Json.obj("type" -> "boolean".asJson),
+                      "select" -> io.circe.Json.obj("type" -> "boolean".asJson),
+                      "note" -> io.circe.Json.obj("type" -> "boolean".asJson)
+                    )
+                  ),
+                  "branches" -> io.circe.Json.obj(
+                    "type" -> "array".asJson,
+                    "items" -> io.circe.Json.obj(
+                      "type" -> "object".asJson,
+                      "properties" -> io.circe.Json.obj(
+                        "name" -> io.circe.Json.obj("type" -> "string".asJson),
+                        "note" -> io.circe.Json.obj("type" -> "string".asJson),
+                        "selected" -> io.circe.Json.obj("type" -> "boolean".asJson),
+                        "relations" -> io.circe.Json.obj(
+                          "type" -> "object".asJson,
+                          "additionalProperties" -> io.circe.Json.obj(
+                            "type" -> "object".asJson,
+                            "properties" -> io.circe.Json.obj(
+                              "status" -> io.circe.Json.obj("type" -> "string".asJson),
+                              "conflict" -> io.circe.Json.obj("type" -> "string".asJson)
+                            )
+                          )
+                        )
+                      ),
+                      "required" -> io.circe.Json.arr("name".asJson)
+                    )
+                  )
+                ),
+                "required" -> io.circe.Json.arr("target".asJson, "targets".asJson, "branches".asJson)
+              ),
               "multiple" -> io.circe.Json.obj(
                 "type" -> "boolean".asJson,
                 "description" ->
@@ -401,14 +445,15 @@ Behavior:
               opts,
               id = id,
               dependsOn = dependsOn,
-              multiple = multiple,
+              multiple = multiple && !q.hcursor.downField("merge").focus.exists(_.isObject),
               canvas = canvas,
               secret = secret,
               secretName = secretName,
               ephemeral = ephemeral,
               ttlSec = ttlSec,
               secretDescription = secretDescription,
-              secretTags = secretTags
+              secretTags = secretTags,
+              merge = if secret then None else q.hcursor.downField("merge").focus.filter(_.isObject)
             )
           )
         end if

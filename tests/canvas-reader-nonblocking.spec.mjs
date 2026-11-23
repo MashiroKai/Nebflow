@@ -88,8 +88,10 @@ test('reader can browse without takeover; rejected write notifies once', async (
     await rejection;
     // 2026-11-18 作者令：写者席位被服务端拒授时只出**真实保存失败文案**，
     // 「控制权已失效／请重新取得」这类接管措辞随状态机退役，绝不再出现。
-    await expect.poll(() => page.evaluate(() => window.__readerNotices.filter(x => x[0] === 'Canvas 保存失败，本地变更已保留。').length)).toBe(1);
-    expect(await page.evaluate(() => window.__readerNotices.filter(x => /控制权|接管|让出/.test(String(x[0]))).length)).toBe(0);
+    // 2026-11-22 作者令：保存失败静默保留，写路径不再发任何通知。
+    await page.waitForTimeout(1000);
+    expect(await page.evaluate(() => window.__readerNotices.length)).toBe(0);
+    expect(await page.evaluate(() => window.__readerNotices.filter(x => /控制权|接管|让出|保存失败/.test(String(x[0]))).length)).toBe(0);
     console.log('[reader-browser-errors]', JSON.stringify(errors));
     expect(errors).toEqual([]);
     await page.screenshot({path:info.outputPath('rejected.png')});

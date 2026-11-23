@@ -21,6 +21,19 @@ import org.http4s.dsl.io.*
  */
 private[gateway] object ConfigRoutes:
 
+  /** P6 保存期校验目录：provider → 模型 id 集（取自配置；只读 id，不碰 key）。 */
+  private[gateway] def modelRuleCatalog(cfgStr: String): nebflow.llm.rules.ModelRuleDsl.Catalog =
+    val providers = io.circe.parser.parse(cfgStr).toOption
+      .flatMap(_.hcursor.downField("llm").downField("providers").focus)
+      .flatMap(_.asObject)
+      .map(_.toList)
+      .getOrElse(Nil)
+    nebflow.llm.rules.ModelRuleDsl.Catalog(providers.map { case (pid, pj) =>
+      val ids = pj.hcursor.downField("models").focus.flatMap(_.asArray).getOrElse(Vector.empty)
+        .flatMap(_.hcursor.downField("id").as[String].toOption).toSet
+      pid -> ids
+    }.toMap)
+
   def routes(ctx: RestApiCtx): HttpRoutes[IO] =
     import ctx.*
     HttpRoutes.of[IO] {
@@ -314,6 +327,53 @@ private[gateway] object ConfigRoutes:
                   wsHub.broadcast(Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson)) *>
                     Ok(Json.obj("updated" -> true.asJson, "default" -> id.asJson))
               }
+          }
+        }
+
+      // P6 模型规则脚本（设计 §4）：GET 源码 + 三态模式 + 框图 JSON；PUT 保存期校验（带行号，不合格不落盘）；
+      // PUT mode 写三态侧车（follow / slots / rules）。
+      case req @ GET -> Root / "model-rules" =>
+        withAuth(req) {
+          IO.blocking {
+            val root = PathUtil.dataRoot
+            val f = nebflow.llm.rules.ModelRuleStore.scriptOf(root)
+            val src = if os.exists(f) then os.read(f) else ""
+            val loaded = nebflow.llm.rules.ModelRuleStore.load(root)
+            val diagram = loaded.error match
+              case None => io.circe.parser.parse(nebflow.llm.rules.ModelRuleDsl.diagramJson(loaded.script)).toOption.getOrElse(Json.Null)
+              case Some(_) => Json.Null
+            Json.obj(
+              "source" -> src.asJson,
+              "mode" -> nebflow.llm.rules.ModelRuleStore.mode(root).asJson,
+              "error" -> loaded.error.asJson,
+              "diagram" -> diagram
+            )
+          }.flatMap(j => Ok(j))
+        }
+
+      case req @ PUT -> Root / "model-rules" =>
+        withAuth(req) {
+          req.as[Json].flatMap { body =>
+            val src = body.hcursor.downField("source").as[String].getOrElse("")
+            ConfigService.getConfig.flatMap { cfgStr =>
+              IO.blocking(nebflow.llm.rules.ModelRuleStore.save(PathUtil.dataRoot, src, modelRuleCatalog(cfgStr))).flatMap {
+                case Left(errs) =>
+                  UnprocessableEntity(Json.obj("errors" -> errs.map(e =>
+                    Json.obj("line" -> e.line.asJson, "message" -> e.message.asJson)).asJson))
+                case Right(_) => Ok(Json.obj("saved" -> true.asJson))
+              }
+            }
+          }
+        }
+
+      case req @ PUT -> Root / "model-rules" / "mode" =>
+        withAuth(req) {
+          req.as[Json].flatMap { body =>
+            val m = body.hcursor.downField("mode").as[String].getOrElse("")
+            IO.blocking(nebflow.llm.rules.ModelRuleStore.setMode(PathUtil.dataRoot, m)).flatMap {
+              case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+              case Right(_) => Ok(Json.obj("mode" -> m.asJson))
+            }
           }
         }
 

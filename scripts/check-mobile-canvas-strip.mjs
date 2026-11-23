@@ -35,7 +35,7 @@
 //
 // 判据的**规范侧**（为什么这么定、方案 C 原稿、偏离说明）在
 //   <dataRoot>/projects/stand/.stand/docs/mobile-canvas-tabs-c__<stamp>.md
-// 人读口径（玻璃标准本体）在 stand-dev 插件包 `<包根>/references/frontend/glass-spec.md` §7。
+// 人读口径（玻璃标准本体）在本仓 `design-language/references/frontend/glass-spec.md` §7。
 //
 // 用法：
 //   node scripts/check-mobile-canvas-strip.mjs              # 门禁（红/绿）

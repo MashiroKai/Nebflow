@@ -1,3 +1,45 @@
+/* Merge approval lives inside the existing AskUser shell and uses its controls. */
+.ask-merge { display: grid; gap: 10px; min-width: 0; }
+.ask-merge-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.ask-merge-row .option-custom-input { flex: 1 1 140px; min-width: 0; width: auto; margin: 0; }
+/* 目标下拉框（作者 11-21 19:4x 送审前裁切修）：原生 select 被 nf-select 包裹，伸缩规则只落在
+   内部 select 上，包裹层按 shrink-to-fit 收成 ~99px，值文本被裁成「…at/base」。把包裹层本身
+   提为伸缩项，让触发面吃满剩余宽度；值文本的省略号策略沿用 dropdown.css 的 .nf-select-val。 */
+.ask-merge-row > .nf-select { flex: 1 1 160px; min-width: 0; max-width: 100%; }
+.ask-merge-row > .nf-select > .nf-select-trigger { width: 100%; }
+.ask-merge-row .option-btn { width: auto; margin: 0; }
+.ask-merge-list { display: grid; gap: 8px; }
+.ask-merge-item { display: grid; gap: 8px; border: 1px solid var(--st-border); border-radius: var(--ds-radius-button); padding: 10px; }
+.ask-merge-item.dragging { opacity: .45; }
+/* 行首勾选面（role="checkbox" 按钮，形态 = 多选卡 `.option-check` 同族；不新画开关，
+   toggle-unify 门禁止「checkbox 冒充开关」）。勾态 = picked 同款绿底 + 白勾。 */
+.ask-merge-check {
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.ask-merge-check[aria-checked="true"] {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
+  border-color: var(--ask-green);
+  background: var(--ask-green);
+}
+/* 勾 = 居中的字形，**不另起定位层**（floating-discovery / noclip-floating 只认
+   已入账的定位面；一个 15px 方框里的勾没有理由漂出来）。 */
+.ask-merge-check[aria-checked="true"]::after {
+  content: '✓';
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+}
+.ask-merge-check:disabled { cursor: default; opacity: .45; }
+.ask-merge-handle { cursor: grab; touch-action: none; padding: 8px; }
+.ask-merge-name { flex: 1 1 100px; overflow-wrap: anywhere; }
+.ask-merge-status, .ask-merge-hint { color: var(--st-text-dim); font-size: 12px; }
+.ask-merge-conflict { color: var(--st-mail-warn-icon); font-size: 12px; }
+
 /* ---------- Main ---------- */
 #main {
   flex: 1;
@@ -342,10 +384,14 @@
 /* 面板高亮极低调档（作者令 2026-11-03 10:11 ⑤「面板键盘焦点/选中高亮改为非常
    非常低调——几乎不可见但仍有线索」）：键盘焦点 = --ds-veil-focus 4% 蓝雾，
    **2px 蓝强调条（inset box-shadow rgb(var(--sapphire)/0.8)）退役**——那是本仓
-   最响的一条焦点信号，与「几乎不可见」直接冲突。描边走既有 hairline 口径
-   （outline:none 保留：行是整行命中面，环会画出盒感）。 */
+   最响的一条焦点信号，与「几乎不可见」直接冲突。
+   focus-ring-unify 批（2026-11-22）改判：光晕换成全站统一的 2px **灰**内缩环
+   （不是被 ⑤ 否决的那条蓝强调条 —— 内缩灰环贴着行边、无外扩、无发光，仍是
+   最低调档；环与蓝雾一起构成「仍有线索」），`outline:none` 因此退休：零环的
+   行在键盘路径上等于没有线索（规范 §2.2 R-4）。 */
 .bg-task-row:focus-visible {
-  outline: none;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
   background: var(--ds-veil-focus);
 }
 /* delegate-ui 批（2026-10-08 · C2 两级层级）：一级行 = delegate 组头（bg-task-row-head，
@@ -359,6 +405,8 @@
    「缩进 + 引导竖线 + 小一号主名」既有档；DOM 机器可读锚 = data-bg-row-level
    （head/child/top，bgAgents.js 写点）。 */
 .bg-task-row-head {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   border-top: 1px solid var(--glass-control-border);
   box-shadow: inset 3px 0 0 rgb(var(--accent-agent-light) / 0.35);
 }
@@ -803,9 +851,11 @@
    Focus = hover background (no accent bar — visual-style iron rule). */
 #bg-dropdown .bg-task-row { cursor: pointer; }
 /* 同 ⑤（2026-11-03 10:11）：焦点底色退到 --ds-veil-focus 最低档（原 --color-frame-hover
-   是「面板行 hover 级」的可见wash，作者要「非常非常低调」）。 */
+   是「面板行 hover 级」的可见wash，作者要「非常非常低调」）。环口径同 .bg-task-row
+   （focus-ring-unify 批 2026-11-22：内缩灰环 + 蓝雾，零环不再允许）。 */
 #bg-dropdown .bg-task-row:focus-visible {
-  outline: none;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
   background: var(--ds-veil-focus);
 }
 /* Project attribution (2026-09-06 author ruling): Flow rows label the owning
@@ -1039,9 +1089,15 @@
   flex-shrink: 0;
   display: inline-block;
 }
-.bg-health-healthy { background: var(--status-success-icon); }
-.bg-health-suspect { background: var(--status-warn-icon); }
-.bg-health-escalated { background: var(--status-error-icon); }
+.bg-health-healthy {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--status-success-icon); }
+.bg-health-suspect {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--status-warn-icon); }
+.bg-health-escalated {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--status-error-icon); }
 /* #753 同族聚合行（waiter 族）：组头行 — 收起态默认（计数一目了然）；成员行
    缩进一格（与 subagent 面板 bg-task-row-child 同款缩进语义）；carets 中性。 */
 .bg-task-row-family { border-top: 1px solid var(--color-frame-border); }
@@ -1058,7 +1114,9 @@
    token), back to the sapphire triplet in dark. Mirrors #bgagent-indicator. */
 @media (prefers-color-scheme: dark) {
   .bg-task-state.bg-state-frozen { color: rgb(var(--sapphire)); }
-  .bg-task-status.bg-status-frozen { background: rgb(var(--sapphire)); box-shadow: 0 0 4px rgb(var(--sapphire) / 0.4); }
+  .bg-task-status.bg-status-frozen {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: rgb(var(--sapphire)); box-shadow: 0 0 4px rgb(var(--sapphire) / 0.4); }
 }
 @media (prefers-reduced-motion: reduce) {
   .bg-task-status { animation: none !important; }
@@ -1153,6 +1211,11 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   justify-content: space-between;
   padding: var(--ds-row-pad);
   gap: var(--ds-space-2);
+  /* 圆角标准批（作者令 2026-11-22 08:03「我说了要圆角的框」「落为标准」；规范
+     focus-ring-spec.md §2.6）：后台任务行不再是方角造型件 —— 6px = --ds-radius-chip
+     档，焦点环随 border-radius 走。行间 hairline 仍是既有 `border-bottom` 写法（1px 线
+     在 6px 行角处转弯，肉眼不显）；不换定位伪元素的原因见 diffView.css 同批注记。 */
+  border-radius: var(--ds-radius-chip);
   border-bottom: var(--ds-border-width) solid var(--ds-border-hairline);
   transition: background var(--ds-dur-hover) var(--ds-ease-std);
 }
@@ -1277,6 +1340,16 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .row.tool { justify-content: flex-start; }
 .row.error { justify-content: center; }
 .row.notice { justify-content: center; }
+/* 零正文终轮行（footer-leak 批 2026-11-22）：无正文的 AI 终轮只余徽章，整行收起——
+   不留空泡壳、不留行距空白、不上胶囊。DOM 保留（turnGroup 读 terminal/nfPhrase）。 */
+.row.row-empty-final { display: none; }
+/* footer 只跟「回复内容」走（作者令 2026-11-23「没有回复的内容，不用footer」）：
+   root 零块气泡（data-nf-zero-output ＝ 无 report 块的过程叙述，已折进角标）所在行
+   不渲染消息 footer（时间/复制键）——无回复内容的回合（纯过程 / 零块 / 折叠）整枚
+   不显 footer，点开角标看过程也不出现。DOM 保留（turnGroup 仍读 .duration-badge 的
+   phrase / data-ts 判 done）；有 report 块的消息（data-nf-output）不受影响，混合回合
+   只在其 report 块消息上保留 footer。 */
+#chat .row:has(> .bubble[data-nf-zero-output]) > .duration-badge { display: none; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
 /* ---------- Message copy button ----------
@@ -1389,14 +1462,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
      字色（bubble-contrast 批 2026-11-07）：我方绿底正文吃 --nf-bub-ours-ink
      （两档深墨绿字），不吃 --color-text —— 暗档浅字在绿底只有 1.21:1。 */
   color: var(--nf-bub-ours-ink);
-  border-bottom-right-radius: 4px;
+  border-bottom-right-radius: var(--ds-radius-badge);
 }
 /* Injected bubble（工具/Delegate/节点/后台任务注入行）：same silhouette as
    `.bubble.user` —— 它在归属上就是**我方**（代表本机账号发出），故底色与
    `.bubble.user` 同档（绿），不再自带第三色。色值归宿见 glass.css 单点块。 */
 .bubble.injected {
   color: var(--color-text);
-  border-bottom-right-radius: 4px;
+  border-bottom-right-radius: var(--ds-radius-badge);
 }
 .bubble.injected .injected-source-label {
   display: flex;
@@ -1456,6 +1529,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   vertical-align: 1px;
 }
 .delivery-queue {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: var(--color-text-muted);
   background: rgba(128, 128, 128, 0.14);
 }
@@ -1691,7 +1766,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: var(--color-text);
   /* Whisper edge — separates bubble from background without feeling deliberate */
   border: 1px solid var(--glass-bub-ai-border);
-  border-bottom-left-radius: 4px;
+  border-bottom-left-radius: var(--ds-radius-badge);
   box-shadow: var(--glass-bub-ai-shadow);
 }
 .bubble.ai img, .bubble.peer img, .bubble.injected img, .ask-bub.ai img { max-width: 220px; max-height: 220px; border-radius: var(--ds-radius-input); display: block; margin-top: var(--ds-space-1); }
@@ -1808,6 +1883,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   line-height: 1;
   white-space: nowrap;
   z-index: 2;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .code-block-wrap:hover .code-copy-btn {
@@ -1828,6 +1904,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-color: #2e7d32;
   background: #e8f5e9;
   opacity: 1;
+  box-shadow: var(--btn-shadow);
 }
 .code-copy-btn svg {
   flex-shrink: 0;
@@ -1860,10 +1937,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   font-size: var(--ds-fs-hint);
 }
 .bubble.ai th, .bubble.ai td, .bubble.injected th, .bubble.injected td, .ask-bub.ai th, .ask-bub.ai td {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   border: 1px solid var(--color-border);
   padding: var(--ds-space-1) var(--ds-space-2);
 }
-.bubble.ai th, .bubble.injected th, .ask-bub.ai th { background: #f5f5f5; }
+.bubble.ai th, .bubble.injected th, .ask-bub.ai th {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: #f5f5f5; }
 /* 2026-10-30 按钮量产批登记收敛项：chat 链接全面蓝化 —— 设计系统蓝
    rgb(var(--sapphire))（#5b7fbf 单源 triplet，亮暗同值可读），原
    var(--color-primary) 品牌绿退役为链接色（绿保留给主操作/通知点族）。
@@ -1916,6 +1997,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   width: fit-content;
 }
 .duration-badge-divider {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-thin);
   width: 1px;
   height: 10px;
   background: currentColor;
@@ -1988,6 +2071,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 /* Pop tool — rainbow filename inline + clickable card（.tool-card.pop-tool-card
    的 cursor 钩子随族化退役：.ds-tool-card 本体即 cursor:pointer） */
 .pop-rainbow-name {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   font: 600 var(--ds-fs-hint) ui-monospace, SFMono-Regular, monospace;
   background: linear-gradient(90deg, #e84855, #f68bd0, #9b5de5, #4cc9f0, #06d6a0, #ffd166, #e84855);
   background-size: 300% 100%;
@@ -2024,6 +2109,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   font-family: inherit;
 }
 .tool-stream-body pre.tool-body-pre .cursor {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-thin);
   display: inline-block;
   width: 5px;
   height: 14px;
@@ -2069,6 +2156,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 
 .notice-info {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: rgba(91,141,217,0.1);
   color: #5b8dd9;
 }
@@ -2120,7 +2209,9 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
       inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
   }
 
-  .notice-info { background: rgba(91,141,217,0.12); }
+  .notice-info {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: rgba(91,141,217,0.12); }
 
   .bubble.ai {
     border-color: rgba(255, 255, 255, 0.04);
@@ -2144,7 +2235,9 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   .bubble.ai pre::-webkit-scrollbar-thumb, .bubble.injected pre::-webkit-scrollbar-thumb, .ask-bub.ai pre::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); }
   .bubble.ai pre::-webkit-scrollbar-thumb:hover, .bubble.injected pre::-webkit-scrollbar-thumb:hover, .ask-bub.ai pre::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
   .bubble.ai code, .bubble.injected code, .ask-bub.ai code { background: rgba(255,255,255,0.08); }
-  .bubble.ai th, .bubble.injected th, .ask-bub.ai th { background: #22252e; }
+  .bubble.ai th, .bubble.injected th, .ask-bub.ai th {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: #22252e; }
   /* dark-border-weight 批 2026-11-18：本条 `border-top-color: #2a2d35` 已随上面
      基规则改走 --color-border 而**逐值冗余** —— 该令牌在本块同一个
      prefers-color-scheme: dark 条件下也解析成 #2a2d35，同特异度、更靠后本是它
@@ -2156,7 +2249,9 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 
   .tool-stream-body { background: rgba(255,255,255,0.04); }
   .tool-stream-body pre.tool-body-pre { color: #b0b3ba; }
-  .tool-stream-body pre.tool-body-pre .cursor { background: #7b7e88; }
+  .tool-stream-body pre.tool-body-pre .cursor {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: #7b7e88; }
   .tool-stream-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: var(--ds-radius-thin); }
 
   /* 思考窗硬上限暗档：同一窗口长度（max-height 是长度非颜色，双主题同值），
@@ -2181,6 +2276,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
     background: rgba(23,26,33,0.9);
     border-color: rgba(255,255,255,0.1);
     color: #7b7e88;
+  box-shadow: var(--btn-shadow);
   }
   @media (hover: hover) {
     .code-copy-btn:hover {
@@ -2193,6 +2289,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
     color: #66bb6a;
     border-color: #66bb6a;
     background: rgba(102,187,106,0.12);
+  box-shadow: var(--btn-shadow);
   }
 
   .duration-badge {
@@ -2248,6 +2345,31 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
     --ask-ring: 0 0 0 3px rgba(7, 193, 96, 0.22);
   }
 }
+/* 显式档镜像（2026-11-21 暗色令牌裁定，同 base.css）：应用内选暗色而系统为亮色时，
+   上面媒体块不命中 ⇒ 卡面仍是白底，而卡内文字走 html[data-theme="dark"] 的亮字
+   ⇒ 亮底亮字不可读（真实页面实测：.llm-failure-card 卡面白底、文字 rgb(232,234,237)）。
+   属性选择器 (0,1,1) 高于媒体块 :root (0,1,0)，手动档优先；无 data-theme 时零回归。
+   改值须三处同步（:root / 本两段 / 媒体块）。 */
+html[data-theme="dark"] {
+  --ask-card-top: #272c3a;
+  --ask-card-bot: #1f232d;
+  --ask-card-bd: rgba(255, 255, 255, 0.09);
+  --ask-card-shadow: 0 2px 4px rgba(0, 0, 0, 0.35), 0 14px 36px rgba(0, 0, 0, 0.50);
+  --ask-card-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --ask-line-strong: rgba(255, 255, 255, 0.30);
+  --ask-btn-shadow: 0 2px 8px rgba(7, 193, 96, 0.32);
+  --ask-ring: 0 0 0 3px rgba(7, 193, 96, 0.22);
+}
+html[data-theme="light"] {
+  --ask-card-top: #ffffff;
+  --ask-card-bot: #f5f7fa;
+  --ask-card-bd: rgba(20, 26, 40, 0.08);
+  --ask-card-shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 12px 32px rgba(16, 24, 40, 0.10);
+  --ask-card-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  --ask-line-strong: rgba(28, 30, 34, 0.30);
+  --ask-btn-shadow: 0 2px 6px rgba(7, 193, 96, 0.30), 0 6px 18px rgba(7, 193, 96, 0.20);
+  --ask-ring: 0 0 0 3px rgba(7, 193, 96, 0.14);
+}
 
 /* ---------- Universal Option Box (AskUser / SlashCmd / Permission) ---------- */
 /* 浮层容器（style-2 外壳）：渐变面 + 1px 发丝描边 + 16px 圆角 + 双层柔影 +
@@ -2288,6 +2410,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
      （--dur-2 = 160ms hover 档，替换 0.25s all）。 */
   transition: background var(--dur-2) ease, color var(--dur-2) ease,
               border-color var(--dur-2) ease, box-shadow var(--dur-2) ease;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .option-btn:hover {
@@ -2301,6 +2424,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   background: var(--color-primary);
   color: #fff;
   border-color: var(--color-primary);
+  box-shadow: var(--btn-shadow);
 }
 .option-btn:disabled {
   opacity: 0.5;
@@ -2312,6 +2436,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .option-btn.perm-upgrade-option {
   border-color: rgb(var(--sapphire) / 0.45);
   background: rgb(var(--sapphire) / 0.08);
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .option-btn.perm-upgrade-option:hover {
@@ -2642,22 +2767,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    「askuser-hybrid 表格行」段（`.option-opts .option-btn`，(0,2,0)，见本文件后段
    3117+）把选项行重皮成全宽透明行，本节要压过它，声明顺序不参与胜负。 */
 
-/* 滚动区（题文 + 选项区）：内容超高才出现滚动条（短卡零视觉变化 ⇒ 零回归）。
-   `--ask-options-max-h` 可被宿主（如待办决策卡）收小/放大；缺省 = 视口 64% 与
-   560px 取小。`overscroll-behavior: contain` = 滚到尽头不把聊天列一起带着滚。 */
-.option-scroll {
-  max-height: var(--ask-options-max-h, min(64vh, 560px));
-  overflow-y: auto;
-  overflow-x: hidden;
-  overscroll-behavior: contain;
-  /* 媒体卡的选中描边（`.option-preview-media` 的 outline-offset）不吃裁剪：
-     左右各留 2px。 */
-  padding: 2px;
-  margin: -2px;
-}
-
-/* 「其他…」自由输入行 / 选项行的既有布局不受滚动区包裹影响（wrapper 仍是块级流）。 */
-.option-scroll > .option-q-wrapper { display: block; }
+/* 无滑动（作者令 2026-11-21）：题与选项直接铺进卡盒，无滚动区。 */
 
 /* 媒体选项行 = 竖排卡（媒体在上、文字在下），整行占满（覆盖 hybrid 表格行档）。 */
 .option-opts .option-btn.has-media,
@@ -2831,9 +2941,8 @@ body:not(.mobile-layer) .option-preview-media {
   max-width: 100%;
 }
 .ask-attachments-wrap .ask-att-thumb:focus-visible {
-  outline: 2px solid var(--ds-focus-ring);
-  outline-offset: 2px;
-  border-radius: var(--ds-radius-input);
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 /* 卡内文件 chip：可点档（role=button）光标 + 键盘焦点环；高度放 auto（降级态
    原因档/重试键要折行）。基座 28px 档仍是下限（min-height）。 */
@@ -2848,8 +2957,8 @@ body:not(.mobile-layer) .option-preview-media {
   padding-bottom: var(--ds-space-1);
 }
 .option-box .att-file.ask-att-file:focus-visible {
-  outline: 2px solid var(--ds-focus-ring);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .option-box .att-file.ask-att-file .att-file-name { min-width: 0; }
 /* 折叠收件（>3 枚默认只显前 3）：两成特异度压过 .att-file 的 inline-flex
@@ -2864,6 +2973,7 @@ body:not(.mobile-layer) .option-preview-media {
   color: var(--ds-warn-icon);
 }
 .att-file .ask-att-retry {
+  border-radius: var(--ds-radius-chip); /* 圆角标准批 2026-11-22（作者令「要圆角的框」「落为标准」· 规范 §2.6）：F7 判据下的环基座。 */
   border: none;
   background: none;
   font-family: inherit;
@@ -2872,7 +2982,7 @@ body:not(.mobile-layer) .option-preview-media {
   cursor: pointer;
   padding: 0;
 }
-.att-file .ask-att-retry:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 2px; }
+.att-file .ask-att-retry:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 /* ---------- Chat-native onboarding (onboarding-redesign-spec §8.4) ---------- */
 /* Typewriter simulation: paragraph stack + blinking cursor + skip button.
@@ -2890,6 +3000,8 @@ body:not(.mobile-layer) .option-preview-media {
   margin-top: var(--ds-space-1);
 }
 .ob-cursor {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-thin);
   display: inline-block;
   width: 1px;
   height: 1em;
@@ -3247,7 +3359,7 @@ body:not(.mobile-layer) .option-preview-media {
   background: var(--nf-bub-theirs-bg);
   border: 1px solid var(--glass-bub-ai-border);
   border-radius: var(--ds-radius-card-lg);
-  border-bottom-left-radius: 4px;
+  border-bottom-left-radius: var(--ds-radius-badge);
   box-shadow: var(--glass-bub-ai-shadow);
 }
 /* 题干（卡引言）在浮层语言里抬一档：15px/600（BRIEF §4.4 下限之上） */
@@ -3271,7 +3383,7 @@ body:not(.mobile-layer) .option-preview-media {
   padding: var(--ds-space-2) var(--ds-space-1h);
   border: none;
   border-top: 1px solid var(--ask-line);
-  border-radius: 0;
+  border-radius: var(--ds-radius-button);
   background: transparent;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
@@ -3775,6 +3887,7 @@ body:not(.mobile-layer) .option-preview-media {
    of truncating (long summaries stay fully readable — no ellipsis); the
    leading ✻ phrase (v1-designed copy) is back as the first segment. */
 .turn-header {
+  border-radius: var(--ds-radius-chip); /* 圆角标准批 2026-11-22（作者令「要圆角的框」「落为标准」· 规范 §2.6）：F7 判据下的环基座。 */
   display: flex;
   align-items: center;
   gap: var(--ds-space-1);
@@ -3792,9 +3905,10 @@ body:not(.mobile-layer) .option-preview-media {
 }
 .turn-header:hover { opacity: 1; }
 .turn-header:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.6);
-  outline-offset: 1px;
-  border-radius: var(--ds-radius-badge);
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
+  /* round2：环规则不再改圆角（环半径 = 组件半径，规范 §2.6）；原 4px badge 档已并入
+     组件自身的 --ds-radius-chip。 */
 }
 .turn-header .nf-chevron { flex-shrink: 0; transition: transform 0.2s ease; }
 /* expanded affordance: the chevron turns to point down (2026-10-03 demo) */
@@ -3855,6 +3969,8 @@ body:not(.mobile-layer) .option-preview-media {
 
 /* Streaming cursor */
 .cursor {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-thin);
   display: inline-block;
   width: 2px;
   height: 1em;
@@ -4106,6 +4222,8 @@ body:not(.mobile-layer) .option-preview-media {
    frame takes the remaining height. A long list scrolls inside the strip
    instead of eating the document. */
 .canvas-tab-pane > .html-card-warning {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   flex: none;
   max-height: 40%;
   overflow-y: auto;
@@ -4197,6 +4315,7 @@ body:not(.mobile-layer) .option-preview-media {
    高度上限 = 6 行正文 + 上内距；折叠态**不留**底部内距 —— 滚动容器的裁切边在
    padding 边，留着的话第 7 行会在那 10px 里露出半个字。 */
 .bubble.ai pre.perm-cmd {
+  border-radius: var(--ds-radius-chip); /* 圆角标准批 2026-11-22（作者令「要圆角的框」「落为标准」· 规范 §2.6）：F7 判据下的环基座。 */
   --perm-cmd-lines: 6;
   max-height: calc(var(--perm-cmd-lines) * 1.4em + var(--ds-space-2));
   padding-bottom: 0;
@@ -4208,8 +4327,8 @@ body:not(.mobile-layer) .option-preview-media {
   padding-bottom: var(--ds-space-block-y);
 }
 .perm-cmd:focus-visible {
-  outline: 2px solid var(--sapphire-edge);
-  outline-offset: 1px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .perm-cmd-toggle {
   align-self: flex-start;
@@ -4243,31 +4362,6 @@ body:not(.mobile-layer) .option-preview-media {
 .perm-reason-label {
   min-width: 0;
   overflow-wrap: anywhere;
-}
-.perm-risk-badge {
-  flex: 0 0 auto;
-  padding: 0 var(--ds-space-1);
-  border: 1px solid currentColor;
-  border-radius: var(--ds-radius-chip);
-  font-size: var(--ds-fs-meta);
-  line-height: 1.6;
-}
-.perm-risk-badge.lv-1 { color: var(--color-warning); }
-.perm-risk-badge.lv-2,
-.perm-risk-badge.lv-3 { color: var(--status-error-icon); }
-.perm-reason-gate,
-.perm-reason-rule {
-  font-size: var(--ds-fs-meta);
-  color: var(--ds-text-muted);
-  overflow-wrap: anywhere;
-}
-/* 闸名 + 规则 id 成组：整组折行，不让「规则」孤零零掉到下一行最左。 */
-.perm-reason-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0 var(--ds-space-1h);
-  min-width: 0;
 }
 /* 作用域一行：设备 · 工作目录 · 目标路径（键次要字色，值等宽、可折可滚）。 */
 .perm-scope {
@@ -4307,18 +4401,11 @@ body:not(.mobile-layer) .option-preview-media {
   }
 }
 
-.permission-payload { min-width: 0; max-width: 100%; margin: var(--ds-space-2) 0; }
-.permission-payload-text {
-  max-height: 18rem;
-  overflow: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  padding: var(--ds-space-2);
-  background: var(--glass-etched-bg);
-  border: 1px solid var(--sapphire-edge);
-  border-radius: var(--ds-radius-badge);
-  font-size: var(--ds-fs-hint);
-  color: var(--color-frame-text);
+/* 「请求载荷，非文件实际 diff」一行说明（Edit 的 -/+ 正文上方，唯一的说明性行）。 */
+.perm-cmd-note {
+  margin-bottom: var(--ds-space-1);
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-text-muted);
 }
 
 /* Inline code for showing command/file detail in permission prompt */
@@ -4419,6 +4506,8 @@ body:not(.mobile-layer) .option-preview-media {
 }
 @media (hover: hover) {
   .error-restart-btn:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
     background: rgb(var(--amber) / 0.12);
   }
 }
@@ -4440,6 +4529,8 @@ body:not(.mobile-layer) .option-preview-media {
 }
 @media (hover: hover) {
   .error-wait-btn:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
     background: var(--color-frame-hover, rgba(128, 128, 128, 0.12));
     color: var(--color-text);
   }
@@ -4474,7 +4565,7 @@ body:not(.mobile-layer) .option-preview-media {
   transform: translateY(-1px);
 }
 .ws-pick-target:active { transform: translateY(0); }
-.ws-pick-target:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
+.ws-pick-target:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 .ws-pick-target svg { flex: 0 0 auto; color: rgb(var(--sapphire) / 0.9); }
 .ws-pick-texts { display: flex; flex-direction: column; gap: var(--ds-space-half); min-width: 0; }
 .ws-pick-title { font-size: var(--ds-fs-subtitle); font-weight: 600; color: var(--color-text); }
@@ -4562,7 +4653,7 @@ body:not(.mobile-layer) .option-preview-media {
   padding: var(--ds-space-2) var(--ds-space-3);
   border: none;
   border-bottom: 1px solid var(--color-frame-border-light);
-  border-radius: 0;
+  border-radius: var(--ds-radius-chip);
   background: none;
   font-family: inherit;
   font-size: var(--ds-fs-body);
@@ -4572,7 +4663,9 @@ body:not(.mobile-layer) .option-preview-media {
   transition: background 0.1s;
 }
 .wsp-row:last-child { border-bottom: none; }
-.wsp-row.wsp-dir:hover { background: var(--color-frame-hover); }
+.wsp-row.wsp-dir:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--color-frame-hover); }
 .wsp-row-icon { color: var(--color-frame-text-muted); flex-shrink: 0; width: 16px; text-align: center; display: inline-flex; justify-content: center; }
 .wsp-row-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wsp-row.wsp-empty {
@@ -4603,7 +4696,10 @@ body:not(.mobile-layer) .option-preview-media {
   border: 1px solid rgba(91, 127, 191, 0.35);
   color: rgb(91, 127, 191);
   background: rgba(91, 127, 191, 0.06);
-  transition: all 0.25s ease;
+  /* 手机面板卡顿诊断批（2026-11-21）：`transition: all` 退役 → 显式白名单。
+     本钮 hover/active 实际只变 background + border-color（见 :4608 块）；
+     `all` 会把任何未来新增的布局属性也拖进过渡（同 hover 零布局批裁定）。 */
+  transition: background-color 0.25s ease, border-color 0.25s ease;
 }
 .wsp-mkdir-ok:hover {
   background: rgba(91, 127, 191, 0.14);
@@ -4645,7 +4741,13 @@ body:not(.mobile-layer) .option-preview-media {
   border: 1px solid var(--glass-border);
   background: rgba(91, 127, 191, 0.03);
   color: var(--color-frame-text-dim);
-  transition: all 0.25s ease;
+  /* 手机面板卡顿诊断批（2026-11-21）：显式白名单（同 .wsp-mkdir-ok 档：
+     hover 只动 background/border-color/color/box-shadow，见 :4650 块）。 */
+  transition:
+    background-color 0.25s ease,
+    border-color 0.25s ease,
+    color 0.25s ease,
+    box-shadow 0.25s ease;
 }
 .wsp-cancel:hover, .wsp-pick:hover, .wsp-mkdir:hover {
   background: rgba(91, 127, 191, 0.08);
@@ -4735,7 +4837,10 @@ body:not(.mobile-layer) .option-preview-media {
   border: 1px solid var(--glass-border);
   background: rgba(91, 127, 191, 0.03);
   color: var(--color-frame-text-dim);
-  transition: all 0.25s ease;
+  /* 手机面板卡顿诊断批（2026-11-21）：显式白名单（hover 只动 background/
+     border-color/color，见 :4741 块）。 */
+  transition: background-color 0.25s ease, border-color 0.25s ease, color 0.25s ease;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .wsp-goto-btn:hover {
@@ -4797,6 +4902,8 @@ body:not(.mobile-layer) .option-preview-media {
    destructive buttons in modal.css. ui-status-redesign（S10 / 盘点 #47）：常显
    「清空」键字转常规色，行首 trash-2 红图标承载；hover 转红（铁律三）。 */
 .wsp-clear {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   display: inline-flex;
   align-items: center;
   gap: var(--ds-space-1);
@@ -4806,6 +4913,8 @@ body:not(.mobile-layer) .option-preview-media {
 }
 .wsp-clear .st-ic { color: var(--status-error-icon); }
 .wsp-clear:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: rgba(220, 60, 60, 0.08) !important;
   border-color: rgba(220, 60, 60, 0.5) !important;
   box-shadow:
@@ -4857,6 +4966,7 @@ body:not(.mobile-layer) .option-preview-media {
   white-space: nowrap;
   transition: transform 0.18s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s ease;
   animation: nf-pill-in 0.18s ease;
+  box-shadow: var(--btn-shadow);
 }
 /* 扁平六态（flat-button-everywhere 批 2026-11-05）：原 hover/按下是
    「投影栈 + translateY(-1px)」的物理按键组合，两层退役（F1 + F5）。
@@ -4874,7 +4984,7 @@ body:not(.mobile-layer) .option-preview-media {
   background: var(--btn-press-bg);
 }
 .scroll-new-pill.hidden { display: none; }
-.scroll-new-pill:focus-visible { outline: 2px solid var(--sapphire-refraction); outline-offset: 2px; }
+.scroll-new-pill:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 @keyframes nf-pill-in {
   from { opacity: 0; transform: translateX(-50%) translateY(4px); }
@@ -5397,6 +5507,8 @@ body:not(.mobile-layer) .option-preview-media {
   background: color-mix(in srgb, var(--color-text-muted) 10%, var(--color-bubble-user));
 }
 .fm-msg.in .fm-att-media .pop-media:has(.pop-img) {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: color-mix(in srgb, var(--color-text-muted) 10%, var(--color-bubble-ai));
 }
 .fm-att-media .pop-media.is-loading:has(.pop-img)::before {
@@ -5432,8 +5544,12 @@ body:not(.mobile-layer) .option-preview-media {
   font-weight: 600;
   pointer-events: none;
 }
-.fm-att-media .pop-media:has(.pop-img.nf-img-failed) { background: color-mix(in srgb, var(--color-text-muted) 14%, var(--color-bubble-user)); }
-.fm-msg.in .fm-att-media .pop-media:has(.pop-img.nf-img-failed) { background: color-mix(in srgb, var(--color-text-muted) 14%, var(--color-bubble-ai)); }
+.fm-att-media .pop-media:has(.pop-img.nf-img-failed) {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: color-mix(in srgb, var(--color-text-muted) 14%, var(--color-bubble-user)); }
+.fm-msg.in .fm-att-media .pop-media:has(.pop-img.nf-img-failed) {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: color-mix(in srgb, var(--color-text-muted) 14%, var(--color-bubble-ai)); }
 .fm-image-retry {
   position: absolute;
   z-index: 2;
@@ -5450,7 +5566,7 @@ body:not(.mobile-layer) .option-preview-media {
   cursor: pointer;
 }
 .fm-msg.in .fm-image-retry { background: color-mix(in srgb, var(--color-bubble-ai) 82%, transparent); }
-.fm-image-retry:focus-visible { outline: 2px solid var(--glass-etched-border-focus, var(--color-text-muted)); outline-offset: 2px; }
+.fm-image-retry:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 /* ── 视频内容封面（video-cover 批 2026-11-05，作者令逐字「不管是在对话框还是
    canvas，都应该有一个内容预览的一个封面」）─────────────────────────────────
    `.nf-video-cover` 由 js/videoCover.js 在抓到帧之后**插在 `<video>` 之后**（DOM
@@ -5493,7 +5609,9 @@ body:not(.mobile-layer) .option-preview-media {
    the WHOLE frame is visible at its own ratio, and the box keeps whatever
    aspect ratio the renderer derived from the front media
    (`.pop-expand-view .media-layer` above). */
-.pop-img, .pop-video { width: 100%; height: 100%; display: block; object-fit: contain; background: #17191f; }
+.pop-img, .pop-video {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); width: 100%; height: 100%; display: block; object-fit: contain; background: #17191f; }
 /* 缺陷 D fix (2026-10-03 UI-E/UI-F): the failed-media placeholder used to be
    reachable ONLY for `.bubble.ai img` (see the 2026-09-15 rule at the top of
    this file) — a Pop artifact face lives in `.row.pop-artifact`, so a broken
@@ -5529,7 +5647,7 @@ body:not(.mobile-layer) .option-preview-media {
   font-size: var(--ds-fs-hint);
   cursor: pointer;
 }
-.nf-media-retry:focus-visible { outline: 2px solid var(--glass-etched-border-focus, var(--color-text-muted)); outline-offset: 2px; }
+.nf-media-retry:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 .play-ring {
   position: absolute; top: 50%; left: 50%;
   width: 54px; height: 54px; margin: -27px 0 0 -27px;
@@ -5551,6 +5669,8 @@ body:not(.mobile-layer) .option-preview-media {
   pointer-events: none; font-variant-numeric: tabular-nums;
 }
 .vd-progress {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-thin);
   position: absolute; left: 0; bottom: 0; height: 3px; width: 0%;
   background: var(--color-primary); pointer-events: none;
 }
@@ -5595,8 +5715,9 @@ body:not(.mobile-layer) .option-preview-media {
 .file-card:active { transform: scale(0.985); }
 /* Pop 引用入口沿用 footer 小图标语言，不改变文件卡主体几何。 */
 .file-card .fc-quote-btn { margin-left: auto; flex: 0 0 auto; }
-.option-box .ask-att-question-card { cursor: pointer; max-width: 100%; }
-.option-box .ask-att-question-card:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 2px; }
+.option-box .ask-att-question-card {
+  border-radius: var(--ds-radius-chip); /* 圆角标准批 2026-11-22（作者令「要圆角的框」「落为标准」· 规范 §2.6）：F7 判据下的环基座。 */ cursor: pointer; max-width: 100%; }
+.option-box .ask-att-question-card:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 /* 问面文件卡降级态（⑤a「原因 + 动作」）：卡内可换行容纳原因档 + 重试键；
    不可用 = 虚线描边（与缩略/chip 面同档语义）。 */
 .option-box .ask-att-question-card { box-sizing: border-box; min-width: 0; flex-wrap: wrap; }
@@ -5732,6 +5853,8 @@ body:not(.mobile-layer) .option-preview-media {
    `.on` 显隐）同名撞车的机制根因（后载者 display:none 压过本块 display:flex ⇒
    实测「点卡片放大毫无反应」）。两灯箱同一套开合词法（`.on` = 可视态），形各自一档。 */
 .nf-lightbox.nf-lightbox--media {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: fixed; inset: 0; z-index: 3200; /* above search-overlay (310), below the modal family (11000) */
   display: flex; align-items: center; justify-content: center;
   background: rgba(0, 0, 0, 0.78);
@@ -5893,7 +6016,7 @@ body:not(.mobile-layer) .option-preview-media {
 .row.user-media .pop-media-flat,
 .fm-msg.out .fm-att-list .pop-media-flat {
   border-radius: var(--ds-radius-card-lg);
-  border-bottom-right-radius: 4px;
+  border-bottom-right-radius: var(--ds-radius-badge);
   box-shadow: none;
 }
 
@@ -5914,9 +6037,13 @@ body:not(.mobile-layer) .option-preview-media {
 /* Give user inline media and social attachments a white mat without painting
    the agent Pop card (whose dark backing is an existing contract). */
 .row.user-media .pop-media:has(> .pop-img),
-.fm-msg .fm-att-list .pop-media:has(> .pop-img) { background: #fff; }
+.fm-msg .fm-att-list .pop-media:has(> .pop-img) {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: #fff; }
 /* Agent Pop media cards have a dark base; place their mat only under images. */
-.pop-artifact:not(.user) .pop-img { background: #fff; }
+.pop-artifact:not(.user) .pop-img {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: #fff; }
 /* The user message's inline attachment image also composites against its bubble. */
 .bubble.user.att-bubble .att-img { background: #fff; }
 @media (prefers-color-scheme: dark) {
@@ -5932,7 +6059,7 @@ body:not(.mobile-layer) .option-preview-media {
 .row.user-media .pop-stack-view .media-layer,
 .fm-msg.out .fm-att-list .pop-stack-view .media-layer {
   border-radius: var(--ds-radius-card-lg);
-  border-bottom-right-radius: 4px;
+  border-bottom-right-radius: var(--ds-radius-badge);
   box-shadow: none;
 }
 /* 入向叠卡层：底色同样归 glass.css 单点块（对方白）；本行只保留「媒体元素自身
@@ -6028,6 +6155,8 @@ body:not(.mobile-layer) .option-preview-media {
 }
 .search-media-card:hover { border-color: rgba(64, 132, 240, 0.55); transform: translateY(-1px); }
 .search-media-thumb {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   width: 100%; aspect-ratio: 4 / 3; object-fit: cover;
   display: block; background: #17191f;
 }
@@ -6260,8 +6389,8 @@ object.search-media-thumb { object-fit: initial; }
    禁「点了没反应」半成品入口 —— friends.css paintJumpAffordance 同纪律）。 */
 .msg-quote-block[data-quote-jump="ready"] { cursor: pointer; }
 .msg-quote-block[data-quote-jump="ready"]:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.5);
-  outline-offset: 1px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .row.quote-target-flash { animation: msgQuoteTargetFlash 1.8s ease; border-radius: var(--ds-radius-xl); }
 @keyframes msgQuoteTargetFlash {
@@ -6315,6 +6444,7 @@ body:not(.mobile-layer) #header .header-center {
   background: var(--agent-avatar-chip-bg);
   border: 1px solid var(--glass-control-border);
   transition: transform 0.15s ease;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   #agent-avatar-btn:hover { transform: scale(1.04); }
@@ -6372,9 +6502,8 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
   font: inherit;
 }
 .ap-pane .ap-avatar-box:focus-visible {
-  outline: 2px solid rgba(91, 127, 191, 0.45);
-  outline-offset: 2px;
-  border-radius: var(--ds-radius-xl);
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .ap-pane .ap-avatar-img {
   width: 72px;
@@ -6490,8 +6619,8 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
   .msg-token-chip:hover { background: rgba(255, 255, 255, 0.1); }
 }
 .msg-token-chip:focus-visible {
-  outline: 2px solid var(--glass-etched-border-focus, rgba(91, 127, 191, 0.3));
-  outline-offset: 1px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* ── msg-token popover（原消息小窗；🔴 无 overlay 遮罩层——visual-style 铁律 1：

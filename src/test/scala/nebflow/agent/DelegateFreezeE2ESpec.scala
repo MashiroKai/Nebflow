@@ -207,7 +207,7 @@ class DelegateFreezeE2ESpec extends CatsEffectSuite:
     )
 
   test(
-    "e2e: provider failure freezes the delegate (frozen receipt, never a failure verdict) → Mail is retained without execution → explicit manual wake in the SAME session → the continuation turn still carries the pre-freeze history"
+    "e2e: provider failure freezes the delegate (frozen receipt, never a failure verdict) → no automatic wake → Mail itself releases the gate and wakes the SAME session → the continuation turn still carries the pre-freeze history"
   ) {
     withFx("main") { fx =>
       val parentSid = "freeze-e2e-parent"
@@ -295,38 +295,28 @@ class DelegateFreezeE2ESpec extends CatsEffectSuite:
         frozenReg <- fx.resources.agentRegistry.get.map(_.get(childSid))
         frozenMail <- mailboxEvents(parentSid)
         frozenFrames <- fx.frames.get
-        // Mail preserves the supplement and the freeze; only the explicit user action resumes execution.
+        // 押闸态：无 Mail 时自动扫描（邮箱排干 / 启动扫箱）**不释放**押闸、不唤醒。
         mailInput = JsonObject(
           "address" -> s"delegate:$childSid".asJson,
           "message" -> "继续把 wiring 补完（provider 已恢复）".asJson
         )
-        mailContext = parentCtx(fx.resources, fx.system, parentSid).copy(toolCallId = "retained-supplement")
-        savedMail <- MailTool.call(mailInput, mailContext)
-        retryMail <- MailTool.call(mailInput, mailContext)
-        _ = assert(savedMail.toOption.exists(_.contains("MANUAL_RECOVERY_REQUIRED")), savedMail.toString)
-        _ = assert(retryMail.isRight)
+        mailContext = parentCtx(fx.resources, fx.system, parentSid).copy(toolCallId = "gate-release-mail")
         _ <- childRef ! AgentCommand.MailboxArrived
         _ <- childRef ! AgentCommand.RecoverPersistedQueues
         _ <- IO.sleep(200.millis)
-        beforeManual <- fx.requests.get.map(_.count(_.sessionId == childSid))
-        _ = assertEquals(beforeManual, 1, "Mail alone must not invoke the model again")
+        beforeMail <- fx.requests.get.map(_.count(_.sessionId == childSid))
+        _ = assertEquals(beforeMail, 1, "without Mail, automatic scans must not invoke the model again")
+        _ = assert(DelegateRegistry.isFrozen(childSid))
+        // Mail 即唤醒：释放押闸、同 id 续跑；补充作为下一回合注入（不滞留邮箱）。
+        savedMail <- MailTool.call(mailInput, mailContext)
+        _ = assert(savedMail.isRight, savedMail.toString)
+        _ = assert(!DelegateRegistry.isFrozen(childSid), "the Mail wake closes the freeze slot")
         pending <- SessionMailbox.scanPending(childSid)
         _ = assertEquals(
           pending.count(_.kind == "mail-supplement"),
-          1,
-          "retry and automatic mailbox scans preserve the held supplement"
+          0,
+          "the released supplement is consumed as the next turn, not left in the mailbox"
         )
-        heldTaken <- SessionMailbox.scanTaken(childSid)
-        _ = assert(heldTaken.isEmpty, "automatic scans must not consume a manually held inbox")
-        _ = assert(DelegateRegistry.isFrozen(childSid))
-        manualWake <- DelegateWakeLeg.wake(
-          fx.resources,
-          Some(j => fx.frames.update(_ :+ j)),
-          childSid,
-          "Resume from the saved checkpoint",
-          "panel-wake"
-        )
-        _ = assert(manualWake.isRight, manualWake.toString)
         // 唤醒收口读数**先行**（确定性）：onWoken 在 wake 链内同步完成（冻结槽清空 +
         // registry 回 Idle + 台账行回 running），而续做轮的自然完成链（text-finish ⇒
         // completed 终态三清：拆 registry 行、行写终态、Stop child）是合法异步收尾——
@@ -334,8 +324,10 @@ class DelegateFreezeE2ESpec extends CatsEffectSuite:
         // poll#1 一旦错过，poll#2 几乎必败 = 本件在补详批合并后稳定翻红的原因）。
         // 唤醒一返回即读 = 契约原语义（wake ⇒ 诚实 in-flight 面），断言零增减、零竞态。
         wokeRecord <- IO(DelegateRegistry.find(childSid))
-        wokeRow <- fx.resources.subAgentTaskStore.findByTaskId(childSid)
-        wokeReg <- fx.resources.agentRegistry.get.map(_.get(childSid))
+        // 唤醒事实 = 审计链行 `delegate-frozen-wake`（action=woken，由 DelegateFreeze.onWoken
+        // 同步写入，续做完成链不删它）。取代原先读瞬时 registry 状态 / 台账行 —— 那两者会被
+        // 续做轮完成清理改写（Idle→None、running→completed），属于竞态读数。事件是事实，不变。
+        wokeChain <- IO(nebflow.core.delegate.ChainStore.readSync(nebflow.core.delegate.ChainStore.keyFor(None, childSid)))
         // ③ 续做轮：第二轮 LLM 请求必须带冻结前的 brief（上下文没丢）。
         _ <- waitUntil(30.seconds) {
           fx.requests.get.map(rs => rs.count(_.sessionId == childSid) >= 2)
@@ -351,12 +343,15 @@ class DelegateFreezeE2ESpec extends CatsEffectSuite:
         assert(frozenRecord.frozenSince.isDefined, "frozenSince persisted on the registry record")
         assertEquals(
           frozenRecord.frozenReason,
-          Some(DelegateFreeze.wireValue(DelegateFreeze.Reason.LlmFailure)),
-          "the reason code is written into the state (llm-failure)"
+          // reason 对齐 base 现行 ProviderFault 分类：401 invalid_api_key 属「配置失效族」
+          // ⇒ model-unavailable（旧断言 llm-failure 为 archive 支过时口径，见 2026-11-23 裁定 1）。
+          Some(DelegateFreeze.wireValue(DelegateFreeze.Reason.ModelUnavailable)),
+          "the reason code is written into the state (model-unavailable, aligned to ProviderFault)"
         )
         assert(
-          frozenRecord.frozenDetail.exists(_.contains("401")),
-          s"the provider error context is kept: ${frozenRecord.frozenDetail}"
+          // base 现行口径：冻结 detail 不再内联原始错误（原始错误转入卡片，不进上级上下文）。
+          frozenRecord.frozenDetail.exists(d => d.contains("原始错误已转入卡片") && !d.contains("401")),
+          s"the detail points to the card and does not leak the raw error: ${frozenRecord.frozenDetail}"
         )
         assertEquals(
           frozenRow.map(_.status),
@@ -386,12 +381,15 @@ class DelegateFreezeE2ESpec extends CatsEffectSuite:
         )
         // ── ② 唤醒：同一 actor、同一 session id、冻结槽清空、行回 running ──
         assertEquals(DelegateRegistry.find(childSid).flatMap(_.frozenSince), None, "the frozen slot is cleared on wake")
+        val wokenEvents = wokeChain.toList.flatMap(_.entries).filter { e =>
+          e.kind == "delegate-frozen-wake" && e.payload.hcursor.get[String]("action").toOption.contains("woken")
+        }
+        assert(wokenEvents.nonEmpty, "the wake fact is recorded in the audit chain (delegate-frozen-wake / woken)")
         assertEquals(
-          wokeReg.map(_.status),
-          Some(nebflow.actor.AgentStatus.Idle),
-          "registry back to Idle after the wake"
+          wokenEvents.headOption.flatMap(_.payload.hcursor.get[String]("via").toOption),
+          Some("mail"),
+          "the wake fact names its channel (via = mail)"
         )
-        assertEquals(wokeRow.map(_.status), Some("running"), "the ledger row is honestly in-flight again")
         // ── ③ 续做 = 别丢上下文（本件硬断言）────────────────────────────
         assertEquals(
           resumedTurn.sessionId,

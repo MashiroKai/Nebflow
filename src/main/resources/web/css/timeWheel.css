@@ -33,11 +33,15 @@
   transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
 }
 .tw-trigger:hover { background: var(--glass-control-bg-hover); }
-.tw-trigger:focus-visible,
+/* 焦点与「展开态」拆开（focus-ring-unify 批 2026-11-22）：原先两条选择器共用
+   一条规则，于是那圈焦点光晕（box-shadow 0 0 0 2px）会顺带落在没被聚焦的
+   `.open` 上。现在焦点只有全站统一的 outline 环，`.open` 只留它的描边。 */
+.tw-trigger:focus-visible {
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
+}
 .tw-trigger.open {
-  outline: none;
   border-color: rgb(var(--sapphire) / 0.6);
-  box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.12);
 }
 .tw-trigger svg {
   width: 13px;
@@ -54,6 +58,8 @@
 
 /* ══ 面板本体（popover / sheet 两皮共用，规格 = 同构）═════════════════════ */
 .tw-panel {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: fixed;
   z-index: 10001;
   display: none;
@@ -65,7 +71,9 @@
 }
 .tw-panel.in,
 .tw-panel.out { display: block; }
-html.no-backdrop .tw-panel { background: var(--color-surface); }
+html.no-backdrop .tw-panel {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--color-surface); }
 
 .tw-panel.popover {
   width: 300px;
@@ -194,7 +202,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   cursor: grab;
 }
 .tw-col:active { cursor: grabbing; }
-.tw-col:focus-visible { box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.35); }
+.tw-col:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 .tw-col-date { width: 104px; }
 .tw-strip {
   position: absolute;
@@ -309,11 +317,15 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
 }
 .tw-status.show { display: block; }
 .tw-status-cross.show {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: rgb(var(--sapphire));
   background: rgb(var(--sapphire) / 0.1);
   border: 1px solid rgb(var(--sapphire) / 0.18);
 }
 .tw-status-equal.show {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: var(--status-error-icon);
   background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--status-error-icon) 22%, transparent);
@@ -344,8 +356,9 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   outline: none;
 }
 .tw-in:focus {
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
   border-color: rgb(var(--sapphire) / 0.6);
-  box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.12);
 }
 .tw-in.err {
   border-color: color-mix(in srgb, var(--status-error-icon) 55%, transparent);
@@ -515,13 +528,63 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
 body.mobile-layer .tw-panel.sheet .tw-col { width: 62px; }
 body.mobile-layer .tw-panel.sheet .tw-col-date { width: 120px; }
 body.mobile-layer .tw-row { gap: var(--ds-space-inline-gap); }
+/* 手机层 sheet 底色 = 压不透档（search-page-density 批 2026-11-21 作者令②）：
+   sheet 盖住整个页面、内容只有滚轮读数，任何内容透底都直接降低可读性。取值 =
+   唯一材质的**压不透档** `--nf-glass-bg-hover`（与桌面次级浮层同一枚令牌 ⇒
+   两端同一条判据，不是两套白度）。桌面 popover 皮不动（点选式小浮层，底下是
+   它自己的宿主面，既有观感零改动）。 */
+body.mobile-layer .tw-panel.sheet { background: var(--nf-glass-bg-hover); }
+
+/* ══ 日期档（三列 年/月/日）══════════════════════════════════════════════
+   search-page-density 批 2026-11-21 作者令②：搜索面板「日期」tab 在手机端用
+   滚轮取代日历+下拉混搭（js/timeWheel.js openDate）。本档**不新造形态**：
+   面板皮（sheet）、行高（40）、中心带、渐隐全部沿用上面的既有规则，这里只补
+   两件日期特需的真值：
+     ① 日列等比年/月列窄一档（两位数字，与「日」的位数一致）；
+     ② 日期档在 **popover 皮**里也用宽列（桌面 ≤768px 宽屏的日期选择不挤成三根
+        46px 细条 —— 年月日是 4/2/2 位文本，比时分的 2 位长）。
+   —— 数值全部走令牌，零裸色值（机检 T10 同判据）。 */
+.tw-col-day { width: 44px; }
+body.mobile-layer .tw-panel.sheet .tw-col-day { width: 46px; }
+.tw-body-date .tw-wheel-row { justify-content: center; }
+/* 日期档没有快捷档/星期/精确输入 ⇒ 面板高自然收一截（空块不占位）。 */
+.tw-body-date { padding-bottom: var(--ds-space-1); }
+
+/* ══ 次级浮层可读性（search-page-density 批 2026-11-21 作者令②·手机端落点）══
+   作者报障逐字：「次级弹层（下拉/浮层）的毛玻璃要处理层级与不透明度：要么提高
+   不透明底色保证可读，要么弹层展开时遮罩下层内容……移动端、桌面端两个端都验收」。
+   桌面端的次级浮层（日历年/月下拉 + 筛选动作表菜单）走「提高不透明底色」那一支
+   （css/glass.css「次级浮层压不透档」）；手机端的日期滚轮是**全屏 sheet 皮**，
+   取另一支「弹层展开时遮罩下层内容」—— 因为它盖住整个页面，只提底色仍会让
+   下层大字在四周露出来。
+   两件事：
+   ① 幕布 = `.nf-glass-scrim` 档（glass.css 幕布成员；值 = --nf-glass-scrim* 单源），
+      把面板外的内容压下去；
+   ② 面板本体 = 唯一材质底（`--nf-glass-bg`）**保持**不变 —— sheet 是主浮件，
+      不是次级嵌套浮层，它已经有幕布把下层压掉，不需要第二套不透明度。
+   层级：幕布放在面板之下（z 序由 DOM 顺序 + 面板 z 11000 承担），点击幕布 = 取消
+   （`close(false)`），与点外关闭同一条语义。 */
+.tw-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 10999;   /* 面板 z 11000 之下一档（sheet 皮既有的全站顶带） */
+  display: none;
+}
+.tw-scrim.in,
+.tw-scrim.out { display: block; }
+.tw-scrim.in { animation: tw-scrim-in 280ms ease-out both; }
+.tw-scrim.out { animation: tw-scrim-out 200ms ease-in both; }
+@keyframes tw-scrim-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes tw-scrim-out { from { opacity: 1; } to { opacity: 0; } }
 
 /* ══ reduced-motion：皮动画全退化（既有纪律）═════════════════════════════ */
 @media (prefers-reduced-motion: reduce) {
   .tw-panel.popover.in,
   .tw-panel.popover.out,
   .tw-panel.sheet.in,
-  .tw-panel.sheet.out { animation: none; }
+  .tw-panel.sheet.out,
+  .tw-scrim.in,
+  .tw-scrim.out { animation: none; }
   .tw-trigger,
   .tw-btn,
   .tw-chip,

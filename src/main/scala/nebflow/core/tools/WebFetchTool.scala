@@ -84,6 +84,146 @@ Usage:
     t.contains("just a moment") || title.contains("请稍候") ||
     t.contains("attention required") || t.contains("access denied")
 
+  // ── Soft-failure detection (HTTP 200 that is not the resource) ─────
+  //
+  // 2026-11-22 end-to-end evaluation (.stand/tmp/websearch-eval/probe3.log):
+  // four of eight fetches "succeeded" on pages carrying no usable content —
+  // an Earthdata login form (459 chars), an IEEE "JavaScript is disabled" wall
+  // (178 chars), an Elsevier redirect stub (15 chars) and a cddis "This page has
+  // been moved" notice (217 chars). HTTP 200 is not content: the agent cannot
+  // tell "I have the paper" from "I have a login form", which is exactly the
+  // failure mode that poisons downstream data collection.
+  //
+  // Thresholds (deliberately small, so they fire on interstitials only):
+  //   * SOFT_FAILURE_MAX_CHARS = 5_000 for JS walls and login walls — every
+  //     interstitial in that run was < 500 chars while real content pages were
+  //     6.9 KB (JSON) to 8.8 KB (arXiv abstract), so 5 KB separates them with
+  //     an order of magnitude of headroom.
+  //   * LOGIN_WALL_MAX_CHARS = 3_000: an authentication form is a short page;
+  //     a long article that merely links "Sign in" in its header stays OK.
+  //   * REDIRECT_SHELL_MAX_CHARS = 500 for meta-refresh/JS redirect stubs.
+  //   * MOVED_NOTICE_MAX_CHARS = 1_000 for "This page has been moved" notices.
+  //   * MIN_HTML_CONTENT_CHARS = 200: generic floor for text/html pages — a
+  //     15-char "# Redirecting" must not be reported as a successful read.
+  private[tools] val SOFT_FAILURE_MAX_CHARS = 5_000
+  private[tools] val LOGIN_WALL_MAX_CHARS = 3_000
+  private[tools] val REDIRECT_SHELL_MAX_CHARS = 500
+  private[tools] val MOVED_NOTICE_MAX_CHARS = 1_000
+  private[tools] val MIN_HTML_CONTENT_CHARS = 200
+
+  /** A 200-OK response whose content is not the requested resource. */
+  private[tools] case class SoftFailure(tag: String, detail: String, cause: String, suggestion: String)
+
+  private val RedirectStubMarkers = List("redirecting", "being redirected", "redirected to", "跳转中", "正在跳转")
+
+  private val MovedNoticeMarkers = List(
+    "this page has been moved",
+    "page has been moved",
+    "has been moved to",
+    "page has moved",
+    "页面已移动",
+    "页面已迁移"
+  )
+
+  private val JsRequiredMarkers = List(
+    "javascript is disabled",
+    "javascript is required",
+    "enable javascript",
+    "please enable js",
+    "requires javascript",
+    "we need to verify that you're not a robot",
+    "please turn on javascript",
+    "请启用javascript",
+    "请开启javascript"
+  )
+  private val LoginWallTitleMarkers = List("login", "log in", "sign in", "signin", "登录", "登陆", "认证")
+
+  private val LoginWallFormMarkers =
+    List("username", "password", "sign in", "log in", "please log in", "please sign in", "登录", "用户名", "密码")
+
+  /**
+   * Detect "soft failure" pages: HTTP 200 with a payload that is not the
+   * resource. Pure (no IO, no network) so the four real samples from the
+   * evaluation are pinned as regression cases, alongside negative controls
+   * (a real abstract page and a real JSON payload must stay OK).
+   */
+  private[tools] def detectSoftFailure(
+    title: Option[String],
+    text: String,
+    contentType: String
+  ): Option[SoftFailure] =
+    val body = text.trim
+    val lower = body.toLowerCase
+    val titleLower = title.map(_.toLowerCase).getOrElse("")
+    val head = lower.take(SOFT_FAILURE_MAX_CHARS)
+    def hits(markers: List[String], haystack: String): Boolean = markers.exists(haystack.contains)
+
+    if body.length <= REDIRECT_SHELL_MAX_CHARS && (
+        titleLower.contains("redirect") || hits(RedirectStubMarkers, head)
+      )
+    then
+      Some(
+        SoftFailure(
+          "soft-failure: redirect-loop",
+          s"the server returned a redirect shell (${body.length} chars), not the target document",
+          "the URL answers with a meta-refresh / JS redirect that this non-JS fetch cannot follow, " +
+            "or the redirect chain ends on an interstitial",
+          "retry the final URL directly (follow the Location/meta-refresh target), or fetch it with a browser"
+        )
+      )
+    else if body.length <= MOVED_NOTICE_MAX_CHARS && hits(MovedNoticeMarkers, lower) then
+      Some(
+        SoftFailure(
+          "soft-failure: moved",
+          s"the server returned a 'this page has been moved' notice (${body.length} chars)",
+          "the resource was relocated; the server answers 200 with a stub instead of 301/302",
+          "follow the link named in the notice (usually a new host/path) and fetch that URL instead"
+        )
+      )
+    else if body.length <= SOFT_FAILURE_MAX_CHARS && hits(JsRequiredMarkers, titleLower + "\n" + head) then
+      Some(
+        SoftFailure(
+          "soft-failure: js-required",
+          s"the server returned a JavaScript wall (${body.length} chars), not the content",
+          "the page renders client-side; this fetch only sees the <noscript> fallback " +
+            "(common for IEEE, Elsevier, Cloudflare-style challenges)",
+          "use the browser fallback (Obscura/Playwright) or an API/OA route (arXiv, Unpaywall, publisher API)"
+        )
+      )
+    else if body.length <= LOGIN_WALL_MAX_CHARS && (
+        hits(LoginWallTitleMarkers, titleLower) || lower.take(500).contains("login")
+      ) && hits(LoginWallFormMarkers, lower)
+    then
+      Some(
+        SoftFailure(
+          "soft-failure: login-wall",
+          s"the server returned an authentication page (${body.length} chars), not the resource",
+          "the URL requires credentials/session; the redirect went to a login form " +
+            "(e.g. Earthdata/URS OAuth) and no credentials were presented",
+          "use an authenticated client (token/cookie), or resolve the resource through an open route " +
+            "(OA copy, API endpoint, Earthdata token)"
+        )
+      )
+    else if contentType.contains("text/html") && body.length < MIN_HTML_CONTENT_CHARS then
+      Some(
+        SoftFailure(
+          "soft-failure: thin-content",
+          s"the page yielded only ${body.length} chars of text (floor is $MIN_HTML_CONTENT_CHARS)",
+          "either the page body is almost empty (script-driven shell) or extraction lost the content",
+          "treat this as 'no content retrieved'; retry with a browser, a print/summary view, or an API endpoint"
+        )
+      )
+    else None
+
+  end detectSoftFailure
+
+  private def softFailureMessage(f: SoftFailure, status: Int, chars: Int, text: String): String =
+    val preview = text.replaceAll("\\s+", " ").trim.take(200)
+    s"""${f.tag} (HTTP $status, $chars chars of page text) — ${f.detail}.
+       |Cause: ${f.cause}.
+       |Suggest: ${f.suggestion}.
+       |The HTTP status was a success but this is NOT the requested content. Page text begins: "$preview"""".stripMargin
+
   // ── HTML extraction ────────────────────────────────────────────────
 
   private def extractHtmlText(html: String): (Option[String], String, Option[String]) =
@@ -219,15 +359,29 @@ Usage:
                 )
                 HttpOutcome.NeedBrowser
               else
-                val output = buildOutput(title, text, metaDesc, format)
-                val (truncated, _) = truncate(output, maxChars)
-                writeCache(url, truncated)
-                logger.infoSync(
-                  s"WebFetch HTTP success",
-                  "url" -> url.take(80),
-                  "resultLen" -> truncated.length.toString
-                )
-                HttpOutcome.Success(truncated)
+                // Soft failure: 200 OK but the payload is a wall/stub, not the
+                // resource. Reported as an ERROR carrying its cause — never as a
+                // silent success (2026-11-22 evaluation: 4 of 8 "OK" fetches were
+                // a login form, a JS wall, a redirect stub and a moved notice).
+                detectSoftFailure(title, text, contentType) match
+                  case Some(f) =>
+                    logger.warnSync(
+                      s"WebFetch soft failure detected: ${f.tag}",
+                      "url" -> url.take(80),
+                      "chars" -> text.trim.length.toString,
+                      "title" -> title.getOrElse("")
+                    )
+                    HttpOutcome.Error(softFailureMessage(f, response.code.code, text.trim.length, text))
+                  case None =>
+                    val output = buildOutput(title, text, metaDesc, format)
+                    val (truncated, _) = truncate(output, maxChars)
+                    writeCache(url, truncated)
+                    logger.infoSync(
+                      s"WebFetch HTTP success",
+                      "url" -> url.take(80),
+                      "resultLen" -> truncated.length.toString
+                    )
+                    HttpOutcome.Success(truncated)
               end if
             end if
           end if

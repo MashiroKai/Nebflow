@@ -1767,10 +1767,36 @@ object ExecutionCommitStore:
       if !Files.isDirectory(current, LinkOption.NOFOLLOW_LINKS) then
         throw new IllegalArgumentException("not a directory")
 
-  private def forceDirectory(path: Path): Unit =
-    val channel = FileChannel.open(path, StandardOpenOption.READ)
-    try channel.force(true)
-    finally channel.close()
+  /**
+   * Directory fsync — a POSIX capability: forcing the directory entry makes a
+   * create/rename durable. Windows cannot open a DIRECTORY as a `FileChannel`
+   * at all (`AccessDeniedException: …\sessions`), so on Windows this leg is a
+   * no-op rather than a failure.
+   *
+   * Best-effort by contract, never a correctness gate. Two independent reasons:
+   *   1. the same call sites (`AtomicJson.forceParentDir`,
+   *      `SubAgentTaskStore.writeTasksSync`) already treat it as best-effort,
+   *      and durability there still holds — the file bytes are forced, only the
+   *      directory entry is advisory;
+   *   2. as an exception source it exceeded its station: a bare throw here
+   *      aborted the whole first-run config path on Windows
+   *      (`MainBoot.ensureFirstRunConfig` → `shell.scala:1665` fatal), i.e. the
+   *      engine could not boot at all on that platform (2026-11-21 E2E, defect
+   *      #3), and in the reconfirmation face it would permanently mark every
+   *      chain `review-required` on a platform that can never satisfy it.
+   * Strict legs are untouched: `confirm` (file open + force) still throws.
+   */
+  private[agent] def forceDirectory(path: Path): Unit =
+    if directoryForceSupported(sys.props.getOrElse("os.name", "")) then
+      try
+        val channel = FileChannel.open(path, StandardOpenOption.READ)
+        try channel.force(true)
+        finally channel.close()
+      catch case _: Exception => ()
+
+  /** Pure capability predicate (spec-drivable, no filesystem): only POSIX can open a directory. */
+  private[agent] def directoryForceSupported(osName: String): Boolean =
+    !Option(osName).getOrElse("").toLowerCase.contains("win")
 
   private def confirm(path: Path): Unit =
     val channel = FileChannel.open(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)

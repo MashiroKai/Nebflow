@@ -401,14 +401,12 @@ object DelegateFlowHosts:
               if retire then
                 flushLeg
                   .handleErrorWith(e =>
-                    IO(logger.warn(s"[delegate-flow-host] orphan flush failed for '${h.delegateId}': ${e.getMessage}"))
+                    logger.warn(s"[delegate-flow-host] orphan flush failed for '${h.delegateId}': ${e.getMessage}")
                   )
                   .flatMap { _ =>
                     removalLeg.handleErrorWith(e =>
-                      IO(
-                        logger.warn(
-                          s"[delegate-flow-host] orphan grace fiber failed to start for '${h.delegateId}': ${e.getMessage}"
-                        )
+                      logger.warn(
+                        s"[delegate-flow-host] orphan grace fiber failed to start for '${h.delegateId}': ${e.getMessage}"
                       )
                     )
                   }

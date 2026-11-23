@@ -25,14 +25,19 @@
 // navigation = injected nav {push, pop} (same convention as meFace.js).
 
 import { t } from '../i18n.js';
-import { createIconsIn } from '../utils.js';
+// 正文 md 渲染单点（作者令 2026-11-21 ②）：待办卡片/详情正文与消息气泡走**同一条**
+// 渲染管线（utils.renderMarkdownWithMath，marked+KaTeX+hljs + 同一 sanitize 档）。
+// 本模块不自建第二套 md 解析、不拼 HTML —— 只调渲染器 + 单一链接处置点。
+import { createIconsIn, looksLikeMarkdown, renderMarkdownWithMath } from '../utils.js';
+import { setHtmlTree } from '../dom.js';
+import { bindMdExtGate } from '../mdLinkGate.js';
 import { todoStore, TAG_COLOR_PRESETS, PRIORITY_COLORS } from '../todoStore.js';
-import { isAskRow, buildAskCardForRow } from '../askTodoQuestion.js';
+import { isAskRow, buildAskCardForRow, decisionOptionLabel, decisionOptionDetail } from '../askTodoQuestion.js';
 import { bindImeGuard, commitEnter } from '../imeGuard.js';
 import state from '../state.js';
 // 次级 LLM 输入框唯一模板（todo-mobile 批 2026-11-18 作者令）：详情页「回复这个
 // 待办」的输入条 = Canvas Ask 那一条（同一装配点 js/input/secondaryComposer.js）。
-import { createSecondaryComposer, SECONDARY_COMPOSER_MAX_H } from '../input/secondaryComposer.js';
+import { createSecondaryComposer, SECONDARY_COMPOSER_MAX_H, SECONDARY_COMPOSER_MAX_H_COMPACT } from '../input/secondaryComposer.js';
 // 列表选择器（作者令「标签必须有列表来选择」）：站内唯一列表菜单组件——手机层
 // 自动变成全屏动作表（可滚动 + 左上返回 + 点空白/Esc 收起，见 contextMenu.js
 // 与 mobileLayer.css「弹窗退场批」B 族），不在本页另造第二套列表。
@@ -152,6 +157,34 @@ function dueText(ms) {
   if (ms >= from && ms < from + DAY) return `${t('todoapple.today')} ${hm}`;
   if (ms >= from + DAY && ms < from + 2 * DAY) return `${t('todoapple.dueTomorrow')} ${hm}`;
   return `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+}
+
+/**
+ * 正文装载单点（作者令 2026-11-21 ②：待办卡片正文渲染 markdown —— 改前
+ * `check_wiki_docs.py` / `**加粗**` 这类原始 md 字样直接裸显）。
+ *
+ * 两条腿、零第二实现：
+ *   · 有 md 语法 ⇒ `utils.renderMarkdownWithMath`（**全站唯一** md→HTML 渲染腿：
+ *     与消息气泡同一条 marked+KaTeX+hljs 管线，`safe:true` = 外部/用户输入信任
+ *     档 —— 原始 HTML 转义成字面文本、链接 scheme 白名单、图片不取远端字节），
+ *     外链二次确认走**单一处置点** `mdLinkGate.bindMdExtGate`（委托挂容器，
+ *     innerHTML 重建不掉 listener）。XSS 防护完全沿用既有 sanitizer，本模块
+ *     零 sanitize 代码、零 `escapeHtml` 自拼。
+ *   · 无 md 语法 ⇒ 原样纯文本节点（`white-space: pre-wrap` 由各面 CSS 保留，
+ *     改前的排版/字色/行高逐字节不变）。
+ * @param {HTMLElement} parent 装载面
+ * @param {string} cls 该面的腔体类（md 态额外挂 `is-md`，样式作用域按它分档）
+ * @param {string} text 原始正文
+ * @returns {HTMLElement} 装载出的节点
+ */
+function mdOrText(parent, cls, text) {
+  const raw = String(text == null ? '' : text);
+  if (!looksLikeMarkdown(raw)) return elIn(parent, 'div', cls, raw);
+  const box = el('div', `${cls} is-md`);
+  setHtmlTree(box, renderMarkdownWithMath(raw, false, { safe: true }));
+  bindMdExtGate(box);
+  parent.appendChild(box);
+  return box;
 }
 
 /**
@@ -843,17 +876,35 @@ function buildList(root, section, nav) {
   pill.appendChild(addBtn);
   addBtn.addEventListener('click', () => openCreateSheet(section, listTarget.mode === 'tag' ? listTarget.tagId : null, addBtn));
 
+  /** 行 id 台账（只用于「新入场」判据：首帧只登记，之后每次 render 的差集 = 新行）。 */
+  const listIds = new Set();
+  let listPainted = false;
+
   /** @returns {void} */
   function render() {
     const head = listHead();
     title.textContent = head.text;
     title.style.color = head.color;
     const list = itemsForTarget();
+    // 新待办入场（作者追加令 2026-11-21「【创建】：新待办入场」）：本面**第一帧**
+    // 只登记不演（首屏整页都是「新的」，全屏齐动 = 噪声）；此后每次 render 里
+    // 首次出现的行 id 才算「新入场」，给它 `data-ta-new="in"`，动画时长到了摘掉
+    // （一次性数据态，不残留 —— 与划卡离场同一条纪律）。判据 = 行 id 集合差，
+    // 不猜「是不是刚 create 的」（迭代/刷新/远端新增同一条腿都成立）。
+    const fresh = new Set();
+    for (const it of list) if (!listIds.has(it.id)) fresh.add(it.id);
+    for (const it of list) listIds.add(it.id);
+    const firstPaint = !listPainted;
+    listPainted = true;
     itemsBox.replaceChildren();
     for (const it of list) {
       const row = el('div', 'ta-item');
       row.classList.toggle('is-done', it.completed);
       row.dataset.itemId = it.id;
+      if (!firstPaint && fresh.has(it.id)) {
+        row.dataset.taNew = 'in';
+        setTimeout(() => { delete row.dataset.taNew; }, QUICK_DECISION_MOTION.enterMs + 40);
+      }
 
       // Left hollow-circle checkbox: visual 24, hit area 48x48 (>=44 contract)
       const check = btnEl('ta-check');
@@ -869,10 +920,22 @@ function buildList(root, section, nav) {
         check.disabled = true;
         check.setAttribute('aria-label', t('askUser.pendingTitle'));
       }
+      // 期 0 止血：未作答的决策待办不暴露完成（先作答再完成；后端完成门控同口径）。
+      const gated = !askRow && !!it.decision && !it.decision.answer;
+      if (gated) {
+        check.disabled = true;
+        check.setAttribute('aria-label', t('todoapple.answerFirst'));
+      }
       check.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (askRow) return;
-        todoStore.completeItem(it.id);
+        if (askRow || gated) return;
+        // 完成动效（iOS 提醒事项口径）：圆钮即刻填充 + 划线 ⇒ 整行右滑淡出 ⇒ 落定才销账。
+        // 时长 = LIST_LEAVE_MOTION.leaveMs（= --ds-dur-hover，与快速卡离场同档）。
+        if (row.classList.contains('is-leaving')) return;
+        row.classList.add('is-done', 'is-leaving');
+        const commit = () => todoStore.completeItem(it.id);
+        if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { commit(); return; }
+        setTimeout(commit, LIST_LEAVE_MOTION.leaveMs);
       });
       row.appendChild(check);
 
@@ -891,6 +954,11 @@ function buildList(root, section, nav) {
       elIn(bodyBtn, 'span', 'ta-item-title', it.title || '—');
       // 问句条目：标题旁一个「待答」标记（**行内**，不是列表上方区块）。
       if (askRow) elIn(bodyBtn, 'span', 'ta-item-due', t('askUser.todoBadge'));
+      // 决策行状态标记（③ 糙点：此前决策行无任何态标记，已答/未答肉眼不可辨）。
+      if (!askRow && it.decision) {
+        const st = it.decision.answer ? 'todoapple.decisionAnswered' : 'todoapple.decisionPending';
+        elIn(bodyBtn, 'span', `ta-item-due ta-decision-state${it.decision.answer ? ' is-answered' : ''}`, t(st));
+      }
       if (it.due != null) elIn(bodyBtn, 'span', 'ta-item-due', dueText(it.due));
       row.appendChild(bodyBtn);
       if (askRow) {
@@ -907,21 +975,58 @@ function buildList(root, section, nav) {
         });
         itemsBox.append(row, detail);
       } else if (it.decision) {
-        // 旧「决策待办」行（服务端带 decision 的普通待办）：保留既有只读折叠面
-        // （本轮不接线；问句条目的作答接线见上支）。
+        // 决策待办行（期 2 接线）：选项可选；「提交作答」走 answerTodoDecision 帧写真源。
+        // 已作答 ⇒ 选项只读并回显所选；secret 题本期禁用（fail-closed，同 needsOriginalCard）。
         bodyBtn.setAttribute('aria-expanded', 'false');
         const detail = el('div', 'ta-decision-detail');
         detail.hidden = true;
         elIn(detail, 'div', 'ta-decision-question', String(it.decision.question || ''));
-        const options = Array.isArray(it.decision.options) ? it.decision.options : [];
-        options.forEach((option) => {
+        const dec = it.decision;
+        const answered = !!dec.answer;
+        const secretBlocked = !!dec.secret;
+        const multi = !!dec.multiSelect;
+        const options = Array.isArray(dec.options) ? dec.options : [];
+        const picks = new Set();
+        const answeredIds = new Set(answered && Array.isArray(dec.answer.selectedOptionIds) ? dec.answer.selectedOptionIds : []);
+        const errLine = el('div', 'ta-decision-error');
+        errLine.setAttribute('role', 'alert');
+        const submit = el('button', 'ta-decision-submit', t('todoapple.answerSubmit'));
+        submit.type = 'button';
+        options.forEach((option, i) => {
+          // 选项真源形 = {id,title,detail,media}：取 title（有 detail 附一行），
+          // 解不出标签的选项跳过；全部为空 ⇒ 不渲染任何选项行（不落 [object Object]）。
+          const text = decisionOptionLabel(option);
+          if (!text) return;
           const label = elIn(detail, 'label', 'ta-decision-option');
           const input = document.createElement('input');
-          input.type = it.decision.multiSelect ? 'checkbox' : 'radio';
-          input.disabled = true;
+          input.type = multi ? 'checkbox' : 'radio';
+          input.name = `dec-${it.id}`;
+          input.disabled = answered || secretBlocked;
+          input.checked = answeredIds.has(option.id);
+          input.addEventListener('change', () => {
+            if (!multi) picks.clear();
+            if (input.checked) picks.add(i); else picks.delete(i);
+          });
           label.appendChild(input);
-          elIn(label, 'span', '', String(option));
+          elIn(label, 'span', '', text);
+          const sub = decisionOptionDetail(option);
+          if (sub) elIn(label, 'span', 'ta-decision-option-detail', sub);
         });
+        if (secretBlocked) errLine.textContent = t('todoapple.answerSecretBlocked');
+        submit.disabled = answered || secretBlocked;
+        submit.addEventListener('click', async () => {
+          const ids = [...picks].sort((a, b) => a - b).map((i) => options[i] && options[i].id).filter(Boolean);
+          if (!ids.length || submit.disabled) return;
+          submit.disabled = true;
+          errLine.textContent = '';
+          const res = await todoStore.answerItem(it.id, { selectedOptionIds: ids, via: 'mobile' });
+          if (!res.ok) {
+            errLine.textContent = `${t('todoapple.answerRejected')}：${res.message || res.code || ''}`;
+            submit.disabled = false;
+          }
+          // 成功：answeredHandler 以后端 task 真值回写 ⇒ 重渲染后行内已作答态。
+        });
+        detail.append(errLine, submit);
         bodyBtn.addEventListener('click', () => {
           detail.hidden = !detail.hidden;
           bodyBtn.setAttribute('aria-expanded', String(!detail.hidden));
@@ -963,11 +1068,21 @@ function buildItem(root, section, nav) {
   row.appendChild(infoBtn);
   const notes = /** @type {HTMLTextAreaElement} */ (elIn(wrap, 'textarea', 'ta-notes'));
   notes.rows = 3;
+  // 正文 **md 渲染面**（作者令 2026-11-21 ②）：改前正文只有编辑域 ⇒ 详情里
+  // `check_wiki_docs.py`、`**加粗**` 这类原始 md 字样直接裸显。现在正文有第二个
+  // 呈现态：只读渲染面（renderMarkdownWithMath 同一管线 + 同一 sanitizer），默认
+  // 显示它；点渲染面即切回编辑域（文本框仍在，编辑能力零损失）。
+  // 「正文默认摊开」的既有裁定（2026-11-18）不变：渲染面本身就是摊开的正文。
+  const notesMd = elIn(wrap, 'div', 'ta-notes-md');
   // 详情页（编辑态）默认把**正文**摊开（作者令「详情页应该标题正文要能完整显示」）；
   // 新建态仍默认收起（作者令「定时区/展开面默认不打开」的同一条收敛口径），点 (i) 展开。
   let notesOpen = !!itemTarget;
+  // 呈现态：编辑域 / 渲染面（新建态没有正文 ⇒ 直接进编辑域）。
+  let notesEditing = !itemTarget;
   notes.hidden = !notesOpen;
+  notesMd.hidden = true;
   bindImeGuard(notes);
+  notesMd.addEventListener('click', () => { notesEditing = true; render(); notes.focus(); });
   const meta = elIn(wrap, 'div', 'ta-meta');
   // 回复/恢复这个待办 = **次级 LLM 输入框**唯一模板（作者令 2026-11-18）：
   // 与 Canvas Ask 输入条同一装配点、同一玻璃外壳、同一裸件 textarea、同一
@@ -995,23 +1110,35 @@ function buildItem(root, section, nav) {
   const replyError = elIn(replyBox, 'div', 'ta-reply-error');
   replyError.setAttribute('role', 'alert');
   let replySending = false;
-  /** 回复这个待办：经主会话同一条发送腿（不吞主会话草稿/附件）。 */
+  /** 回复这个待办（作者报障批 IMG_1993 修通后 · 本批任务书 ②「卡内输入框回复走
+   *  真实链路（与详情页回复等价）」的详情页半边）：
+   *    · 出口 = js/input.js 的**唯一**待办回传台 `sendTodoReply`（本模块零帧形）；
+   *    · 目标会话 = 该待办**行自己的** sessionId（行级寻址面，todoStore.mapRow 投影），
+   *      缺省回落主会话 —— 待办归属哪个会话就回到哪个会话；
+   *    · 忙态 = 引擎最近安全边界注入（不再是「回复未发送」）。
+   *  返回读数落 `data-ta-reply-last`（机读面，闸读它不猜 UI）。 */
   async function sendReply() {
     const item = todoStore.allItems().find((entry) => entry.id === itemTarget);
     const text = replyInput.input.value.trim();
     if (!item || !text || replySending) return;
     replySending = true;
-    let ok = false;
+    replyError.textContent = '';
+    /** @type {{ok:boolean, mode?:string, reason?:string, sessionId?:string}} */
+    let res = { ok: false, reason: 'import' };
     try {
-      const { sendPrimaryTodoReply } = await import('../input.js');
-      ok = sendPrimaryTodoReply(`#${item.title}·${item.id} ${text}`);
-    } catch { ok = false; }
+      const { sendTodoReply } = await import('../input.js');
+      res = sendTodoReply(`#${item.name}·${item.id} ${text}`, { sessionId: item.sessionId });
+    } catch (err) { console.error('[todoAppleFace] reply 出口不可得:', err); }
     replySending = false;
-    if (ok) {
+    if (res.ok) {
       replyInput.input.value = '';
       replyInput.autosize();
-      replyError.textContent = '';
-    } else replyError.textContent = t('todoapple.replyFailed');
+      flashSent(replyInput.root);
+    } else if (res.reason !== 'empty') {
+      // 真实失败（无会话/出口不可得）才提示；忙态与断线（已入离线队列）都是成功。
+      replyError.textContent = t('todoapple.replyFailed');
+    }
+    replyBox.dataset.taReplyLast = JSON.stringify({ itemId: item.id, ...res, sent: text });
   }
 
   // Top bar, three pieces: back on the left (page shell "<"), capsule on the
@@ -1075,8 +1202,10 @@ function buildItem(root, section, nav) {
 
   infoBtn.addEventListener('click', () => {
     notesOpen = !notesOpen;
-    notes.hidden = !notesOpen;
-    if (notesOpen) { autosizeField(notes); notes.focus(); }
+    // 展开时的默认呈现：没有正文（新建态/空正文）⇒ 编辑域；已有正文 ⇒ 渲染面。
+    if (notesOpen) notesEditing = !draft.notes;
+    render();
+    if (notesOpen && notesEditing) notes.focus();
   });
   input.addEventListener('input', () => { draft.title = input.value; autosizeField(input); });
   notes.addEventListener('input', () => { draft.notes = notes.value; autosizeField(notes); });
@@ -1088,6 +1217,15 @@ function buildItem(root, section, nav) {
     if (document.activeElement !== input) input.value = draft.title;
     if (document.activeElement !== notes) notes.value = draft.notes;
     notes.placeholder = t('todoapple.notes');
+    // 正文两态（作者令 ②）：编辑域 / md 渲染面。有正文且不在编辑 ⇒ 渲染面（点它
+    // 才进编辑域）；正文为空 ⇒ 始终给编辑域（渲染空正文没有任何意义）。
+    const showPreview = notesOpen && !notesEditing && !!draft.notes;
+    notes.hidden = !(notesOpen && !showPreview);
+    notesMd.hidden = !showPreview;
+    if (showPreview) {
+      notesMd.replaceChildren();
+      mdOrText(notesMd, 'ta-notes-md-body', draft.notes);
+    }
     // 标题/正文身高跟随内容（「完整显示」：容器高度不再由 CSS max-height 截断，
     // 也不需要内部滚动条）。焦点在域内时不写身高，避免打字时抖一行。
     if (document.activeElement !== input) autosizeField(input);
@@ -1185,6 +1323,9 @@ function saveDraft(nav) {
 
 /** Gesture/motion constants of the card. Exported so the gate can pin them
  *  against the tokens they mirror (single source = the CSS custom properties). */
+/** 列表行完成离场时长（= --ds-dur-hover，与快速卡离场同一档；CSS 同值，改此处需同改 css）。 */
+export const LIST_LEAVE_MOTION = { leaveMs: 160 };
+
 export const QUICK_DECISION_MOTION = {
   axisPx: 8,      // axis lock — same value as navController EDGE_AXIS_PX
   flickMs: 200,   // flick window — same value as navController EDGE_FLICK_MS
@@ -1200,6 +1341,43 @@ export const QUICK_DECISION_MOTION = {
  *  screen edge the shell owns the drag, never this card. */
 const QD_EDGE_PX = 24;
 
+/** 手势收口的 window 兜底腿（GIF 取证发现的手势收敛缺陷，2026-11-21）：
+ *  卡片跟着手指位移后，指针常常已离开 `.ta-qd-stage` 的盒（位移一屏宽时必然
+ *  如此，甚至越过视口边缘 ⇒ pointerup 连目标元素都没有）—— 此时 stage 上的
+ *  pointerup/pointercancel 收不到，`--qd-dx` 停在位移值上，卡片从此错位（下一次
+ *  「完成」的离场键帧也从那个偏移起步）。修法两条：
+ *    ① 认领手势时 setPointerCapture（事件重定向到 stage，正常路径必然到手）；
+ *    ② 本兜底腿（捕获不可用的内核 / 合成事件）= window 上的同 id 事件收口。
+ *  **单次绑定**：window 监听器只装一次，页面重建只换引用（不累积监听器）。 */
+/** @type {((e: PointerEvent) => void)|null} */
+let gestureRelease = null;
+/** @type {((e: PointerEvent) => void)|null} */
+let gestureCancel = null;
+let gestureFallbackBound = false;
+function bindGestureFallback() {
+  if (gestureFallbackBound) return;
+  gestureFallbackBound = true;
+  window.addEventListener('pointerup', (e) => { if (gestureRelease) gestureRelease(e); });
+  window.addEventListener('pointercancel', (e) => { if (gestureCancel) gestureCancel(e); });
+}
+
+/** 回复发送成功的轻量回执（作者追加令 2026-11-21「回复发送成功等操作要有顺滑
+ *  轻量的过渡动画」）：**两条回复面共用本函数**（详情页回复条 / 决策卡悬浮控件带）。
+ *  形态全在 CSS（`[data-ta-sent="ok"] .ds-turn-btn--send` 的 taOkPop 一条键帧，
+ *  token 时长/曲线）；本函数只写一次性数据态并在时长到后摘掉 —— 不残留、可重入
+ *  （连发多条时重新计时，不叠加两份动画）。动画属性只 = transform ⇒ 零布局。
+ *  @param {HTMLElement} root 次级输入条外壳（`.ta-reply-input` / `.ta-qd-answer-input`） */
+let sentTimer = null;
+function flashSent(root) {
+  if (!root) return;
+  root.dataset.taSent = 'ok';
+  if (sentTimer) clearTimeout(sentTimer);
+  sentTimer = setTimeout(() => {
+    delete root.dataset.taSent;
+    sentTimer = null;
+  }, QUICK_DECISION_MOTION.enterMs + 40);
+}
+
 /** Card cursor (which todo is on the card) — module state, reset on page entry. */
 let qdIndex = 0;
 /** Selected option indices per todo id: view state on this device only, never a
@@ -1213,15 +1391,40 @@ const qdAnswers = new Map();
 const qdDrafts = new Map();
 /** @type {ReturnType<typeof setTimeout>|null} */
 let qdTimer = null;
+/** 浮带入场上限计时（悬浮控件，作者令 ⑥）：与 qdTimer 同档的收尾计时器，
+ *  页面重建时一并清掉（陈旧计时器不许去掉新页面的态）。 */
+/** @type {ReturnType<typeof setTimeout>|null} */
+let qdFloatTimer = null;
+/** 牌堆过滤（作者令 2026-11-21 ⑤：右上角过滤钮，按标签 / 重要度只显示部分决策
+ *  卡片）。`tagId:null` = 全部标签；`priority:0` = 不按旗标筛（1/2/3 = 恰等该档）。
+ *  过滤态是**本设备视图态**，与选中态同档：只筛 `quickItems()`，不写 store。 */
+/** @type {{ tagId: string|null, priority: number }} */
+const qdFilter = { tagId: null, priority: 0 };
+/** 过滤面板展开态（视图态；页面重建回到收起）。 */
+let qdFilterOpen = false;
 
 /** Row shape the quick card reads (the store's read-only projection). */
 /** @typedef {{id:string, tagId:string|null, name:string, detail:string, due:number|null,
  *   priority:number, completed:boolean, createdAt:number,
+ *   sessionId:string|null,
  *   decision?:{question?:string, options?:string[], multiSelect?:boolean, allowOther?:boolean}|null}} QdRow */
 
-/** The card queue = open todos in the store's own order (no second sort recipe).
+/** The card queue = open todos in the store's own order (no second sort recipe),
+ *  narrowed by the filter panel (single source for both the deck and the home
+ *  badge: the badge reads through this same function, so the count and the
+ *  number of swipeable cards stay literally equal).
  *  @returns {QdRow[]} */
-function quickItems() { return todoStore.openItems(); }
+function quickItems() {
+  const all = todoStore.openItems();
+  if (qdFilter.tagId == null && qdFilter.priority === 0) return all;
+  return all.filter((it) => (qdFilter.tagId == null || it.tagId === qdFilter.tagId)
+    && (qdFilter.priority === 0 || it.priority === qdFilter.priority));
+}
+
+/** 过滤是否启用（用于右上角钮的 `on` 态与读数）。
+ *  @returns {boolean} */
+function qdFilterActive() { return qdFilter.tagId != null || qdFilter.priority !== 0; }
+
 
 /**
  * @param {HTMLElement} root
@@ -1230,8 +1433,40 @@ function quickItems() { return todoStore.openItems(); }
  */
 function buildQuick(root, section) {
   const wrap = elIn(root, 'div', 'ta-qd');
-  const head = elIn(wrap, 'div', 'ta-qd-head');
-  const count = elIn(head, 'div', 'ta-qd-count');
+
+  // ── 顶带簇（作者令 2026-11-21 ④⑤）────────────────────────────────────
+  // ④ 计数「第 n / m 条」改前独占页内一行（`.ta-qd-head`），整行只为一行小字让位
+  //    ⇒ 搬进顶栏浮带（与三张待办页同一枚 `.ta-pill` 胶囊、同一条 `--mcap-h` 几何），
+  //    页内那一行退役，卡片区随之上移放大（CSS `.ta-qd` 的 gap/高度链跟着改）。
+  // ⑤ 右上角过滤钮落在同一胶囊的右端：按标签 / 重要度只显示部分决策卡片。
+  //    过滤面板本体在页内（chips，见下）——顶带只放一枚开关钮。
+  const cluster = elIn(section, 'div', 'ta-cluster');
+  const pill = elIn(cluster, 'div', 'ta-pill nf-glass');
+  const count = elIn(pill, 'span', 'ta-qd-count');
+  const filterBtn = iconBtn('ta-pill-btn ta-qd-filter-btn', 'list-filter', t('todoapple.filter'));
+  filterBtn.dataset.todoQuickFilter = '';
+  pill.appendChild(filterBtn);
+  // 右上角打勾（作者令 2026-11-22 10:48 逐字「完全采用 右上角的打勾按钮」）：
+  // 与条目详情页顶部那颗**同款同位** —— 同为 `.ta-save g2-fab`（48 直径 + sapphire
+  // 实底 + 恒白墨 `--ctl-send-ink`）、同在簇内 `top:0 right:0`、同一「完成」动作
+  // （completeItem + 同一 CSS 离场键帧）。改前「完成」挤在页底操作条四键的第 1 位。
+  const saveDone = iconBtn('ta-save g2-fab', 'check', t('todoapple.markComplete'));
+  cluster.appendChild(saveDone);
+
+  // ── 过滤面板（轻量档 = chips，作者令五选一中的 chips 档）───────────────
+  // 两行 chips：标签（全部 + 各标签）/ 重要度（全部 / 高 / 中 / 低）。单行横滚、
+  // 单选语义（一组一颗选中），选中态走 sapphire 档（与胶囊键 `.on` 同一族）。
+  // 面板本体在页内流里（顶带之下、卡片之上）——展开时卡片让位，收起即复原；
+  // 零定位声明，不给浮动发现闸添新选择器。
+  const filters = elIn(wrap, 'div', 'ta-qd-filters');
+  filters.hidden = true;
+  const fltTagRow = elIn(filters, 'div', 'ta-qd-flt-row');
+  const fltPrioRow = elIn(filters, 'div', 'ta-qd-flt-row');
+  // 空态事实行（建在浮带之前：浮带必须是 `.ta-qd` 的**最后一个**流内孩子，
+  // 否则「整页最底那条控件带」的几何判据不成立）。
+  const empty = elIn(wrap, 'div', 'ta-qd-empty');
+  empty.hidden = true;
+
   const stage = elIn(wrap, 'div', 'ta-qd-stage');
   const card = elIn(stage, 'div', 'ta-qd-card nf-glass');
   // Focusable group: the keyboard leg (ArrowLeft/ArrowRight switch cards) rides
@@ -1241,28 +1476,69 @@ function buildQuick(root, section) {
   card.setAttribute('role', 'group');
   card.setAttribute('tabindex', '0');
   const scroll = elIn(card, 'div', 'ta-qd-scroll');
-  // ── ③ 输入区（回答框）: the card's third band, pinned below the scroller.
-  // Answer exit = the EXISTING reply chain (input.js `sendPrimaryTodoReply`, the
-  // very same exit the list page's reply box and the row interaction box use):
-  // the verbatim `#<todo name>·<id> <answer>` user message goes to the primary
-  // session. This module never builds a frame itself.
-  // The field recipe (typography + the single autosize cap) is inherited from
-  // the shared `.tfl-hit-reply` rule in css/mobileLayer.css — no second ladder;
-  // the page's own CSS block only owns the band's layout.
-  const answer = elIn(card, 'div', 'ta-qd-answer');
-  const answerRow = elIn(answer, 'div', 'ta-qd-answer-row');
-  const answerInput = /** @type {HTMLTextAreaElement} */ (elIn(answerRow, 'textarea', 'ta-qd-answer-input tfl-hit-reply'));
-  answerInput.rows = 1;
-  answerInput.placeholder = t('todoface.replyPh');
-  answerInput.setAttribute('aria-label', t('todoface.replyPh'));
-  const answerSend = btnEl('ta-qd-answer-send ta-create-save');
-  answerSend.type = 'button';
-  answerSend.textContent = t('todoface.send');
-  answerRow.appendChild(answerSend);
-  const answerError = elIn(answer, 'div', 'ta-qd-answer-error');
+
+  // ── ③ 输入区（回答框）: **悬浮控件带**（作者令 2026-11-21 ⑥）────────────
+  // 改前这条带在 `.ta-qd-card` 内（卡底固定带）⇒ 卡片底缘一旦落到 dock 之下，
+  // 输入框就被卡片下缘裁掉（截图 IMG_1986 的事实）。现在它搬出卡片，成为
+  // `.ta-qd` 的**最后一个流内孩子**（卡片 `flex:1 1 auto` 收缩让位）：
+  //   · 永远是整页最底那一条控件带，卡片内滚不推走它、不被卡片边裁切；
+  //   · 视觉按悬浮档处理（玻璃条 + 抬升影），卡片滚动时进入 raised 态（CSS）；
+  //   · 零定位声明（position 全 static）—— 与详情页回复条同一「流内页脚」
+  //     纪律（tests/todo-mobile-reply-bottom.spec.mjs B10），不给浮动发现闸
+  //     添新定位选择器。
+  // 输入件 = **次级 LLM 输入框唯一模板**（js/input/secondaryComposer.js）：与
+  // Canvas Ask 输入条、待办详情页回复条同一装配点（毛玻璃外壳 + 裸件 textarea +
+  // ds-turn-btn 发送圆钮），本页不再自造 textarea + 文字发送键（作者令 ① 统一）。
+  // 发送出口 = js/input.js 的唯一待办回传台 `sendTodoReply`（见 submitAnswer）。
+  //
+  // ── 页内页脚（作者令 2026-11-22 10:48：完成键上顶带、控制键落输入框下方）────
+  // 本带 = 页面级流内页脚，落位与详情页逐件对齐（作者令 2026-11-22 10:48 逐字
+  // 「完全采用 右上角的打勾按钮 输入框下方的控制按钮」）：
+  //   上排 = 回复输入件（与详情页回复带同一模板 `secondaryComposer`）；
+  //   下排 = **控制带**（日期 / 旗标 / 项目），与详情页 `.ta-tool` 同一条词表
+  //          （`.ta-tool-btn` + `.ta-tool-label`，图标 + 读数；本页是流内末件，
+  //          详情页那条是 fixed —— 两页视觉同位：都在输入框之下、dock 之上）；
+  //   完成 = 顶带簇右上角 ✓（见上，不再占本带）。
+  // 改前这里是「操作条四键」胶囊带（完成/旗标/日期/项目），与详情页功能重合却
+  // 形态/位次都不同 —— 作者判「按钮功能高度重合 就应该用条目详情页的设计」。
+  const floatBand = elIn(wrap, 'div', 'ta-qd-float');
+  floatBand.dataset.todoQuickFloat = '';
+  const composer = createSecondaryComposer({
+    class: 'ta-qd-answer-input nf-glass',
+    placeholder: t('todoface.replyPh'),
+    ariaLabel: t('todoface.replyPh'),
+    sendLabel: t('todoface.send'),
+    sendHook: 'ta-qd-answer-send',
+    // 自增高封顶 = 站内唯一声明点（次级输入框紧凑档 120）；本页不写第二个数。
+    maxHeight: SECONDARY_COMPOSER_MAX_H_COMPACT,
+    onSend: () => { void submitAnswer(); },
+  });
+  floatBand.appendChild(composer.root);
+  const answerInput = composer.input;
+  const answerSend = composer.sendBtn;
+  const autosizeAnswer = composer.autosize;
+  const answerError = elIn(floatBand, 'div', 'ta-qd-answer-error');
   answerError.setAttribute('role', 'alert');
-  const empty = elIn(wrap, 'div', 'ta-qd-empty');
-  empty.hidden = true;
+  /** 控制带（详情页 `.ta-tool` 同族：图标 + 读数两件，同一几何令牌）。 */
+  const tool = elIn(floatBand, 'div', 'ta-tool ta-qd-tool nf-glass');
+  /**
+   * @param {string} icon
+   * @param {string} label
+   * @returns {{ el: HTMLButtonElement, label: HTMLElement }}
+   */
+  const toolBtn = (icon, label) => {
+    const b = btnEl('ta-tool-btn');
+    b.type = 'button';
+    b.append(icoEl(icon), el('span', 'ta-tool-label'));
+    const lab = /** @type {HTMLElement} */ (b.querySelector('.ta-tool-label'));
+    lab.textContent = label;
+    b.setAttribute('aria-label', label);
+    tool.appendChild(b);
+    return { el: b, label: lab };
+  };
+  const toolFlag = toolBtn('flag', t('todoapple.toPriority'));
+  const toolDue = toolBtn('calendar', t('todoapple.toDue'));
+  const toolTag = toolBtn('hash', t('todoapple.toTag'));
 
   const cancelSettle = () => { if (qdTimer) { clearTimeout(qdTimer); qdTimer = null; } };
   const reduceMotion = () => {
@@ -1288,41 +1564,162 @@ function buildQuick(root, section) {
     else { s.clear(); if (on) s.add(i); }
   };
 
-  /** Answer field autosize: measure at `height:auto`, then clamp by the CSS cap
-   *  (that cap lives in exactly one place — the shared `.tfl-hit-reply` rule). */
-  const autosizeAnswer = () => {
-    answerInput.style.height = 'auto';
-    const cap = Number.parseFloat(getComputedStyle(answerInput).maxHeight);
-    const next = Number.isFinite(cap) && cap > 0
-      ? Math.min(answerInput.scrollHeight, cap) : answerInput.scrollHeight;
-    answerInput.style.height = `${next}px`;
+  /** 选中态回写原生控件（不重建卡片 ⇒ 滚动位/草稿都不动；与 selectOption
+   *  同一条「选中不走 render()」纪律，只多一条反向同步：作答发出后清选）。 */
+  const renderSelections = () => {
+    const item = quickItems()[qdIndex];
+    if (!item) return;
+    const set = selectedSet(item.id);
+    scroll.querySelectorAll('.ta-qd-opt-input').forEach((input, i) => {
+      if (input instanceof HTMLInputElement) input.checked = set.has(i);
+    });
   };
-  answerInput.addEventListener('input', autosizeAnswer);
+  /** 选中项文案（按选项序）：选中态是本地视图态，但**必须能回传**——作答内容
+   *  = 输入框文字 + 选中项（见 composeAnswer）。选项文本取自行数据本身。
+   *  @param {QdRow} item @returns {string[]} */
+  const pickedLabels = (item) => {
+    const opts = item && item.decision && Array.isArray(item.decision.options) ? item.decision.options : [];
+    return [...selectedSet(item.id)].sort((a, b) => a - b)
+      .map((i) => decisionOptionLabel(opts[i])).filter(Boolean);
+  };
+  /** 作答正文合成（回传链路的单点）：纯手输 ⇒ 逐字；带选中 ⇒ `输入（选项…）`；
+   *  只点选不输入 ⇒ 选中项本身（作者令 ③ 端到端「点选 → 回传」得以闭环）。
+   *  @param {QdRow} item @param {string} text @returns {string} */
+  const composeAnswer = (item, text) => {
+    const picked = pickedLabels(item);
+    if (!picked.length) return text;
+    return text ? `${text}（${picked.join('、')}）` : picked.join('、');
+  };
 
   /** Submit the answer through the existing reply chain. The machine-readable
-   *  trace `data-qd-answer-last` is what the gate reads (never a guess). */
+   *  trace `data-qd-answer-last` is what the gate reads (never a guess).
+   *  出口 = js/input.js 的**唯一**待办回传台 `sendTodoReply`（作者报障批 IMG_1993
+   *  修通：忙态 = 最近安全边界注入、断线 = 离线队列，二者都不再是失败）。 */
   const submitAnswer = async () => {
     const item = quickItems()[qdIndex];
-    const text = answerInput.value.trim();
+    const typed = answerInput.value.trim();
+    const picked = item ? pickedLabels(item) : [];
+    const text = item ? composeAnswer(item, typed) : '';
     if (!item || !text || answerSend.disabled) return;
     answerSend.disabled = true;
     answerError.textContent = '';
-    let ok = false;
-    try {
-      const { sendPrimaryTodoReply } = await import('../input.js');
-      ok = sendPrimaryTodoReply(`#${item.name}·${item.id} ${text}`);
-    } catch (err) { console.error('[todoAppleFace] answer 出口不可得:', err); }
+    // ① 作答写真源（answerTodoDecision 帧，期 1）：失败 ⇒ 不投递、不划卡，给出码。
+    let ans = { ok: true };
+    if (item.decision) {
+      const opts = Array.isArray(item.decision.options) ? item.decision.options : [];
+      const ids = [...selectedSet(item.id)].sort((a, b) => a - b)
+        .map((i) => opts[i] && opts[i].id).filter(Boolean);
+      ans = await todoStore.answerItem(item.id, { selectedOptionIds: ids, otherText: typed || undefined, via: 'mobile' });
+      if (!ans.ok) {
+        answerSend.disabled = false;
+        answerError.textContent = `${t('todoapple.answerRejected')}：${ans.message || ans.code || ''}`;
+        card.dataset.qdAnswerLast = JSON.stringify({ itemId: item.id, ok: false, code: ans.code || '', sent: text, typed, picked });
+        return;
+      }
+    }
+    // ② 决策行：投递由**后端**在作答成功时入 agent 信箱（P0 修复，见 WsTasks
+    // handleAnswerTodoDecision → SessionMailbox）。这里**不再**走 sendTodoReply，否则双投。
+    // 非决策行（不应出现在本卡）保留原投递腿。
+    /** @type {{ok:boolean, mode?:string, reason?:string, sessionId?:string}} */
+    let res = { ok: true, mode: 'mailbox' };
+    if (!item.decision) {
+      res = { ok: false, reason: 'import' };
+      try {
+        const { sendTodoReply } = await import('../input.js');
+        res = sendTodoReply(`#${item.name}·${item.id} ${text}`, { sessionId: item.sessionId || null });
+      } catch (err) { console.error('[todoAppleFace] answer 出口不可得:', err); }
+    }
     answerSend.disabled = false;
-    if (ok) {
+    if (res.ok) {
       qdDrafts.delete(item.id);
       answerInput.value = '';
+      selectedSet(item.id).clear();
       autosizeAnswer();
-    } else {
+      renderSelections();
+      flashSent(composer.root);
+    } else if (res.reason !== 'empty') {
       answerError.textContent = t('todoapple.replyFailed');
     }
-    card.dataset.qdAnswerLast = JSON.stringify({ itemId: item.id, ok, sent: text });
+    card.dataset.qdAnswerLast = JSON.stringify({ itemId: item.id, ok: true, ...res, sent: text, typed, picked });
+    // ③ 作答即完成（期 2 编排）：作答已落库（信箱已入箱）⇒ 划卡离场并销账。
+    if (res.ok && item.decision) exitAndComplete(item);
   };
-  answerSend.addEventListener('click', () => { void submitAnswer(); });
+
+
+  // ── 操作条写点（作者追加令 2026-11-21 ①②③：卡片视角要能**直接处理任务**）──
+  // 四键的写口与详情页逐条同源，本页不新增第二套：
+  //   完成 ⇒ todoStore.completeItem（与详情页 ta-pill 的 circle-check 同一写点）；
+  //   旗标 ⇒ todoStore.updateItem({priority})（与详情页旗标键同一「点击循环」语义）；
+  //   日期 ⇒ 站内统一定时器 openPoint（详情页 bindPointTrigger 同一个面板）；
+  //   列表 ⇒ 站内唯一列表菜单 openTagPicker（详情页同一个）。
+  /** 当前卡上的行（无卡 ⇒ null）。 @returns {QdRow|null} */
+  const cardItem = () => quickItems()[qdIndex] || null;
+
+  /** ① 标记完成 + 划卡离场 + **自动翻到下一张未处理卡**（作者追加令 ①）。
+   *  自动翻卡的机制 = 牌堆本身：`quickItems()` 只给未完成行，完成写入后该行走
+   *  store 的 `emit()` 触发既有 rerender 链 ⇒ 同一 `qdIndex` 自动指向下一张卡。
+   *  动效：卡片带 `data-qd-done="exit"`（CSS 打勾 + 卡片右移淡出，token 时长），
+   *  落定才写 store（读作「划卡离场后销账」，不是瞬时消失）。 */
+  let doneBusy = false;
+  /** 划卡离场 + 销账（顶带簇右上角打勾键 saveDone 与「作答即完成」共用同一条离场链）。 */
+  const exitAndComplete = (item) => {
+    if (doneBusy) return;
+    doneBusy = true;
+    saveDone.disabled = true;
+    const finish = () => {
+      doneBusy = false;
+      saveDone.disabled = false;
+      delete card.dataset.qdDone;
+      pose(0);   // 离场键帧的起点归零（防上一拍手势 residual --qd-dx 带进下一张）
+      todoStore.completeItem(item.id);
+      card.dataset.qdDoneLast = JSON.stringify({ itemId: item.id, ok: true, date: Date.now() });
+    };
+    if (reduceMotion() || card.hidden) { finish(); return; }
+    card.dataset.qdDone = 'exit';
+    qdTimer = setTimeout(() => { qdTimer = null; finish(); }, QUICK_DECISION_MOTION.exitMs);
+  };
+  saveDone.addEventListener('click', () => {
+    const item = cardItem();
+    if (!item || doneBusy) return;
+    // 期 0 止血：决策待办未作答不允许完成——引导先作答（后端完成门控同口径）。
+    if (item.decision && !item.decision.answer) {
+      answerError.textContent = t('todoapple.answerFirst');
+      return;
+    }
+    exitAndComplete(item);
+  });
+
+  /** ② 旗标循环（0→1→2→3→0，与详情页旗标键同一语义）。 */
+  toolFlag.el.addEventListener('click', () => {
+    const item = cardItem();
+    if (!item) return;
+    todoStore.updateItem(item.id, { priority: (item.priority + 1) % 4 });
+  });
+  /** ③ 日期 = 统一定时器（落点串由行值驱动；确认后写 updateItem({due})）。 */
+  toolDue.el.setAttribute('aria-haspopup', 'dialog');
+  toolDue.el.setAttribute('aria-expanded', 'false');
+  toolDue.el.addEventListener('click', () => {
+    const item = cardItem();
+    if (!item) return;
+    const p = pointOf(item.due);
+    if (p) { toolDue.el.dataset.date = p.date; toolDue.el.dataset.time = p.time; }
+    else { delete toolDue.el.dataset.date; delete toolDue.el.dataset.time; }
+    openPoint(toolDue.el, {
+      onConfirm: (v) => {
+        const ms = msOfPoint(v);
+        if (ms == null) return;
+        toolDue.el.dataset.date = v.date;
+        toolDue.el.dataset.time = v.time;
+        todoStore.updateItem(item.id, { due: ms });
+      },
+    });
+  });
+  /** ④ 标签 = 站内列表菜单（同一选择器单源）。 */
+  toolTag.el.addEventListener('click', () => {
+    const item = cardItem();
+    if (!item) return;
+    openTagPicker(toolTag.el, () => item.tagId, (next) => { todoStore.updateItem(item.id, { tagId: next }); });
+  });
 
   /** Release without a switch (under threshold, or head/tail): stop + spring back. */
   const springBack = () => {
@@ -1371,7 +1768,7 @@ function buildQuick(root, section) {
     // The answer band is a text surface, not a gesture surface: a drag that
     // starts inside it belongs to the field (text selection / caret), never to
     // the card switch. Same discipline as the shell's edge band.
-    if (e.target instanceof Element && e.target.closest('.ta-qd-answer')) return;
+    if (e.target instanceof Element && e.target.closest('.ta-qd-float, .ta-qd-answer-input')) return;
     if (e.clientX <= QD_EDGE_PX || e.clientX >= window.innerWidth - QD_EDGE_PX) return;
     g = { id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: Date.now(), claimed: false };
   });
@@ -1387,6 +1784,13 @@ function buildQuick(root, section) {
       cancelSettle();
       delete card.dataset.qdSettle;   // follow the finger: no transition
       card.dataset.qdDrag = '1';
+      // 指针捕获（GIF 取证时发现的手势收敛缺陷，2026-11-21）：卡片跟着手指位移后，
+      // 指针往往已经离开 `.ta-qd-stage` 的盒（位移一屏宽时必然如此），此时
+      // pointerup / pointercancel 派发给**指针所在元素**而不是 stage ⇒ release 不
+      // 触发 ⇒ `--qd-dx` 停在位移值上，卡片从此错位（后续「完成」的离场键帧也从
+      // 那个偏移起步）。捕获后事件重定向到 stage，release 必然到手；捕获失败
+      // （旧内核 / 合成事件）由下面的 window 兜底腿接住。
+      try { stage.setPointerCapture(e.pointerId); } catch { /* 走 window 兜底 */ }
     }
     pose(dx);
   });
@@ -1419,12 +1823,22 @@ function buildQuick(root, section) {
     slide(target, dir);
   };
   stage.addEventListener('pointerup', release);
-  stage.addEventListener('pointercancel', (e) => {
+  /** 手势取消的收口（与 release 同一条语义：已认领 = 回弹归零；未认领 = 只丢状态）。
+   *  @param {PointerEvent} e */
+  const onGestureCancel = (e) => {
     if (!g || e.pointerId !== g.id) return;
     const claimed = g.claimed;
     g = null;
     if (claimed) springBack();
-  });
+  };
+  stage.addEventListener('pointercancel', onGestureCancel);
+  // 兜底腿（同上一条捕获注）：指针在 stage 外抬起 / 被浏览器取消时，事件不会
+  // 落到 stage（未捕获到 / 捕获被撤销）。window 上的同 id 事件是最后一道收口 ——
+  // 不接这条，手势态 `g` 会永远悬着，下一张卡的位移（--qd-dx）也没有归零路径，
+  // 卡片从此错位。单次绑定由模块级 bindGestureFallback 保证（页面重建不累积）。
+  gestureRelease = release;
+  gestureCancel = onGestureCancel;
+  bindGestureFallback();
 
   // Keyboard leg (ArrowLeft/ArrowRight switch cards) — skipped while a control
   // inside the card has focus, so the native radio-group arrow keys keep working.
@@ -1452,10 +1866,40 @@ function buildQuick(root, section) {
     input.name = `ta-qd-${item.id}`;
     input.checked = selectedSet(item.id).has(i);
     const body = el('span', 'ta-qd-opt-body');
-    body.appendChild(el('span', 'ta-qd-opt-label', String(option)));
+    body.appendChild(el('span', 'ta-qd-opt-label', decisionOptionLabel(option)));
+    const sub = decisionOptionDetail(option);
+    if (sub) body.appendChild(el('span', 'ta-qd-opt-detail', sub));
     row.append(input, body);
     input.addEventListener('change', () => selectOption(item.id, i, input.checked, multi));
     return row;
+  };
+
+  /** 顶带胶囊里的计数读法（作者令 ④）：牌堆长度 + 过滤态一句。
+   *  @param {number} n @returns {string} */
+  const countReading = (n) => (n
+    ? t('todoapple.quickCount', { n: String(qdIndex + 1), m: String(n) })
+    : t('todoapple.emptyDeck'));
+
+  /** 过滤面板的一行 chips（单选：一组里恰一颗 `.is-on`；选中态 = sapphire 族，
+   *  与顶带胶囊键 `.on` 同一档）。
+   *  @param {HTMLElement} row @param {string} label
+   *  @param {Array<{label: string, on: boolean, color?: string, act: () => void}>} chips */
+  const renderFltRow = (row, label, chips) => {
+    row.replaceChildren();
+    row.appendChild(el('span', 'ta-qd-flt-label', label));
+    for (const c of chips) {
+      const b = btnEl(`ta-qd-flt-chip${c.on ? ' is-on' : ''}`);
+      b.type = 'button';
+      b.setAttribute('aria-pressed', c.on ? 'true' : 'false');
+      if (c.color) {
+        const dot = el('span', 'ta-qd-dot');
+        dot.style.background = c.color;
+        b.appendChild(dot);
+      }
+      b.appendChild(el('span', '', c.label));
+      b.addEventListener('click', () => { c.act(); render(); });
+      row.appendChild(b);
+    }
   };
 
   /** @returns {void} */
@@ -1467,13 +1911,42 @@ function buildQuick(root, section) {
     if (prevId) qdDrafts.set(prevId, answerInput.value);
     if (qdIndex >= items.length) qdIndex = Math.max(0, items.length - 1);
     if (qdIndex < 0) qdIndex = 0;
-    const reading = t('todoapple.quickCount', { n: String(qdIndex + 1), m: String(items.length) });
-    head.hidden = items.length === 0;
+    const reading = items.length
+      ? t('todoapple.quickCount', { n: String(qdIndex + 1), m: String(items.length) })
+      : '';
     card.hidden = items.length === 0;
     empty.hidden = items.length > 0;
-    empty.textContent = t('todoapple.emptyDone');
-    count.textContent = items.length ? reading : '';
-    card.setAttribute('aria-label', reading);
+    empty.textContent = qdFilterActive() ? t('todoapple.emptyFiltered') : t('todoapple.emptyDone');
+    count.textContent = countReading(items.length);
+    count.hidden = items.length === 0;
+    card.setAttribute('aria-label', reading || t('todoapple.emptyDone'));
+    // 浮带只在有卡片时出场（0 张 = 无作答对象，输入框没有承载语义）。
+    floatBand.hidden = items.length === 0;
+    // 右上角 ✓ 同档：0 张 = 无「完成」对象 ⇒ 置灰不可点（不移除，位次恒定）。
+    saveDone.disabled = items.length === 0;
+
+    // 右上角过滤钮：`on` 态 + 机读读数（闸按它断言过滤是否启用）。
+    filterBtn.classList.toggle('on', qdFilterActive() || qdFilterOpen);
+    filterBtn.setAttribute('aria-expanded', qdFilterOpen ? 'true' : 'false');
+    if (qdFilterActive()) filterBtn.dataset.qdFilter = 'on'; else delete filterBtn.dataset.qdFilter;
+    filters.hidden = !qdFilterOpen;
+
+    // 过滤面板 chips：标签行（全部 + 各标签）/ 重要度行（全部 / 高 / 中 / 低）。
+    renderFltRow(fltTagRow, t('todoapple.toTag'), [
+      { label: t('todoapple.all'), on: qdFilter.tagId == null, act: () => { qdFilter.tagId = null; qdIndex = 0; } },
+      ...todoStore.tags.map((tag) => ({
+        label: tag.name, color: tag.color, on: qdFilter.tagId === tag.id,
+        act: () => { qdFilter.tagId = qdFilter.tagId === tag.id ? null : tag.id; qdIndex = 0; },
+      })),
+    ]);
+    renderFltRow(fltPrioRow, t('todoapple.filterPriority'), [
+      { label: t('todoapple.all'), on: qdFilter.priority === 0, act: () => { qdFilter.priority = 0; qdIndex = 0; } },
+      ...[3, 2, 1].map((p) => ({
+        label: priorityLabel(p), color: priorityColor(p), on: qdFilter.priority === p,
+        act: () => { qdFilter.priority = qdFilter.priority === p ? 0 : p; qdIndex = 0; },
+      })),
+    ]);
+
     scroll.replaceChildren();
     const item = items[qdIndex];
     if (!item) {
@@ -1514,28 +1987,64 @@ function buildQuick(root, section) {
     if (dec) {
       if (dec.question) scroll.appendChild(el('div', 'ta-qd-q', String(dec.question)));
       const options = Array.isArray(dec.options) ? dec.options : [];
-      if (options.length) {
+      // 只渲染解得出标签的选项（真源形 = {id,title,detail,media}）；下标沿用原序，
+      // 选中态/回传按原始选项序寻址。全部为空 ⇒ 整段选项列表不渲染。
+      const renderable = options.filter((o) => !!decisionOptionLabel(o)).length;
+      if (renderable) {
         const list = el('div', 'ta-qd-opts');
         // Single-select → radiogroup; multi-select → checkbox group. Native
         // controls, same as the list page's decision rows (no second control
         // recipe); selection state is local view state.
         list.setAttribute('role', dec.multiSelect ? 'group' : 'radiogroup');
-        options.forEach((option, i) => { list.appendChild(optionRow(item, i, option, !!dec.multiSelect)); });
+        options.forEach((option, i) => {
+          if (!decisionOptionLabel(option)) return;
+          list.appendChild(optionRow(item, i, option, !!dec.multiSelect));
+        });
         scroll.appendChild(list);
       }
     }
 
-    // The todo's long content (detail) comes after the question/options: a long
-    // body scrolls inside `.ta-qd-scroll` instead of burying the question.
-    if (item.detail) scroll.appendChild(el('div', 'ta-qd-content', item.detail));
+    // 正文（作者令 ②）：md 语法 ⇒ 站内唯一渲染管线（逐字节复用消息气泡那条，
+    // sanitizer / 链接闸同一个），无 md 语法 ⇒ 原样纯文本（改前排版不变）。
+    if (item.detail) mdOrText(scroll, 'ta-qd-content', item.detail);
 
     // The answer field follows the card: this todo's parked draft, this todo's
-    // label. The band itself sits outside the scroller (CSS, pinned).
+    // label. The band itself sits outside the scroller (the floating band).
     answerInput.value = qdDrafts.get(item.id) || '';
     answerError.textContent = '';
     autosizeAnswer();
-    if (typeof lucide !== 'undefined') createIconsIn(card);
+    // 控制带读数（详情页 `.ta-tool` 同一条读数语义）：三键的标签 = 当前卡的行值
+    // （日期落点串 / 旗标档 / 项目名），`on` 态跟行值走；无行值即回落到键名。
+    const actTagNow = item.tagId ? todoStore.tagById(item.tagId) : null;
+    toolFlag.el.classList.toggle('on', item.priority > 0);
+    toolFlag.label.textContent = item.priority > 0 ? priorityLabel(item.priority) : t('todoapple.toPriority');
+    toolDue.el.classList.toggle('on', item.due != null);
+    toolDue.label.textContent = item.due != null ? dueText(item.due) : t('todoapple.toDue');
+    toolTag.el.classList.toggle('on', !!actTagNow);
+    toolTag.label.textContent = actTagNow ? actTagNow.name : t('todoapple.toTag');
+    if (actTagNow) toolTag.el.dataset.tagName = actTagNow.name; else delete toolTag.el.dataset.tagName;
+    // 切卡 / 换过滤后卡片重建、滚动位归零 ⇒ 抬升态跟着复位。
+    delete floatBand.dataset.qdRaised;
+    if (typeof lucide !== 'undefined') {
+      createIconsIn(card); createIconsIn(pill); createIconsIn(filters);
+      createIconsIn(saveDone); createIconsIn(floatBand); createIconsIn(tool);
+    }
   }
+
+  // ── 悬浮控件的两态 + 过滤钮开合（作者令 ⑤⑥）────────────────────────────
+  // raised：卡片内容滚出可视区后浮带抬一档影（「滚动时贴底悬浮」的读数面）；
+  // qdFloat=in：页面进入时浮带自下滑入（一次性入场，token 时长；减动效档直接落位）。
+  // 两条腿都只写 dataset，形态全在 CSS（本模块不写样式，也不写定位）。
+  scroll.addEventListener('scroll', () => {
+    if (scroll.scrollTop > 4) floatBand.dataset.qdRaised = '1';
+    else delete floatBand.dataset.qdRaised;
+  });
+  filterBtn.addEventListener('click', () => { qdFilterOpen = !qdFilterOpen; render(); });
+  floatBand.dataset.qdFloat = 'in';
+  qdFloatTimer = setTimeout(() => {
+    if (floatBand.dataset.qdFloat === 'in') delete floatBand.dataset.qdFloat;
+    qdFloatTimer = null;
+  }, QUICK_DECISION_MOTION.enterMs + 40);
 
   return { root, render };
 }
@@ -1586,7 +2095,9 @@ export function mountTodoAppleInto(pageId, body, nav) {
     // Re-entry restarts the queue and drops a settle timer left over from the
     // previous mount (a stale timer must never pose the new card).
     if (qdTimer) { clearTimeout(qdTimer); qdTimer = null; }
+    if (qdFloatTimer) { clearTimeout(qdFloatTimer); qdFloatTimer = null; }
     qdIndex = 0;
+    qdFilterOpen = false;   // 过滤面板收起（过滤条件本身保留：视图态跟着人走）
     built = buildQuick(root, section);
   } else {
     resetDraft();

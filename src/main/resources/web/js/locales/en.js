@@ -488,6 +488,22 @@ export default {
   'chat.quoteTypeTool': '[Tool]',
   'chat.quoteTypeAsk': '[Q&A]',
   'chat.quoteTypeSystem': '[System]',
+  // ── multi-quote batch (2026-11-22 author order: quote several messages at once) ──
+  // Same-message action name while the target is already quoted (click again = remove).
+  'messages.unquote': 'Unquote',
+  // Short names on the compact quote chips (auto-shrunk icon chips when ≥2 selected).
+  // Fixed-length words by source role — never CSS ellipsis truncation.
+  'chat.quoteShortAgent': 'Agent',
+  'chat.quoteShortTool': 'Tool',
+  'chat.quoteShortAsk': 'Q&A',
+  'chat.quoteShortImage': 'Image',
+  'chat.quoteShortFile': 'File',
+  // Accessible name of a compact quote chip: order number + short name.
+  'chat.quoteCompactAria': 'Quote {n}: {name}',
+  'chat.quoteCompactOpenAria': 'View original message: {name}',
+  'chat.quoteCompactHint': 'Click to view the original message',
+  // Quote cap (MAX_PENDING_QUOTES) reached.
+  'chat.quoteLimitReached': 'At most {n} messages can be quoted at once',
   // ── msgchip batch (msg-token short-name quote, author order 2026-11-01): new keys ──
   'chat.msgTokenChipHint': 'View original message',
   'chat.msgTokenPopTitle': 'Original message',
@@ -801,6 +817,23 @@ export default {
   // interjections + disconnect banner texts.
   'ws.connBanner.reconnecting': 'Connection lost · reconnecting…',
   'ws.connBanner.pending': 'Connection lost · reconnecting… {n} message(s) waiting to send',
+  // Console single-instance batch (2026-10-27): takeover modal (takeoverModal.js);
+  // four-fix batch (2026-10-29 author ruling): exit-face/re-enter retired (exit now
+  // navigates to the website profile); retake loading + failure hint added.
+  // Retake-must-land batch (2026-11-01 author ruling ①): retake rides the HTTP leg
+  // (verdict rides the response itself — no dependency on this page's ws), and
+  // failures surface a classified reason on the card + toast (never silent).
+  'takeover.title': 'Console opened elsewhere',
+  'takeover.msg': 'You signed in to the console somewhere else. This window has yielded control — exit, or retake it.',
+  'takeover.retake': 'Retake Control',
+  'takeover.exit': 'Exit',
+  'takeover.retaking': 'Retaking…',
+  'takeover.retakeFailed': 'Retake failed — please try again',
+  'takeover.errNetwork': 'Cannot reach the host — check the network and retry',
+  'takeover.errTimeout': 'Host not responding (timeout) — retry shortly',
+  'takeover.errAuth': 'Session expired — sign in again, then retry',
+  'takeover.errDisabled': 'Single-instance switch is off — this window needs no retake',
+  'takeover.errRefused': 'The host refused this retake',
   // f1-send-queue (2026-10-19): pending-mark tooltip for offline-queued bubbles + queue overflow toast.
   'chat.pendingSend': 'Pending - auto-resends on reconnect',
   'input.queueOverflow': 'Message queue full (100): oldest message dropped',
@@ -946,6 +979,10 @@ export default {
   // Sub-Agents panel (2026-08-25 subagents-panel spec) — state labels + empty state
   'subagents.header': 'Sub-agents · {count}',
   'subagents.empty': 'No running sub-agents',
+  'subagents.historyFold': 'History · {count} folded',
+  'subagents.historyExpand': 'Expand',
+  'subagents.historyCollapse': 'Collapse history',
+  'subagents.historyClear': 'Clear history view',
   'subagents.indicatorTitle': 'Background sub-agents',
   'subagents.status.running': 'Running',
   // Explicit waiting dock (Waiting): the row status word is "Docked, waiting"
@@ -985,6 +1022,15 @@ export default {
   'subagents.frozenAutoResumes': 'auto-resumed {n} time(s)',
   'subagents.frozenAutoResumesSpent': 'auto-resume budget spent — needs you: top up / switch model / cancel',
   'subagents.providerFailureGroup': '{count} background tasks: provider unavailable · {provider}',
+  // Item 3 (2026-11-23): once the recovery signal arrives the failure card greys out and is marked expired.
+  'subagents.providerFailureExpired': '{provider} recovered · failure state of {count} task(s) expired',
+  // Card-family consolidation batch (2026-11-23): recovery-expectation line on the
+  // failure-group card face (llm-failure-card family).
+  'subagents.providerFailureRecovering': 'Waiting to recover: the engine keeps retrying with backoff and probes provider recovery, then resumes the same session — not a task failure, nothing for you to do.',
+  // Family-aware copy (2026-11-21 author ruling): "provider unavailable" is reserved for
+  // the availability family; shape and config families say what actually went wrong.
+  'subagents.providerFailureGroupShape': '{count} background tasks blocked by an invalid request/response format · {provider}',
+  'subagents.providerFailureGroupConfig': '{count} background tasks need attention (auth/quota/model) · {provider}',
   'subagents.status.roundComplete': 'Round complete; available',
   'subagents.freezeDigestRecoverable': '{count} frozen (wakeable)',
   'subagents.freezeDigestNeedsHuman': '{count} frozen (needs you)',
@@ -1056,6 +1102,7 @@ export default {
   // per-row `#id · title` badge
   'subagents.taskBadge': 'Task: {text}',
   'manage.uptime': 'Up {time}',
+  'manage.readonlyRoot': 'Root session agents are read-only (self-preservation guard)',
   'manage.readonlyTeam': 'Team agents are read-only',
   'manage.readonlyFlow': 'Flow node agents are read-only',
   'manage.stopSent': 'Stop command sent',
@@ -1407,12 +1454,36 @@ export default {
   'settings.modelChainTitle': 'Model (per session class)',
   'settings.modelChainDisclosureTitle': 'Model (per session class)',
   'settings.modelChainSectionHint': 'Session class models sync with /model.',
-  'settings.modelModeUnifiedNote': '{roles} follow the main session.',
+  'settings.modelRulesTitle': 'Model rules',
+  'settings.modelRulesHint': 'Scripted model selection (by time window, level, slot, call point). Only the Rules mode takes effect; the other two modes keep existing behavior.',
+  'modelRules.mode.follow': 'Follow all',
+  'modelRules.mode.slots': 'Per-slot',
+  'modelRules.mode.rules': 'Rules (takeover)',
+  'modelRules.modeLabel': 'Model selection mode',
+  'modelRules.diagram': 'Diagram',
+  'modelRules.source': 'Source',
+  'modelRules.diagramEmpty': 'No rules yet.',
+  'modelRules.draftLabel': 'Rule draft',
+  'modelRules.stage': 'Stage preview',
+  'modelRules.apply': 'Apply',
+  'modelRules.stagedDiff': 'Staged diff (vs saved)',
+  'modelRules.noChanges': 'No changes.',
+  'modelRules.errLine': 'Line {line}',
+  'modelRules.loading': 'Loading…',
+  'modelRules.loadError': 'Script does not parse; evaluation disabled',
+  'modelRules.loadFailed': 'Failed to load rules',
+  'modelRules.saveFailed': 'Save failed',
+  'modelRules.modeSaved': 'Mode saved',
+  'modelRules.applied': 'Applied',
+  'modelRules.rejected': 'Validation failed; not saved',
   'settings.modelRoleTabs': 'Choose a conversation category',
   // /model panel (modelcfg Phase 1)
   'model.title': 'Model Configuration',
   'model.modeUnified': 'All follow main',
   'model.modeSeparate': 'Per-role',
+  'model.modeSeparateHint': 'On: configure each class; off: every class follows the main session',
+  'model.modeStateUnified': 'Current: following the main session',
+  'model.modeStateSeparate': 'Current: per-class configuration',
   'model.mainChain': '{agent} primary chain',
   'model.mainChainDesc': 'Every role follows this chain by default',
   'model.chainHead': 'Primary',
@@ -1438,6 +1509,7 @@ export default {
   'model.scheduleRestrictedSuffix': 'unavailable {windows}',
   'model.saved': 'Saved',
   'model.divergedBar': '{roles} configured independently; unaffected by the primary chain',
+  'model.divergedNoteLead': 'Configured independently — unaffected by the primary chain',
   'model.divergedView': 'View',
   'model.seedNote': 'Not configured — select an explicit model to enable requests',
   'model.singleModelNote': 'Single model: on failure the session is marked invalid and waits silently — switch it from the sub-agent panel or the dialog',
@@ -1587,6 +1659,11 @@ export default {
   'timewheel.presetDay': 'Day 09–18',
   'timewheel.presetAfternoon': 'Afternoon 14–18',
   'timewheel.deadline': 'Due time',
+  // Date mode (search-page-density 2026-11-21): search page's Date tab wheel.
+  'timewheel.titleDate': 'Pick a date',
+  'timewheel.yearUnit': 'year',
+  'timewheel.monthUnit': 'month',
+  'timewheel.dayUnit': 'day',
 
   // Model fields in modal
   'model.idPlaceholder': 'Model ID',
@@ -1696,7 +1773,6 @@ export default {
   'chat.cancel': 'Cancel',
   'chat.allow': 'Allow',
   'chat.deny': 'Deny',
-  'chat.skipTool': 'Skip this tool call',
   // cardguard (author ruling 2026-09-17 · #687①): a tool result carrying the
   // card sentinel is no longer dumped through the <pre> fallback ⇒ it takes the
   // card path, and this placeholder when extraction fails (raw text never in DOM).
@@ -1731,7 +1807,6 @@ export default {
   // Escalation chain (author boundary ① "keep the escalation chain"): permshield
   // F1 retargeted the upgrade to the **global persisted** mode (same path as the
   // shield) ⇒ no "this time only" semantics; state global + survives a restart.
-  'chat.permShowFull': 'Show full content',
   'chat.permRequestNotDiff': 'Requested changes, not an actual file diff',
   'chat.permUpgradeAutoEdits': 'Allow and switch to auto-edits',
   'chat.permUpgradeAutoEditsDesc': 'Global mode becomes auto-edits: applies to every session and persists across restarts',
@@ -1960,6 +2035,29 @@ export default {
   'think.16': 'Chased the light for {d}, forgot to look back',
   'think.17': 'A comet streaked across the sky, {d} and it was gone',
   'think.18': 'Rode a stellar wind past the nebulas, flew for {d}',
+
+  // === Ack phrases (zero <report>-block turns; ack-badge-pool batch, author order 2026-11-23) ===
+  // Semantics = received / done / light acknowledgement; same cosmic imagery and
+  // cadence as the think pool. Exactly one {d} placeholder each; count / length /
+  // cross-locale parity are guarded by scripts/check-ack-phrases.mjs.
+  'ack.0': 'Gave a soft nod this way, {d} all told',
+  'ack.1': 'A quiet "got it" skimmed the stars, {d} in flight',
+  'ack.2': 'Folded the receipt into a paper plane, {d} aloft',
+  'ack.3': 'Stamped "done" on the star chart, {d} at the desk',
+  'ack.4': 'Waved once across the porthole glass, {d} in all',
+  'ack.5': 'A meteor carried my "all set", {d} en route',
+  'ack.6': 'The radio answered with a crackle, {d} on air',
+  'ack.7': 'The lighthouse blinked its reply, {d} apart',
+  'ack.8': 'Set the answer gently into orbit, {d} to settle',
+  'ack.9': 'The pigeon landed back on the porthole, {d} of flutter',
+  'ack.10': 'Called in all-clear along the route, {d} on the line',
+  'ack.11': 'The echo came riding a star trail, {d} of ripple',
+  'ack.12': 'Opened a palm with a small star in it, {d} to unfold',
+  'ack.13': 'Starlight nodded back, {d} there and back',
+  'ack.14': 'A "received" from the moon\'s far side, {d}',
+  'ack.15': 'Condensed the reply into a grain of stardust, {d}',
+  'ack.16': 'Brushed off the stardust and answered, {d} in a breath',
+  'ack.17': 'Left "done" on the lunar dust, {d} in orbit',
 
   // === Slash commands ===
   // (/clear //compact dropdown help removed with the commands, 2026-10-09; the
@@ -2236,6 +2334,29 @@ export default {
   'canvas.imgFailUnreachable': 'Cannot read this image (invalid path or no permission)',
   'canvas.imgFailUnknown': 'Read failed (HTTP {status})',
   'canvas.closeTab': 'Close tab',
+  'canvas.fav.add': 'Favorite document',
+  'canvas.fav.remove': 'Remove from favorites',
+  'canvas.fav.sectionTitle': 'Favorites',
+  'canvas.fav.empty': 'No favorite documents yet. Use the favorite button at the top of the canvas to add one.',
+  'canvas.fav.invalid': 'Unavailable',
+  'canvas.fav.added': 'Added to favorites',
+  'canvas.fav.removed': 'Removed from favorites',
+  'canvas.fav.open': 'Favorites',
+  'canvas.favPage.open': 'Open favorites',
+  'canvas.favPage.title': 'Favorites',
+  'canvas.favPage.back': 'Back',
+  'canvas.favPage.search': 'Search',
+  'canvas.favPage.empty': 'No favorites yet. Tap the star at the top of a document to save it.',
+  'canvas.favPage.noMatch': 'No matching favorites',
+  'canvas.favPage.tab.note': 'Notes',
+  'canvas.favPage.tab.media': 'Photos & videos',
+  'canvas.favPage.tab.file': 'Files',
+  'canvas.favPage.tab.link': 'Links',
+  'canvas.favPage.kind.note': 'Note',
+  'canvas.favPage.kind.media': 'Image',
+  'canvas.favPage.kind.pdf': 'PDF',
+  'canvas.favPage.kind.file': 'File',
+  'canvas.fav.missing': '"{title}" no longer exists (it may have been removed) and cannot be opened.',
   'canvas.stackToggle': 'Stacked cards (wheel / vertical drag to switch · click front card to bring in · swipe away to close)',
   'canvas.noRef': 'This tab cannot be referenced',
   // canvas-reveal-in-finder (2026-11-19): label follows the ENGINE-reported platform
@@ -2280,14 +2401,6 @@ export default {
   'canvas.conflictDirty': 'This file changed on disk while you have unsaved edits here.',
   'canvas.conflictKeep': 'Keep mine',
   'canvas.conflictReload': 'Reload from disk',
-  // Displaced-writer draft (silent-takeover batch 2026-11-19): when the seat is
-  // silently taken over, the losing window quietly stashes its edit buffer as an
-  // unmerged draft; this non-blocking chip is the after-the-fact retrieval entry.
-  'canvas.draftAvailable': 'This window\u2019s edits were stashed as an unmerged draft (the seat was taken over elsewhere).',
-  'canvas.draftRestore': 'Restore draft',
-  'canvas.draftDismiss': 'Dismiss',
-  'canvas.draftConflict': 'The draft could not be re-applied: the file on disk changed in another window (or the body exceeded the stored prefix). It is kept here so nobody else\u2019s edits get overwritten.',
-  'canvas.draftConflictKeep': 'Keep draft',
   // B7-4 explorer tree search + sort (client-side; server order untouched)
   'explorer.searchPlaceholder': 'Search files…',
   'explorer.sortDefault': 'Default order',
@@ -2455,9 +2568,11 @@ export default {
   'todo.entryTitle': 'To-Dos',
   'todo.entryEmpty': 'All clear',
   'todo.grpOverdue': 'Overdue',
-  'todo.grpDecision': 'Decisions',
+  // Separation discipline (2026-11-22): AskUser-converted immediate questions (ask-
+  // mirrors) are grouped apart from agent-raised suggestions / planned to-dos.
+  'todo.grpAskConverted': 'Asked · Awaiting',
   'todo.grpApproval': 'Approvals',
-  'todo.grpPlan': 'Planned',
+  'todo.grpPlan': 'Suggested · Planned',
   // Permission / McpPermission mirror rows (engine AskTodoBridge perm- product):
   // click jumps back to the approval card; the card's terminal state retires it.
   'todo.permChip': 'Approval',
@@ -2930,9 +3045,6 @@ export default {
   'perm.detail.device': 'Device',
   'perm.detail.cwd': 'Working directory',
   'perm.detail.target': 'Target path',
-  'perm.detail.gate': 'gate',
-  'perm.detail.rule': 'rule',
-  'perm.detail.level': 'risk L{level}',
   'perm.detail.remoteExec': '(remote-exec)',
   'perm.detail.noRule': 'fixed confirmation of this gate (no rule hit)',
 
@@ -3426,7 +3538,13 @@ export default {
   'todoapple.newTodo': 'New to-do',
   'todoapple.createUnconfirmed': 'Save not confirmed. Check your connection and retry in the original session to avoid duplicates.',
   'todoapple.discardPending': 'Discard retry',
-  'todoapple.replyFailed': 'Reply not sent. Check the primary session and connection, then retry.',
+  'todoapple.replyFailed': 'Reply not sent. Please try again.',
+  'todoapple.answerFirst': 'Answer first, then complete',
+  'todoapple.decisionPending': 'Awaiting answer',
+  'todoapple.decisionAnswered': 'Answered',
+  'todoapple.answerSubmit': 'Submit answer',
+  'todoapple.answerRejected': 'Answer not saved',
+  'todoapple.answerSecretBlocked': 'Sensitive decisions cannot be answered in todos yet',
   'todoapple.notes': 'Notes (optional)',
   'todoapple.save': 'Save',
   'todoapple.markComplete': 'Mark complete',
@@ -3444,6 +3562,12 @@ export default {
   // page's decision rows).
   'todoapple.quickDecision': 'Quick decision',
   'todoapple.quickCount': '{n} of {m}',
+  // Todo inbox UI batch (author order 2026-11-21 ⑤): the top-right filter key, the
+  // two panel row labels, and the two distinct empty-state facts.
+  'todoapple.filter': 'Filter',
+  'todoapple.filterPriority': 'Priority',
+  'todoapple.emptyDeck': 'No todos',
+  'todoapple.emptyFiltered': 'Nothing matches this filter',
   'todoface.tagSave': 'Save',
   'todoface.tagErrEmpty': 'Name cannot be empty',
   'todoface.tagErrDup': 'A tag with this name already exists',
@@ -3596,13 +3720,15 @@ export default {
   'profile.editOnWebsite': 'Identity fields are read-only readings; to edit them go to the website account page {where}.',
   'profile.githubUnavailable': 'The account service returned no GitHub username (that reading comes from the GitHub account sent at sign-in).',
   'profile.googleUnavailable': 'The Google binding is maintained on the website account page only; neither the local account service nor the sign-in credential carries it.',
-  'profile.signedIn': 'Signed in',
+  // `profile.signedIn` removed with the me-page name block: in-card name/email is gone, so
+  // identity readings live in one place only (disclosure-dedup-spec.md §3.2 table 2 · U2)
+  // ⇒ zero emitters; the key is dropped rather than left dead.
 
   // external-open batch (2026-11-19, author order "support pulling external files
   // into canvas"): dialog copy + a user-readable sentence per server refusal reason
   // (the reason vocabulary mirrors ExternalOpenRoutes / ExternalOpenPolicy).
   'externalOpen.title': 'Open external file',
-  'externalOpen.hint': 'Paste an absolute path to any readable local file, or an http(s) link; remote content is type-sniffed, stored, then opened.',
+  'externalOpen.hint': 'Paste an absolute path to a readable file, or an http(s) link; remote content is stored before it opens.',
   'externalOpen.placeholder': '/Users/.../report.pdf or https://example.com/pic.png',
   'externalOpen.open': 'Open',
   'externalOpen.cancel': 'Cancel',

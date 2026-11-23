@@ -382,6 +382,30 @@
     "scala/nebflow/social/outbound/RichDegradeProbe.scala:environment:6a64145c0fd6235a226381bcb1606598816d0a10a0a8ae679cddf00e9cd749c5",
     "scala/nebflow/social/outbound/RichRenderProbe.scala:environment:a4d8fafafade061a2888ba0cf809c7d227cbcc36190d61d539ee859c16a6fbae",
     "scala/nebflow/social/outbound/RichRenderProbe.scala:environment:844a034ea869b7de15c588b8c147ecf256f073d9a70a6edefbb2242c776291ee",
-    "scala/nebflow/social/outbound/RichRenderProbe.scala:sleep:19218fce40559df5ee9b0162792da6c31eb5ed0ca46fd6fd20b6e6df22ea9c62"
-  ]
+    "scala/nebflow/social/outbound/RichRenderProbe.scala:sleep:19218fce40559df5ee9b0162792da6c31eb5ed0ca46fd6fd20b6e6df22ea9c62",
+    "scala/nebflow/core/browser/BrowserVerbsSpec.scala:environment:b99a2aaf8f11a4cd49027446cb6f0dcd3d0762365d39ece8bfa3f6445bdf2598",
+    "scala/nebflow/cli/DetachedApplySpec.scala:absolute-path:ec175d17a33b89934f99dc3304d43e7fa3b4983f62d4836715f7165eb2ccc04a",
+    "scala/nebflow/cli/DetachedApplySpec.scala:absolute-path:53471dfe0e9870b9c1366816a49251206660c31750b28f3719f0b644c8f42b05",
+    "scala/nebflow/cli/DetachedApplySpec.scala:absolute-path:ec175d17a33b89934f99dc3304d43e7fa3b4983f62d4836715f7165eb2ccc04a",
+    "scala/nebflow/core/browser/BrowserSecretInjectSpec.scala:environment:b99a2aaf8f11a4cd49027446cb6f0dcd3d0762365d39ece8bfa3f6445bdf2598",
+    "scala/nebflow/core/tools/CubuVerbBaselineSpec.scala:environment:052a13b5831595903116f23f61bbfdf024cacc01625256f4cdc6834615b9e74e",
+    "scala/nebflow/core/tools/CubuVerbBaselineSpec.scala:environment:450a50c47d5363ac38c974d4247e3118f2321568ef12ebedb53d051954522116",
+    "scala/nebflow/core/tools/CubuVerbBaselineSpec.scala:absolute-path:a51b9fcb55bbf7bb7082e94a82497ddf014d59c8aeef63f9d9e0b89ef768b352",
+    "scala/nebflow/core/tools/CubuVerbBaselineSpec.scala:environment:a51b9fcb55bbf7bb7082e94a82497ddf014d59c8aeef63f9d9e0b89ef768b352",
+    "scala/nebflow/core/wiki/WikiIndexSpec.scala:absolute-path:871ea3798a60302794a9a32b3cf3237c6441656a07a925b87f9adfb370b49616",
+    "scala/nebflow/gateway/console/ConsoleUnitSpec.scala:fixed-port:e0f6adbff1a3432661ee488ba584e27e3832394041e462e23376daab24f32c49",
+    "scala/nebflow/gateway/console/ConsoleUnitSpec.scala:fixed-port:db5066efbe9e325b3330eaa1c7ad48c3bec97bc8dc8187efe8a345a22d5534f0"
+  ],
+  "reasons": {
+    "scala/nebflow/cli/DetachedApplySpec.scala:absolute-path:ec175d17a33b89934f99dc3304d43e7fa3b4983f62d4836715f7165eb2ccc04a": "scala/nebflow/cli/DetachedApplySpec.scala:429 absolute-path — 既存（2026-11-21/22 引入，非今晚）：absolute-path 文本命中，本批未改动",
+    "scala/nebflow/cli/DetachedApplySpec.scala:absolute-path:53471dfe0e9870b9c1366816a49251206660c31750b28f3719f0b644c8f42b05": "scala/nebflow/cli/DetachedApplySpec.scala:422 absolute-path — 既存（2026-11-21/22 引入，非今晚）：absolute-path 文本命中，本批未改动",
+    "scala/nebflow/core/browser/BrowserSecretInjectSpec.scala:environment:b99a2aaf8f11a4cd49027446cb6f0dcd3d0762365d39ece8bfa3f6445bdf2598": "scala/nebflow/core/browser/BrowserSecretInjectSpec.scala:27 environment — opt-in 存在性门控（环境开关仅判定是否执行，非取值依赖）",
+    "scala/nebflow/core/tools/CubuVerbBaselineSpec.scala:environment:052a13b5831595903116f23f61bbfdf024cacc01625256f4cdc6834615b9e74e": "scala/nebflow/core/tools/CubuVerbBaselineSpec.scala:25 environment — opt-in 存在性门控（环境开关仅判定是否执行，非取值依赖）",
+    "scala/nebflow/core/tools/CubuVerbBaselineSpec.scala:environment:450a50c47d5363ac38c974d4247e3118f2321568ef12ebedb53d051954522116": "scala/nebflow/core/tools/CubuVerbBaselineSpec.scala:26 environment — opt-in 存在性门控（环境开关仅判定是否执行，非取值依赖）",
+    "scala/nebflow/core/tools/CubuVerbBaselineSpec.scala:absolute-path:a51b9fcb55bbf7bb7082e94a82497ddf014d59c8aeef63f9d9e0b89ef768b352": "scala/nebflow/core/tools/CubuVerbBaselineSpec.scala:28 absolute-path — opt-in 基线输出目录默认值（仅 CUBU_BASELINE=1 时执行；环境变量未设=跳过，取值不改变断言）",
+    "scala/nebflow/core/tools/CubuVerbBaselineSpec.scala:environment:a51b9fcb55bbf7bb7082e94a82497ddf014d59c8aeef63f9d9e0b89ef768b352": "scala/nebflow/core/tools/CubuVerbBaselineSpec.scala:28 environment — opt-in 存在性门控（环境开关仅判定是否执行，非取值依赖）",
+    "scala/nebflow/core/wiki/WikiIndexSpec.scala:absolute-path:871ea3798a60302794a9a32b3cf3237c6441656a07a925b87f9adfb370b49616": "scala/nebflow/core/wiki/WikiIndexSpec.scala:813 absolute-path — 既存（2026-11-21/22 引入，非今晚）：absolute-path 文本命中，本批未改动",
+    "scala/nebflow/gateway/console/ConsoleUnitSpec.scala:fixed-port:e0f6adbff1a3432661ee488ba584e27e3832394041e462e23376daab24f32c49": "scala/nebflow/gateway/console/ConsoleUnitSpec.scala:63 fixed-port — 既存（2026-11-21/22 引入，非今晚）：fixed-port 文本命中，本批未改动",
+    "scala/nebflow/gateway/console/ConsoleUnitSpec.scala:fixed-port:db5066efbe9e325b3330eaa1c7ad48c3bec97bc8dc8187efe8a345a22d5534f0": "scala/nebflow/gateway/console/ConsoleUnitSpec.scala:64 fixed-port — 既存（2026-11-21/22 引入，非今晚）：fixed-port 文本命中，本批未改动"
+  }
 }

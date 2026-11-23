@@ -600,10 +600,11 @@
 .reminder-repeat-seg button.active {
   opacity: 1;
   background: rgb(var(--sapphire) / 0.16);
+  box-shadow: var(--btn-shadow);
 }
 .reminder-repeat-seg button:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.5);
-  outline-offset: 1px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* ── Repeat badge on task rows (recurring only; one-shot shows none) ──── */
@@ -917,6 +918,7 @@ nf-sched-card { display: contents; }
   font-weight: var(--ds-fw-btn);
   cursor: pointer;
   transition: background var(--ds-dur-hover) var(--ds-ease-std);
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .schedule-card-btn:hover { background: var(--glass-control-bg-hover); }
@@ -925,8 +927,8 @@ nf-sched-card { display: contents; }
 .schedule-card-btn.is-primary { border-color: rgb(var(--sapphire) / 0.5); color: rgb(var(--sapphire)); }
 .schedule-card-btn.is-danger { border-color: var(--status-error-icon); color: var(--status-error-icon); }
 .schedule-card-btn:focus-visible {
-  outline: var(--ds-focus-width) solid var(--btn-focus-ring);
-  outline-offset: var(--ds-border-width);
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* 原地编辑 / 取消确认（不跳页、不开模态） */
@@ -1010,6 +1012,7 @@ nf-sched-card { display: contents; }
     /* 扁平化批 2026-11-05：原「inset 顶缘高光 + 1px 描边影」两层退役。
        选中态改由**底色 + 描边**表达（描边是线不是影，扁平允许项）。 */
     border-color: rgb(var(--sapphire) / 0.28);
+  box-shadow: var(--btn-shadow);
   }
   .reminder-repeat-badge {
     background: rgb(var(--sapphire) / 0.14);

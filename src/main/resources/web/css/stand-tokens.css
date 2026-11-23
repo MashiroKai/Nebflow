@@ -255,6 +255,12 @@ html[data-theme="dark"] {
    作者令原话：「词条被使用的时候，应该是一个蓝色的文字」。消费点 =
    split.css `a.nf-wikilink.nf-wikilink-term` / `a.nf-term`（经 design-system.css
    的 `--ds-link-term` 语义别名），不直接在规则里写色值。
+   **2026-11-22 消费面变更**（ask-ref-marks-green 批，作者更正令原话：「ask引用
+   做错了 需要回退 我说的是这种 可点击的下划线标记 现在是紫色 在暗色模式下可见性
+   很差」）：canvas 文档面的可点击下划线标记（文档链接 / 手写词条 / 裸词自动链 /
+   词条索引条目）已统一改绿，`--ds-link-term` 因此改指向 `--status-success-icon`，
+   不再消费本 token；本 token 值不动，现由 mobile-todo-apple.css 待办快捷钮
+   （.ta-quick-fab，蓝语义）消费。
 
    为什么亮档要单独出生一枚加深值：蓝族母色 `--sapphire`（91 127 191，
    sapphire.css 单源）落在正文阅读面上只有 4.01:1（vs 白）—— 正文文本色的
@@ -511,9 +517,19 @@ html[data-theme="dark"] {
   --nf-glass-shadow: inset 0 1px 0 0 #ffffff40, 0 2px 8px #0000000a, 0 8px 24px #0000000f;
   /* 幕布（纯模糊遮罩层，无玻璃面：灯箱底/语音遮罩）——
      它不是毛玻璃形态，是「把背景压下去」的工具，故单列 token 且不参与
-     .nf-glass。值恒为深色低 α，不随亮暗翻面。 */
+     .nf-glass。值恒为深色低 α，不随亮暗翻面。
+     🔴 2026-11-21（search-page-density 批，作者报障「次级弹层毛玻璃可读性」）：
+     本值原为裸长度 `8px`，而它唯一的消费点是 `backdrop-filter: var(...)`
+     （css/glass.css 的 `.nf-glass-scrim`）—— `backdrop-filter: 8px` 是**非法值**，
+     整条声明被浏览器静默丢弃 ⇒ `.nf-glass-scrim` 从出生起就没有模糊过，只是
+     「一层 14% 深色薄膜」。该面在批前零产品消费者（灯箱/语音遮罩自己写的是别的
+     类），所以一直没被看见；本批的日期滚轮幕布是第一个消费者，实测
+     computedStyle.backdropFilter = 'none' 抓出来的。
+     修正 = 把单源值改写成它作为 `backdrop-filter` 值应有的形态 `blur(8px)`
+     （半径 8 逐字不变，只是补上函数外壳）；CSS 侧的声明形状不动，
+     check-glass-unify G2 白名单读的是声明值 `var(--nf-glass-scrim-blur)`，零影响。 */
   --nf-glass-scrim: #0f121824;
-  --nf-glass-scrim-blur: 8px;
+  --nf-glass-scrim-blur: blur(8px);
 }
 
 html[data-theme="dark"] {
@@ -643,11 +659,10 @@ html[data-theme="light"] {
   /* 裸件（嵌在已成形的容器里，如主会话输入条 / 记事本 / 搜索胶囊）：
      背景/边框/阴影全让位给外壳，只保留字与色 */
   --nf-field-bare-bg: transparent;
-  /* 键盘可见焦点环：唯一允许出现「蓝」的地方 —— 且是压灰的蓝族混色
-     （品牌蓝 45% + 正文色），不是整块品牌蓝框；对比度见规范 §3 */
-  --nf-field-ring: color-mix(in srgb, var(--btn-focus-ring) 45%, var(--color-text));
-  --nf-field-ring-w: 2px;
-  --nf-field-ring-offset: -1px;                       /* 内缩：压在框体自己的边上 */
+  /* 键盘可见焦点环：几何/颜色唯一源 = css/keyboard.css 的 --nf-focus-ring*。
+     focus-ring-unify 批（2026-11-22，作者批 B 案）取消了输入件的「压灰混色」——
+     焦点环是全站一种颜色，不再由输入面另立一套（原 --nf-field-ring / -w / -offset
+     三槽删除，0 引用由 scripts/check-focus-ring.mjs F6 钉住）。 */
   /* 输入条外壳档（.ask-input 等「装着输入件的条」）：与 #input-bar 同族圆角 */
   --nf-field-shell-radius: var(--ds-radius-xl);
   /* 错误态边（同一种形态的状态档，不是第二套形态） */
@@ -776,9 +791,7 @@ html[data-theme="light"] {
   --nf-toggle-knob-bg: var(--ctl-send-ink);        /* 亮档 #ffffff（与发送键字色同值，零新色） */
   --nf-toggle-knob-stroke: var(--st-toggle-off-border);
   --nf-toggle-accent: rgb(var(--brand-green));     /* 品牌绿 #07c160（2026-11-01 作者令回绿） */
-  --nf-toggle-ring: var(--btn-focus-ring);
-  --nf-toggle-ring-w: 2px;
-  --nf-toggle-ring-offset: 2px;
+  --nf-toggle-ring: var(--nf-focus-ring);          /* 焦点环色 = 全站唯一色源（focus-ring-unify 批 2026-11-22） */
   --nf-toggle-disabled-opacity: var(--btn-disabled-opacity);
   --nf-toggle-busy-opacity: 0.55;                  /* 不确定态：圆钮降不透明（纯线语言，不发光） */
 }

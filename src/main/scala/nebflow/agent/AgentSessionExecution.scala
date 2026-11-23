@@ -492,19 +492,6 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
       id -> s"#$id $rest".trim
     }.toMap
 
-  /**
-   * 派发时刻链快照下发（provider-concurrency 批，2026-11-06）：pin 存在 ⇒ agentModel
-   * = 快照物化 `(preferred=链首, fallbacks=尾链)`（走 registry 同一条既有解析——
-   * 零新选择路径）；pin = None（未钉：无上限满载路径/既有构造/测试字面量）⇒ base
-   * 原值透传 = 既有行为逐字节不变。🔴 禁止把快照写回 agent.json 的 model 键——
-   * `AgentLibrary.loadFromDir` 每 turn 现读，那会把快照变成「每 turn 重算」。
-   */
-  private def agentModelWithPin(
-    base: Option[nebflow.shared.AgentModelConfig],
-    pin: Option[nebflow.llm.PinnedChain]
-  ): Option[nebflow.shared.AgentModelConfig] =
-    pin.fold(base)(p => Some(p.toAgentModelConfig))
-
   /** Full / delta / unchanged task text for this turn's reminder. */
   private def renderTasksForTurn(
     resources: SharedResources,
@@ -1150,12 +1137,15 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             // 让它们全部吃 subagent 槽链（「配置 cmdcode 实际跑 terra」的成因）。
             // 未归槽（mode 缺席/不识别）⇒ slotChainOf 返回 None ⇒ 原样走钉链/base；
             // 可读原因由 ModelRoles 单点记 WARN（兜底不许吞真信息）。组合序未动。
-            agentModel = nebflow.core.ModelRoles
-              .slotChainOf(
+            // 统一模型层（P1）：组合序只在 ModelDecision.composeAgentModel 出现一次。
+            agentModel = nebflow.llm.ModelDecision
+              .composeAgentModel(
                 stateForLlm.sessionId,
-                nebflow.core.delegate.DelegateRegistry.rawModeOf(stateForLlm.sessionId)
+                nebflow.core.delegate.DelegateRegistry.rawModeOf(stateForLlm.sessionId),
+                freshDef.model,
+                effectivePin
               )
-              .orElse(agentModelWithPin(freshDef.model, effectivePin)),
+              ._1,
             // 派发钉链剔除账本（缺陷批 2026-11-06）：spawn 时因满载被链首扫描剔出的
             // 候选连原因随请求下发——进候选账本 seeded 层。没有它，这些候选既不在链上
             // 也没有原因 ⇒ `SILENTLY EXCLUDED`（现网实证 UTSC/glm-5.3-flash）。缺省 Nil。
@@ -1447,12 +1437,9 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
       // the running actor instead of waiting for an actor rebuild. This
       // closes the 2026-08-15 follow-up: mid-session flows edits were still
       // gated by the actor-startup snapshot ("Allowed: <stale list>").
-      // 团队功能删除批阶段 3：原 `teamNameOpt` 取团队会话登记表（团队 agent 的
-      // def 从 teams/<team>/agents/ 重载）；团队退役 ⇒ **恒 None**（全局 agents
-      // 目录重载路径不变）。`loadCurrentDef` 的签名与团队分支保留 —— 那是通用
-      // 「按团队重载 agent 定义」的实体层工具，作者未裁定其去留。
-      teamNameOpt <- IO.pure(Option.empty[String])
-      currentDefOpt <- ContextRefresher.loadCurrentDef(teamNameOpt, resources, agentDef)
+      // 团队类型面删除批阶段 B2：`teamNameOpt`（阶段 3 起恒 None）与
+      // `loadCurrentDef` 的团队分支一并删除——重载只走全局 agents 路径。
+      currentDefOpt <- ContextRefresher.loadCurrentDef(resources, agentDef)
       effectiveDef = currentDefOpt.getOrElse(agentDef)
       isTeamLead <- isTeamLeadStatus(effectiveDef, state.sessionId)
       guardrailsOn <- nebflow.core.Guardrails.enabled
@@ -1479,7 +1466,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         then
           sessionIdOpt.traverse_ { sid =>
             val blocks = result.thinking.toList.map(t => ContentBlock.Thinking(t, result.thinkingSignature)) ++
-              (if result.text.nonEmpty then List(ContentBlock.Text(result.text)) else Nil) ++
+              (if !result.text.isBlank then List(ContentBlock.Text(result.text)) else Nil) ++
               result.toolCalls.map(c => ContentBlock.ToolUse(c.id, c.name, c.input))
             resources.sessionStore.saveMessagesForSession(
               sid,
@@ -1586,7 +1573,6 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         messages = state.messages,
         requestId = result.requestId,
         bashConfig = resources.bashResilience,
-        teamName = teamNameOpt,
         // TaskBoard 批 2（§1d 身份接线收尾）：项目任务板身份从 SessionContext 透传
         // 进 ToolContext——TaskBoardTool 权限矩阵的引擎侧判定来源（不信客户端参数）；
         // projectName 同批接通既有空置字段（分发器/节点 spawn 注入 → 节点会话内
@@ -2919,30 +2905,19 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // 2026-09-29 一并消失；授能豁免本身保留，收口归 e5 批）；其余身份剥全集，
     // 行为零变化。
     val rootFiltered = withBuiltin -- AgentCore.exclusiveToolsFor(agentDef.name)
-    // Team task tools（任务工具重做 2026-08-30）：TeamTask 三件只配 team——
-    // 注入源是 fixedToolsFor 的 category=team 分支（全体成员）。这里只做防
-    // 声明逃逸剥离：非 team agent（standalone/flow/Nebula）即使 agent.json
-    // 显式列出也不给（the tool name IS the permission boundary）。
-    val teamTaskFiltered =
-      if agentDef.category == "team" then rootFiltered
-      else rootFiltered -- AgentCore.TeamTaskTools
     // Block 1 (supervision trio §C2, 2026-08-27): AgentControl mechanism-layer
     // grant — a team lead (Manager) gains subtree-scoped control over its own
     // team (members + their sub-agents; the subtree guard in AgentControlTool
     // enforces the scope), Nebula keeps global authority. The grant is the
     // ONLY source: declaring AgentControl in agent.json grants nothing
-    // (TeamTaskTools precedent — the tool name IS the permission boundary).
+    // (the tool name IS the permission boundary).
     val controlGrant = if isRoot || isTeamLead then Set("AgentControl") else Set.empty[String]
-    val withControl = (teamTaskFiltered -- Set("AgentControl")) ++ controlGrant
+    val withControl = (rootFiltered -- Set("AgentControl")) ++ controlGrant
     // Task tools: Nebula/lead 专属的 session 域 TaskCreate/TaskUpdate 已退役
-    // （任务工具重做 2026-08-30）；depth≥2 的 "*" 代理仍剥离 TeamTask*（叶子
-    // 隔离）。
-    val taskFiltered = agentDef.tools match
-      case List("*") =>
-        if depth >= 2 then withControl -- AgentCore.TeamTaskTools
-        else withControl
-      case _ =>
-        withControl
+    // （任务工具重做 2026-08-30）。团队类型面删除批阶段 B2 后 TeamTask* 已无
+    // 注入源（工具已删），depth≥2 的 "*" 叶子剥离随之失去对象 ⇒ 本段仅保留
+    // 结构位（withControl 原样透传）。
+    val taskFiltered = withControl
     // MCP tools: agents may use MCP tools from explicitly granted servers
     // (mcpServers) plus their own dedicated agent-scoped servers, which are
     // always auto-allowed. Tool names are mcp__<serverId>__<tool>; dedicated
@@ -2977,11 +2952,13 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           !t.startsWith("mcp__") || t.startsWith(agentOwnPrefix) || prefixes.exists(t.startsWith) ||
             pluginPrefixes.exists(t.startsWith)
         )
-    // Flow nodes are isolated leaves: no delegation or team task-board tools.
-    // Mail stays available to team-category nodes. SubTask is retired globally.
+    // Flow nodes are isolated leaves: no delegation tools and no team task-board
+    // tools left (TeamTask* retired in the B2 batch; the SubTask tool name is inert
+    // after B3 — the blocking subagent entry point is `Subagent`, so only
+    // `Delegate` remains to strip). Mail stays available to team-category nodes.
     val categoryFiltered =
       if isFlowNode then
-        val leafStripped = mcpFiltered -- (Set("SubTask", "Delegate") ++ AgentCore.TeamTaskTools)
+        val leafStripped = mcpFiltered - "Delegate"
         // 轨道二 #5（专用化护栏，设计 §C1）：T1 flow worker 默认剥离面向用户
         // 的展示类工具——引擎级剥离而非提示词恳求（deck-v6 实证：提示词约束在
         // 错位人设下会被推翻）。即使 agent.json 显式声明也扣掉；userFacing:true
@@ -3053,7 +3030,14 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     val withDelegateMail = if delegateSession then withDelegateFace + "Mail" else withDelegateFace
     // Strip only the two Ask-exclusive message/history tools from other roles.
     // Shared lookup tools and Bash retain their existing role permissions.
-    (withDelegateMail - "SubTask") -- nebflow.core.ask.AskSessions.AskExclusiveTools
+    // B3：`SubTask` 工具名已退役（不在注册表）⇒ 剥离集不再需要它。
+    // browser-verbs-p0 插件分发裁定（作者 2026-11-22）：引擎工具面（浏览器九动词）经**挂载的插件**
+    // 授予——plugin 声明 `org.nebflow/engine-tools`，PluginMcpManager.acquire 产出前缀来源
+    // `plugin_<p>_engine`（无子进程）。本腿仅认挂载态：agentDef.pluginMcpServers 含该前缀 ⇒ 并入
+    // EngineToolWhitelist（现即九动词；挂载判据是插件有 engine-tools 声明，粒度为白名单整集——
+    // 按插件逐名授予需 AgentDef 新增字段，留作后续）；无挂载 ⇒ 空集（默认工具面无名字）。不看身份名单。
+    val pluginEngineGrant = nebflow.core.plugin.PluginRegistry.engineGrantFor(agentDef.pluginMcpServers)
+    (withDelegateMail ++ pluginEngineGrant) -- nebflow.core.ask.AskSessions.AskExclusiveTools
 
   end buildAllowedToolSet
 

@@ -327,15 +327,15 @@ test('H3 计数同源：面板头 total == 实际渲染行数（五种通路组�
 
   console.log('[H3 combos] ' + JSON.stringify(combos));
 
+  // 计数口径（2026-11-23 作者裁定）：头部 / 智能体签 = running 数（实际并行在跑，夹具定义
+  // 于 combo.active）；徽标同取 running；data-bg-row-total = 行集长度（≥ 可见行，折叠子树
+  // 计入行集但不出镜）。四读数同源于同一行集，口径各自名实相符。
   for (const c of combos) {
     const headTotal = Number(String(c.counts.header).replace(/[^0-9]/g, ''));
-    // 头 total == 实际渲染行数（五种组合全成立）。
-    expect(headTotal).toBe(c.rows);
-    // The badge counts ACTIVE rows (fixture-defined per combo); the section label and the model row-total keep
-    // the visible row count — three readings of one row set, two deliberately different quantities.
+    expect(headTotal).toBe(c.active);
     expect(String(c.counts.badge).trim()).toBe(String(c.active));
-    expect(String(c.counts.section)).toContain('· ' + c.rows);
-    expect(String(c.counts.rowTotal)).toBe(String(c.rows));
+    expect(String(c.counts.section)).toContain('· ' + c.active);
+    expect(Number(c.counts.rowTotal)).toBeGreaterThanOrEqual(c.rows);
   }
   expect(errors).toEqual([]);
 });

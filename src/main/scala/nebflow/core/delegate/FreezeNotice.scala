@@ -361,6 +361,10 @@ object FreezeNotice:
         .map { g =>
           Json.obj(
             "provider" -> g.provider.asJson,
+            // 族区分呈现（2026-11-21 作者裁定）：format ≠ 服务商不可用。presentation
+            // 是唯一呈现开关（availability / shape / config），前端不得自行猜族。
+            "family" -> g.family.asJson,
+            "presentation" -> g.presentation.asJson,
             "reason" -> g.reason.asJson,
             "count" -> g.count.asJson,
             "sessionIds" -> g.taskIds.asJson

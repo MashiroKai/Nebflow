@@ -402,9 +402,19 @@ const TERMINAL_MSG_TYPES = new Set([
   // 会话帧被入口过滤器丢弃，活跃会话帧无订阅者 no-op（后端照发，零触碰）。
   'backgroundTaskUpdate',
   'askUser', 'askPermission',
+  // 控制台单实例接管独占两帧（2026-10-27；2026-11-22 历史基线回补）——均无 sessionId 的
+  // **本连接**直回/定向帧。🔴 必须入 GLOBAL（remoteAgents 同律）：否则会被下方视图路由当
+  // 会话内事件 ⇒ setActiveView(primary) 抢走正在看的视图。消费点 = takeoverModal.js。
+  //   takeover        服务端→被移位实例（fresh-claim 翻位 / 旧主回连 superseded 通知）
+  //   takeoverResult  【重新接管】的回执（ok ⇒ 收模态回 active）
+  'takeover', 'takeoverResult',
   // model-fallback-card 批（2026-11-18 作者裁定 14:37）：统一「模型不可用」卡
   // （任何槽：small-llm / kernel / node / dispatcher / subagent 共用同一张）。
   'modelUnavailable',
+  // LLM 失败卡片批（2026-11-21）：非阻塞卡（发帧即返回）。sessionId = 失败的会话；
+  //   llmFailure          LLM 类失败出卡（错误摘要 + 等待恢复 + 换模型）
+  //   llmFailureRecovered 同 agent 下一次成功调用 ⇒ 自动收卡
+  'llmFailure', 'llmFailureRecovered',
   // askUserAnswered 已摘（uiclean 批 2026-09-15）：该帧的唯一生产者（hub
   // handleChatInputAnswer）随输入框直通腿退役（e59ed251d），接收点亦已摘除 ⇒
   // 路由表项冗余且不再被引用（详见本批报告 C 项引用读数）。
@@ -1560,6 +1570,15 @@ export function connect() {
         return;
       }
 
+      // 控制台单实例四修批（2026-10-29 作者令 · 隐私面）：被顶出态（consoleSuperseded，
+      // 唯一写点 = takeoverModal.js）一律不渲染新内容帧——服务端已对该会话连接断喂
+      // （ConsoleTakeover.gateFrame），此处前端兜底（旧引擎 / 本连接直发帧）。放行
+      // 白名单 = 接管协议帧（takeover 重弹 / takeoverResult 裁决）。放在 pong 之后：
+      // 通道活性水位（lastWsInboundAt）已推进，心跳面不受影响。
+      if (state.consoleSuperseded && msg.type !== 'takeover' && msg.type !== 'takeoverResult') {
+        return;
+      }
+
       if (durableTaskFrameObserver?.(msg)) return;
 
       // ── BUG 6 fix: save/restore activeView ────────────────────────────
@@ -1674,8 +1693,7 @@ export function connect() {
       // nodeSessionId = "team-<sessionId>". Convert them to standard chat
       // events (agentTextDelta → textDelta, etc. - same as the flow/delegate
       // branches below) and route them to the popup ChatView. The popup is
-      // registered under the BARE sessionId (openStepPopup keys team popups
-      // with the unprefixed sid from /api/teams/mounted), so strip the
+      // registered under the BARE sessionId, so strip the
       // prefix before converting/looking up. Must NOT fall through to the
       // flow interceptor below - its ensureStepView would key on the
       // prefixed id and never match the popup.

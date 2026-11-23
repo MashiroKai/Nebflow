@@ -14,7 +14,8 @@ import scala.util.control.NonFatal
  * 而是把通过校验的命令解析成 argv 管道后**不经任何 shell**直接执行
  * （os.proc 链），shell 元字符因此根本没有解释器可吃：
  *   - 首词白名单：grep/rg/ls/cat/head/tail/find/wc + stand-recall/stand-messages
- *     + git（仅子命令 log/show/diff/status，env 钉 GIT_PAGER=cat PAGER=cat）；
+ *     + git（仅子命令 log/show/diff/status/branch(仅列举)/for-each-ref/rev-parse，
+ *     diff/log/show 拒 --output 写通道；env 钉 GIT_PAGER=cat PAGER=cat）；
  *   - 管道仅白名单段相连（未加引号的 `|` 分段，每段独立过白名单）；
  *   - 拒绝一切重定向与写元字符（> < >> tee 通道不存在——argv 直执行），
  *     拒绝 $ 与反引号（命令替换/环境展开一律拒，含引号内）、; & 换行组合；
@@ -37,8 +38,50 @@ object AskBashGuard:
   /** 引擎自带检索/消息 CLI（tools/stand-*；PATH 解析，缺件即命令报错）。 */
   val UtilityCommands: Set[String] = Set("stand-recall", "stand-messages")
 
-  /** git 仅放行的只读子命令。 */
-  val GitSubcommands: Set[String] = Set("log", "show", "diff", "status")
+  /**
+   * git 仅放行的只读子命令。读面裁定（2026-11-23）增补 `branch`（仅列举形态，见
+   * [[validateGitBranch]]）、`for-each-ref` / `rev-parse`（纯读引用/解析）。
+   */
+  val GitSubcommands: Set[String] = Set("log", "show", "diff", "status", "branch", "for-each-ref", "rev-parse")
+
+  /** git diff/log/show 的 `--output` 会把结果写入任意文件（写通道）——整族拒。 */
+  val GitWriteFlagPrefixes: List[String] = List("--output")
+
+  /** `git branch` 只放行列举形态的开关（无任何建/删/改/移/设上游开关）。 */
+  val GitBranchListFlags: Set[String] =
+    Set("-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose", "-l", "--list", "--show-current", "--no-color")
+
+  /** `git branch` 的过滤开关（带一个值；值必须是引用名，不得以 `-` 开头）。 */
+  val GitBranchFilterFlags: Set[String] = Set("--contains", "--merged", "--no-merged", "--points-at")
+
+  /**
+   * `git branch` 只读列举闸：允许开关 ∈ 列举/过滤集；过滤开关消费下一词（或 `=值`）；
+   * 位置参数仅在 `--list`/`-l` 形态下允许（作为 glob 过滤，非建分支名）。其余一律拒。
+   */
+  def validateGitBranch(args: Vector[String]): Either[String, Unit] =
+    val refused = Left(
+      "git branch is limited to listing forms (no create/delete/rename/copy/set-upstream): refused `git branch " +
+        args.mkString(" ") + "`"
+    )
+    var listing = false
+    var ok = true
+    var i = 0
+    while ok && i < args.size do
+      val t = args(i)
+      if GitBranchListFlags.contains(t) then
+        if t == "--list" || t == "-l" then listing = true
+        i += 1
+      else if t.startsWith("--format=") || t.startsWith("--sort=") || t.startsWith("--color") then i += 1
+      else if GitBranchFilterFlags.contains(t) then
+        if i + 1 < args.size && !args(i + 1).startsWith("-") then i += 2
+        else ok = false
+      else if GitBranchFilterFlags.exists(f => t.startsWith(f + "=")) then
+        if t.indexOf('=') < t.length - 1 then i += 1 else ok = false
+      else if !t.startsWith("-") then if listing then i += 1 else ok = false
+      else ok = false
+    end while
+    if ok then Right(()) else refused
+  end validateGitBranch
 
   /** git 环境钉死（分页器禁用——非交互通道吃不下 pager）。 */
   val QueryEnv: Map[String, String] = Map("GIT_PAGER" -> "cat", "PAGER" -> "cat")
@@ -143,7 +186,13 @@ object AskBashGuard:
         forbid(
           s"git is limited to read-only subcommands (${GitSubcommands.toList.sorted.mkString("/")}): refused `git ${sub.trim}`".trim
         )
-      else Right(tokens)
+      else
+        val args = tokens.drop(2)
+        args.find(t => GitWriteFlagPrefixes.exists(p => t == p || t.startsWith(p + "="))) match
+          case Some(t) => forbid(s"git argument refused: $t (--output writes to an arbitrary file)")
+          case None =>
+            if sub == "branch" then validateGitBranch(args).map(_ => tokens)
+            else Right(tokens)
     else if ReadCommands.contains(head) || UtilityCommands.contains(head) then
       val argFault: Option[String] = head match
         case "find" =>
@@ -162,7 +211,7 @@ object AskBashGuard:
         case None => Right(tokens)
     else
       forbid(
-        s"command not in the query-only allowlist (grep/rg/ls/cat/head/tail/find/wc, git log/show/diff/status, stand-recall, stand-messages): refused `${head}`"
+        s"command not in the query-only allowlist (grep/rg/ls/cat/head/tail/find/wc, git log/show/diff/status/branch(list)/for-each-ref/rev-parse, stand-recall, stand-messages): refused `${head}`"
       )
     end if
   end validateSegment
@@ -182,7 +231,7 @@ object AskBashExecutor:
   /** 输出内存帽（chars；超出截断——grep 大文件不拖垮会话）。 */
   val MaxOutputChars: Int = 200000
 
-  /** 执行 argv 管道。cwd = 绑定文件目录（ctx.sessionCwd；缺省进程 cwd）。 */
+  /** 执行 argv 管道。cwd = 会话 cwd（file 域 = 工作区根，见 AskSessions.sessionCwd；缺省进程 cwd）。 */
   def run(
     validated: AskBashGuard.Validated,
     cwd: Option[String],

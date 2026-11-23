@@ -483,7 +483,7 @@ function renderTodoPage() {
 
   const groups = [
     ['todo.grpOverdue', visible.filter((r) => todoGroupOf(r) === 'overdue')],
-    ['todo.grpDecision', visible.filter((r) => todoGroupOf(r) === 'decision')],
+    ['todo.grpAskConverted', visible.filter((r) => todoGroupOf(r) === 'decision')],
     ['todo.grpApproval', visible.filter((r) => todoGroupOf(r) === 'approval')],
     ['todo.grpPlan', visible.filter((r) => todoGroupOf(r) === 'plan')],
   ];
@@ -662,6 +662,95 @@ function buildPermTodoRow(r) {
   return row;
 }
 
+/** 决策待办未作答 ⇒ 完成门控（期 0；后端 completeTodo 同口径拒绝）。 */
+function isDecisionGated(r) {
+  return !!r && !!r.decision && typeof r.decision === 'object' && !r.decision.answer;
+}
+
+/** 行内作答面板（期 3，决策统一批 2026-11-22）：选项 radio/checkbox + 提交。
+ *  作答写后端真源（answerTodoDecision 帧）；回执 todoDecisionAnswered 回写行。
+ *  键盘：数字键 1-9 切换第 n 个选项，Enter 提交（面板获焦时）。secret 题本期禁用。 */
+function buildDecisionPanel(r) {
+  const dec = r.decision;
+  const wrap = document.createElement('div');
+  wrap.className = 'reminder-decision';
+  wrap.tabIndex = -1;
+  const q = document.createElement('div');
+  q.className = 'reminder-decision-q';
+  q.textContent = String(dec.question || '');
+  wrap.appendChild(q);
+
+  const answered = !!dec.answer;
+  const blocked = !!dec.secret;
+  const multi = !!dec.multiSelect;
+  const options = Array.isArray(dec.options) ? dec.options : [];
+  const answeredIds = new Set(answered && Array.isArray(dec.answer.selectedOptionIds) ? dec.answer.selectedOptionIds : []);
+  const picks = new Set();
+  const inputs = [];
+  const list = document.createElement('div');
+  list.className = 'reminder-decision-opts';
+  list.setAttribute('role', multi ? 'group' : 'radiogroup');
+  options.forEach((o, i) => {
+    const title = o && typeof o.title === 'string' ? o.title.trim() : '';
+    if (!title) return;
+    const label = document.createElement('label');
+    label.className = 'reminder-decision-opt';
+    const input = document.createElement('input');
+    input.type = multi ? 'checkbox' : 'radio';
+    input.name = `dec-${r.id}`;
+    input.disabled = answered || blocked;
+    input.checked = answeredIds.has(o.id);
+    input.addEventListener('change', () => {
+      if (!multi) picks.clear();
+      if (input.checked) picks.add(i); else picks.delete(i);
+    });
+    inputs.push({ input, i });
+    const key = document.createElement('kbd');
+    key.className = 'reminder-decision-key';
+    key.textContent = String(inputs.length);
+    label.append(input, key, document.createTextNode(' ' + title));
+    list.appendChild(label);
+  });
+  wrap.appendChild(list);
+
+  const err = document.createElement('div');
+  err.className = 'reminder-decision-err';
+  err.setAttribute('role', 'alert');
+  if (blocked) err.textContent = t('todoapple.answerSecretBlocked');
+  wrap.appendChild(err);
+
+  const submit = document.createElement('button');
+  submit.type = 'button';
+  submit.className = 'reminder-decision-submit';
+  submit.textContent = t('todoapple.answerSubmit');
+  submit.disabled = answered || blocked;
+  submit.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (submit.disabled) return;
+    const ids = [...picks].sort((a, b) => a - b).map((i) => options[i] && options[i].id).filter(Boolean);
+    if (!ids.length) return;
+    const sid = sessionIdOfTask(r.id);
+    if (!sid) return;
+    submit.disabled = true;
+    err.textContent = '';
+    sendWs({ type: 'answerTodoDecision', sessionId: sid, id: r.id, selectedOptionIds: ids, via: 'desktop' });
+  });
+  wrap.appendChild(submit);
+
+  wrap.addEventListener('click', (e) => e.stopPropagation());
+  wrap.addEventListener('keydown', (e) => {
+    if (answered || blocked) return;
+    if (/^[1-9]$/.test(e.key)) {
+      const hit = inputs[Number(e.key) - 1];
+      if (hit) { e.preventDefault(); hit.input.click(); }
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      submit.click();
+    }
+  });
+  return wrap;
+}
+
 /**
  * 列表行（schedule-todo-unify 批 2026-11-06 作者令「定时任务也要按 name description
  * 来添加 点击展开可以查看细节 展开要用液态形变」）：
@@ -688,11 +777,19 @@ function buildRow(r, isTriggered) {
   } else if (isTodoTask(r)) {
     // 认知二期产品批③打卡：待办圆钮 = 打卡销账（completeTodo——留 done 痕，
     // 周报数据源）；取消走行尾 ×（deleteScheduledTask，不留痕）。
+    // 期 0 止血（决策统一批 2026-11-22）：未作答的决策待办圆钮禁用，先作答再完成。
+    const gated = isDecisionGated(r);
     circle.dataset.action = 'checkin';
     circle.dataset.id = r.id;
-    circle.title = t('task.checkin');
+    circle.title = gated ? t('todoapple.answerFirst') : t('task.checkin');
+    if (gated) {
+      circle.disabled = true;
+      circle.classList.add('gated');
+      circle.setAttribute('aria-label', t('todoapple.answerFirst'));
+    }
     circle.addEventListener('click', (e) => {
       e.stopPropagation();
+      if (gated) return;
       completeCheckin(r.id);
     });
   } else {
@@ -762,6 +859,10 @@ function buildRow(r, isTriggered) {
   descEl.className = 'reminder-row-desc';
   descEl.textContent = desc;
   detail.appendChild(descEl);
+  // 期 3（决策统一批）：非问句决策待办的行内作答面板（选项 + 提交；键盘 1-9 / Enter）。
+  if (!isTriggered && isTodoTask(r) && r.decision && typeof r.decision === 'object') {
+    detail.appendChild(buildDecisionPanel(r));
+  }
 
   const facts = document.createElement('div');
   facts.className = 'reminder-row-facts';
@@ -1673,6 +1774,9 @@ function deleteTask(id) {
 function completeCheckin(id) {
   const sid = sessionIdOfTask(id);
   if (!sid) return;
+  // 期 0 门控（决策统一批）：未作答的决策待办不发完成帧。
+  const gatedRow = inboxTodos.find((x) => x.id === id) || tasks.find((x) => x.id === id);
+  if (isDecisionGated(gatedRow)) return;
   const row = document.querySelector(`.reminder-row[data-id="${id}"]`);
   if (row) {
     const circle = row.querySelector('.reminder-circle');
@@ -1718,6 +1822,15 @@ onMessage('scheduledTaskCreated', (msg) => {
 // these with msgType: 'createScheduledTask'. Roll back the optimistic temp
 // row so the list never shows a task the server refused to persist.
 onMessage('error', (msg) => {
+  // 决策作答被拒（期 3）：就地在该行的作答面板给出码对应文案，恢复提交键。
+  if (msg.msgType === 'answerTodoDecision') {
+    const row = document.querySelector(`.reminder-row[data-id="${msg.id}"]`);
+    const err = row && row.querySelector('.reminder-decision-err');
+    if (err) err.textContent = `${t('todoapple.answerRejected')}：${msg.message || msg.code || ''}`;
+    const btn = row && row.querySelector('.reminder-decision-submit');
+    if (btn && !(msg.code === 'decision_completed' || msg.code === 'decision_not_found')) btn.disabled = false;
+    return;
+  }
   if (msg.msgType !== 'createScheduledTask') return;
   // Remove the most recent optimistic temp row (the one this error answers).
   // 改版批：待办乐观行在收件箱面，提醒面行在任务面——两面都回滚。
@@ -1738,6 +1851,23 @@ onMessage('error', (msg) => {
   renderList();
   updateBadge();
   addNotification('task', msg.message || t('task.createFailed'), { dismissAfter: 15000 });
+});
+
+// 决策作答回执（期 3）：以后端 task 真值替换行（decision.answer 落地），随即重渲染
+// ⇒ 圆钮门控解除、面板转只读已答态。
+onMessage('todoDecisionAnswered', (msg) => {
+  const id = msg && msg.id;
+  if (!id) return;
+  const patch = (list) => list.map((x) => {
+    if (x.id !== id) return x;
+    if (msg.task && msg.task.id) return { ...x, ...msg.task };
+    return { ...x, decision: { ...(x.decision || {}), answer: msg.answer || null } };
+  });
+  inboxTodos = patch(inboxTodos);
+  tasks = patch(tasks);
+  saveCachedInbox(inboxTodos);
+  renderList();
+  updateBadge();
 });
 
 onMessage('scheduledTaskDeleted', (msg) => {

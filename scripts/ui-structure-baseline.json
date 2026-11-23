@@ -1,31 +1,6 @@
 {
   "_comment": "check-ui-structure.mjs 存量基线（ui-design-requirements 批 2026-11-18）：每条 = 一条**判定留存**的重复/超预算命中（作者 2026-11-18 16:45 点名的形态：「高级 高级」「关于 关于」= title；「底部的账户栏 信息重复」= group）。按 disclosure-dedup-spec.md §5，只许降不许升；加条目 = 声称「这条重复是对的」，必须在批报告里点名理由。重锚：node scripts/check-ui-structure.mjs --update-baseline",
-  "generatedAt": "2026-11-18T09:10:07.128Z",
-  "total": 4,
-  "allow": [
-    {
-      "key": "title::设置页::src/main/resources/web/js/sidebar.js::runtime::settings.runtime",
-      "kind": "title",
-      "page": "设置页",
-      "detail": "容器「runtime」内同一键 settings.runtime 占了 2 个标题槽（<h2> + title:）⇒ 同页把同一栏目名渲染两次"
-    },
-    {
-      "key": "title::设置页::src/main/resources/web/js/sidebar.js::advanced::settings.advanced",
-      "kind": "title",
-      "page": "设置页",
-      "detail": "容器「advanced」内同一键 settings.advanced 占了 2 个标题槽（<h2> + title:）⇒ 同页把同一栏目名渲染两次"
-    },
-    {
-      "key": "title::设置页::src/main/resources/web/js/sidebar.js::about::settings.about",
-      "kind": "title",
-      "page": "设置页",
-      "detail": "容器「about」内同一键 settings.about 占了 2 个标题槽（<h2> + title:）⇒ 同页把同一栏目名渲染两次"
-    },
-    {
-      "key": "group::手机·我的::src/main/resources/web/js/mobile/meFace.js::账号身份::73d496ef7a",
-      "kind": "group",
-      "page": "手机·我的",
-      "detail": "信息组「账号身份」渲染点 3 > 允许 1：mf-me-card + mf-me-fields + mf-account-card ⇒ 同一份信息在同一页面面渲染多次"
-    }
-  ]
+  "generatedAt": "2026-11-21T02:14:48.521Z",
+  "total": 0,
+  "allow": []
 }

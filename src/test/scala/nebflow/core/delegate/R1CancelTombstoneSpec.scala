@@ -136,4 +136,53 @@ class R1CancelTombstoneSpec extends FunSuite:
     os.remove.all(parentSession)
     os.remove.all(seat)
   }
+  test("T9 终态联动（冻结三路恢复批 2026-11-21）：冻结会话被取消 ⇒ 冻结四槽同写清空，墓碑在场") {
+    val id = "delegate-nebflow-t9"
+    DelegateRegistry.put(mkRecord(id).copy(
+      frozenSince = Some(System.currentTimeMillis() - 1000L),
+      frozenReason = Some("llm-failure"),
+      frozenDetail = Some("All providers failed (1 attempt(s); families: format)"),
+      frozenTrigger = Some("failed-event")
+    ))
+    assert(DelegateRegistry.find(id).get.frozenSince.nonEmpty, "precondition: frozen")
+    assert(DelegateRegistry.markCancelRequested(id, "the user panel").isRight)
+    val rec = DelegateRegistry.find(id).get
+    assertEquals(rec.frozenSince, None, "cancel must clear frozenSince")
+    assertEquals(rec.frozenReason, None, "cancel must clear frozenReason")
+    assertEquals(rec.frozenDetail, None, "cancel must clear frozenDetail")
+    assertEquals(rec.frozenTrigger, None, "cancel must clear frozenTrigger")
+    assert(rec.cancelRequestedAt.isDefined, "tombstone must remain")
+  }
+
+
+  // 可观测性补洞（2026-11-21 作者裁定）：error-freeze 与 supervisor 的 freezeAndHold 是两条
+  // 冻结腿，只有后者写 registry/台账 ⇒ 在途子代理冻结对作者完全不可见（digest 恒 0）。
+  // 修法 = enterErrorFrozen 对 delegate 记录补 DelegateFreeze.park（同语义）。本用例钉住
+  // 「落盘 ⇒ digest 可见；取消 ⇒ 墓碑清槽、行消失」的链条（不依赖 actor 台架）。
+  test("T10 error-freeze 落盘可见：parkFrozen ⇒ digest total≥1 且行含 frozenSince；取消 ⇒ 清槽归 0、墓碑在") {
+    val id = "delegate-nebflow-t10"
+    DelegateRegistry.put(mkRecord(id))
+    assert(
+      DelegateRegistry
+        .parkFrozen(
+          id,
+          DelegateFreeze.detailedWireValue(DelegateFreeze.Reason.LlmFailure, "All providers failed (2 attempt(s); families: server)"),
+          "All providers failed (2 attempt(s); families: server)",
+          "error-freeze"
+        )
+        .isRight
+    )
+    val rec = DelegateRegistry.find(id).get
+    assert(rec.frozenSince.isDefined, "error-freeze must write frozenSince")
+    assertEquals(rec.frozenTrigger, Some("error-freeze"))
+    val digest = FreezeNotice.fullDigest(List(rec), System.currentTimeMillis())
+    assertEquals(digest.total, 1, "面板/digest 必须看得见这次冻结")
+    assert(digest.items.head.frozenSince > 0L)
+    assert(DelegateRegistry.markCancelRequested(id, "the user panel").isRight)
+    val after = DelegateRegistry.find(id).get
+    assert(after.cancelRequestedAt.isDefined, "tombstone must remain")
+    assertEquals(after.frozenSince, None)
+    assertEquals(FreezeNotice.fullDigest(List(after), System.currentTimeMillis()).total, 0, "取消后行必须消失")
+  }
+
 end R1CancelTombstoneSpec

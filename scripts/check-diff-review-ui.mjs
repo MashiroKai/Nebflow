@@ -129,6 +129,25 @@ try {
   // ── E 正常源码 → 绿 ─────────────────────────────────────────────────────────
   leg('E 正常源码 → 绿', false, () => runSpec(curWeb));
 
+  // ── J 静态断言（过期态修复批 2026-11-22）：触屏隐藏键位提示 / 过期重试先 resync /
+  //    拒绝保外部改动的回归用例仍在。源码字面断言（不跑浏览器），破坏即红。
+  const staticLeg = (name, ok) => {
+    results.push({ name, expectRed: false, code: ok ? 0 : 1, ok, fails: '' });
+    console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}`);
+  };
+  const cssSrc = readFileSync(join(REPO, WEB_REL, 'css/diffView.css'), 'utf8');
+  const reviewJs = readFileSync(join(REPO, WEB_REL, 'js/askEditReview.js'), 'utf8');
+  const specSrc = readFileSync(join(REPO, 'src/test/scala/nebflow/core/ask/AskEditReviewSpec.scala'), 'utf8');
+  staticLeg('J1 触屏（pointer: coarse）隐藏键位提示 .nf-dv-keyhint',
+    /@media \(pointer: coarse\)\s*\{\s*\.nf-dv-keyhint\s*\{\s*display:\s*none;?\s*\}\s*\}/.test(cssSrc));
+  staticLeg('J2 过期重试 = askEditResync（不再发 accept 全收）',
+    /closest\('\.nf-ar-retry'\)[\s\S]*?send\('resync',\s*sid\)/.test(reviewJs)
+      && /resync:\s*'askEditResync'/.test(reviewJs));
+  staticLeg('J3 拒绝保外部改动回归用例存在（reject 全部 + 外部追加行保留）',
+    specSrc.includes('reject(all) during an external append keeps the external line'));
+  staticLeg('J4 逐块钮为同块右侧浮层（absolute，不再流内撑行）',
+    /\.cm-deletedChunk \.cm-chunkButtons\s*\{[^}]*position:\s*absolute/.test(cssSrc));
+
   writeFileSync(IDX, ORIG_IDX);
   writeFileSync(THM, ORIG_THM);
   writeFileSync(DVC, ORIG_DVC);

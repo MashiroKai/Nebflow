@@ -72,7 +72,7 @@ object InstallPointer:
   private def readTrimmed(path: os.Path): IO[Option[String]] =
     IO.blocking(if os.exists(path) then Some(os.read(path).trim) else None)
       .map(_.filter(_.nonEmpty))
-      .handleErrorWith(e => IO(logger.warn(s"[hotupdate] pointer read failed ${path.toString}: ${msg(e)}")).as(None))
+      .handleErrorWith(e => logger.warn(s"[hotupdate] pointer read failed ${path.toString}: ${msg(e)}").as(None))
 
   /** 现读指针（None = 无指针 / 空指针 ⇒ 调用方走 legacy 回退或报 `unverified`）。 */
   def readCurrent(dir: os.Path): IO[Option[String]] = readTrimmed(currentPath(dir))

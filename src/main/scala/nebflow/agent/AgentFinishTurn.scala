@@ -18,6 +18,24 @@ import nebflow.shared.given
  * AgentActor,经 import AgentActor.* 引用。
  */
 private[agent] object AgentFinishTurn:
+
+  /**
+   * 助手终轮内容的唯一装配点（2026-11-22 修复批，空白块产生源）。
+   * 空白正文（`""` / `"  \n"`）**不落 text 块**：落盘的空白 text 块在每次历史回放时
+   * 被 Anthropic 以 400 `text content blocks must contain non-whitespace text` 拒收。
+   * 无正文 ⇒ 只留 thinking 块（或无块）；有正文 ⇒ 原样保留。请求侧
+   * [[nebflow.llm.providers.AnthropicAdapter.dropBlankText]] 为兜底。
+   */
+  private[agent] def assistantContentOf(
+    thinking: Option[String],
+    thinkingSignature: Option[String],
+    text: String
+  ): Either[String, List[ContentBlock]] =
+    (thinking, text.isBlank) match
+      case (None, true) => Right(Nil)
+      case (None, false) => Left(text)
+      case (Some(t), true) => Right(List(ContentBlock.Thinking(t, thinkingSignature)))
+      case (Some(t), false) => Right(List(ContentBlock.Thinking(t, thinkingSignature), ContentBlock.Text(text)))
   import nebflow.agent.AgentActor.*
 
   private def routeChildProgress(
@@ -194,6 +212,17 @@ private[agent] object AgentFinishTurn:
   // Finish turn
   // ============================================================
 
+  /**
+   * 卡片批（2026-11-21）：回合正常结束 = LLM 调用成功 ⇒ 若该 agent 处于 LLM 失败卡态，
+   * 发 `llmFailureRecovered` 收卡（非阻塞；无失败态时 recordSuccess 为 None，零帧）。
+   */
+  private def recoverLlmFailureCard(agentName: String, state: AgentState): IO[Unit] =
+    state.sessionId.fold(IO.unit)(sid =>
+      nebflow.llm.LlmFailureCard
+        .recordSuccess(sid, agentName)
+        .fold(IO.unit)(frame => state.wsSend(frame).handleErrorWith(_ => IO.unit))
+    )
+
   private[agent] def finishTurn(
     agentDef: AgentDef,
     resources: SharedResources,
@@ -206,6 +235,22 @@ private[agent] object AgentFinishTurn:
     thinkingSignature: Option[String] = None,
     textAlreadyStreamed: Boolean = false,
     model: Option[String] = None
+  )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
+    recoverLlmFailureCard(agentDef.name, state) *>
+      finishTurnBody(agentDef, resources, depth, parentRef, state, replyTo, text, thinking, thinkingSignature, textAlreadyStreamed, model)
+
+  private def finishTurnBody(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    replyTo: Option[ActorRef[AgentEvent]],
+    text: String,
+    thinking: Option[String],
+    thinkingSignature: Option[String],
+    textAlreadyStreamed: Boolean,
+    model: Option[String]
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     // ── Zombie-compaction guard ──
     // A pending CompactionJob must never survive into idle: the next normal
@@ -260,11 +305,7 @@ private[agent] object AgentFinishTurn:
       )
     val isSubagent = parentRef.isDefined
     val sendText = !textAlreadyStreamed && text.nonEmpty
-    val assistantContent = (thinking, text) match
-      case (None, _) => Left(text)
-      case (Some(t), "") => Right(List(ContentBlock.Thinking(t, thinkingSignature)))
-      case (Some(t), txt) =>
-        Right(List(ContentBlock.Thinking(t, thinkingSignature), ContentBlock.Text(txt)))
+    val assistantContent = assistantContentOf(thinking, thinkingSignature, text)
     val newMessages = normalizedState.messages :+ Message(MessageRole.Assistant, assistantContent)
     val sendTextIO =
       if sendText then
@@ -346,7 +387,7 @@ private[agent] object AgentFinishTurn:
       yield result
     end if
 
-  end finishTurn
+  end finishTurnBody
 
   /**
    * 完成信号目标兜底（**dispatcher 终态批 2026-11-05** · 作者报障「dispatcher 模式
@@ -461,7 +502,10 @@ private[agent] object AgentFinishTurn:
               .fold(IO.unit) { sid =>
                 resources.agentRegistry.get.flatMap { registry =>
                   registry.get(sid) match
-                    case Some(rec) if rec.kind == AgentKind.SubTask && rec.parentSessionId.nonEmpty =>
+                    // B3：子代理会话换标为 Delegate ⇒ 判据收窄为「有父会话」；真正的
+                    // 分流在下面的任务行 source ∈ {subtask, subagent} 与 parentSessionId
+                    // 相等（真 Delegate 批次的行 source=delegate ⇒ 天然不进债面）。
+                    case Some(rec) if rec.parentSessionId.nonEmpty =>
                       resources.subAgentTaskStore.findByTaskId(sid).flatMap {
                         case Some(row)
                             if Set("subtask", "subagent").contains(
@@ -751,7 +795,12 @@ private[agent] object AgentFinishTurn:
             )
           )
         else IO.unit
-      val eventMessages = List(buildEventReminder(boundaryEvents))
+      // P1⑤（送达链路修复批 2026-11-23）：终报独立成 user 消息（不并入工具结果批
+      // 的编号 system-reminder）；其余事件保持合批形。
+      val (terminalReportEvents, batchedEvents) = boundaryEvents.partition(MailboxDrain.isDelegateTerminal)
+      val eventMessages =
+        (if batchedEvents.nonEmpty then List(buildEventReminder(batchedEvents)) else Nil) ++
+          terminalReportEvents.map(e => MailboxDrain.injectionMessages(List(e)).head)
       val messagesWithPending = newMessages ++ eventMessages
       logAgentEvent(
         agentDef,
@@ -759,7 +808,8 @@ private[agent] object AgentFinishTurn:
         state.sessionId,
         state.sessionName,
         "pending-messages-injected",
-        s"events=${boundaryEvents.size} remaining=${remainingEvents.size} mailbox=${mailboxTaken.size} mailboxHeld=${mailboxHeld}"
+        s"events=${boundaryEvents.size} remaining=${remainingEvents.size} mailbox=${mailboxTaken.size} " +
+          s"mailboxHeld=${mailboxHeld} terminalOwn=${terminalReportEvents.size}"
       )
       val updatedState = state
         .copy(execution =
@@ -1083,8 +1133,8 @@ private[agent] object AgentFinishTurn:
 
   // ═══ 团队 busy 标记面（团队功能删除批阶段 3：整体退役）══════════════
   // 原 `markTeamBusy` / `markTeamIdle` 写「团队会话登记表」的 busyMap，唯一读者是
-  // WebSocketRoutes.filterActiveAgents 的 `AgentKind.Team` 过滤腿。活体终局：
-  // `AgentKind.Team` 记录的唯一生产者是以团队会话登记表为底座的冷激活腿（团队退役
+  // WebSocketRoutes.filterActiveAgents 的 Team 过滤腿。活体终局：
+  // Team 记录的唯一生产者是以团队会话登记表为底座的冷激活腿（团队退役
   // 后在生产路径上零调用方）⇒ busyMap 两侧（写方 gated on `agentDef.category ==
   // "team"`、读方过滤 Team 记录）同时失去数据源，该面整体删除，`activeAgents`
   // 的呈现因此零变化（无记录可过滤）。

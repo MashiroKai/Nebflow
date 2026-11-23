@@ -56,6 +56,8 @@
 #onboarding-panel::before,
 .model-panel::before,
 .wsp-panel::before {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: inherit;
   content: '';
   position: absolute;
   top: 0;
@@ -119,6 +121,10 @@
   background: rgba(91, 127, 191, 0.03);
   color: var(--color-frame-text-dim);
   transition: all 0.25s ease;
+}
+#memory-modal-actions button,
+#rules-modal-actions button {
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   #modal-cancel:hover,
@@ -589,6 +595,26 @@
 }
 .search-filters .cfg-select { width: auto; font-size: var(--ds-fs-hint); }
 #search-go { margin-left: auto; }
+/* ── 来源筛选行（search-page-density 批 2026-11-21 作者令①②）──────────────
+   来源 chips 与「选择文件」钮共用一行。桌面端本行只装 chips —— 几何与改前
+   逐值一致（改前 chips 直接是 .search-controls 的列内子件，chips 行本身就带
+   `margin-top`；现在多一层行容器，只是把同一组 chips 包成横向 flex 行）。
+   手机层由 mobileLayer.css 接管（chips 紧凑档 + 「选择文件」钮同行右端）。 */
+#search-filter-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-width: 0;
+}
+#search-filter-row[hidden] { display: none; }
+/* chips 自带 width:100% + margin-top（chat.css #491 段）——行容器接管填充职责后
+   这两项归零，否则行内会出现一条空白竖带（chat.css 本批不动，故在此覆盖）。 */
+#search-filter-row #search-source-chips {
+  width: auto;
+  margin-top: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+}
 /* ── 会话内独立搜索（3(b) 会话内独立搜索批 2026-11-06 作者令）─────────────────
    会话档（overlay 挂 data-conv-scope="1"）只搜当前会话 ⇒ 范围/agent 两枚 select
    语义不存在（「全部会话/主会话/按 agent 筛」是 agent 会话面的词汇）⇒ 折叠。
@@ -751,7 +777,17 @@
   max-height: 180px;
   overflow-y: auto;
   min-width: 72px;
-  background: var(--glass-bg);
+  /* ── 次级浮层可读性（search-page-density 批 2026-11-21 作者令②）──────────
+     作者报障逐字：「月份下拉是半透明毛玻璃，下层日历数字透出来叠在一起完全
+     不可读」。层级没错（z30 压在日历之上），缺的是**不透明底色**：本面原取
+     `--glass-bg`（α .16，与唯一材质同一份半透底），浮层下半截压着日历数字 ⇒
+     两层半透叠加 = 数字穿透叠字。
+     处置 = 「提高不透明底色」这一支（作者给的两个选项之一）⇒ 底色取唯一材质
+     的**压不透档** `--nf-glass-bg-hover`。
+     🔴 底色声明**不在这里**：材质值归 css/glass.css（本文件在 glass.css 之前
+     加载，同特异度写在这里会被 `.nf-glass` 的底色覆盖 —— 2026-11-21 实证）。
+     本条只留几何；同族判据见 glass.css「次级浮层压不透档」块。 */
+  background: var(--nf-glass-bg-hover);
   border: 1px solid var(--glass-border);
   border-radius: var(--ds-radius-button);
   padding: var(--ds-space-1);
@@ -1187,6 +1223,8 @@ body.canvas-open .nebflow-toast {
 /* Overlay stays transparent (no dimming per design ruling) — it only blocks
    clicks; the panel itself joins the shared glass-card group above. */
 .onboarding-overlay {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
   background: var(--overlay-bg);
@@ -1288,6 +1326,7 @@ body.canvas-open .nebflow-toast {
 .mp-mode-btn.on {
   background: var(--color-surface);
   color: var(--color-text);
+  box-shadow: var(--btn-shadow);
 }
 
 /* 台账 #937：/model 面板级降级面 —— 全角色读数失败（401/断连）时替下
@@ -1390,7 +1429,9 @@ body.canvas-open .nebflow-toast {
   cursor: pointer;
   user-select: none;
 }
-.mp-role-head-toggle:hover { background: var(--color-frame-hover); }
+.mp-role-head-toggle:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--color-frame-hover); }
 .mp-role-name {
   font: 600 var(--ds-fs-body) -apple-system, sans-serif;
   color: var(--color-text);
@@ -1423,6 +1464,8 @@ body.canvas-open .nebflow-toast {
   color: var(--color-text);
 }
 .mp-status-fork {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: rgb(var(--sapphire));
   background: rgb(var(--sapphire) / 0.1);
   border: 1px solid rgb(var(--sapphire) / 0.22);
@@ -1516,7 +1559,9 @@ body.canvas-open .nebflow-toast {
 .mp-inline-err .st-ic { width: 12px; height: 12px; margin-right: var(--ds-space-1); vertical-align: -2px; }
 .mp-inline-err.on { display: block; }
 @media (prefers-color-scheme: dark) {
-  .mp-add-select { background: rgba(255, 255, 255, 0.03); }
+  .mp-add-select {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: rgba(255, 255, 255, 0.03); }
 }
 @media (prefers-reduced-motion: reduce) {
   .mp-chev { transition: none; }
@@ -1539,7 +1584,7 @@ body.canvas-open .nebflow-toast {
   gap: 6px;
   padding: 8px 10px;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: var(--color-frame-input-bg);
 }
 .mp-group-head {
@@ -1582,7 +1627,7 @@ div.mp-group > .mp-group-head { cursor: default; }
   width: 100%;
   height: 28px;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: var(--color-surface);
   color: var(--color-text);
   font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
@@ -1590,6 +1635,7 @@ div.mp-group > .mp-group-head { cursor: default; }
   cursor: pointer;
   outline: none;
   transition: border-color 0.15s;
+  box-shadow: var(--btn-shadow);
 }
 .mp-group-switch:focus { border-color: rgb(var(--sapphire) / 0.4); }
 .mp-group-switch:disabled { opacity: 0.55; cursor: default; }

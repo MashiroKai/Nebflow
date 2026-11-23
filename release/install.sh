@@ -1227,16 +1227,33 @@ _jar_valid() {  # <path> -> 0 when the file looks like a complete JAR
     return 1
 }
 
+# Whole-transfer ceiling per file (curl --max-time / wget --timeout). The JAR is
+# ~154 MB: a 120 s cap kills it on any link slower than ~1.3 MB/s, so it gets
+# 900 s (~0.17 MB/s floor). Small files keep 120 s.
+_dl_max_time() {  # <target> -> seconds
+    case "$1" in
+        *.jar) echo 900 ;;
+        *)     echo 120 ;;
+    esac
+}
+
+# Failure is never silent: say how many bytes arrived and what to try next.
+_download_failed() {  # <url> <target> <curl-rc>
+    log_err "Download failed (curl exit $3) after $(_file_size "$2") bytes: $1"
+    log_err "Run the command again to resume from scratch, or check your network / proxy (set https_proxy, e.g. export https_proxy=http://127.0.0.1:7890)."
+}
+
 # TTY download with the brand progress bar: curl runs in the background
 # writing to the target file; we poll its size and redraw the bar. Total
 # size comes from a HEAD probe (content-length); unreachable -> spinner mode.
 _download_progress() {  # <url> <target> <label> -> curl exit code
     local _url="$1" _target="$2" _label="$3"
-    local _total
+    local _total _mt
+    _mt=$(_dl_max_time "$_target")
     _total=$(curl -fsSI --connect-timeout 5 --max-time 10 "$_url" 2>/dev/null \
         | tr -d '\r' | awk 'tolower($1)=="content-length:"{n=$2} END{if(n!="") printf "%d", n}')
     [ -z "$_total" ] && _total=-1
-    curl -fsSL --connect-timeout 10 --max-time 120 "$_url" -o "$_target" 2>/dev/null &
+    curl -fsSL --connect-timeout 10 --max-time "$_mt" "$_url" -o "$_target" 2>/dev/null &
     local _pid=$! _spin=0 _last=0 _now=0 _spd=-1
     while kill -0 "$_pid" 2>/dev/null; do
         _now=$(_file_size "$_target")
@@ -1255,21 +1272,26 @@ _download_progress() {  # <url> <target> <label> -> curl exit code
 }
 
 _download() {
-    local url="$1" target="$2" label="${3:-}"
+    local url="$1" target="$2" label="${3:-}" _rc=0 _mt
     if _progress_ok; then
-        _download_progress "$url" "$target" "${label:-$(basename "$target")}"
+        _download_progress "$url" "$target" "${label:-$(basename "$target")}" || _rc=$?
     else
         # non-TTY (curl|bash pipe) / dumb terminal: plain one-line log
         [ -n "$label" ] && log_i "Downloading ${label}..."
+        _mt=$(_dl_max_time "$target")
         if command -v curl > /dev/null 2>&1; then
-            curl -fsSL --connect-timeout 10 --max-time 120 "${url}" -o "${target}"
+            curl -fsSL --connect-timeout 10 --max-time "$_mt" "${url}" -o "${target}" || _rc=$?
         elif command -v wget > /dev/null 2>&1; then
-            wget --connect-timeout=10 --timeout=120 -q "${url}" -O "${target}"
+            wget --connect-timeout=10 --timeout="$_mt" -q "${url}" -O "${target}" || _rc=$?
         else
             log_err "curl or wget is required."
             exit $ERR_CURL
         fi
     fi
+    if [ "$_rc" -ne 0 ]; then
+        _download_failed "$url" "$target" "$_rc"
+    fi
+    return "$_rc"
 }
 
 # ---- checksum machinery (deps/ integrity, batch 2) ------------------------
@@ -1489,7 +1511,13 @@ download_jar() {
     # 单一源（结论不变）：jar 只从上面的镜像端点取。2026-09-17 更正：此前
     # 的「#29 仓库 private ⇒ GitHub Releases 未认证 404」理由已过时（仓库现已
     # 公开），单源理由为可达性与带宽，见文件头品牌值区注释。
-    if _download "${COS_URL}" "${target_versioned}" "${JAR_NAME}"; then
+    # 双命名回退（stable 404 修复）：新命名 stand-assembly-<ver>.jar 不存在时
+    # （旧版 stable 仅以 nebflow-assembly-<ver>.jar 发布）回退下载旧命名；
+    # 落盘名仍为新命名，wrapper 的 stand-assembly-* 查找不受影响。
+    _legacy_jar_name="nebflow-assembly-${VERSION}.jar"
+    if _download "${COS_URL}" "${target_versioned}" "${JAR_NAME}" \
+        || { log_i "Primary name not found; trying legacy ${_legacy_jar_name}..."; \
+             _download "${COS_BASE_CN}/${_legacy_jar_name}" "${target_versioned}" "${_legacy_jar_name}"; }; then
         log_ok "Downloaded ${JAR_NAME} from COS."
         # Same no-zip-tool situation as in _jar_valid: the fresh bytes cannot be
         # verified either. Say so out loud - never let the log imply an
@@ -1725,14 +1753,21 @@ WRAPPER
     # name by design (historical fact, same rule as rebrand.sh) - NOT
     # brand-derived, so it stays stable across future renames. Also replaces
     # any pre-rename real "nebflow" binary in INSTALL_DIR (overwrite > shadow).
+    # Written ON DEMAND only: a fresh install gets no shim. It is written when an
+    # old nebflow trace exists (an existing nebflow file in INSTALL_DIR, or a
+    # nebflow command on PATH), so an upgrade of an install that had it keeps it.
     local shim="${INSTALL_DIR}/nebflow"
-    cat > "${shim}" << SHIM
+    if [ -e "${shim}" ] || command -v nebflow >/dev/null 2>&1; then
+        cat > "${shim}" << SHIM
 #!/bin/bash
 echo "WARN: 'nebflow' is deprecated - the command is now '${WRAPPER_NAME}'. Forwarding..." >&2
 exec "${INSTALL_DIR}/${WRAPPER_NAME}" "\$@"
 SHIM
-    chmod +x "${shim}"
-    log_ok "Legacy shim created: ${shim} (deprecation notice, forwards to ${WRAPPER_NAME})"
+        chmod +x "${shim}"
+        log_ok "Legacy shim created: ${shim} (deprecation notice, forwards to ${WRAPPER_NAME})"
+    else
+        log_v "No legacy nebflow trace - shim not written"
+    fi
 }
 
 # Add install dir to PATH in shell profile

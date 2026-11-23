@@ -70,6 +70,40 @@ const ORPHAN_EXEMPTIONS = new Map([
   ['js/chainDetailEntry.js', 'tasklist-flowmap batch (2026-10-10): L1 switched to the flowmap engine face; the fm-detail card supersedes this shim — zero live importers, kept on disk'],
 ]);
 
+// ── 0. Source fingerprint (freshness single source) ─────────────
+// 2026-11-21 静态面加载效率批：新鲜度判据 = web/ 全树**内容**指纹（路径 + 文件
+// sha256，按路径排序后再散列），而不是 mtime —— git checkout / 合并会刷新 mtime
+// 而内容未变（假 stale），反过来 mtime 也抓不到「同 mtime 异内容」。指纹写入
+// build/web-dist.source-fingerprint（dist 目录之外，verify-web-assets 不会把它当成
+// 无路由文件）。Scala 侧 StaticRoutes.ensureDist 只调 `--ensure`，不自己算指纹。
+const STAMP = join(ROOT, 'build', 'web-dist.source-fingerprint');
+function sourceFingerprint() {
+  const top = createHash('sha256');
+  (function walkSrc(d) {
+    const entries = readdirSync(d, { withFileTypes: true })
+      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    for (const e of entries) {
+      const p = join(d, e.name);
+      if (e.isDirectory()) walkSrc(p);
+      else {
+        const rel = relative(SRC, p).split('\\').join('/');
+        const fileHash = createHash('sha256').update(readFileSync(p)).digest('hex');
+        top.update(`${rel}\0${fileHash}\n`);
+      }
+    }
+  })(SRC);
+  return top.digest('hex');
+}
+const ENSURE = process.argv.includes('--ensure');
+const SOURCE_FP = sourceFingerprint();
+// --ensure：戳与源指纹一致且 dist 在 ⇒ 什么也不做（热路径 ≈ 指纹计算耗时）；
+// 否则落入下方正常打包。一次性打包失败 ⇒ 非零退出，调用方（Scala 引擎 / sbt）据此回落或失败。
+if (ENSURE && existsSync(join(OUT, 'index.html')) && existsSync(STAMP)
+  && readFileSync(STAMP, 'utf8').trim() === SOURCE_FP) {
+  console.log(`web-dist fresh (source fingerprint ${SOURCE_FP.slice(0, 16)}) — no rebuild`);
+  process.exit(0);
+}
+
 // ── 1. Clean output ────────────────────────────────────────────
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(join(OUT, 'assets'), { recursive: true });
@@ -269,6 +303,18 @@ html = html.replace(
   /<script\s+type="module"\s+src="js\/mobile\/bootstrap\.js"><\/script>/,
   `<script type="module" src="${mobileEntryUrl}"></script>`
 );
+// ── 6b. Version the copy-through vendor refs (fingerprint, fix 2) ──
+// 模块图本体已由 esbuild 内容寻址（app-[hash].js / chunks/*-[hash].js → assets/**，
+// immutable）；残留的裸引用只剩 index 直接点名的 vendor 脚本/样式（copy-through，
+// 不经打包图）。它们按裸路径 no-cache 每次导航重验证（二次导航 304 的来源）。这里给
+// 每条 index 引用的 vendor 文件注入内容指纹 `?v=<sha256 前16hex>`：URL 随内容变，
+// 带版本请求由静态面回 immutable（assetCacheControl 同一判据，零新路由）。
+html = html.replace(/((?:href|src)=")(vendor\/[^"?]+)(")/g, (m, pre, p, post) => {
+  const f = join(SRC, p);
+  if (!existsSync(f)) throw new Error(`index.html references a missing vendor file: ${p}`);
+  const v = createHash('sha256').update(readFileSync(f)).digest('hex').slice(0, 16);
+  return `${pre}${p}?v=${v}${post}`;
+});
 if (!html.includes(`assets/${cssName}`)) throw new Error('index.html rewrite failed: css bundle link missing');
 if (!html.includes(jsEntryUrl)) throw new Error('index.html rewrite failed: js entry missing');
 if (!html.includes(mobileEntryUrl)) throw new Error('index.html rewrite failed: mobile bootstrap entry missing');
@@ -284,6 +330,9 @@ for (const entry of readdirSync(SRC, { withFileTypes: true })) {
   if (entry.name === 'js' || entry.name === 'css' || entry.name === 'index.html') continue;
   cpSync(join(SRC, entry.name), join(OUT, entry.name), { recursive: true });
 }
+
+// Stamp last: a build that failed any check above never claims freshness.
+writeFileSync(STAMP, SOURCE_FP + '\n');
 
 // ── 8. Report ──────────────────────────────────────────────────
 const chunks = Object.keys(result.metafile.outputs).filter(o => o.includes('chunks/'));

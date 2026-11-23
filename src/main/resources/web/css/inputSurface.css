@@ -94,13 +94,19 @@
    同族 —— 外壳 `.ta-reply-input` = nf-glass 输入条（复刻 ask 输入条），内芯按
    裸件收编（同一个 js/input/secondaryComposer.js 模板产出）。 */
 .ta-reply-input textarea,
+/* 快速决策卡页悬浮控件带内芯（作者令 2026-11-21 ①⑥）：与 `.ta-reply-input`
+   同族 —— 外壳 `.ta-qd-answer-input` = nf-glass 输入条，内芯按裸件收编（同一个
+   js/input/secondaryComposer.js 模板产出）。 */
+.ta-qd-answer-input textarea,
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-newlist-input,
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-title-input,
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes,
 .bgagent-model-switch {
   background: var(--nf-field-bare-bg);
   border: none;
-  border-radius: 0;
+  /* 全面圆角批 2026-11-22（§2.6 标记类）：裸件不持有几何 —— 圆角跟随宿主外壳
+     （`.nf-glass` 输入条 / 卡片成形面），自己不写 0 也不写档位。 */
+  border-radius: inherit;
   box-shadow: none;
   /* 刻意**不写** outline: none —— 裸件同样要被键盘看见。焦点态归下面两条
      焦点规则（指针压回中性 / 键盘给内缩环），此处写 none 会把它们一起盖掉。 */
@@ -131,6 +137,10 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes,
   background-position: var(--nf-field-caret-pos);
   background-size: var(--nf-field-caret-size);
   background-repeat: no-repeat;
+}
+.bgagent-model-switch {
+  border-radius: var(--ds-radius-input);
+  box-shadow: var(--btn-shadow);
 }
 
 /* ── 指针/常态焦点：中性，零环 ─────────────────────────────────────────────
@@ -169,8 +179,8 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes,
   select
 ):focus-visible,
 .nf-field:focus-visible {
-  outline: var(--nf-field-ring-w) solid var(--nf-field-ring);
-  outline-offset: var(--nf-field-ring-offset);
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* 指针来的焦点：环压回中性（上面的 :focus 灰线加深仍生效） */
@@ -200,6 +210,17 @@ html[data-nf-modality="pointer"] .nf-field:focus-visible {
    JS 挂 `.nf-glass` 供），故取同一条外壳圆角。 */
 .ta-reply-input {
   border-radius: var(--nf-field-shell-radius, var(--ds-radius-xl));
+}
+/* 快速决策卡页悬浮控件带（作者令 2026-11-21 ①⑥）：同一装配点
+   （js/input/secondaryComposer.js）的第二份实例 ⇒ 同一条外壳圆角。 */
+.ta-qd-answer-input {
+  border-radius: var(--nf-field-shell-radius, var(--ds-radius-xl));
+}
+/* raised 态（卡片内容滚出可视区后，JS 写 data-qd-raised="1"）：外壳抬一档影。
+   造型值归本文件（I2 单一源）；选择器比 `.ta-qd-answer-input { box-shadow:none }` 高一档。 */
+.ta-qd-float[data-qd-raised="1"] .ta-qd-answer-input {
+  box-shadow: var(--nf-field-shadow);
+  transition: box-shadow var(--ds-dur-hover) var(--ds-ease-std);
 }
 
 /* ── 状态档（同一种形态的状态，不是第二套形态）────────────────────────────

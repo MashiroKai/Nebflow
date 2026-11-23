@@ -353,6 +353,12 @@ class BackoffSupervisorFreezeSpec extends CatsEffectSuite:
           .loadTasks(parentSid)
           .map(ts => ts.find(_.taskId == childCancel).exists(_.status == "cancelled"))
       )
+      // 竞态硬化（B5 闸内实测）：任务行的 cancelled 状态先落，父邮箱条的
+      // MailboxProducer 写入在其后（同一 IO 链的后续段）——单次读取会偶发读到空集。
+      // 这里等「终态已落邮箱」这件**断言目标本身**成立，再断言，语义不变。
+      _ <- waitUntil(10.seconds)(
+        mailboxEvents(parentSid).map(_.exists(_.eventType == "cancelled"))
+      )
       quotaRec <- IO(DelegateRegistry.find(childQuota).get)
       cancelRec <- IO(DelegateRegistry.find(childCancel).get)
       events <- mailboxEvents(parentSid)

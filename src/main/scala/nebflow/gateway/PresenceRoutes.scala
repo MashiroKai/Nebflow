@@ -48,6 +48,13 @@ import scala.concurrent.duration.*
 private[gateway] object PresenceRoutes:
 
   /**
+   * 批量星型子代理面（[[child-batch]]）单请求父数上限。
+   * 面板一行最多显示几十个在册父，128 给足 3–4 轮余量；超过则要求调用方分批
+   * （400，不退化成静默截断），保持「绝不悄悄丢一个父」的读面纪律。
+   */
+  private val MaxChildBatchIds = 128
+
+  /**
    * 绑定即通批 (weixin bind-through, 2026-10-11): the per-channel
    * default-session whitelist — the two cards that carry a defaultSessionId
    * today (feishu since the C4 batch, weixin-ilink since the bind-through
@@ -1087,6 +1094,59 @@ private[gateway] object PresenceRoutes:
                   )
                 }
             }
+        }
+
+      // GET /api/child-batch —— 批量星型子代理面（手机面板卡顿修复批 2026-11-21）。
+      //
+      // 问题：面板每渲一轮 `bgDelegateGroups` Pass 3 都对**每个父**各发一条
+      // `GET /api/delegates/<id>/children`（修前 156 个父 ⇒ 一拍 116+ 条），
+      // 而每条的应答通常只有 1–3 个子条目。这条 N+1 正是诊断批实测的
+      // 「5s 轮询风暴」的放大器（屏蔽该族请求后 9.9fps → 119.8fps）。
+      // 修法 = 与 #2702「/api/chain-digests」**同一手法**：一次请求聚合全部父的
+      // 子集，客户端逐父分配。义务边界与既有 children 腿逐字一致：
+      //   · 父 id 白名单校验（非法/不存在 ⇒ 该键缺席，绝不臆造空集——前端据此
+      //     保旧值，与单父腿的 404 语义同源）；
+      //   · 每父 `findByParent` 单点读（`readTasksSync` 一次整表，**不**全盘扫目录）；
+      //   · 条目投影逐字复用单父腿既有形（`SubAgentTask.asJson`）。
+      // 请求形：`GET /api/child-batch?ids=a,b,c`（逗号分隔，**上限 [[MaxChildBatchIds]]**）。
+      // 应答形：`{v:1, requested:N, count:M, children:{<id>: [...]}}`——只含查到的父；
+      // 未在册的父**缺席**而非空数组（缺席 = 「无读数」，空数组 = 「确无子」）。
+      // 超限 ⇒ 400（显式拒绝而不是静默截断：调用方必须自己分批，绝不偷偷丢父）。
+      // 幂等 GET + ETag 条件协商（同 /subagent-tasks 与 /chains 族）。
+      case req @ GET -> Root / "child-batch" =>
+        withAuth(req) {
+          val ids = req.params
+            .get("ids")
+            .map(_.split(',').toList.map(_.trim).filter(_.nonEmpty))
+            .getOrElse(Nil)
+            .distinct
+          if ids.size > MaxChildBatchIds then
+            BadRequest(
+              Json.obj("error" -> s"too many ids (max $MaxChildBatchIds per request)".asJson)
+            )
+          else
+            ids
+              .traverse { id =>
+                if !nebflow.core.delegate.DelegateRegistry.validId(id) then IO.pure(none[Json])
+                else
+                  IO.blocking(nebflow.core.delegate.DelegateRegistry.find(id)).flatMap {
+                    case None => IO.pure(none[Json])
+                    case Some(_) =>
+                      sharedResources.subAgentTaskStore.findByParent(id).map(children =>
+                        Some(children.asJson)
+                      )
+                  }
+              }
+              .flatMap { found =>
+                val pairs = ids.zip(found).collect { case (id, Some(kids)) => (id, kids) }
+                val body = Json.obj(
+                  "v" -> 1.asJson,
+                  "requested" -> ids.size.asJson,
+                  "count" -> pairs.size.asJson,
+                  "children" -> Json.fromFields(pairs)
+                )
+                HttpCache.conditionalOk(req, body, HttpCache.ofJson(body))
+              }
         }
 
       // Authenticated console scope, with no private content broadcast through WsHub.
@@ -2893,13 +2953,6 @@ private[gateway] object PresenceRoutes:
   // removal. The live face is the per-role model chain
   // (GET/PUT /agents/:name/model), which reads agent.json directly through
   // `SchemePolicy`.
-
-  // (团队功能删除批 team-feature-deletion-20261104 阶段 2) `buildMountedTeamsJson`
-  // 曾在此（原 :2701-2745）：为 GET /api/teams/mounted 拼「已挂团队 + agent 磁贴
-  // 状态 + 团队任务」的响应体。路由与它的唯一调用方一并删除，故整段移除；
-  // 它读的团队会话登记表（listMountedTeams / isBusy）本体已在阶段 3 随团队面删除，
-  // 故此处只是失去本消费者。判定见
-  // reports-evidence/team-feature-deletion/stage2/README.md §B。
 
   // ── Flow editor helpers ──────────────────────────────────
 

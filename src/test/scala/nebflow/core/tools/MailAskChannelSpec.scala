@@ -172,7 +172,8 @@ class MailAskChannelSpec extends FunSuite:
             _ + (askId -> AgentRecord(
               sessionId = askId,
               ref = probe,
-              kind = AgentKind.SubTask,
+              // B3：子代理会话换标为 Delegate（§4.1 衍生清单 3）。
+              kind = AgentKind.Delegate,
               rootSessionId = "nebula-root"
             ))
           )

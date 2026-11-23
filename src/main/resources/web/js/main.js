@@ -2,7 +2,9 @@
 // chatMount.js 里工厂装配 —— 必须是**首位 import**：#input-bar / #search-overlay
 // 的静态壳要在任何应用模块求值取节点之前填充完成（时序契约见 chatMount.js 头注）。
 import './chatMount.js';
-import { renderProviderFailureStatus } from './providerFailureStatus.js';
+import { renderProviderFailureStatus, isSessionFrozenExpired } from './providerFailureStatus.js';
+import { renderLlmFailureCard, findLlmFailureCard, llmFailureKey, createLlmDismissStore } from './llmFailureCard.js';
+import { saveSlotPreferredModel, getAllModelRefs } from './modelPanel.js';
 import { key } from './branding.js'; // MUST be first: storage-key migration runs at module init, before state.js/i18n.js read localStorage.
 import state from './state.js';
 import { installPanelBackSwipeWire as initBackSwipe, hasBackHandler, topBackHandler } from './gesture/backSwipe.js';
@@ -42,7 +44,7 @@ if (document.documentElement.dataset.nfEmbedded === '1') {
 // 验证脚本只能从产品自己的模块图取到**同一实例**，否则键盘闸永远只能验源树。
 installProbeSurface();
 import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
-import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, setTodoListProvider, enhanceMentionSpansInDom, bgHealthNorm } from './utils.js';
+import { createIconsIn, initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, setTodoListProvider, enhanceMentionSpansInDom, bgHealthNorm } from './utils.js';
 // mermaid-md batch (2026-10-23): ONE global hydration point — every markdown
 // face that shares renderMarkdownWithMath gets its ```mermaid placeholders
 // hydrated by this observer (chat bubbles, flow/report cards, popups). The
@@ -108,9 +110,14 @@ import {
   deleteSession, formatSessionTime, setSessionAttention,
   persistUnread, createNewFolder, getCurrentFolderId,
   resetChatForActiveSession,
-  computeAgentStates
+  computeAgentStates,
+  openSettingsPanel
 } from './sidebar.js';
 import { initOnboarding } from './onboarding.js';
+// 卡内快捷设置（provider-notice-card-unify 增量批；作者 09:48「卡片上应该要可以直接设置」）：
+// 窗口受限卡直接读写 provider unavailableWindows —— 写走 sidebar/providersUi.js 的
+// saveProviderWindowsWithAck（与设置面板同一条 saveProviderWithAck 写入链路）。
+import { getProviderWindows, saveProviderWindowsWithAck } from './sidebar/providersUi.js';
 import { rootDisplayName, initRootNameProbe, reprobeRootName } from './rootName.js';
 import {
   showNewSessionModal, hideModals, confirmNewSession,
@@ -124,6 +131,9 @@ import { initMicOrb } from './micOrb.js';
 // 挂 liveSource + boot 首刷 + WS 触发防刷/重连对账。渲染面（taskList/delegateChainView
 // 读取口调用）零改动；夹具在场 = stub 读取口恒夹具优先（harness 兼容缝）。
 import { refreshScopedTasks, onDurableTasksChanged } from './delegateChainProvider.js';
+// 控制台单实例批（2026-10-27）：接管独占客户端腿——模块副作用 = 注册 takeover/
+// takeoverResult 帧消费 + 接管模态按钮接线（叶子模块，只依赖 ws.js/state/i18n）。
+import './takeoverModal.js';
 // keyboard-first 一期（2026-11-01）：键盘层引导 —— 模块副作用 = 建模式指示器 +
 // 注册 meta/edit 双模态直键 + 命令面板命令表（keymap.js / mode.js /
 // commandPalette.js / focusTrap.js 四件，入口仅此一行）。为什么走 import 而不是
@@ -197,7 +207,7 @@ import { initMessages } from './messages.js';
 // 与手机常驻条同一引擎 js/socialSearchCore.js）；随好友门控同拍装配。
 import { initPanelSearch } from './panelSearch.js';
 import { collapseTurn, failTurn } from './turnGroup.js';
-import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
+import { initCanvas, restoreTabs, closeCanvas, openCanvas, restoreOwnSeatDraft } from './canvas.js';
 import { initAskDock } from './askDock.js';
 // canvas-inline-diff-review（2026-11-16）：ask_edit/ask_write 直接落盘的 canvas
 // 审阅页签（原文档内联 diff 逐块/全量接受拒绝）。
@@ -1197,7 +1207,11 @@ onMessage('textDelta', (msg, view) => {
   if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
   phaseStampIfMissing(sid); // thinkingtimer-fix：段未开则开段（重试重流不重置既有段）
   // Accumulate text for ALL sessions
-  if (sid) state.sessionTexts[sid] = (state.sessionTexts[sid] || '') + msg.delta;
+  if (sid) {
+    state.sessionTexts[sid] = (state.sessionTexts[sid] || '') + msg.delta;
+    // 追加批（2026-11-22）：缓冲身份 = 帧上服务端戳（`=== true` 才是 root；缺戳 ⇒ false，不猜）。
+    state.sessionTextIdentity[sid] = msg.isRoot === true;
+  }
   resetStreamTimeout(sid);
   state.lastStreamActivity = Date.now();
   armBusyFromStream(sid); // ①-2: gated (see armBusyFromStream)
@@ -1230,7 +1244,7 @@ onMessage('textDone', (msg, view) => {
     // (must reset between turns to avoid cross-turn concatenation).
     const thinkingText = state.sessionThinkingBuffers[sid] || '';
     saveMsg({type: 'ai', text: state.sessionTexts[sid], thinking: thinkingText || undefined}, sid);
-    state.pendingRestore[sid] = { text: state.sessionTexts[sid], thinking: thinkingText || undefined };
+    state.pendingRestore[sid] = { text: state.sessionTexts[sid], thinking: thinkingText || undefined, isRoot: state.sessionTextIdentity[sid] === true };
     delete state.sessionTexts[sid];
     if (state.sessionThinkingBuffers[sid]) delete state.sessionThinkingBuffers[sid];
   }
@@ -1524,7 +1538,7 @@ onMessage('done', (msg, view) => {
         saveMsg({type: 'ai', text, thinking: thinkingText || undefined, durationMs, model: msg.model, terminal: true}, msg.sessionId);
         // pendingRestore only contains the LAST round's data (not concatenated across rounds),
         // so dedup against backend history (last Ai message) works correctly.
-        state.pendingRestore[msg.sessionId] = { text, thinking: thinkingText || undefined, durationMs, model: msg.model };
+        state.pendingRestore[msg.sessionId] = { text, thinking: thinkingText || undefined, durationMs, model: msg.model, isRoot: state.sessionTextIdentity[msg.sessionId] === true };
       }
       delete state.sessionTexts[msg.sessionId];
       delete state.sessionThinkingBuffers[msg.sessionId];
@@ -1887,15 +1901,60 @@ onMessage('modelUnavailable', (msg, view) => {
   // ——任何槽共用同一张（`msg.slot` 是载荷字段）。best-effort 追加进当前会话流
   // （容器缺失 = 不抛，卡仍可就地由调用方挂载）。
   try {
-    const host =
-      document.getElementById('chat-stream') ||
-      document.querySelector('.chat-stream') ||
-      document.getElementById('messages');
+    const host = llmFailureHost();
     const card = renderModelUnavailable(msg);
     if (host && card) host.appendChild(card);
     else console.warn('[modelUnavailable] no chat container; card not mounted', msg && msg.slot);
   } catch (e) {
     console.warn('[modelUnavailable] render failed', e);
+  }
+});
+
+// LLM 失败卡片（卡片批 2026-11-21；第 3 轮：聚合键 = 层级+模型）：非阻塞。llmFailure 出卡/更新
+// （同层级同模型组整体替换，卡上列出受影响代理）；llmFailureRecovered 组清空后收卡。
+// 换模型经 saveSlotPreferredModel（与设置页同一写入口）。
+// 消息流容器 = #chat（index.html；与 chat.js/main.js 其它渲染同口径）。
+function llmFailureHost() {
+  return document.getElementById('chat');
+}
+// 已消失的组（正文点按 / 关闭钮 / 换模型成功淡出）：同组在本次失败期内不再复出；
+// llmFailureRecovered 清除该组记录。与卡片同口径，纯内存（不落盘；页面重载后以后端快照为准）。
+const llmDismissed = createLlmDismissStore();
+onMessage('llmFailure', (msg) => {
+  try {
+    const host = llmFailureHost();
+    const key = llmFailureKey(msg.layer, msg.modelRef);
+    if (!host) return console.warn('[llmFailure] no chat container; card not mounted', key);
+    if (llmDismissed.has(key)) return;
+    const stale = findLlmFailureCard(host, key);
+    if (stale) stale.remove();
+    const card = renderLlmFailureCard(msg, {
+      saveModel: saveSlotPreferredModel,
+      modelRefs: getAllModelRefs,
+      onDismiss: (k) => llmDismissed.add(k),
+      // 窗口受限型「去设置」：同一设置面板打开入口（活动栏同款，单点接线）。
+      openSettings: openSettingsPanel,
+      // 窗口受限型卡内直接设置（作者 09:48 增量令）：读 live 配置 + 写走设置面板同一链路；
+      // 写入确认后不手工收卡 —— 配置生效 ⇒ 引擎重试成功 ⇒ llmFailureRecovered 自动清卡。
+      getWindows: getProviderWindows,
+      saveWindows: saveProviderWindowsWithAck,
+    });
+    host.appendChild(card);
+    createIconsIn(card);
+  } catch (e) {
+    console.warn('[llmFailure] render failed', e);
+  }
+});
+
+onMessage('llmFailureRecovered', (msg) => {
+  try {
+    const key = llmFailureKey(msg.layer, msg.modelRef);
+    llmDismissed.clear(key);
+    const host = llmFailureHost();
+    const card = host && findLlmFailureCard(host, key);
+    if (card) card.remove();
+  } catch (e) {
+    console.warn('[llmFailureRecovered] collapse failed', e);
   }
 });
 
@@ -2573,6 +2632,7 @@ function applyDelegateFrozen(rootSid, sid, patch) {
   }
   const view = rootSid ? findViewBySessionId(rootSid) : null;
   if (view) renderBgAgentDropdown && renderBgAgentDropdown();
+  if (touched) refreshFreezeSurfaces();
   return touched;
 }
 
@@ -2642,10 +2702,12 @@ onMessage('delegateWoken', (msg) => {
       }
       if (msg.status) info.status = msg.status;
       info.waiting = undefined;
+      // 项 3：恢复信号显式标记（供失败卡判过期；不能用 frozen===false，普通行默认即 false）。
+      info.freezeRecovered = true;
       touched = true;
     }
   }
-  if (touched) renderBgAgentDropdown && renderBgAgentDropdown();
+  if (touched) { renderBgAgentDropdown && renderBgAgentDropdown(); refreshFreezeSurfaces(); }
 });
 
 // 面板「唤醒」动作回执（delegateWakeResult）：成功 ⇒ 撤掉冻结标记（同一会话续跑，
@@ -2674,13 +2736,14 @@ onMessage('delegateWakeResult', (msg) => {
     }
     if (!touched) {
       // 行不在本地面板（另一台设备/已刷新）也要落地：交给扁平通道兜底。
-      applyDelegateFrozen(null, sid, ok ? { frozen: false, frozenSince: null, frozenReason: '' } : {});
+      applyDelegateFrozen(null, sid, ok ? { frozen: false, frozenSince: null, frozenReason: '', freezeRecovered: true } : {});
     }
   } else {
     applyDelegateFrozen(null, sid, ok
       ? {
         frozen: false, frozenSince: null, frozenReason: '', frozenDetail: '', dormantHours: 0,
         freezeKind: '', needsHuman: false, freezeReasonWire: '', freezeReason: null, freezeResumeAt: null,
+        freezeRecovered: true,
       }
       : {});
   }
@@ -2714,12 +2777,22 @@ onMessage('delegateFreezeDigest', (msg) => {
       autoResumesExhausted: !!it.autoResumesExhausted,
     });
   }
-  for (const view of Object.values(chatViews)) {
-    renderProviderFailureStatus(view, state.freezeDigest, (id) =>
-      import('./bgAgentPopup.js').then(m => m.openStepPopup(id)));
-  }
+  refreshFreezeSurfaces();
   renderBgAgentDropdown && renderBgAgentDropdown();
 });
+
+/**
+ * 冻结失败卡面的单一重绘口（项 3 · 2026-11-23）：digest 帧、恢复帧（delegateWoken）、
+ * 冻结标记变更（applyDelegateFrozen）、唤醒回执都走这里。过期判据读行表的显式
+ * `frozen === false`，见 providerFailureStatus.isSessionFrozenExpired。
+ */
+function refreshFreezeSurfaces() {
+  for (const view of Object.values(chatViews)) {
+    renderProviderFailureStatus(view, state.freezeDigest,
+      (id, title) => import('./bgAgentPopup.js').then(m => m.openStepPopup(id, '', title)),
+      (id) => isSessionFrozenExpired(state.sessionBgAgents, id));
+  }
+}
 
 onMessage('agentDone', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
@@ -4163,7 +4236,10 @@ onMessage('bgRateAlert', (msg) => {
 });
 
 // --- /ask command ---
-import { selectionAskFrame, initSelectionAsk } from './selectionAsk.js';
+import { selectionAskFrame, selectionExplainFrame, initSelectionAsk } from './selectionAsk.js';
+// 选区解释（r2 批 2026-11-23）：小模型一次解释的回包（非 /ask 会话帧）。
+onMessage('selectionExplain', (msg) => { selectionExplainFrame('selectionExplain', msg); });
+onMessage('selectionExplainError', (msg) => { selectionExplainFrame('selectionExplainError', msg); });
 onMessage('askTextDelta', (msg, view) => {
   if (selectionAskFrame('askTextDelta', msg)) return;
   const sid = msg.sessionId || state.activeSessionId;
@@ -4545,6 +4621,10 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
   };
   const ro = new ResizeObserver(updateChatPadding);
   ro.observe(inputArea);
+  // 项 2（2026-11-23 作者令「消息被输入框挡一半」）：reserve 公式 = #chat 底边 − 输入框顶边，
+  // 两端任一移动都会改变 reserve。只观察输入框时，#chat 底边单独移动（安全区/dock/地址栏
+  // 变化）不会重算 ⇒ reserve 陈旧、末条被挡。把 #chat 自身也纳入观察。
+  ro.observe(chat);
   // A virtual keyboard / browser chrome can move the composer without changing
   // its own size, so ResizeObserver alone will not refresh the scroll reserve.
   // visualViewport also reports keyboard-driven viewport changes on mobile.
@@ -4791,6 +4871,8 @@ restoreQueue();
 // 是智能体入口的继任默认页。restoreTabs 异步语义不变（F1, 2026-08-30）。
 restoreTabs().then((restored) => {
   if (!restored) openPlugins();
+  // 打开页签：只恢复本页签自己的失权草稿（按页签隔离；无草稿即空操作）。
+  restoreOwnSeatDraft();
 });
 // Auto-restore is triggered from sessionList handler (needs activeSessionId)
 initScheduledTask();

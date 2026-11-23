@@ -73,22 +73,10 @@ object UpdateCommand extends CliCommand:
                 )
               )
             case None =>
-              // Local channel update (existing behavior, unchanged)
-              IO.blocking {
-                import sys.process.*
-                val isWindows = System.getProperty("os.name").toLowerCase.contains("win")
-                val script =
-                  if ctx.args.get("beta").contains("true") then
-                    if isWindows then
-                      """powershell -Command "$env:CHANNEL='beta'; iwr """ + nebflow.shared.Branding.installPs1Url + """ | iex" """
-                    else "curl -fsSL " + nebflow.shared.Branding.installUrl + " | sh -s -- --beta"
-                  else if isWindows then
-                    """powershell -Command "& { iwr """ + nebflow.shared.Branding.installPs1Url + """ | iex }" """
-                  else "curl -fsSL " + nebflow.shared.Branding.installUrl + " | sh"
-                val exitCode = script.!
-                if exitCode == 0 then CliResult.text("Update completed")
-                else CliResult.Error("Update failed", exitCode)
-              }
+              // Local channel update: the installer is fetched to a temp file
+              // first and only then executed; a download failure and an installer
+              // failure are reported apart (see localChannelInstall).
+              IO.blocking(localChannelInstall(ctx.args.get("beta").contains("true"), isWindows))
 
     // ── two-phase local update（台账 #916）────────────────────────────────
 
@@ -211,6 +199,72 @@ object UpdateCommand extends CliCommand:
 
     private def isWindows: Boolean = System.getProperty("os.name").toLowerCase.contains("win")
 
+    private final case class Captured(exitCode: Int, output: String)
+
+    /** Run a command, merged stdout+stderr. A missing binary is exit 127, never a throw. */
+    private def runCapture(cmd: Seq[String], extraEnv: Map[String, String]): Captured =
+      try
+        val pb = new ProcessBuilder(cmd*)
+        pb.redirectErrorStream(true)
+        extraEnv.foreach((k, v) => pb.environment().put(k, v))
+        val p = pb.start()
+        val out = new String(p.getInputStream.readAllBytes(), "UTF-8")
+        Captured(p.waitFor(), out)
+      catch case e: java.io.IOException => Captured(127, e.getMessage)
+
+    /** Last 15 non-blank output lines, for the failure message. */
+    private def outputTail(out: String): String =
+      val lines = out.linesIterator.map(_.trim).filter(_.nonEmpty).toList
+      if lines.isEmpty then "" else "\n  installer output (tail):\n    " + lines.takeRight(15).mkString("\n    ")
+
+    /**
+     * Local channel update (stable or --beta). Two-step on purpose: the installer
+     * is downloaded to a temp file (curl -f / Invoke-WebRequest -OutFile), checked
+     * non-empty, then executed. The former `curl | sh` pipe reported "Update
+     * completed" for an empty/failed download (sh exits 0 on empty input). Each
+     * step has its own failure message; the temp file is always removed.
+     */
+    private[cli] def localChannelInstall(beta: Boolean, isWindows: Boolean): CliResult =
+      val url = if isWindows then nebflow.shared.Branding.installPs1Url else nebflow.shared.Branding.installUrl
+      val tmp = java.nio.file.Files.createTempFile("stand-install-", if isWindows then ".ps1" else ".sh")
+      try
+        val fetch =
+          if isWindows then
+            runCapture(
+              Seq(
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                s"Invoke-WebRequest -UseBasicParsing -Uri '$url' -OutFile '${tmp.toString}'"
+              ),
+              Map.empty
+            )
+          else runCapture(Seq("curl", "-fsSL", "-o", tmp.toString, url), Map.empty)
+        if fetch.exitCode != 0 then
+          CliResult.Error(
+            s"Update failed: could not download the installer from $url (download exit ${fetch.exitCode})${outputTail(fetch.output)}",
+            fetch.exitCode
+          )
+        else if java.nio.file.Files.size(tmp) == 0L then
+          CliResult.Error(s"Update failed: the installer downloaded from $url is empty — nothing was run", 1)
+        else
+          val run =
+            if isWindows then
+              runCapture(
+                Seq("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", tmp.toString),
+                if beta then Map("CHANNEL" -> "beta") else Map.empty
+              )
+            else runCapture(Seq("sh", tmp.toString) ++ (if beta then Seq("--beta") else Nil), Map.empty)
+          if run.exitCode == 0 then CliResult.text("Update completed")
+          else
+            CliResult.Error(
+              s"Update failed: the installer exited with code ${run.exitCode}${outputTail(run.output)}",
+              run.exitCode
+            )
+      finally java.nio.file.Files.deleteIfExists(tmp)
+
     /** Trigger update on a remote device via the gateway (P2P first, relay fallback). */
     private def remoteUpdate(deviceName: String, beta: Boolean): IO[CliResult] =
       GatewayClient.create.flatMap {
@@ -271,8 +325,15 @@ object UninstallCommand extends CliCommand:
             """powershell -Command "& { iwr """ + nebflow.shared.Branding.uninstallPs1Url + """ | iex }" """
           else "curl -fsSL " + nebflow.shared.Branding.uninstallUrl + " | sh"
         val exitCode = script.!
-        if exitCode == 0 then CliResult.text("Uninstall completed")
-        else CliResult.Error("Uninstall failed", exitCode)
+        exitCode match
+          case 0 => CliResult.text("Uninstall completed")
+          // 3 = partial (release/uninstall.ps1): the rest is removed; locked
+          // leftovers are listed above and in the residue file. Not a failure.
+          case 3 =>
+            CliResult.text(
+              "Uninstall partially completed: some files were still locked and are listed above (residue file in TEMP). Reboot and re-run 'stand uninstall', or delete them by hand."
+            )
+          case _ => CliResult.Error("Uninstall failed", exitCode)
       }
 
   end UninstallRun
@@ -349,8 +410,9 @@ object StopCommand extends CliCommand:
     deps: ProcessManager.StopDeps = ProcessManager.StopDeps()
   ): IO[CliResult] =
     ProcessManager.stopHardened(opts, deps).map {
+      // 退出码统一（作者 15:32 批）：未运行 = 3（与 status 一致），不再按成功 0。
       case ProcessManager.StopOutcome.NotRunning =>
-        CliResult.Exit(0, s"${nebflow.shared.Branding.productName} is not running")
+        CliResult.Exit(3, s"${nebflow.shared.Branding.productName} is not running")
       case ProcessManager.StopOutcome.Stopped(message) =>
         CliResult.Exit(0, message)
       case ProcessManager.StopOutcome.Refused(reason) =>

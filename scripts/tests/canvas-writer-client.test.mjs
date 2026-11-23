@@ -37,21 +37,22 @@ test('preempted client returns to reader and rejects writing', async () => {
 test('failed save transitions to unsynced reader, drafts the buffer, without canvas takeover handler', async () => {
   const source = readFileSync(new URL('../../src/main/resources/web/js/canvas.js', import.meta.url), 'utf8');
   const begin = source.indexOf('function writerChanged(');
-  const end = source.indexOf('const writerRejectionNotices', begin);
+  const end = source.indexOf('const canvasWriter = createCanvasWriterClient(', begin);
   assert.ok(begin >= 0 && end > begin);
   const notices = [];
   const drafts = [];
   const context = { localUnsynced: false, writerStatusEl: null, writerClaimEl: null,
-    captureSeatDraft: () => drafts.push(1),
+    captureSeatDraft: () => drafts.push(1), window: { __showToast: m => notices.push(m) },
     serverPersistTimer: null, pendingPersistPayload: null, persistDirty: false, clearTimeout };
   vm.runInNewContext(source.slice(begin, end), context);
   const a = client({ claim: async () => ({role: 'writer', epoch: 1}), put: async () => false,
-    changed: context.writerChanged, failed: () => notices.push('Canvas 保存失败，本地变更已保留。') });
+    changed: context.writerChanged, failed: () => { context.localUnsynced = true; context.writerChanged('reader'); } });
   await a.claim();
   assert.equal(await a.put({}), false);
   assert.equal(a.role(), 'reader');
   assert.equal(context.localUnsynced, true);
-  assert.deepEqual(notices, ['Canvas 保存失败，本地变更已保留。']);
+  // 保存失败静默保留（作者令 2026-11-22）：失败路径不产生任何通知。
+  assert.deepEqual(notices, [], 'a refused save must stay silent (no toast)');
   // 静默接管批（2026-11-19）：失权端**静默**落草稿 —— 丢席位的那一刻恰落一次。
   assert.deepEqual(drafts, [1], 'losing the writer seat must stash the buffer exactly once');
   assert.doesNotMatch(source.slice(begin, end), /showCanvasTakeover|takeoverModal|localStorage\.removeItem/);
@@ -78,28 +79,19 @@ test('reader can close shared tabs consecutively in order', () => {
   assert.equal(context.activeTabId, 'c');
 });
 
-test('reader guards are silent and server rejections notify once per reason', () => {
+test('reader guards are silent (no notice surface on the canvas write path)', () => {
   const source = readFileSync(process.env.CANVAS_TEST_SOURCE || new URL('../../src/main/resources/web/js/canvas.js', import.meta.url), 'utf8');
   const notices = [];
-  // 2026-11-18 canvas-save-failure 批：被切片求值的通知区块现在多了两个模块级依赖
-  // —— branding 的 key()（派生去重账存储键）与 sessionStorage（跨刷新去重账）。
-  // 这里按沙箱形态补上：键名原样透传，sessionStorage 取空/写入丢（页内 Set 仍生效）。
+  // 2026-11-22 作者令：保存失败弹窗已删，写路径不再有通知面；reader 守卫只剩静默拒绝。
   const context = { window: { __showToast: message => notices.push(message) }, writerStatusEl: null,
     localUnsynced: false, applyingLiveTabsFrame: false, canvasWriter: { role: () => 'reader' },
-    key: s => s, sessionStorage: { getItem: () => null, setItem: () => {} } };
-  const noticeStart = source.indexOf('const writerRejectionNotices = new Set();');
-  const start = noticeStart < 0 ? source.indexOf('function writerNotice(') : noticeStart;
-  const end = source.indexOf('const canvasWriter =', start);
+    key: s => s };
   const guardStart = source.indexOf('function allowCanvasMutation()');
   const guardEnd = source.indexOf('// F1:', guardStart);
-  assert.ok(start >= 0 && end > start && guardStart >= 0 && guardEnd > guardStart);
-  vm.runInNewContext(source.slice(start, end) + source.slice(guardStart, guardEnd), context);
+  assert.ok(guardStart >= 0 && guardEnd > guardStart);
+  vm.runInNewContext(source.slice(guardStart, guardEnd), context);
   assert.equal(context.allowCanvasMutation(), false);
   assert.deepEqual(notices, []);
-  context.writerNotice('rejected', 'save:409');
-  context.writerNotice('rejected', 'save:409');
-  context.writerNotice('other rejection', 'save:403');
-  assert.deepEqual(notices, ['rejected', 'other rejection']);
 });
 
 // ── 规则②三条断言（2026-11-18 作者令：多开只做检测，第二窗口只读 + 服务端拒写
@@ -156,11 +148,12 @@ test('②b a never-granted claim never reaches the shared PUT and reports the re
   assert.deepEqual(notices, ['failed']);
 });
 
-test('③ a refused write carries the real save-failure copy, never takeover/yield wording', () => {
+test('③ a refused write is kept silently locally (no toast, no takeover/yield wording)', () => {
   const source = readFileSync(new URL('../../src/main/resources/web/js/canvas.js', import.meta.url), 'utf8');
   const wire = /failed:\s*\(\)\s*=>\s*\{([^}]*)\}/.exec(source);
   assert.ok(wire, 'canvas.js must wire a `failed` handler for refused writes');
-  assert.match(wire[1], /保存失败/);
+  assert.match(wire[1], /localUnsynced\s*=\s*true/, 'the local fallback must stay');
+  assert.doesNotMatch(wire[1], /__showToast|showToast|writerNotice|保存失败/, 'the save-failure popup is retired');
   assert.doesNotMatch(wire[1], /接管|让出|取回|控制权/);
   assert.doesNotMatch(source, /takeover/i, 'the canvas producer must carry no console-takeover surface');
 });

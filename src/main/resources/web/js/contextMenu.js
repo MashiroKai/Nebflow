@@ -94,12 +94,17 @@ export function showPopupMenu(x, y, items) {
   // keyboard-first 一期：整张菜单入层栈。落焦 → 首项；Tab/Shift+Tab 在菜单内
   // 首尾相接；任意关闭路径（点外 / Esc / 选项点击 / resize / blur）都会经
   // hidePopupMenu → release 把焦点送回触发元素。
-  // 不声明 onEscape：Esc 仍由下方既有 capture 监听独占（它要 stopPropagation
-  // 以免同一击连带关掉宿主弹窗，这段语义逐字保留）。
+  // Esc 归层栈（keyboard-focus-audit 批 G1，2026-11-21 作者令「Esc 收进
+  // focusTrap 层栈 onEscape」）：focusTrap 的 capture 处理器对栈顶声明了 onEscape
+  // 的层先 preventDefault + stopPropagation 再调用 —— 与下方既有 capture 监听
+  // 「菜单开着时这一击不传导给宿主弹窗」逐条等价（2026-09-18 msgmenu 批的语义
+  // 由层栈承载，不再由本文件手写）。层栈尚未安装时无法入栈的退化路径见下方
+  // keydown 兜底。
   menuLayer = pushLayer(menuEl, {
     initial: /** @type {HTMLElement|null} */ (menuEl.querySelector('button')),
     contain: true,
     name: 'context-menu',
+    onEscape: () => hidePopupMenu(),
   });
 }
 
@@ -110,15 +115,34 @@ document.addEventListener('contextmenu', (e) => {
   // A right-click outside the menu closes it; menu items handle themselves.
   if (menuEl && !(e.target instanceof Element && menuEl.contains(e.target))) hidePopupMenu();
 }, true);
+// ── 行导航（G1，keyboard-focus-audit 批 2026-11-21）────────────────────────
+// 口径逐条照抄既有下拉（dropdown.js 的行导航：↑↓ 循环、Home/End 首末、
+// 当前项不在菜单内时按方向取首/末）。菜单开着时这组键归菜单：capture 阶段
+// preventDefault + stopPropagation，避免宿主面（文件树 / 叠卡 / 列表）同时响应。
+const MENU_ITEM_SEL = '[role="menuitem"], [role="menuitemradio"]';
+function menuItems() {
+  if (!menuEl) return [];
+  return [...menuEl.querySelectorAll(MENU_ITEM_SEL)]
+    .filter((n) => n instanceof HTMLElement && !n.hasAttribute('disabled') && !(n instanceof HTMLButtonElement && n.disabled));
+}
 document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape') return;
-  // 2026-09-18 msgmenu 批（缺陷修复，零行为变化对外）：菜单**开着**时这一下 Esc
-  // 归菜单独占 —— 不 stopPropagation 的话，宿主弹窗自己的 Esc 处理器（bubble 阶段）
-  // 会在菜单已被本处理器关掉之后**同一击**再跑一次 ⇒ 聊天窗被一起关掉
-  // （实测：右键出菜单 → Esc → 菜单与窗同时消失）。既有唯一消费者（联系人行菜单）
-  // 不在任何弹窗里 ⇒ 该行对其零影响。
-  if (menuEl) e.stopPropagation();
-  hidePopupMenu();
+  if (!menuEl) return;
+  const k = e.key;
+  if (k !== 'ArrowDown' && k !== 'ArrowUp' && k !== 'Home' && k !== 'End') return;
+  const items = menuItems();
+  if (!items.length) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const idx = items.indexOf(/** @type {HTMLElement} */ (document.activeElement));
+  let next;
+  if (k === 'Home') next = 0;
+  else if (k === 'End') next = items.length - 1;
+  else if (idx < 0) next = k === 'ArrowUp' ? items.length - 1 : 0;
+  else next = k === 'ArrowUp' ? (idx - 1 + items.length) % items.length : (idx + 1) % items.length;
+  items[next].focus();
 }, true);
+// Esc：唯一所有者 = focusTrap 层栈（见 showPopupMenu 的 onEscape）。语义与
+// 2026-09-18 msgmenu 批等价：菜单开着时这一击不传导给宿主弹窗（focusTrap 对
+// 栈顶 onEscape 先 preventDefault + stopPropagation 再调用）。
 window.addEventListener('resize', hidePopupMenu);
 window.addEventListener('blur', hidePopupMenu);

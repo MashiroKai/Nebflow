@@ -167,6 +167,8 @@
 .explorer-context-menu button.danger,
 .fm-context-menu button.danger,
 .canvas-tab-context-menu button.danger {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: var(--btn-danger-ink);
   outline: 1px solid var(--btn-danger-stroke);
   outline-offset: calc(-1 * 1px);
@@ -175,6 +177,8 @@
   .explorer-context-menu button.danger:hover,
   .fm-context-menu button.danger:hover,
   .canvas-tab-context-menu button.danger:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
     background: var(--btn-danger-tint);
     color: var(--btn-danger-ink);
   }
@@ -209,6 +213,8 @@
   flex-grow: 1;
 }
 .explorer-root-drop-margin.drop-target {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: rgb(var(--sapphire) / 0.1);
 }
 
@@ -218,6 +224,11 @@
   align-items: center;
   gap: var(--ds-space-1);
   padding: var(--ds-space-1) var(--ds-space-2);
+  /* 圆角标准批（作者令 2026-11-22 08:03「我说了要圆角的框」「落为标准」；规范
+     design-language/references/frontend/focus-ring-spec.md §2.6）：行族不再是方角
+     造型件 —— 6px = --ds-radius-chip 档；焦点环随 border-radius 走（outline 自动贴
+     行角）。同一批废除了 scripts/focus-ring-exemptions.json 的方角登记豁免机制。 */
+  border-radius: var(--ds-radius-chip);
   cursor: pointer;
   user-select: none;
   font-size: var(--ds-fs-hint);
@@ -773,6 +784,22 @@ body.canvas-open.canvas-overlay #canvas-panel {
    通栏变体）不受桌面居中/排他规则（自有形态）；卡窗（body.card-window）随
    件一批并入面板同款居中（下方 §卡窗 段）。deck 叠卡态（面板 = 前卡）顶中
    即 v2① 卡顶名称条位，无需另钉。 */
+.canvas-writer-controls {
+  position: absolute;
+  top: var(--cv-head-clear, 60px);
+  right: 14px;
+  z-index: 35;
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2, 8px);
+  padding: 6px 10px;
+  border-radius: var(--ds-radius-input);
+  background: var(--bg-primary, white);
+  color: var(--text-primary, black);
+  font-size: var(--ds-fs-hint, 12px);
+}
+.canvas-writer-controls button { white-space: nowrap; }
+
 .canvas-header {
   position: absolute;
   top: 10px;
@@ -1119,6 +1146,8 @@ body:not(.mobile-layer) .canvas-header .canvas-close-btn {
    inset ring, the same glass language as .explorer-item.drop-target (no accent
    bars). Same 1px/13% value family, applied to the pane instead of a row. */
 .canvas-tab-pane.canvas-drop-target {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: rgb(var(--sapphire) / 0.06);
   box-shadow: inset 0 0 0 1px rgb(var(--sapphire) / 0.45);
 }
@@ -1769,6 +1798,8 @@ body:not(.canvas-open) #canvas-capsule-ring { display: none !important; }
    uifix ③a：叠卡态投影 = 前景档 token（随 look 三版联动）。
    UI 批 ⑤：描边随卡族一并退役（层次靠明暗差），投影羽化融边。 */
 #canvas-panel.stacked {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   transform: translateY(var(--stack-shift, 8px)) scale(var(--stack-scale, 0.85));
   border-color: transparent;
   box-shadow:
@@ -1842,6 +1873,9 @@ body:not(.canvas-open) #canvas-capsule-ring { display: none !important; }
   pointer-events: none;
 }
 .deck-card .card-top {
+  /* 全面圆角批 2026-11-22（§2.6）：叠卡卡头自带底色+下边线 = 画框面（几何归它自己，
+     上两角跟卡壳、下两角方 —— 用 inherit 跟随卡壳，避免在内壁留缝）。 */
+  border-radius: inherit;
   flex: none;
   display: flex;
   align-items: center;
@@ -1960,6 +1994,8 @@ body:not(.canvas-open) #canvas-capsule-ring { display: none !important; }
 .deck-card .ln.w85 { width: 85%; } .deck-card .ln.w100 { width: 100%; }
 .deck-card .thumb-pad { position: absolute; inset: 12px 14px; }
 .deck-card .thumb-grid {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute;
   inset: 0;
   background:
@@ -1967,10 +2003,14 @@ body:not(.canvas-open) #canvas-capsule-ring { display: none !important; }
     repeating-linear-gradient(90deg, var(--bar-3) 0 1px, transparent 1px 34px);
 }
 .deck-card .thumb-grid .ghead {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute; top: 0; left: 0; right: 0; height: 20px;
   background: rgb(var(--sapphire) / 0.10); border-bottom: 1px solid rgb(var(--sapphire) / 0.18);
 }
 .deck-card .thumb-img {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute;
   inset: 0;
   background: linear-gradient(135deg, rgb(var(--sapphire) / 0.38), rgb(var(--sapphire) / 0.10) 60%, rgb(var(--sapphire) / 0.22));
@@ -2016,7 +2056,9 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   #deck-layer,
   #deck-fab,
   .canvas-title .t-inner,
-  .cr-capsule { transition-duration: 0.01s !important; }
+  .cr-capsule { transition-duration: 0.01s !important;}
+#deck-fab {
+}
 }
 
 /* 精修③补：OS 文件拖到居中标题条 = 开新签（标签条退役后的替代落区，v1 备忘） */
@@ -2262,10 +2304,14 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   font-size: var(--ds-fs-hint);
 }
 .canvas-md-viewer th, .canvas-md-viewer td {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   border: 1px solid var(--color-border);
   padding: var(--ds-space-1) var(--ds-space-2);
 }
-.canvas-md-viewer th { background: var(--color-surface, #f5f5f5); font-weight: 600; }
+.canvas-md-viewer th {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--color-surface, #f5f5f5); font-weight: 600; }
 .canvas-md-viewer a { color: var(--color-primary); }
 .canvas-md-viewer hr { border: none; border-top: 1px solid var(--color-border); margin: var(--ds-space-2) 0; }
 .canvas-md-viewer strong { font-weight: 600; }
@@ -2338,6 +2384,8 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   position: relative;
 }
 .epub-reader-content {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   padding: var(--ds-space-6) 36px;
   font-size: var(--ds-fs-callout);
   line-height: 1.8;
@@ -2384,6 +2432,8 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   background: var(--color-frame-input-bg, rgba(127, 127, 127, 0.08));
 }
 .epub-reader-content [data-nf-res-miss] {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   display: inline-block;
   min-width: 48px;
   min-height: 24px;
@@ -2447,6 +2497,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   font-size: var(--ds-fs-btn);
   cursor: pointer;
   transition: background 0.15s;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .epub-menu-btn:hover { background: var(--glass-control-bg-hover); }
@@ -2455,6 +2506,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 .epub-menu-btn.on {
   border-color: rgb(var(--brand-green) / 0.5);
   background: rgb(var(--brand-green) / 0.14);
+  box-shadow: var(--btn-shadow);
 }
 .epub-menu-close {
   display: block;
@@ -2494,6 +2546,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   transition: background 0.15s, color 0.15s;
   user-select: none;
   padding: 0;
+  box-shadow: var(--btn-shadow);
 }
 .epub-nav-btn[hidden] { display: none; }
 @media (hover: hover) {
@@ -2620,7 +2673,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   flex-direction: column;
   padding: var(--ds-space-block-y) var(--ds-space-2);
   border-right: 1px solid var(--glass-border);
-  border-radius: 0 12px 12px 0;
+  border-radius: 0 var(--ds-radius-xl) var(--ds-radius-xl) 0;
   background: var(--glass-bg);
   box-shadow: var(--frost-shadow);
   font-size: var(--ds-fs-body);
@@ -2682,6 +2735,8 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   pointer-events: none;
 }
 .epub-flip-layer {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute;
   inset: 0;
   overflow: hidden;
@@ -2691,6 +2746,8 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 }
 .epub-flip-layer.rebound { transition-duration: 180ms; }
 .epub-flip-page {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: relative;
   overflow: hidden;
   background: var(--epub-bg, var(--color-surface));
@@ -2704,8 +2761,12 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   opacity: 0;
   z-index: 2;
 }
-.epub-flip-shadow.l { left: 0; background: linear-gradient(to right, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0)); }
-.epub-flip-shadow.r { right: 0; background: linear-gradient(to left, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0)); }
+.epub-flip-shadow.l {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); left: 0; background: linear-gradient(to right, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0)); }
+.epub-flip-shadow.r {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); right: 0; background: linear-gradient(to left, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0)); }
 @media (prefers-reduced-motion: reduce) {
   .epub-flip-layer { transition-duration: 0.01s !important; }
 }
@@ -2716,6 +2777,8 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
    后的自持滚动容器——排版对齐 epub 纸质档（同字号/行距/段距族），无 chrome
    底栏/翻页/TOC；\f 段界只作分段视觉距（段间 28px + 细分隔线）。 ── */
 .canvas-txt-scroll {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute;
   inset: 0;
   overflow-y: auto;
@@ -2858,7 +2921,7 @@ mark.nf-anno[data-anno-stale] {
     max-height: 60%;
     border-right: none;
     border-top: 1px solid var(--glass-border);
-    border-radius: 12px 12px 0 0;
+    border-radius: var(--ds-radius-xl) var(--ds-radius-xl) 0 0;
   }
 }
 
@@ -2901,6 +2964,8 @@ mark.nf-anno[data-anno-stale] {
    任意按下即拖动画布。光标/hand 语义随 pan-enabled 门（image.js hand 钮 /
    按住 Space 才挂类），默认态 cursor:default。 */
 .canvas-image-viewport {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   /* A restrained light mat keeps dark line art readable without full white glare. */
   background: #e8eaed;
   flex: 1;
@@ -3054,9 +3119,8 @@ body.mobile-layer .canvas-video-viewer {
   outline: none;
 }
 .canvas-video-stage:focus-visible {
-  outline: var(--btn-ring-w) solid var(--btn-ring);
-  outline-offset: var(--btn-ring-offset);
-  border-radius: var(--ds-radius-input);
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* ── 自研控件条（流内；永不压在画面像素上）────────────────────────────────
@@ -3157,8 +3221,8 @@ body.mobile-layer .canvas-video-viewer {
 }
 /* 滑轨键盘焦点：与按钮同一个描边环口径（环是线不是影）。 */
 :is(.cvv-scrub, .cvv-vol):focus-visible {
-  outline: var(--btn-ring-w) solid var(--btn-ring);
-  outline-offset: var(--btn-ring-offset);
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* 音量条 = 桌面档（作者规格「音量（桌面）」）：无 hover 面与手机层都不给 ——
@@ -3322,6 +3386,7 @@ body.mobile-layer .cvv-time {
 .canvas-zoom-btn.canvas-pan-toggle.is-on {
   background: rgb(var(--sapphire) / 0.14);
   color: rgb(var(--sapphire));
+  box-shadow: var(--btn-shadow);
 }
 .canvas-zoom-btn svg { width: var(--cv-icon); height: var(--cv-icon); }
 .canvas-zoom-pct {
@@ -3446,12 +3511,16 @@ body.mobile-layer .canvas-ref-select {
 }
 .xlsx-sheet-content td,
 .xlsx-sheet-content th {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   border: 1px solid var(--color-border, rgba(128,128,128,0.12));
   padding: var(--ds-space-1) var(--ds-space-2);
   white-space: nowrap;
   text-align: left;
 }
 .xlsx-sheet-content tr:first-child td {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: var(--color-surface, rgba(128,128,128,0.04));
   font-weight: 600;
 }
@@ -3632,6 +3701,8 @@ html.ui-init #canvas-panel {
 }
 .col-resizer:hover::before,
 .col-resizer.dragging::before {
+  /* 全面圆角批 2026-11-22（§2.6 标记类）：5px 竖条抓取面 —— 圆角跟随宿主，条头不切方。 */
+  border-radius: inherit;
   opacity: 0.9;
   background: var(--color-primary);
   height: 48px;
@@ -3778,9 +3849,17 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="markdown"] .canvas-find-togg
 mark.nf-find-hit { background: rgba(255, 213, 0, 0.45); color: inherit; border-radius: var(--ds-radius-thin); }
 mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border-radius: var(--ds-radius-thin); }
 
-/* ── Wikilinks (rendered markdown) ──────────────────────────────── */
+/* ── Wikilinks (rendered markdown) ────────────────────────────────
+   可点击下划线标记统一绿（ask-ref-marks-green 批 2026-11-22，作者更正令原话：
+   「ask引用做错了 需要回退 我说的是这种 可点击的下划线标记 现在是紫色 在暗色
+   模式下可见性很差」）。四类可点击标记 = 文档链接（本规则）/ 手写词条引用
+   （下条）/ 正文裸词自动链 / 词条索引条目 —— 全部取同一枚 `--ds-link-term`
+   （design-system.css → base.css `--status-success-icon` 双档绿）；本规则原值
+   `--color-primary` #07c160 亮档实测仅 2.21:1（浅底当字色不合格），收敛到同族
+   绿后亮 4.6:1 / 暗 7.5:1；同一文档里不再并存两种绿。未解析短形
+   （a.nf-wikilink-unresolved）保持中性灰 —— 它不是可点目标，不该冒充绿。 */
 .canvas-md-viewer a.nf-wikilink {
-  color: var(--color-primary, #07c160);
+  color: var(--ds-link-term);
   text-decoration: none;
   border-bottom: 1px dashed currentColor;
   cursor: pointer;
@@ -3859,6 +3938,8 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
    styles further down, #wiki-graph-side) — this block only dresses the
    canvas pane: canvas + tooltip (+ the mobile-layer panebar). */
 .wiki-graph-pane {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   --wg-background: #f5f6f7;
   --wg-card: #ffffff;
   --wg-foreground: #141416;
@@ -3934,42 +4015,147 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 }
 .wg-tip.para .td { color: var(--color-frame-text-dim, var(--wg-muted)); }
 
-/* Document citation card: full summary, never line-clamped. */
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 悬浮小弹层族（popover family）—— canvas 文件说明卡 × 词条释义弹层
+ * canvas-popup-unify 批 2026-11-22 · 作者令逐字：
+ *   「另外 canvas点文件的说明和词条的弹窗 这两个设计应该是同源的 但是点文件那个
+ *    现在设计的很丑 而且不是毛玻璃的 是全透明的」
+ *
+ * 病根（本批之前逐条实测，全部是「同一族写成两份」的末端表现）：
+ *   ① 材质：词条弹层在毛玻璃账本里（css/glass.css 成员登记表 · .nf-term-tip），
+ *      文件说明卡**不在** ⇒ 卡上只有 --nf-glass-bg 的 α 底、零 backdrop-filter
+ *      ⇒ 底下的正文笔画直接穿过卡片 = 作者说的「全透明」。玻璃底本来就是半透的，
+ *      少了那层模糊就只剩「一层薄膜」——两者是配方的一半与另一半的关系。
+ *   ② 表面：同一族两份数值（宽 340/380、内距 14px/14px、圆角 fallback 14/12、
+ *      描边 fallback 两套色值），改一处不会改到另一处。
+ *   ③ 排版：文件说明卡的标题/提要/状态/路径是裸数值（无字号档、12px 硬写、
+ *      `line-height: 1.5` 裸行高、`opacity: .8` 变相调色、8/12px 裸间距）。
+ *   ④ 动作：`.document-term-open` 是**零样式的原生 button**（浏览器灰底圆角、
+ *      自带浮雕）—— 全站唯一一处没被按钮规范覆盖的按钮，也是「丑」最刺眼的
+ *      那一点（截图像素见 evidence 的 before-file-*）。
+ *
+ * 收敛口径（本批）：
+ *   · 表面 = **本节一条共享声明**（两个选择器同表）——材质/描边/圆角/内距/阴影/
+ *     宽度/层级/换行纪律只在这里给一次；材质配方本身仍只出生在 glass.css 成员
+ *     登记表（G1/G2 单一源，不许在这里另写 backdrop-filter）。
+ *   · 排版 = canvas-hint 的 tip 三档令牌（css/canvasHint.css --cv-hint-*），
+ *     与词条弹层的 tt/ts/td 逐档同值 ⇒ 两卡并排是同一套字级与行距节奏。
+ *   · 动作 = 复用本文件既有的 canvas 侧栏动作钮配方（.wg-detail-body .openbtn 同族：
+ *     frame-text-bright 底 + surface 字 + --ds-radius-button），并补齐扁平六态。
+ *   · 功能与信息架构零改动：仍是「标题 / 提要全文（不裁剪）/ 状态·更新 / 路径 /
+ *     打开原文档」，词条弹层仍是「词条名 / 定义 / 脚注」。
+ * 新增同族弹层 = 把选择器加进本节的两个选择器表（表 + 材质账本），不许再抄一份。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+.nf-term-tip,
 .document-term-card {
-  position: fixed; z-index: 901; box-sizing: border-box;
-  width: min(380px, calc(100vw - 16px)); max-height: calc(100vh - 16px);
-  overflow-y: auto; overflow-wrap: anywhere;
-  padding: 14px; border-radius: var(--ds-radius-xl, 14px);
-  border: 1px solid var(--glass-border, rgba(128,128,128,.35));
-  background: var(--nf-glass-bg, var(--color-bg, #fff));
-  color: var(--color-frame-text-bright, var(--color-text, #222));
-  box-shadow: var(--frost-shadow, 0 8px 28px rgba(0,0,0,.18));
-}
-.document-term-summary { margin-top: 8px; white-space: pre-wrap; line-height: 1.5; }
-.document-term-meta, .document-term-path { margin-top: 8px; font-size: 12px; opacity: .8; }
-.document-term-open { margin-top: 12px; cursor: pointer; }
-.document-term-open:focus-visible { outline: 2px solid var(--ds-link-term, #2684ff); outline-offset: 2px; }
-
-/* 词条点击释义弹层：桌面/触屏均为小弹层，固定在 body 顶层避免滚动容器裁剪。 */
-.nf-term-tip {
   position: fixed;
-  z-index: 900;
-  display: none;
+  z-index: 901;
   box-sizing: border-box;
-  width: min(340px, calc(100vw - 16px));
+  /* 一族一个宽度：380 是族内最大内容（文档提要 + 绝对路径）需要的那一档，
+     词条弹层随族同宽（并排同源的前提是同一个盒子，不是同一个「大概」）。 */
+  width: min(380px, calc(100vw - 16px));
   max-width: calc(100vw - 16px);
   max-height: calc(100vh - 16px);
   overflow-y: auto;
   overscroll-behavior: contain;
-  background: var(--nf-glass-bg);
+  padding: var(--ds-space-block-y) var(--ds-space-3);
   border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.35));
   border-radius: var(--ds-radius-xl);
-  padding: var(--ds-space-block-y) 14px;
+  background: var(--nf-glass-bg);
   box-shadow: var(--frost-shadow, 0 8px 28px rgba(0, 0, 0, 0.10));
   color: var(--color-frame-text-bright, var(--color-text));
   pointer-events: auto;
-  overflow-wrap: anywhere;
   cursor: default;
+  overflow-wrap: anywhere;
+}
+
+/* ── 文件说明卡（canvas 点文件 = 文档提要面）正文节奏 ─────────────────────
+   标题 = tip 档 strong（12/600/1.45）· 提要 = tip 档正文（12/400/1.45/muted）·
+   状态/路径 = tip 档脚注（11/dim）。逐值与 .nf-term-tip 的 tt/ts/td 同表：
+   同一实体同一档，禁再出现「这张卡 12 那张 13」「这里 opacity .8 那里 token」。 */
+/* 落位前提：文件卡由模块 append 后量 offsetWidth/offsetHeight 再做视口钳位
+   （js/documentTermCard.js 落位算法）⇒ 本族两面里**只有**词条弹层可以
+   display:none（它的显示由模块显式置 block），文件卡不许隐藏，否则量到 0 尺寸、
+   永远往下开。故共享块不写 display，各面自己留显示态。 */
+.document-term-card > strong {
+  display: block;
+  font-size: var(--cv-hint-fs-h);
+  font-weight: var(--cv-hint-fw-strong);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color-strong);
+  word-break: break-word;
+}
+.document-term-summary {
+  margin-top: var(--ds-space-1);
+  font-size: var(--cv-hint-fs-h);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color);
+  white-space: pre-wrap;   /* 提要里的换行照原样留；全文不裁剪（信息架构不变） */
+}
+/* 空态（没有提要 / 元数据读不到）：走 canvas-hint 的 empty 档（S：12/500/1.45/
+   muted），并按「一句状态、不是一句报错」的语序排列 —— 具名缺什么（作者令
+   2026-11-22 09:23「两者皆无给可读空态」），不画空白、不画红色。 */
+.document-term-summary.document-term-empty {
+  font-weight: var(--cv-hint-fw-s);
+  color: var(--cv-hint-color);
+}
+.document-term-meta {
+  margin-top: var(--ds-space-1h);
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color-dim);
+  font-variant-numeric: tabular-nums;
+}
+/* 路径 = 机器可读的身份行（同一族在侧栏 .wg-detail-body .path 已有既定形态：
+   等宽 + 玻璃控制底 + 输入档圆角）。这里复用同一配方，长路径允许断行。 */
+.document-term-path {
+  margin-top: var(--ds-space-1h);
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color-dim);
+  background: var(--glass-control-bg);
+  border-radius: var(--ds-radius-input);
+  word-break: break-all;
+}
+/* 动作钮 = 同族动作配方（与 .wg-detail-body .openbtn 同值），并补扁平六态：
+   按下只缩放（扁平允许项）、键盘焦点走全站单规则焦点环、无任何厚度道具
+   （check-flat-buttons F1–F5 对按钮面禁止阴影/渐变/位移）。 */
+.document-term-open {
+  display: block;
+  width: 100%;
+  margin-top: var(--ds-space-stack-gap);
+  padding: var(--ds-space-2) 0;
+  border: 1px solid var(--color-frame-text-bright);
+  border-radius: var(--ds-radius-button);
+  background: var(--color-frame-text-bright);
+  color: var(--color-surface);
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-btn);
+  font-weight: 500;
+  line-height: var(--ds-lh-tight);
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .document-term-open:hover { opacity: .88; }
+}
+.document-term-open:active { transform: scale(var(--btn-press-scale)); }
+.document-term-open:focus-visible {
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .document-term-open:active { transform: none; opacity: var(--btn-press-fade); }
+}
+
+/* 词条点击释义弹层：桌面/触屏均为小弹层，固定在 body 顶层避免滚动容器裁剪。
+   表面在上面的族块里（同表给两面），本块只留词条面自己的显示态。 */
+.nf-term-tip {
+  display: none;
 }
 .nf-term-tip.interactive { pointer-events: auto; }
 /* 悬浮提示（tip 形态）三段字档（canvas-hint-text 批 2026-11-05）：
@@ -3991,34 +4177,41 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
    2026-11-05：文档名归词条索引块，气泡只剩词条名 + 定义）。 */
 .nf-term-tip .td:empty { display: none; }
 
-/* 词条引用的视觉面（term-system-v2 词条视觉面批 2026-11-05）────────────
-   作者令原话：「词条被使用的时候，应该是一个蓝色的文字，然后不需要显示文档名。
-   在目前基础上把文字变蓝色然后去掉括号里的文档就行。」
-   ① 蓝色：字色 = `--ds-link-term`（design-system.css 语义别名 → stand-tokens.css
-      蓝族 ink 双档）。亮 70 99 156 / 暗 sapphire-glow，阅读面合成底实测
-      5.76:1 / 6.52:1（tests/_term-face-harness.mjs 打印），正文门槛 4.5:1。
+/* 可点击标记的视觉面 —— 手写词条引用 / 正文裸词自动链 ────────────────────
+   沿革：term-system-v2（2026-11-05）作者令「词条被使用的时候，应该是一个蓝色的
+   文字…」→ 本批 2026-11-22 作者更正令：「ask引用做错了 需要回退 我说的是这种
+   可点击的下划线标记 现在是紫色 在暗色模式下可见性很差」。字色因此从蓝族
+   `--term-link-ink` 改绿（「蓝」那条令的消费面由本条取代；蓝 token 仍供
+   mobile-todo-apple.css 待办快捷钮，语义不同不动）。
+   ① 字色：`--ds-link-term`（design-system.css 一拍别名 → base.css
+      --status-success-icon 双档绿：亮 #2e7d32 / 暗 #66bb6a），与文档链接标记
+      **同一枚绿**（作者令「统一改绿」）。双档实测亮 4.6:1 / 暗 7.5:1
+      （tests/ask-ref-marks-shots.mjs 真截图像素，正文门槛 4.5:1）。
       **规则里零裸色值** —— 改色改令牌，不改本块。
    ② 可点击信号保留且仍分两档（原 F3/B5-1 的「信号 vs 提示」层级不丢，只把
-      区分从字色挪到底纹强度，因为字色已由作者统一定为蓝）：手写引用 = 底纹
-      55% 蓝（信号）；正文裸词自动链 = 底纹 30% 蓝（提示，密度高一个量级）。
-      悬停两档都收成实色 = 可点确认。
-   未解析短形引用（兜底腿 .nf-wikilink-unresolved + .nf-wikilink-term）同样取
-   蓝色：hover 能出泡就说明「这是词条」，词条面不该有两种字色。 */
+      区分从字色挪到底纹强度，因为字色已由作者统一）：手写引用 = 底纹 55%
+      （信号）；正文裸词自动链 = 底纹 30%（提示，密度高一个量级）。底纹色 =
+      `currentColor` 同源（color-mix 出 α，同 cards.css 用法）—— 字色改绿则
+      底纹同步绿，不留蓝线配绿字。悬停两档都收成实色 = 可点确认。
+   未解析短形引用：纯未解析的普通文档链接（只有 .nf-wikilink-unresolved，无 term
+   类）保持中性灰 —— 灰 = 「不是可点目标」；而带 term 类的短形未解析引用仍取词条
+   色（term-system-v2 F3 既有裁定：hover 能出泡就说明「这是词条」，词条面不该有
+   两种字色），故它随本批同源改绿，非本批新增行为。 */
 a.nf-wikilink.nf-wikilink-term {
   color: var(--ds-link-term);
-  /* 底纹 = 既有 .nf-wikilink 的 border-bottom 通道（虚线改点线 + 换蓝），
+  /* 底纹 = 既有 .nf-wikilink 的 border-bottom 通道（虚线改点线 + 同源 currentColor），
      不再叠一条 text-decoration —— 两条底纹会在词条上叠成双线。 */
-  border-bottom: 1px dotted rgb(var(--term-link-ink) / 0.55);
+  border-bottom: 1px dotted color-mix(in srgb, currentColor 55%, transparent);
   text-decoration: none;
   text-underline-offset: 3px;
 }
 a.nf-wikilink.nf-wikilink-term:hover { border-bottom-color: currentColor; filter: none; }
 
-/* 正文裸词识别（B5-1）：同一枚字色（同一实体同一 token —— 两种蓝会教出两种
+/* 正文裸词识别（B5-1）：同一枚字色（同一实体同一 token —— 两种绿会教出两种
    含义），底纹压到 30% 保持「提示」轻量。 */
 a.nf-term {
   color: var(--ds-link-term);
-  border-bottom: 1px dotted rgb(var(--term-link-ink) / 0.3);
+  border-bottom: 1px dotted color-mix(in srgb, currentColor 30%, transparent);
   text-decoration: none;
   cursor: pointer;
 }
@@ -4058,10 +4251,11 @@ a.nf-term:hover { border-bottom-color: currentColor; }
   min-width: 0;
 }
 /* 条目 = 词条名（可点，跳它所在的文档并落到定义段）+ 所在文档名（暗一档）。
-   条目名与正文里的词条同色（同一实体同一 token），底纹同手写引用档。 */
+   条目名与正文里的词条同色（同一实体同一 token —— 2026-11-22 起该 token =
+   成功绿双档），底纹同手写引用档（currentColor 同源，字色改则底纹同步）。 */
 .canvas-md-viewer .nf-term-index .nf-term-index-term {
   color: var(--ds-link-term);
-  border-bottom: 1px dotted rgb(var(--term-link-ink) / 0.55);
+  border-bottom: 1px dotted color-mix(in srgb, currentColor 55%, transparent);
   text-decoration: none;
   overflow-wrap: anywhere;
 }
@@ -4124,6 +4318,7 @@ a.nf-term:hover { border-bottom-color: currentColor; }
   text-overflow: ellipsis;
   cursor: pointer;
   transition: filter 0.12s ease;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .canvas-refback-btn:hover { filter: brightness(1.06); }
@@ -4222,7 +4417,9 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
 }
 /* 造型 + 焦点态 + 原生下拉箭头：归 css/inputSurface.css（输入面唯一标准批
    2026-11-06；`.wg-switch-select` 登记在标准的下拉成员表里）。 */
-.wg-switch-select option { color: var(--color-frame-text); background: var(--color-surface, #fff); }
+.wg-switch-select option {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); color: var(--color-frame-text); background: var(--color-surface, #fff); }
 
 /* Breadcrumb row (#744-B drill-in views): X › sub › …, last crumb static. */
 .wg-crumbs { flex: none; font-size: var(--cv-hint-fs-m); font-weight: var(--cv-hint-fw); line-height: var(--cv-hint-lh-m); color: var(--cv-hint-color); padding: 0 var(--ds-space-half); }

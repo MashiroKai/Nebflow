@@ -368,6 +368,30 @@ for (const [label, engine] of [['chromium', chromium], ['webkit(Safari引擎族)
     await sleep(900);
     const md = await state(page, 'file:' + MD_PATH);
     t('6a .md 文本交付件渲染出正文', /Pop notes/.test(md.textBody || ''), (md.textBody || '').slice(0, 60));
+    // 6a2/6a3 —— 作者 2026-11-21 11:41 报障的**两态覆盖**（card-visible-reconcile 批）：
+    // 修前 .md 打开后正文已完整渲染，但「正在打开…」占位仍悬浮（转圈不收）。根因 =
+    // markdown viewer 不清 pane（viewers/markdown.js:1401-1424 只 remove 自己那类旧面
+    // 再 appendChild），占位 `.nf-progress-pane` 于是与正文并排同屏。修法 = 占位生命
+    // 周期挂到「真容出现」（progressPane 自撤 + fileViewers.renderFile 单点兜底）。
+    //   6a2 完成态解除：真容在场 ⇒ 占位必须已撤（两态之「加载中→完成解除」）；
+    //   6a3 反证：真容在场时不得同时留占位（「内容已出还转圈」这一形态必红）。
+    t('6a2 .md 渲染完成后「正在打开…」占位已撤（loading→完成 解除）',
+      md.progress == null, `progress=${md.progress}`);
+    const bothPresent = await page.evaluate((tabId) => {
+      // 必须按 **tab id** 定位 pane：document.querySelector('.canvas-tab-pane') 会
+      // 命中侧栏常驻的 plugins 面板（它是首个 .canvas-tab-pane，永无 md 面），
+      // 断言就会拿错 pane 判对错（本断言首版即栽在此）。
+      const pane = document.querySelector(`.canvas-tab-pane[data-tab-id="${tabId}"]`);
+      if (!pane) return null;
+      return {
+        hasProgress: !!pane.querySelector('[data-nf-progress]'),
+        mdScrollers: pane.querySelectorAll(':scope > .canvas-md-scroll').length,
+        text: (pane.textContent || '').slice(0, 40),
+      };
+    }, 'file:' + MD_PATH);
+    t('6a3 完成态不得「正文与占位并存」（内容已出还转圈必红）',
+      !!bothPresent && bothPresent.hasProgress === false && bothPresent.mdScrollers >= 1,
+      JSON.stringify(bothPresent));
     await page.evaluate(CLICK(HTML_PATH, 'anim.html'));
     await page.waitForFunction(() => !!document.querySelector('.canvas-tab-pane iframe'), null, { timeout: 8000 });
     await sleep(500);
@@ -378,6 +402,33 @@ for (const [label, engine] of [['chromium', chromium], ['webkit(Safari引擎族)
     });
     t('6b .html 交付件不被排除面挡（iframe 渲染真容）', htmlOk === true);
     t('6c 页面零 JS 异常', errors.length === 0, errors.join(' | '));
+    await browser.close();
+  }
+
+  // ── 站6b：兜底路径（作者令「完成但解除失败 → 兜底」两态之第二态）──
+  // 不依赖占位自身的 MutationObserver（该臂可能被环境禁用/被 viewer 覆写 pane 跳过），
+  // 直接验证**渲染单点**的显式出口：手工挂一个占位，再走一次真实 renderFile，
+  // 真容挂出后占位必须被撤（fileViewers.renderFile → dismissProgressPane）。
+  {
+    const { browser, page, errors } = await bootPage(engine, {});
+    await page.evaluate(CLICK(MD_PATH, 'notes.md'));
+    await waitDom(page, '.canvas-tab-pane', 8000);
+    await sleep(900);
+    // 用真实单点重演：先手工塞回一个占位（模拟「解除失败」的现场），再 re-render。
+    const fallen = await page.evaluate(async (tabId) => {
+      const pane = document.querySelector(`.canvas-tab-pane[data-tab-id="${tabId}"]`);
+      if (!pane) return { err: 'no pane' };
+      const pp = await import('/js/progressPane.js');
+      pp.renderProgressPane(pane, '正在打开…');
+      const had = !!pane.querySelector('[data-nf-progress]');
+      // 兜底路径：渲染单点被再次调用 ⇒ 占位必须撤（不新增第二个环体系）。
+      const fv = await import('/js/fileViewers.js');
+      await fv.renderFile(pane, { itemType: 'markdown', content: '# Pop notes\n\nagain\n', fileName: 'notes.md', size: 20 });
+      return { had, after: !!pane.querySelector('[data-nf-progress]'), text: (pane.textContent || '').slice(0, 40) };
+    }, 'file:' + MD_PATH);
+    t('6d 兜底路径：renderFile 完成后占位必撤（不靠观察器也解解除）',
+      fallen && fallen.had === true && fallen.after === false, JSON.stringify(fallen));
+    t('6e 兜底路径零 JS 异常', errors.length === 0, errors.join(' | '));
     await browser.close();
   }
 

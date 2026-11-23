@@ -229,6 +229,12 @@ export async function mountDiff(host, opts = {}) {
   wrapBtn.className = 'nf-dv-wrapbtn';
 
   // 动作钮工厂（review 专用；read 模式根本不建 —— DOM 里零残留）。
+  // G10（keyboard-focus-audit 批 2026-11-21 作者令「补可见键位提示」）：快捷键的
+  // **所有权**在 askEditReview.js（⌘↩ 接受 / ⌘⌫ 拒绝，作用域 = 审阅页签激活），
+  // 本处只负责两件事：aria-keyshortcuts（读屏可发现）+ 右侧可见键位提示
+  // （.nf-dv-keyhint）。两处都给双写（Meta 与 Control），与实际 handler 的
+  // `metaKey || ctrlKey` 口径一致。
+  const isMacPlatform = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
   const mkAction = (kind, label, aria) => {
     const b = document.createElement('button');
     b.type = 'button';
@@ -236,6 +242,8 @@ export async function mountDiff(host, opts = {}) {
     b.setAttribute('data-chunk-action', kind === 'accept-all' ? 'accept' : 'reject');
     b.setAttribute('data-scope', 'all');
     b.setAttribute('aria-label', aria);
+    b.setAttribute('aria-keyshortcuts', kind === 'accept-all'
+      ? 'Meta+Enter Control+Enter' : 'Meta+Backspace Control+Backspace');
     b.textContent = label;
     return b;
   };
@@ -279,6 +287,16 @@ export async function mountDiff(host, opts = {}) {
       mkAction('reject-all', tt('全部拒绝', 'Reject all'), tt('全部拒绝（回退全部改动）', 'Reject all (revert every change)')),
     );
     actions.append(group);
+    // G10 可见键位提示：只作**说明**，不绑定动作（动作归 askEditReview.js）。
+    // 文案随平台取键位符号；aria-hidden 让读屏只读按钮自己的 aria-keyshortcuts，
+    // 同一条信息不被念两遍。
+    const hint = document.createElement('span');
+    hint.className = 'nf-dv-keyhint';
+    hint.setAttribute('aria-hidden', 'true');
+    hint.textContent = isMacPlatform
+      ? tt('⌘↩ 全部接受 · ⌘⌫ 全部拒绝', '⌘↩ accept all · ⌘⌫ reject all')
+      : tt('Ctrl+Enter 全部接受 · Ctrl+Backspace 全部拒绝', 'Ctrl+Enter accept all · Ctrl+Backspace reject all');
+    actions.append(hint);
     root.append(actions);
   }
   host.append(root);

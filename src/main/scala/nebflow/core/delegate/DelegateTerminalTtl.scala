@@ -112,14 +112,35 @@ object DelegateTerminalTtl:
    *  2. **「无子项」闸**：读数显示仍有在飞子项（`liveChildItems > 0`）或子项档不可解
    *     ⇒ **InFlight**（永不清理）——作者令完整判据里的「no child items」条落到清理面，
    *     堵住「远古登记刻 + 活着的子项」被 TTL 剪掉的最坏形态。
+   *
+   * **worktree 闸收紧**（孤儿行全清 ops 复核批 2026-11-21 · 作者令「收紧判据」）：
+   * 旧闸是「`worktree` 字段非空 ⇒ InFlight」，在年龄判定**之前**返回。字段只是登记时刻
+   * 的意图快照，不是现场存续——695 条过期行里 694 条字段非空，其中 634 条目录早已
+   * 不在盘上，于是「真在飞的不收」被撑成「登记过的永不收」。现判据改为**现场三态**
+   * （[[DelegateWorktreeRegistry.Presence]]）：目录在盘上 ∧ 仍被 git 登记 ⇒ `Live`
+   * ⇒ 仍判 InFlight（保险丝语义原样保留）；`Gone`/`Unregistered` ⇒ 落到正常年龄判定
+   * （与其余闸同级的兜底顺序不变）。台账归属闸、置顶闸、收口读数闸一律不动。
+   *
+   * 效率：worktree 现场读数由调用方一次性快照给定（[[DelegateWorktreeRegistry.Snapshot]]）；
+   * 默认形按单条记录现取（语义等价，供非批量调用方使用）。
    */
   def verdict(rec: DelegateRegistry.Record, taskOpt: Option[SubAgentTask], nowMs: Long): Verdict =
+    verdict(rec, taskOpt, nowMs, DelegateWorktreeRegistry.Snapshot.capture(List(rec)))
+
+  /** 批量形：worktree 现场快照由调用方一次性给定（sweep 的正式入口——见 [[verdict]] 注）。 */
+  def verdict(
+    rec: DelegateRegistry.Record,
+    taskOpt: Option[SubAgentTask],
+    nowMs: Long,
+    worktrees: DelegateWorktreeRegistry.Snapshot
+  ): Verdict =
     if rec.pinnedAt.isDefined then return Pinned
     val managed = WorkspaceLedger.default.snapshot
     if managed.workspaces.exists(_.owner == rec.id) || managed.mergers.exists(_.delegateId == rec.id) then
       return InFlight
-    // Legacy worktree ownership is kept until explicitly reconciled into the ledger.
-    if rec.worktree.exists(_.nonEmpty) then return InFlight
+    // 存量 worktree 归属：只有**现场仍在**（目录在盘 ∧ 仍被 git 登记）才认作在飞。
+    if DelegateWorktreeRegistry.presenceOf(rec, worktrees) == DelegateWorktreeRegistry.Presence.Live then
+      return InFlight
     verdict(rec, taskOpt, nowMs, DelegateVisibility.readOf(rec.id))
   end verdict
 

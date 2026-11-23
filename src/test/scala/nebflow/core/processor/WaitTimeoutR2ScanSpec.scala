@@ -237,7 +237,7 @@ class WaitTimeoutR2ScanSpec extends CatsEffectSuite:
         system,
         resources,
         "r2-waiting-team",
-        AgentKind.Team,
+        AgentKind.Root,
         AgentStatus.WaitingForUser,
         Some(parentRef),
         threshold,

@@ -905,7 +905,10 @@ export function closeChat(opts) {
   // voicefix 批 腿 B：关窗路径（ESC/覆层/×）一律经本函数 ⇒ 在飞的语音听写
   // 必须同拍收敛（引擎是全局单例，不关会往已销毁的输入框里继续写字）。
   // fmStopVoice 幂等（未录音 = no-op），且须在 modalEls 清零**之前**调用。
-  if (modalEls && modalEls.stopVoice) modalEls.stopVoice();
+  // social-chat-input-unify 批：语音光球面同时注销（渲染器 pause + contextlost
+  // 解绑）—— 与 stopVoice 同拍，禁跨窗渲染上下文累积。
+  if (modalEls && modalEls.disposeComposer) modalEls.disposeComposer();
+  else if (modalEls && modalEls.stopVoice) modalEls.stopVoice();
   // 会话页头同构批：身份头滚动渐隐监听已随身份头常显批（2026-11-04）整条退役 ⇒
   // 关窗不再有渐隐解绑腿（`modalEls.unbindFade` 一并删除，见 modalEls 字面量）。
   if (modalEls) {
@@ -1755,7 +1758,7 @@ function renderChatModal(conv) {
   } else {
     document.body.appendChild(overlay);
   }
-  modalEls = { overlay, modal, flow, input, sendBtn, toast, offline, conv, quoteStrip, selectBar, selectCount, selectForward, selectForwardEach, selectForwardMerge, stopVoice: composer.stopVoice, idHead, head: header, inMain, restore: null };
+  modalEls = { overlay, modal, flow, input, sendBtn, toast, offline, conv, quoteStrip, selectBar, selectCount, selectForward, selectForwardEach, selectForwardMerge, stopVoice: composer.stopVoice, disposeComposer: composer.dispose, idHead, head: header, inMain, restore: null };
   // （渐隐解绑器 `unbindFade` 已随身份头常显批 2026-11-04 删除 —— 身份头不再有
   // 滚动监听，故 modalEls 无需解绑字段，closeChat 也没有对应的解绑腿。）
   // Fresh modal → reset history-window state (a stale older conversation's
@@ -2029,7 +2032,7 @@ function applyBlockState(conv) {
     modalEls.flow.parentNode.insertBefore(bar, modalEls.flow);
   }
   modalEls.input.disabled = blocked || noSelf || !state.connected;
-  modalEls.input.placeholder = t(noSelf ? 'messages.deviceSendUnavailable' : 'messages.inputPlaceholder');
+  modalEls.input.placeholder = t(noSelf ? 'messages.deviceSendUnavailable' : 'input.placeholder');
   syncComposerSend(); // 发送键 = 输入框可用 ∧ 输入非空（判据单源，见下）
 }
 
@@ -2039,7 +2042,10 @@ function applyBlockState(conv) {
  *  判据唯一来源：applyBlockState / onDisconnect / input 事件 / sendCurrent 共用。 */
 function syncComposerSend() {
   if (!modalEls) return;
-  modalEls.sendBtn.disabled = modalEls.input.disabled || !modalEls.input.value.trim();
+  // 与主会话统一（social-input-unify 2026-11-21）：空输入**不禁用**发送键——主会话
+  // 发送键空输入态亦不灰；空正文由 sendCurrent / sendDeviceCurrent 的 !body 闸吞掉
+  // （不出站、不产生空消息）。禁用判据仅剩输入件禁用（拉黑/断连/设备身份缺席）。
+  modalEls.sendBtn.disabled = modalEls.input.disabled;
   // ③（作者 2026-09-15「掉线了会变成灰色」）：链路态与主对话框**同族判据** ——
   // 断连 ⇒ 给本键挂 `.disconnected`（主对话框那条挂点 = `ws.js:119` 的
   // `syncSendButtonConnState`，判据同为 `!state.connected`，禁第二份判据）。
@@ -2282,6 +2288,9 @@ function buildMediaStackGroup(entrys) {
     onOpen: (item, index) => {
       const e = entrys[index];
       if (!e) return;
+      // 被点那一件的水合 <img>（手机图片预览修复：原图腿败时复用它的字节，见 previewAttachmentOf）。
+      const clickedFaceEls = (area.popFaces && area.popFaces[index] && area.popFaces[index].els) || [];
+      const clickedImg = clickedFaceEls.filter(el => el.tagName === 'IMG')[0] || area;
       // mobile-image-lightbox 批（2026-11-17）：手机层叠卡图组 = 整组进画廊（字节 =
       // 各层已水合的同一枚 URL，零第二条取字节路）；视频张/未水合层不入组，组尽空
       // 或点的张不在组内 ⇒ 落回下方单卡既有腿。
@@ -2300,7 +2309,7 @@ function buildMediaStackGroup(entrys) {
           group.push({ kind: 'image', name: String(en.name || (en.att && en.att.name) || ''), src: url });
         });
         if (group.length && gi >= 0) {
-          const single = () => Promise.resolve(previewAttachmentOf(e.att, area, e.kind, e.src))
+          const single = () => Promise.resolve(previewAttachmentOf(e.att, clickedImg, e.kind, e.src))
             .then(need => { if (need) modalToast(t('messages.attachPreviewFailed')); })
             .catch(() => modalToast(t('messages.attachPreviewFailed')));
           import('./lightbox.js')
@@ -2309,7 +2318,7 @@ function buildMediaStackGroup(entrys) {
           return;
         }
       }
-      Promise.resolve(previewAttachmentOf(e.att, area, e.kind, e.src))
+      Promise.resolve(previewAttachmentOf(e.att, clickedImg, e.kind, e.src))
         .then(need => { if (need) modalToast(t('messages.attachPreviewFailed')); })
         .catch(() => modalToast(t('messages.attachPreviewFailed')));
     },
@@ -2449,20 +2458,36 @@ async function previewMediaDirectOf(att, kind, src) {
  *  画廊（lightbox.openImageGallery），字节 = 卡面已水合的同一枚 URL（渲染时已走
  *  账本/鉴权路由取数腿，零第二条取字节路）；判型 = isImageAttachmentName 单点
  *  （PDF 等其他可预览件照旧直开系统查看器）。面未水合/失败 ⇒ 落回既有直开腿。 */
-function previewAttachmentOf(att, card, kind, src) {
+export function previewAttachmentOf(att, card, kind, src) {
   const name = String((att && att.name) || '');
   const media = /\.(png|jpe?g|gif|webp|bmp|svg|avif|mp4|webm|mov|ogv|m4v|mp3|wav|ogg|m4a|aac|flac|opus)$/i.test(name);
   if (media) {
+    // 手机图片预览失败修复（2026-11-23 作者报障 IMG_2039「缩略图正常、点开大图弹
+    // 预览失败」）：缩略已在卡面水合的字节 = 第二条可用源。修前本分支对图片名先
+    // 命中（media 正则覆盖全部图片扩展名），原图腿（`friends/attachments` 全量
+    // 取）一败即整件 toast，卡面上已经显示好的同一件字节被丢弃——「缩略通、原图
+    // 败」的分叉即此。修后：原图腿优先；原图腿败且卡面字节在场 ⇒ 用卡面字节开
+    // 灯箱（不 toast）；两腿皆无才 toast。
+    const thumb = card && card.tagName === 'IMG' ? card
+      : (card && card.querySelector ? card.querySelector('img') : null);
+    const thumbUrl = thumb && thumb.dataset.nfMediaFailed !== '1'
+      ? (thumb.currentSrc || thumb.src || '') : '';
     void (async () => {
       const mr = await import('./mediaOpenRoute.js');
       const mediaType = mr.mediaKind({ name });
       const source = src || {};
+      const lb = await import('./lightbox.js');
       let item = { kind: mediaType, name };
       if (kind === 'device' && source.kind === 'blob' && source.file) item.blob = source.file;
       else if (kind === 'device' && source.kind === 'path' && source.path) item.path = source.path;
-      else if (att && att.id) item.blob = (await api.downloadAttachment(att.id)).blob;
-      const lb = await import('./lightbox.js');
-      if (!lb.openImageGallery([item], 0)) throw new Error('No media source');
+      else if (att && att.id) {
+        try { item.blob = (await api.downloadAttachment(att.id)).blob; }
+        catch (err) { if (!thumbUrl) throw err; item = { kind: mediaType, name, src: thumbUrl }; }
+      }
+      if (!lb.openImageGallery([item], 0)) {
+        if (!thumbUrl) throw new Error('No media source');
+        lb.openImageGallery([{ kind: mediaType, name, src: thumbUrl }], 0);
+      }
     })().catch(() => window.__showToast?.(t('messages.attachPreviewFailed'), 'error'));
     return false;
   }

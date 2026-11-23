@@ -129,6 +129,11 @@ class MailActivateLifecycleSpec extends FunSuite:
     val memberDir = teamDir / "agents" / "member"
     os.makeDir.all(memberDir)
     os.write.over(memberDir / "agent.json", """{"description": "fixture member", "useWhen": "tests"}""")
+    // 团队类型面删除批阶段 B2（作者裁定 Q2）：Mail 激活身份只走全局 agent 库
+    // （loadTeamAgent 的团队局部查找腿已删）⇒ 成员定义同时落在 agents/member/。
+    val globalMemberDir = data / "agents" / "member"
+    os.makeDir.all(globalMemberDir)
+    os.write.over(globalMemberDir / "agent.json", """{"description": "fixture member", "useWhen": "tests"}""")
 
   test("#2 respawn loads persisted history — Mail-activated agent is not an amnesiac") {
     val system = ActorSystem(s"mail-lc-${java.util.UUID.randomUUID().toString.take(6)}")
@@ -195,7 +200,7 @@ class MailActivateLifecycleSpec extends FunSuite:
       // 团队功能删除批阶段 3：夹具从已退役的登记表 actorMap 换成统一 agentRegistry
       // （本看护现在只负责这一份权威记录的卫生：死则删记录）。
       _ <- resources.agentRegistry.update(
-        _ + (sid -> AgentRecord(sessionId = sid, ref = victim, kind = AgentKind.Team, rootSessionId = sid))
+        _ + (sid -> AgentRecord(sessionId = sid, ref = victim, kind = AgentKind.Root, rootSessionId = sid))
       )
       _ <- system.spawn(
         MailTool.teamAgentDeathWatch(sid, "victim", victim, resources),

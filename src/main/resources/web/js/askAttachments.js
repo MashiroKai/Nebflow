@@ -64,6 +64,7 @@ function filesFromClipboard(e) {
 export function answerAttachmentsAllowed(questions) {
   if (!Array.isArray(questions) || questions.length === 0) return false;
   if (questions.some(q => q && q.secret === true)) return false; // secret 卡 fail-closed
+  if (questions.some(q => q && q.merge)) return false; // structured answers cannot be replaced by attachments
   if (questions.some(q => q && q.dirPicker === true)) return false; // 选择面写入的卡不带
   // 至少一道开放题（无 options）——选择题卡不显示入口（修正①）。
   return questions.some(q => q && !(q.options && q.options.length > 0));
@@ -236,7 +237,7 @@ function addChip(c, file) {
   rm.title = t('askUser.removeAttachment', { name: file.name });
   rm.setAttribute('aria-label', t('askUser.removeAttachment', { name: file.name }));
   rm.style.cssText =
-    'position:absolute;top:-1px;right:-1px;width:18px;height:18px;border-radius:0 10px 0 8px;border:none;' +
+    'position:absolute;top:-1px;right:-1px;width:18px;height:18px;border-radius:0 var(--ds-radius-button) 0 var(--ds-radius-input);border:none;' +
     'background:var(--color-surface-2,rgba(127,127,127,0.08));border-left:1px solid var(--color-border,rgba(128,128,128,0.35));' +
     'border-bottom:1px solid var(--color-border,rgba(128,128,128,0.35));color:var(--color-text-muted,#888);' +
     'font-size:var(--ds-fs-meta);line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;';

@@ -26,8 +26,8 @@ import scala.concurrent.duration.*
  *   - 子 agent（有 parentRef）Processing 超时 → 发 Stop（→ BackoffSupervisor
  *     death-watch 重启链路由现有 supervisor 测试覆盖，这里只验证识别+触发）
  *   - 根 agent（无 parentRef）Processing 超时 → 广播 taskStuck WS 事件，不 Stop
- *   - #22 (2026-08-19)：Team agent Processing 超时 → 广播 taskStuck(action=
- *     attention)，只读不 Stop（Team 是长驻用户可见会话，AgentControl §4）
+ *   - #22 (2026-08-19)：Mail 激活的长驻会话 Processing 超时 → 广播 taskStuck(action=
+ *     attention)，只读不 Stop（B5 后其身份 = Root + parentSessionId）
  *   - 防误杀铁律：Idle 态永不判；lastActivityMs 在阈值内不判；
  *     刚注册（lastActivityMs==0）不判
  */
@@ -92,7 +92,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       voiceMutedRef = voiceMuted
     )
 
-  test("#22: Team agent Processing 超时 → 只读广播 taskStuck(action=attention)，绝不发 Stop") {
+  test("#22: Mail 激活的长驻会话（Root+父）Processing 超时 → 只读广播 taskStuck(action=attention)，绝不发 Stop") {
     val system = ActorSystem("test-team-stuck")
     for
       _ <- IO(system)
@@ -106,14 +106,16 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       _ <- wsHub.registerListener(json => receivedWs.update(_ :+ json))
       now = System.currentTimeMillis()
       threshold = 10 * 60 * 1000L
-      // Mail 激活的 team agent：kind=Team、有 parentRef（曾使 parentRef=Some 分支
-      // 误发 Stop 的风险形态）——必须走 Team 只读分支
+      // Mail 激活的长驻会话：B5 后身份 = Root kind + 有 parent（曾使 parentRef=Some
+      // 分支误发 Stop 的风险形态）——必须走 attention-only 只读分支
       stuckTeam = AgentRecord(
         sessionId = "team-nebflow-project-Frontend",
         ref = teamRef,
-        kind = AgentKind.Team,
+        kind = AgentKind.Root,
         rootSessionId = "root-1",
         parentRef = Some(parentRef),
+        // Mail 激活写入的激活方会话（生产侧 MailTool.activateAgent 同点写入）
+        parentSessionId = "root-1",
         startedAt = now - 2 * 60 * 60 * 1000L,
         status = AgentStatus.Processing,
         lastActivityMs = now - threshold - 1000
@@ -124,16 +126,16 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       wsEvents <- receivedWs.get
       teamCmds <- teamReceived.get
     yield
-      // 广播：kind=Team + action=attention（用户可见，交给用户/Nebula 决策）
+      // 广播：kind=Root + action=attention（用户可见，交给用户/Nebula 决策）
       assert(wsEvents.size == 1, s"expected one taskStuck broadcast, got $wsEvents")
       val ev = wsEvents.head
       assertEquals(ev.hcursor.get[String]("type").toOption, Some("taskStuck"))
-      assertEquals(ev.hcursor.get[String]("kind").toOption, Some("Team"))
+      assertEquals(ev.hcursor.get[String]("kind").toOption, Some("Root"))
       assertEquals(ev.hcursor.get[String]("action").toOption, Some("attention"))
       assertEquals(ev.hcursor.get[String]("sessionId").toOption, Some("team-nebflow-project-Frontend"))
       assert(ev.hcursor.get[Long]("idleSecs").toOption.exists(_ > 0), s"idleSecs: $ev")
-      // 只读铁律：长驻 team agent 绝不自动 Stop（AgentControl §4 Team=只读）
-      assert(teamCmds.isEmpty, s"Team agent must NOT receive any command, got $teamCmds")
+      // 只读铁律：长驻 mail-activated 会话绝不自动 Stop（B5 后其 kind=Root+父会话）
+      assert(teamCmds.isEmpty, s"mail-activated agent must NOT receive any command, got $teamCmds")
     end for
   }
 
@@ -300,7 +302,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
     end for
   }
 
-  test("#22: Team 加入扫描集合但只读——广播 taskStuck，绝不 Stop") {
+  test("#22: Mail 激活的长驻会话进扫描集合但只读——广播 taskStuck，绝不 Stop") {
     val system = ActorSystem("test")
     for
       _ <- IO(system)
@@ -317,7 +319,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
           "team-long" -> AgentRecord(
             sessionId = "team-long",
             ref = childRef,
-            kind = AgentKind.Team, // Team 现在在扫描集合（#22），但只读
+            kind = AgentKind.Root, // Team 现在在扫描集合（#22），但只读
             rootSessionId = "root-1",
             parentRef = Some(childRef),
             startedAt = now - 60 * 60 * 1000L,
@@ -331,11 +333,11 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       msgs <- received.get
       wsEvents <- receivedWs.get
     yield
-      // 只读铁律：Team 永不 Stop
+      // 只读铁律：mail-activated 长驻会话永不 Stop
       assert(msgs.isEmpty, s"Team agent must never be stopped, got: $msgs")
-      // 但要被看见：长驻 Team 卡死不再是盲区（#22 12:28-13:45 两小时零可见性）
+      // 但要被看见：长驻会话卡死不再是盲区（#22 12:28-13:45 两小时零可见性）
       assert(wsEvents.nonEmpty, s"Team stuck must broadcast taskStuck, got: $wsEvents")
-      assert(wsEvents.head.hcursor.get[String]("kind").toOption.contains("Team"), s"kind=Team: ${wsEvents.head}")
+      assert(wsEvents.head.hcursor.get[String]("kind").toOption.contains("Root"), s"kind=Team: ${wsEvents.head}")
     end for
   }
 
@@ -493,8 +495,9 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
               "team-w-1" -> AgentRecord(
                 sessionId = "team-w-1",
                 ref = teamRef,
-                kind = AgentKind.Team,
+                kind = AgentKind.Root,
                 rootSessionId = "root-1",
+                parentSessionId = "root-1",
                 startedAt = n - 2 * 60 * 60 * 1000L,
                 status = AgentStatus.Processing,
                 lastActivityMs = n - 11 * 60 * 1000L

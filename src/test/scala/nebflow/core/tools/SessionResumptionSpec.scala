@@ -575,7 +575,7 @@ class SessionResumptionSpec extends CatsEffectSuite:
     end for
   }
 
-  test("restart-interrupted Mail is retained without clearing the gate or starting an actor") {
+  test("restart-interrupted Mail releases the gate in place: same id, supplement is the next turn, nothing queued") {
     val system = ActorSystem("restart-held-mail")
     val id = "delegate-nebflow-restart-held"
     val ws = workspaceOf("restart-held")
@@ -583,15 +583,37 @@ class SessionResumptionSpec extends CatsEffectSuite:
       resources <- mkResources(system, hang = true)
       _ <- seedRecord(id, "parent", ws, "interrupted", restartInterrupted = true)
       _ <- seedTranscript(resources, id, List("original task", "partial result"))
-      result <- mailToDelegate(resources, system, "parent", id, "supplement retained for manual recovery")
+      result <- mailToDelegate(resources, system, "parent", id, "supplement released by mail")
       pending <- nebflow.core.mail.SessionMailbox.scanPending(id)
       live <- resources.agentRegistry.get
       record <- IO.blocking(DelegateRegistry.find(id))
+      row <- resources.subAgentTaskStore.findByTaskId(id)
     yield
-      assert(result.toOption.exists(_.contains("MANUAL_RECOVERY_REQUIRED")))
-      assertEquals(pending.map(_.event.payload), List("supplement retained for manual recovery"))
-      assert(!live.contains(id))
-      assert(record.exists(_.restartInterruptedAt.nonEmpty))
+      assert(result.toOption.exists(_.contains("released by Mail")), result.toString)
+      assert(result.toOption.exists(_.contains("IN PLACE")), result.toString)
+      assert(!result.toOption.exists(_.contains("MANUAL_RECOVERY_REQUIRED")), result.toString)
+      // 押闸释放 = 同 id 续跑：补充经原位续腿直接注入下一回合，不再滞留邮箱。
+      assert(pending.isEmpty, s"the released supplement must not stay queued: ${pending.map(_.event.payload)}")
+      assert(live.contains(id), "the same identity is live again")
+      assert(record.exists(r => r.restartInterruptedAt.isEmpty && r.frozenSince.isEmpty), "gate slots are closed")
+      // 零预算记账：Mail 释放不写复活计数（supervisor 重启预算不动）。
+      assertEquals(row.flatMap(_.revivalCount).getOrElse(0), 0)
+    exercise.guarantee(system.stopAll)
+  }
+
+  test("a cancelled identity is never woken by Mail even though its gate is held") {
+    val system = ActorSystem("cancelled-gate-mail")
+    val id = "delegate-nebflow-cancelled-gate"
+    val ws = workspaceOf("cancelled-gate")
+    val exercise = for
+      resources <- mkResources(system, hang = true)
+      _ <- seedRecord(id, "parent", ws, "interrupted", tombstone = true, restartInterrupted = true)
+      _ <- seedTranscript(resources, id, List("original task", "partial result"))
+      result <- mailToDelegate(resources, system, "parent", id, "must not wake a cancelled identity")
+      live <- resources.agentRegistry.get
+    yield
+      assert(result.isLeft, result.toString)
+      assert(!live.contains(id), "a cancel tombstone never releases the gate")
     exercise.guarantee(system.stopAll)
   }
 

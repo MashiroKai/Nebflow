@@ -121,7 +121,9 @@ case class AskItem(
    * 任何读面拼进值文件；侧车本身也从不承载值。非 secret 题忽略。
    */
   secretDescription: Option[String] = None,
-  secretTags: List[String] = Nil
+  secretTags: List[String] = Nil,
+  /** Merge question configuration; absent for all existing questions. */
+  merge: Option[io.circe.Json] = None
 )
 
 case class AskOption(

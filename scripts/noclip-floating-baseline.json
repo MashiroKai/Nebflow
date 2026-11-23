@@ -1743,6 +1743,16 @@
       "owner": "noclip-unified-fix (作者排期)"
     },
     {
+      "key": "src/main/resources/web/css/llmFailureCard.css::text-truncation::.llm-failure-agents, .llm-failure-summary",
+      "file": "src/main/resources/web/css/llmFailureCard.css",
+      "line": 38,
+      "rule": "text-truncation",
+      "selector": ".llm-failure-agents, .llm-failure-summary",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "llm-failure-card 四轮批 (2026-11-21 落地)"
+    },
+    {
       "key": "src/main/resources/web/css/mermaid.css::cap-without-scroll::.nf-figure-open",
       "file": "src/main/resources/web/css/mermaid.css",
       "line": 91,
@@ -1843,11 +1853,11 @@
       "owner": "—"
     },
     {
-      "key": "src/main/resources/web/css/mobile-todo-apple.css::text-truncation::body.mobile-layer .mobile-page[data-page=\"todo-apple-item\"] .ta-tool-label",
+      "key": "src/main/resources/web/css/mobile-todo-apple.css::text-truncation::body.mobile-layer .mobile-page:is([data-page=\"todo-apple-item\"], [data-page=\"todo-quick-decision\"]) .ta-tool-label",
       "file": "src/main/resources/web/css/mobile-todo-apple.css",
       "line": 786,
       "rule": "text-truncation",
-      "selector": "body.mobile-layer .mobile-page[data-page=\"todo-apple-item\"] .ta-tool-label",
+      "selector": "body.mobile-layer .mobile-page:is([data-page=\"todo-apple-item\"], [data-page=\"todo-quick-decision\"]) .ta-tool-label",
       "severity": "P2",
       "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
       "owner": "noclip-unified-fix (作者排期)"
@@ -4185,24 +4195,6 @@
       "key": "mobile-chat-escalation-card::.error-escalation-card::ancestor-overflow-top",
       "scenario": "mobile-chat-escalation-card",
       "selector": ".error-escalation-card",
-      "rule": "ancestor-overflow-top",
-      "severity": "P1",
-      "reason": "决策/浮层卡高于可视区时顶部被裁（非浮层、无自滚）：应改为悬浮 + 内部可滚（铁律 9·①②③）",
-      "owner": "noclip-unified-fix (作者排期)"
-    },
-    {
-      "key": "mobile-todo-decision-card::.ta-decision-detail::viewport-top-clip",
-      "scenario": "mobile-todo-decision-card",
-      "selector": ".ta-decision-detail",
-      "rule": "viewport-top-clip",
-      "severity": "P1",
-      "reason": "决策/浮层卡高于可视区时顶部被裁（非浮层、无自滚）：应改为悬浮 + 内部可滚（铁律 9·①②③）",
-      "owner": "noclip-unified-fix (作者排期)"
-    },
-    {
-      "key": "mobile-todo-decision-card::.ta-decision-detail::ancestor-overflow-top",
-      "scenario": "mobile-todo-decision-card",
-      "selector": ".ta-decision-detail",
       "rule": "ancestor-overflow-top",
       "severity": "P1",
       "reason": "决策/浮层卡高于可视区时顶部被裁（非浮层、无自滚）：应改为悬浮 + 内部可滚（铁律 9·①②③）",

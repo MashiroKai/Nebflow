@@ -16,8 +16,9 @@ import scala.concurrent.duration.*
 
 // 定位器参数窄化,AgentActor 构造改经工厂镜像
 /**
- * Role-scoped agent communication. Frozen/restart-held delegates retain supplements
- * in their durable mailbox until explicit manual recovery. Normal completed delegates
+ * Role-scoped agent communication. A Mail to a frozen/restart-held delegate is itself the
+ * wake: it releases the gate and resumes the same identity ([[releaseGateByMail]]); a
+ * refused release retains the supplement in the durable mailbox. Normal completed delegates
  * continue under the same identity only when their saved history is verified.
  */
 object MailTool extends Tool:
@@ -407,10 +408,11 @@ object MailTool extends Tool:
 
 Required: message, plus `address`.
 
-Frozen or restart-interrupted delegates retain your supplement in their original durable mailbox.
-Mail does not release a manual recovery gate or start a replacement session. Use the explicit
-manual recovery action when execution is authorized to resume. Missing history or unknown tool
-outcomes are an explicit refusal; cancellation requires a new Delegate request.
+Frozen or restart-interrupted delegates are woken by your Mail: it releases the manual gate, resumes
+the SAME session (same id, saved transcript replayed, your message is the next turn) and spends no restart
+budget. Mail never starts a replacement session. If the resume is refused, your supplement is retained in
+the session's durable mailbox and the reason is reported. Missing history or unknown tool outcomes are an
+explicit refusal; cancellation requires a new Delegate request.
 
 ## `Mail` vs `SendMessage` — who receives it?
 - **`Mail` — an AGENT receives it**: the mail is injected into the target agent's
@@ -500,8 +502,8 @@ Delivery follows recipient state (there is no delivery parameter to set):
   Async send, injected at the target's next turn boundary (an idle target starts
   a new turn; a busy target has it merged into the current turn). You don't wait
   for a response.
-  Frozen and restart-held delegates retain supplements in their durable mailbox without
-  starting execution; only explicit manual recovery releases that gate.
+  Frozen and restart-held delegates are woken by Mail itself (the gate is released and the same
+  session continues); a refused release retains the supplement in the durable mailbox.
   There is no delivery mode to choose. A caller that
   passes `delivery="queue"` (a serialized FIFO mode — one Mail per turn — that
   this tool does not offer) is an
@@ -1397,7 +1399,7 @@ Delivery follows recipient state (there is no delivery parameter to set):
                       task,
                       live
                     ) =>
-                  queueRecoverySupplement(id, message, blocks, ctx)
+                  releaseGateByMail(id, message, blocks, ctx, system, resources, current, live)
                 case Some(current) =>
                   // Round-model decision point (inside the start-lease critical
                   // section, naturally mutually exclusive with revival/continuation):
@@ -1443,6 +1445,63 @@ Delivery follows recipient state (there is no delivery parameter to set):
         }
       case _ => IO.unit
     }.handleErrorWith(_ => IO.unit)
+
+  /**
+   * 押闸释放口（Mail 即唤醒；作者令 2026-11-22 20:44「让mail也能唤醒」）。冻结 /
+   * 重启打断 / 待恢复的会话收到 Mail ⇒ 释放该闸，同 id 续跑，补充作为下一回合注入。
+   *   · 活体（监督者仍持有 actor，冻结未死）⇒ 原 actor 注入：[[nebflow.agent.DelegateWakeLeg]]
+   *     live 腿（幂等键 frozen-wake、onWoken 收口、绝不 RestartAgent）；
+   *   · 无活体 ⇒ 原位续腿 `resumeInPlaceLocked(gateReleased = true)`：转录重放、零预算记账、
+   *     成功后冻结槽收口；
+   *   · 任一腿拒绝 ⇒ 补充落原会话邮箱（不丢），回执写明拒绝原因、闸仍在。
+   * 取消墓碑已在上游 [[deliverToDelegate]] 显式拒绝，本函数不见。
+   * 显式重试信号：唤醒后若再撞确定性缺陷，按既有规则再冻结，不是缺陷绕行。
+   */
+  private def releaseGateByMail(
+    id: String,
+    message: String,
+    blocks: Option[List[ContentBlock]],
+    ctx: ToolContext,
+    system: ActorSystem,
+    res: AgentRuntimePort,
+    record: DelegateRegistry.Record,
+    live: Option[AgentRecord]
+  ): IO[Either[ToolError, String]] =
+    live
+      .fold(IO.pure(false))(entry => system.isAlive(entry.ref.path))
+      .flatMap {
+        case true =>
+          nebflow.agent.DelegateWakeLeg
+            .wake(res, ctx.wsSend, id, message, "mail")
+            .flatMap {
+              case Right(mode) =>
+                IO.pure[Either[ToolError, String]](
+                  Right(
+                    s"[delegate #$id] Mail released the manual gate on the live session ($mode): the supplement " +
+                      "was injected into the SAME session and the freeze cleared. No restart budget was spent."
+                  )
+                )
+              case Left(reason) =>
+                queueRecoverySupplement(id, message, blocks, ctx).map(
+                  _.map(saved => s"Gate release refused ($reason); $saved")
+                )
+            }
+        case false =>
+          resumeDelegateInPlace(
+            record,
+            id,
+            message,
+            ctx,
+            system,
+            res,
+            nebflow.core.delegate.SessionResumption.displayTitle(record),
+            None,
+            blocks,
+            gateReleased = true
+          )
+      }
+
+  end releaseGateByMail
 
   private def queueRecoverySupplement(
     id: String,
@@ -1730,7 +1789,8 @@ Delivery follows recipient state (there is no delivery parameter to set):
     res: AgentRuntimePort,
     displayTitle: String,
     parentRef: Option[ActorRef[AgentCommand]],
-    blocks: Option[List[ContentBlock]] = None
+    blocks: Option[List[ContentBlock]] = None,
+    gateReleased: Boolean = false
   ): IO[Either[ToolError, String]] =
     val brief =
       s"""[supplement for the SAME delegate session $id — resumed in place; your history is loaded above]
@@ -1738,7 +1798,13 @@ Delivery follows recipient state (there is no delivery parameter to set):
 
 $message"""
     nebflow.core.delegate.SessionResumption
-      .resumeInPlaceLocked(nebflow.core.delegate.SessionResumption.Deps(res, system, ctx.wsSend), record, brief, blocks)
+      .resumeInPlaceLocked(
+        nebflow.core.delegate.SessionResumption.Deps(res, system, ctx.wsSend),
+        record,
+        brief,
+        blocks,
+        gateReleased
+      )
       .map {
         case Right(out) =>
           record.taskId.foreach { tid =>
@@ -1758,8 +1824,10 @@ $message"""
             else
               s"\nNOTE: the original parent session '${record.parentSessionId}' is not live right now. If its saved session still exists, " +
                 "the result waits in its durable mailbox until its next wake; otherwise the outcome remains in the task panel."
+          val releasePrefix =
+            if gateReleased then "[manual gate released by Mail] " else ""
           Right(
-            s"[delegate #$id] No live actor was holding this instance — your message RESUMED IT IN PLACE: " +
+            s"[delegate #$id] ${releasePrefix}No live actor was holding this instance — your message RESUMED IT IN PLACE: " +
               s"**same session id** (`$id`), transcript appended (${out.transcriptMessages} messages replayed, nothing rewritten), " +
               "same workspace and task ledger. The batch's chain nodes keep their owner, so their completion events and " +
               s"supplements still reach this session. Display name: \"$displayTitle\" (stable across generations).$parentNote"
@@ -1776,7 +1844,8 @@ $message"""
       }
       .flatMap {
         case Left(error) =>
-          IO.blocking(DelegateRegistry.isFrozen(id)).flatMap {
+          // 押闸释放失败（再冻结 / 仍押闸）⇒ 补充照旧落原会话邮箱，不丢。
+          IO.blocking(DelegateRegistry.isFrozen(id)).map(_ || gateReleased).flatMap {
             case true =>
               queueRecoverySupplement(id, message, blocks, ctx).map(
                 _.map(saved => s"Continuation could not start (${error.message}); $saved")
@@ -2344,13 +2413,14 @@ $message"""
           // （`_index.json` 的盘上遗留值：全局 confirm-edits 时被 Mail 激活的成员会
           // 继承盘上 auto-all），也不再有会话覆盖面。
           safetyMode <- resources.effectiveSafetyMode.map(nebflow.core.SafetyMode.toString)
-          entryOpt <- session.flowName match
-            case Some(teamName) => EntityLoader.loadTeamAgent(teamName, agentName)
-            case None => EntityLoader.loadAgent(agentName)
+          // 团队类型面删除批阶段 B2（作者裁定 Q2：teams/ 盘上遗留直接丢弃）：原
+          // `session.flowName match Some(teamName) => loadTeamAgent(teamName, …)` 的
+          // 团队局部定义查找腿删除，激活身份只走全局 agent 库（磁盘 agents/ + 内置）。
+          entryOpt <- EntityLoader.loadAgent(agentName)
           _ <- IO {
             if entryOpt.isEmpty then
               logger.warn(
-                s"[mail] activation failed: agent def '$agentName' not loadable (team=${session.flowName.getOrElse("-")}) for session ${sessionId.take(8)} (issue #22 observability)"
+                s"[mail] activation failed: agent def '$agentName' not loadable for session ${sessionId.take(8)} (issue #22 observability)"
               )
           }
           _ <- entryOpt.traverse_ { entry =>
@@ -2413,23 +2483,32 @@ $message"""
               // session — the Teams panel double-entry ghost. Delegate /
               // SubTask / DAG spawns already name actors by their
               // nodeSessionId; this aligns the Mail path with them.
-              // AgentActor 构造改经工厂
-              // 镜像(resources 以 this 代入,实参逐字,零行为差)。
-              ref <- actorSystem.spawn(
-                resources.agentActorBehavior(
+              // 阶段 A（G1 收口）：唯一创建入口 resources.spawnAgentActor；
+              // 旧直连（agentActorBehavior 镜像）的差异以等价旋钮逐项声明，行为不变：
+              // 无 readTracker/fileHistory、contextWindow 取 Defaults、不占 provider 坑、
+              // 不走准入闸、不过 KernelChildSpawnGate。
+              ref <- resources.spawnAgentActor(
+                actorSystem,
+                nebflow.core.node.NodeRunner.SpawnParams(
                   agentDef = agentDef,
-                  wsSend = teamWsSend,
+                  resources = resources,
+                  sessionId = session.id,
+                  sessionName = session.name,
                   depth = 1,
                   parentRef = ctx.agentActorRef,
-                  sessionId = Some(session.id),
-                  sessionName = Some(session.name),
-                  initialMessages = history,
+                  wsSend = teamWsSend,
                   projectRoot = Some(ctx.projectRoot),
                   safetyMode = safetyMode,
                   rootSessionId = rootSid,
-                  expectsMail = entry.name != "Manager"
-                ),
-                session.id
+                  initialMessages = history,
+                  expectsMail = entry.name != "Manager",
+                  withTracking = false,
+                  contextWindowOverride = Some(Defaults.ContextWindow),
+                  pinProvider = false,
+                  admissionGuard = false,
+                  kernelGate = false,
+                  actorName = session.id
+                )
               )
               // Death watch: a Mail-activated actor lives OUTSIDE any tree watch
               // system, so its death would be completely silent — the registry
@@ -2445,9 +2524,19 @@ $message"""
                   session.id -> AgentRecord(
                     sessionId = session.id,
                     ref = ref,
-                    // 团队会话 kinds 面：团队退役后本腿已无生产调用方（仅遗留队列层
-                    // spec 直调），kind 值保持 `Team` 以免动枚举（作者未裁定枚举去留）。
-                    kind = AgentKind.Team,
+                    // B5（枚举 Team 值删除）：Mail 激活的会话登记为 `Root`——它就是
+                    // **本会话自己的 agent**（每个会话只有一个 agent，depth=1 的子会话
+                    // 形态是 Delegate/subagent，不是本条腿）。
+                    //
+                    // 选 Root 而不选 Delegate 的理由 = 换标前 Team 记录在四个消费点的
+                    // 语义逐条等价，行为零变化（铁律 2 的同类要求）：
+                    //  · TaskStuckWatcher：本记录带 parentSessionId ⇒ 命中「Root kind + 有父
+                    //    会话」的 attention-only 腿（只广播不 Stop）＝ 原 Team 腿；
+                    //  · 树根 Nebula（非 Mail 激活）与本条靠 parentSessionId 区分，互不干扰；
+                    //  · MailIdleGate：Root 不在 taskKinds ⇒ 不计入发送者子树忙判 ＝ 原 Team 腿；
+                    //  · filterActiveAgents：Root 不在 taskKinds ⇒ 不出现在子代理行集 ＝ 原 Team 腿；
+                    //  · AgentControl：Root 被显式拒绝（self-preservation guard）＝ 原 Team 被显式拒绝。
+                    kind = AgentKind.Root,
                     rootSessionId = rootSid,
                     parentRef = ctx.agentActorRef,
                     // Block 0 链的 parent 语义随团队退役收敛为「激活方会话」。

@@ -37,7 +37,9 @@ private[gateway] object WsAskHandlers:
     // hunkId 逐块；dismiss = 冲突逃生口）。
     "askEditAccept" -> handleAskEditAccept,
     "askEditReject" -> handleAskEditReject,
-    "askEditDismiss" -> handleAskEditDismiss
+    "askEditDismiss" -> handleAskEditDismiss,
+    // 审阅期间文件被改后的「重试」：重拉盘上 + 重算 diff（零写盘，不接受/拒绝）。
+    "askEditResync" -> handleAskEditResync
   )
 
   private def send(wsSend: Json => IO[Unit], payload: Json): IO[Unit] = wsSend(payload)
@@ -206,20 +208,28 @@ private[gateway] object WsAskHandlers:
       case u: nebflow.shared.UiMessage.User if u.injected =>
         rows += Json.obj("role" -> "sys".asJson, "text" -> u.text.asJson, "source" -> u.source.getOrElse("").asJson)
       case u: nebflow.shared.UiMessage.User =>
-        rows += Json.obj("role" -> "user".asJson, "text" -> u.text.asJson)
+        // 附图批：附件行件随回放下发（{name,type,path}；前端 path → /uploads 路由取图）。
+        // 「图+无正文」行保留（text 可空，行不因正文空被丢弃）。
+        val base = withTimestamp(Json.obj("role" -> "user".asJson, "text" -> u.text.asJson), u.timestamp)
+        rows += (if u.attachments.isEmpty then base
+                 else base.deepMerge(Json.obj("attachments" -> u.attachments.asJson)))
       case a: nebflow.shared.UiMessage.Ai if a.text.trim.nonEmpty =>
         rows.lastOption.flatMap(_.hcursor.downField("role").as[String].toOption) match
           case Some("ai") =>
             // 同轮相邻段并回一泡（原文直连 = live delta 拼接同形；tool 行透明不隔断，
-            // user/sys 行已落行故天然隔断）。
+            // user/sys 行已落行故天然隔断）。时间戳沿用首段（deepMerge 保留既有 timestamp 键）。
             val prev = rows.last.hcursor.downField("text").as[String].getOrElse("")
-            rows(rows.length - 1) = Json.obj("role" -> "ai".asJson, "text" -> (prev + a.text).asJson)
+            rows(rows.length - 1) = rows.last.deepMerge(Json.obj("text" -> (prev + a.text).asJson))
           case _ =>
-            rows += Json.obj("role" -> "ai".asJson, "text" -> a.text.asJson)
+            rows += withTimestamp(Json.obj("role" -> "ai".asJson, "text" -> a.text.asJson), a.timestamp)
       case _ => () // tool / agent / ask / system：dock 透明纪律（live 腿同样不进泡列）
     }
     rows.toList
   end encodeTranscript
+
+  /** 时间戳随回放行下发（canvas ask 时间分隔线批）：仅 >0 时加 `timestamp` 键；0/缺席 ⇒ 行形态逐字不变。 */
+  private[gateway] def withTimestamp(row: Json, ts: Long): Json =
+    if ts > 0L then row.deepMerge(Json.obj("timestamp" -> ts.asJson)) else row
 
   // ── askQuestion：真实用户文本链路（与输入框同腿 dispatchUserText）────────
 
@@ -233,29 +243,38 @@ private[gateway] object WsAskHandlers:
     val raw = WsDispatch.parsedJson(text)
     val sid = raw.hcursor.downField("sessionId").as[String].getOrElse("")
     val content = raw.hcursor.downField("content").as[String].getOrElse("")
+    // 附图批：附件清单（主会话 userMessage.attachments 同形）；缺席 = Nil ⇒ 纯文本提问逐字现状。
+    val attsJson = raw.hcursor.downField("attachments").as[List[Json]].getOrElse(Nil)
 
     if !AskSessions.isAskSession(sid) then askError(wsSend, sid, "askQuestion: sessionId must be an ask- session")
-    else if content.trim.isEmpty then askError(wsSend, sid, "askQuestion: empty content")
+    // 有图不算空：正文空白但带图 ⇒ 合法提问（「图+无正文」）。
+    else if content.trim.isEmpty && attsJson.isEmpty then askError(wsSend, sid, "askQuestion: empty content")
     else
-      AskGatewayServices.instance match
-        case None => askError(wsSend, sid, "ask mode unavailable on this instance")
-        case Some(svc) =>
-          svc.registry.byId(sid).flatMap {
-            case None => askError(wsSend, sid, "askQuestion: no file binding for this session")
-            case Some(binding) =>
-              // 冷却组装腿（§3.3：冷却期满后的下一次交互——发问——前重组）。
-              svc
-                .assembleIfDue(sid, binding)
-                .handleErrorWith(e => logger.warn(s"ask assemble failed (non-fatal): ${e.getMessage}")) *>
-                // 交互前刷新转交目标（主会话可能已切换）。
-                refreshMainIfReported(svc, sid, raw) *>
-                // PDF note/ask 批（2026-11-18）· 懒解析触发点：给 ask 发的消息是
-                // 解析的唯一触发器。绑定 PDF 时在后台起（或 join）解析——
-                // askOpen / note 腿都不碰 PdfCache.ensure，这里不 await（大文档
-                // 不许挡住提问；模型侧 PdfPage 调用自会 join 同一单飞）。
-                triggerPdfParseIfNeeded(binding) *>
-                ctx.handleUserText(sid, content, "ask-dock", fromUser = true)
-          }
+      AskAttachmentIntake.parse(attsJson) match
+        case Left(why) => askError(wsSend, sid, s"askQuestion: $why")
+        case Right(prepared) =>
+          AskGatewayServices.instance match
+            case None => askError(wsSend, sid, "ask mode unavailable on this instance")
+            case Some(svc) =>
+              svc.registry.byId(sid).flatMap {
+                case None => askError(wsSend, sid, "askQuestion: no file binding for this session")
+                case Some(binding) =>
+                  // 冷却组装腿（§3.3：冷却期满后的下一次交互——发问——前重组）。
+                  svc
+                    .assembleIfDue(sid, binding)
+                    .handleErrorWith(e => logger.warn(s"ask assemble failed (non-fatal): ${e.getMessage}")) *>
+                    // 交互前刷新转交目标（主会话可能已切换）。
+                    refreshMainIfReported(svc, sid, raw) *>
+                    // PDF note/ask 批（2026-11-18）· 懒解析触发点：给 ask 发的消息是
+                    // 解析的唯一触发器。绑定 PDF 时在后台起（或 join）解析——
+                    // askOpen / note 腿都不碰 PdfCache.ensure，这里不 await（大文档
+                    // 不许挡住提问；模型侧 PdfPage 调用自会 join 同一单飞）。
+                    triggerPdfParseIfNeeded(binding) *>
+                    // 附图批：落盘（uploads/<askSid>，所有权同主会话）→ 行件 + 模型块 → 同一派发腿。
+                    AskAttachmentIntake.save(sid, prepared, ctx.askOwnerAccess).flatMap { saved =>
+                      ctx.handleAskUserText(sid, content, saved.map(_.uiJson), saved.flatMap(_.blocks))
+                    }
+              }
     end if
   end handleAskQuestion
 
@@ -451,6 +470,7 @@ private[gateway] object WsAskHandlers:
         case "accept" => nebflow.core.ask.AskEditReviews.accept(sid, hunkId)
         case "reject" => nebflow.core.ask.AskEditReviews.reject(sid, hunkId)
         case "dismiss" => nebflow.core.ask.AskEditReviews.dismiss(sid)
+        case "resync" => nebflow.core.ask.AskEditReviews.resync(sid)
       outcome.flatMap {
         case Right(_) =>
           wsSend(
@@ -497,6 +517,13 @@ private[gateway] object WsAskHandlers:
     wsSend: Json => IO[Unit],
     watch: ExplorerWatchSession
   ): IO[Unit] = handleAskEditResolve("dismiss", text, wsSend)
+
+  private def handleAskEditResync(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: Json => IO[Unit],
+    watch: ExplorerWatchSession
+  ): IO[Unit] = handleAskEditResolve("resync", text, wsSend)
 
   // ── Note persistence ───────────────────────────────────────────────────
   // Two inbound frames and two outbound frames, with the same file identity as the ask session

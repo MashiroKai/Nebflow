@@ -24,8 +24,9 @@ import { readFileSync } from 'node:fs';
 const SRC = process.env.SETTINGS_SIDEBAR_JS || 'src/main/resources/web/js/sidebar.js';
 const src = readFileSync(SRC, 'utf8');
 
-const REQUIRED = ['runtime', 'advanced', 'about'];
-const EXPECTED_MIN = 5;
+// 通用 + 运行时 已融合为单块「通用」（作者令 2026-11-22 18:51）⇒ 分区 = 4 个。
+const REQUIRED = ['general', 'advanced', 'about'];
+const EXPECTED_MIN = 4;
 
 // ── 取 renderSettings 的模板串（content.innerHTML = ` ... `;）──────────────
 const start = src.indexOf('content.innerHTML = `');

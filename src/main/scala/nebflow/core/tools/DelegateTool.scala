@@ -201,7 +201,7 @@ object DelegateTool extends Tool:
     val attachmentBlock = if attachmentSection.isEmpty then "" else s"\n\n$attachmentSection"
     s"""$workspaceLine${bindingLine.map(l => s"\n$l").getOrElse("")}
 ${ResetHazardLine}
-
+${nebflow.prompts.PromptCatalog.Shared.WorktreeDiscipline}
 ${reportLine}
 
 ${Defaults.DeliveryLandingLine}

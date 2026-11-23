@@ -43,7 +43,9 @@ class ProjectStoreSpec extends CatsEffectSuite:
       assert(os.exists(ws / "AGENTS.md"), "AGENTS.md template must be at workspace root")
       assert(!os.exists(ws / ".nebflow" / ".gitignore"), ".gitignore must NOT be inside .nebflow/ (R6 position fix)")
       assert(os.exists(ws / ".gitignore"), ".gitignore must be at workspace root (R6)")
-      assertEquals(os.read(ws / ".gitignore"), ".nebflow/\n")
+      assertEquals(os.read(ws / ".gitignore"), ".nebflow/\n.stand/worktrees/\n.stand/tmp/\n")
+      assert(os.isDir(ws / ".stand" / "worktrees"))
+      assert(os.isDir(ws / ".stand" / "tmp"))
       assertEquals(pd.map(_.name), Some("demo"))
   }
 
@@ -92,7 +94,11 @@ class ProjectStoreSpec extends CatsEffectSuite:
     yield
       assert(created.isRight)
       val content = os.read(ws3 / ".gitignore")
-      assertEquals(content, "node_modules/\n.nebflow/\n", "must not duplicate the .nebflow/ entry")
+      assertEquals(
+        content,
+        "node_modules/\n.nebflow/\n.stand/worktrees/\n.stand/tmp/\n",
+        "must append only missing workspace entries"
+      )
   }
 
   test("R6: fresh workspace gets root .gitignore with .nebflow/ entry") {
@@ -103,7 +109,7 @@ class ProjectStoreSpec extends CatsEffectSuite:
       assert(created.isRight)
       val gi = ws4 / ".gitignore"
       assert(os.exists(gi))
-      assertEquals(os.read(gi), ".nebflow/\n")
+      assertEquals(os.read(gi), ".nebflow/\n.stand/worktrees/\n.stand/tmp/\n")
   }
 
   // S2 2026-09-17 12:09 裁定单 ③-8：「缺件即补、既有永不覆盖」——既有件是**不可覆写**的
@@ -170,7 +176,11 @@ class ProjectStoreSpec extends CatsEffectSuite:
       val giFirst = appended.items.find(_.item == ".gitignore").getOrElse(fail("item missing"))
       assert(giFirst.created, "既有 .gitignore 缺行 ⇒ 追加 = created")
       assert(giFirst.detail.contains("appended"), giFirst.detail)
-      assertEquals(afterFirst, "node_modules/\n.nebflow/\n", "用户内容零改动 + 恰一行 .nebflow/")
+      assertEquals(
+        afterFirst,
+        "node_modules/\n.nebflow/\n.stand/worktrees/\n.stand/tmp/\n",
+        "preserve user content and append workspace entries"
+      )
       val giSecond = again.items.find(_.item == ".gitignore").getOrElse(fail("item missing"))
       assert(!giSecond.created, "已含 .nebflow/ 行 ⇒ skipped")
       assert(giSecond.detail.contains("already lists"), giSecond.detail)

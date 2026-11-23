@@ -23,16 +23,14 @@ import scala.concurrent.duration.*
  * 四修①（2026-10-07 修复令「空轮≠完成」）判读——worker 会话 turn-ended-empty
  * 且全会话零工具调用（尤其 stopReason=max_tokens 空烧形态）不再等于完成：
  *
- *  - 判据纯函数：`sessionToolCalls`（全会话 tool_use 计数）＋
- *    `isEmptyBurnCompletion`（零工具 ∧（终文空 ∨ max_tokens 空烧 stub））；
- *  - 两级处置（现行语义 = 直接交付批 dcc430e42「Deliver delegate completion payload
- *    directly」拆除矩阵提醒腿接线之后 ＋ P5 静默完成治理第二波）：有重启预算 →
- *    既有 respawn 续推（"restarting" 库态＋subagentRetry＋continue nudge 注入）；
- *    预算耗尽 → delegate 轨照常交付完成回执，但空回执**必须显式非静默**：
- *    payload 携带结构化 `[delegate-diagnostic] no-final-text; …; empty-run` 行
- *    （第一波结构化回执）、引擎日志 WARN（第二波告警面）、任务行 diagnostic 字段
- *    落盘（面板 L3 warn 面），lastError 恒 None（「干了活没说话」≠「失败」）；
- *    subtask 轨 failed 终态（failureType=empty-burn）。
+ *  - 判据纯函数（回合级，2026-11-22 语义修复）：`sessionToolCalls`（全会话 tool_use
+ *    计数，仅诊断用）＋ `isEmptyBurnCompletion`（**末轮**零 tool_use ∧（终文空 ∨
+ *    max_tokens 空烧 stub））——之前回合有过工具调用不再豁免末轮空烧；
+ *  - 两级处置：有重启预算 → respawn 续推（fresh LLM 调用，指数退避，continue nudge
+ *    注入）；预算耗尽 → **显式失败**（delegate 与 subtask 同形：failed 终态、
+ *    retryable、lastError = `empty-final-turn (…)` 可读原因），绝不静默 completed。
+ *  - 边界：末轮带工具调用的空文本回合是正常中间态（原样走完成闸，诊断行随行，见
+ *    「worked silently」用例）。
  *
  * 现场回归：鹦鹉骑自行车 delegate——thinking-only 空烧，supervisor 把
  * "(no text output)" 当完成报父，假 completed。本件钉死：空烧不再报**干净**完成
@@ -173,11 +171,11 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
     assert(workedSilently.contains("toolCalls=2") && !workedSilently.contains("empty-run"), workedSilently)
   }
 
-  test("isEmptyBurnCompletion: zero tools + (no text | stub) = true; real text or any tool = false") {
-    assert(BackoffSupervisor.isEmptyBurnCompletion(Nil), "silent empty completion is an empty burn")
+  test("isEmptyBurnCompletion (turn-level): final turn zero tools + (no text | stub) = true; real text or final-turn tool = false") {
+    assert(BackoffSupervisor.isEmptyBurnCompletion(Nil), "no output at all is an empty final turn")
     assert(
       BackoffSupervisor.isEmptyBurnCompletion(thinkingOnlyMessages),
-      "thinking-only turn-ended-empty is an empty burn"
+      "thinking-only turn-ended-empty is an empty final turn"
     )
     assert(
       BackoffSupervisor.isEmptyBurnCompletion(stubMessages),
@@ -185,7 +183,7 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
     )
     assert(
       !BackoffSupervisor.isEmptyBurnCompletion(List(Message(MessageRole.Assistant, Left("did the work")))),
-      "real text output is the judge's input, not an empty burn"
+      "real text output is the judge's input, not an empty final turn"
     )
     assert(
       !BackoffSupervisor.isEmptyBurnCompletion(
@@ -194,14 +192,39 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
           Right(List(ContentBlock.ToolUse("t9", "Bash", io.circe.JsonObject.empty)))
         )
       ),
-      "any tool call disqualifies the empty-burn verdict"
+      "a tool call in the final turn is a normal intermediate state, not an empty final turn"
+    )
+  }
+
+  test("isEmptyBurnCompletion: 17-case form — heavy multi-tool session + thinking-only final turn IS an empty final turn") {
+    // 现场形态：会话里早已有大量工具调用（7–167 次），末轮只剩 reasoning、text 空、零工具。
+    // 旧全会话判据在此被守卫放过（toolCalls>0 ⇒ 非空烧）；回合级判据必须判真。
+    val heavySession = List(
+      Message(MessageRole.User, Left("refactor everything")),
+      Message(MessageRole.Assistant, Right(List(ContentBlock.ToolUse("h1", "Edit", io.circe.JsonObject.empty)))),
+      Message(MessageRole.User, Right(List(ContentBlock.ToolResult("h1", "ok")))),
+      Message(MessageRole.Assistant, Right(List(ContentBlock.ToolUse("h2", "Bash", io.circe.JsonObject.empty)))),
+      Message(MessageRole.User, Right(List(ContentBlock.ToolResult("h2", "ok")))),
+      Message(MessageRole.Assistant, Right(List(ContentBlock.Thinking("…" * 300, None))))
+    )
+    assertEquals(BackoffSupervisor.sessionToolCalls(heavySession), 2)
+    assert(
+      BackoffSupervisor.isEmptyBurnCompletion(heavySession),
+      "earlier tool calls must NOT shield a thinking-only final turn (the 17-case root cause)"
+    )
+    // 反例：同一重会话若末轮给出真实终文 ⇒ 正常完成，不触发空终轮。
+    assert(
+      !BackoffSupervisor.isEmptyBurnCompletion(
+        heavySession :+ Message(MessageRole.Assistant, Left("all done, tests green"))
+      ),
+      "a real final text after tool work is a normal completion"
     )
   }
 
   // ── 行为面：delegate 轨两级处置 ─────────────────────────────────────────
 
   test(
-    "delegate track: empty Completed restarts (nudge injected, restarting status); budget exhausted ⇒ completion delivered but EXPLICITLY marked — payload + store row carry the no-final-text diagnostic with empty-run, lastError stays None (never a clean fake completion)"
+    "delegate track: empty final turn restarts (nudge injected, restarting status); retry budget exhausted ⇒ EXPLICIT failed terminal (retryable, lastError = empty-final-turn reason) — never a silent completed"
   ) {
     val system = ActorSystem(s"bsup-eb-1-${scala.util.Random.nextInt(100000)}")
     val tmp = os.temp.dir(prefix = "nb-bsup-eb-")
@@ -254,9 +277,9 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
       _ <- waitUntil(10.seconds)(spawned.get.map(_ == 2))
       _ <- supervisor ! AgentEvent.Completed(childSid, stubMessages)
       _ <- waitUntil(10.seconds)(
-        SessionMailbox.scanPending(parentSid).map(_.exists(_.event.eventType == "completed"))
+        SessionMailbox.scanPending(parentSid).map(_.exists(_.event.eventType == "failed"))
       )
-      _ <- IO.sleep(300.millis) // 任务行/诊断写沉降
+      _ <- IO.sleep(300.millis) // 任务行写沉降
       mailed <- SessionMailbox.scanPending(parentSid)
       refEvents <- parentEvents.get
       cmds <- childCmds.get
@@ -275,38 +298,38 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
         .collect { case u: AgentCommand.UserInput => u.text }
         .filter(_.contains("NO output and NO tool calls"))
       assertEquals(nudges.size, 2, s"each empty-burn restart must inject the nudge, got: $nudges")
-      // 预算耗尽腿（现行语义）：完成回执照常投父（直接交付批），但**绝不干净**——
-      // 结构化诊断行随 payload（第一波），empty-run 标记在场（空烧 = 零工具 ∧ 零终文）。
-      val ext = mailed.collect { case e if e.event.eventType == "completed" => e }
-      assertEquals(ext.size, 1, s"exactly one terminal receipt expected, got: ${mailed.map(e => e.event.eventType)}")
+      // 预算耗尽腿（2026-11-22 语义修复）：空终轮 ⇒ **显式失败**终态（retryable），
+      // 绝不静默 completed。payload 带可读原因 `empty-final-turn (...)`。
+      val ext = mailed.collect { case e if e.event.eventType == "failed" => e }
+      assertEquals(ext.size, 1, s"exactly one terminal failure receipt expected, got: ${mailed.map(e => e.event.eventType)}")
+      assert(
+        !mailed.exists(_.event.eventType == "completed"),
+        s"an empty final turn must NEVER be delivered as completed, got: ${mailed.map(e => e.event.eventType)}"
+      )
       val payload = ext.head.event.payload
-      assert(payload.contains("(no text output)"), s"trim-guard face must survive, got: ${payload.take(200)}")
       assert(
-        payload.contains("[delegate-diagnostic] no-final-text"),
-        s"the silent completion must carry the structured diagnostic, got: ${payload.take(300)}"
+        payload.contains("empty-final-turn (provider stream empty after 2 retries)"),
+        s"the failure must name the readable reason, got: ${payload.take(300)}"
       )
+      // 判词行（引擎终态记录）：failed 终态只允许 verdict=failed 的诚实记录，绝不 completed。
       assert(
-        payload.contains("toolCalls=0") && payload.contains("empty-run"),
-        s"zero-tool burn must be marked empty-run, got: ${payload.take(300)}"
+        chainLines.forall(_.payload.hcursor.get[String]("verdict").toOption.contains("failed")),
+        s"terminal-verdict lines may only record failed, got: $chainLines"
       )
-      // 无判词行（判定机已拆——引擎不伪造判词，诚实面 = 诊断行）
-      assertEquals(chainLines.size, 0, s"no terminal-verdict line may be written, got: $chainLines")
       // 红线（双发=事故）：ref 消息流零 ExternalEvent。
       assertEquals(
         refEvents.collect { case e: AgentCommand.ExternalEvent => e }.size,
         0,
         s"delegate terminal MUST NOT ride the legacy push chain, got: $refEvents"
       )
-      // 任务行：completed + 诊断落盘（面板 L3 warn 面）+ lastError 恒 None
-      // （「干了活没说话 / 空烧」≠「失败」——面板一眼分得清）。
+      // 任务行：failed + lastError = 可读原因（失败事实落盘，面板可见）。
       val task = tasks.find(_.taskId == childSid).get
-      assertEquals(task.retryCount, 2, "two empty-burn restarts must be counted")
-      assertEquals(task.status, "completed", "the budget-exhausted empty burn settles completed (explicitly marked)")
+      assertEquals(task.retryCount, 2, "two empty-final-turn restarts must be counted")
+      assertEquals(task.status, "failed", "the exhausted empty final turn settles FAILED, never completed")
       assert(
-        task.diagnostic.exists(d => d.contains("no-final-text") && d.contains("empty-run")),
-        s"store row must carry the explicit diagnostic, got: ${task.diagnostic}"
+        task.lastError.exists(_.contains("empty-final-turn")),
+        s"lastError must carry the readable empty-final-turn reason, got: ${task.lastError}"
       )
-      assertEquals(task.lastError, None, "a silent completion must never read as failed")
     end for
   }
 
@@ -364,9 +387,81 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
       assertEquals(ext.head.eventType, "failed", "an unresolvable empty burn is NOT reported as completed")
       assertEquals(ext.head.metadata("failureType").flatMap(_.asString), Some("empty-burn"))
       assert(ext.head.payload.contains("empty burn"), s"the payload names the burn: ${ext.head.payload}")
+      assert(
+        ext.head.payload.contains("empty-final-turn (provider stream empty after 2 retries)"),
+        s"the payload carries the readable empty-final-turn reason: ${ext.head.payload}"
+      )
       val task = tasks.find(_.taskId == childSid).get
       assertEquals(task.status, "failed")
       assertEquals(task.retryCount, 2)
+    end for
+  }
+
+  test(
+    "17-case form (multi-tool heavy session + thinking-only final turn) on delegate track: retried, then EXPLICIT failed — never a silent completed"
+  ) {
+    val system = ActorSystem(s"bsup-eb-4-${scala.util.Random.nextInt(100000)}")
+    val tmp = os.temp.dir(prefix = "nb-bsup-eb4-")
+    val parentSid = "eb-parent-4"
+    val childSid = "delegate-eb-4"
+    val heavySession = List(
+      Message(MessageRole.User, Left("refactor everything")),
+      Message(MessageRole.Assistant, Right(List(ContentBlock.ToolUse("h1", "Edit", io.circe.JsonObject.empty)))),
+      Message(MessageRole.User, Right(List(ContentBlock.ToolResult("h1", "ok")))),
+      Message(MessageRole.Assistant, Right(List(ContentBlock.ToolUse("h2", "Bash", io.circe.JsonObject.empty)))),
+      Message(MessageRole.User, Right(List(ContentBlock.ToolResult("h2", "ok")))),
+      Message(MessageRole.Assistant, Right(List(ContentBlock.Thinking("…" * 300, None))))
+    )
+    for
+      resources <- mkResources(system, tmp)
+      _ <- resources.sessionStore.getOrCreateSession(parentSid, "heavy-empty parent")
+      _ <- resources.subAgentTaskStore.recordTask(mkTask(parentSid, childSid, "delegate"))
+      parentEvents <- Ref.of[IO, List[AgentCommand]](Nil)
+      parentRef <- system.spawn(mkParentRecorder(parentEvents), "eb-parent-rec-4")
+      childCmds <- Ref.of[IO, List[AgentCommand]](Nil)
+      spawned <- Ref.of[IO, Int](0)
+      firstChild <- system.spawn(mkRecordingChild(childCmds), "eb4-child-0")
+      supervisor <- system.spawn(
+        BackoffSupervisor(
+          childRef = firstChild,
+          childSpawnFn = (_, _) =>
+            spawned.update(_ + 1) *> system
+              .spawn(mkRecordingChild(childCmds), s"eb4-child-${scala.util.Random.nextInt(100000)}"),
+          childName = childSid,
+          parentRef = Some(parentRef),
+          description = "heavy refactor",
+          agentName = "Worker",
+          subagentId = childSid,
+          parentSessionId = parentSid,
+          resources = resources,
+          initialPrompt = "refactor everything",
+          source = "delegate",
+          minBackoff = 50.millis,
+          maxBackoff = 100.millis
+        ),
+        "eb-supervisor-4"
+      )
+      _ <- supervisor ! AgentEvent.Completed(childSid, heavySession)
+      _ <- waitUntil(10.seconds)(spawned.get.map(_ == 1))
+      _ <- supervisor ! AgentEvent.Completed(childSid, heavySession)
+      _ <- waitUntil(10.seconds)(spawned.get.map(_ == 2))
+      _ <- supervisor ! AgentEvent.Completed(childSid, heavySession)
+      _ <- waitUntil(10.seconds)(
+        SessionMailbox.scanPending(parentSid).map(_.exists(_.event.eventType == "failed"))
+      )
+      _ <- IO.sleep(300.millis)
+      mailed <- SessionMailbox.scanPending(parentSid)
+      tasks <- resources.subAgentTaskStore.loadTasks(parentSid)
+      _ <- system.stopAll
+    yield
+      assert(
+        !mailed.exists(_.event.eventType == "completed"),
+        s"the 17-case form must never settle completed, got: ${mailed.map(_.event.eventType)}"
+      )
+      assertEquals(mailed.count(_.event.eventType == "failed"), 1, "exactly one explicit failure receipt")
+      val task = tasks.find(_.taskId == childSid).get
+      assertEquals(task.status, "failed")
+      assert(task.lastError.exists(_.contains("empty-final-turn")), s"readable reason: ${task.lastError}")
     end for
   }
 

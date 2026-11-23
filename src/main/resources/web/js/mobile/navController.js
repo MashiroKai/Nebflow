@@ -51,11 +51,14 @@ import {
   // 源解析/克隆腿**单源复用**桌面 canvas.js 的同一内核（不另造第二套截图方案），
   // 手机层只负责缓存与挂载。
   canvasSnapshotFor, canvasSnapshotStamp,
+  activeFavoriteTarget, FAV_SYNC_EVENT,
 } from '../canvas.js';
+import { toggleFavoritePath, isFavoritePath, onFavoritesChange } from '../canvasFavorites.js';
 import { hasBackHandler } from '../gesture/backSwipe.js';
 import { key } from '../branding.js';
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from '../sidebar.js';
 import { createIconsIn } from '../utils.js';
+import { openFavoritesPage } from '../canvasFavoritesPage.js';
 import { ensureSocialPage, syncSocialFaces } from './socialFaces.js';
 // The 'tasks' page body is the Apple-Reminders-style todo face, a three-page
 // stack (tasks / todo-apple-list / todo-apple-item). The face receives push/pop
@@ -101,6 +104,8 @@ function dockDef(id) {
  *  工作台批（作者令 2026-10-30「设置并入工作台一览」）：末行 = 设置——
  *  设置自顶层导航降级为工作台成员，点行进设置页（push 详情）。 */
 const HUB_ROWS = [
+  // 收藏（2026-11-23 收藏 r2）：不是 push 页——打开独立收藏页 overlay（action = 'favorites'）。
+  { page: 'favorites',  icon: 'star',            zh: '收藏',      en: 'Favorites', action: 'favorites' },
   { page: 'projects',   icon: 'folder-kanban',   zh: '项目',      en: 'Projects' },
   { page: 'plugins',    icon: 'puzzle',          zh: '插件',      en: 'Plugins' },
   { page: 'usage',      icon: 'bar-chart-3',     zh: 'token 用量', en: 'Usage' },
@@ -329,6 +334,11 @@ function buildHubRow(r) {
     // 打开的面板（桌面 outside-close 监听 document 冒泡）会被本记点击的
     // 继续冒泡误关 —— 入口键一律停冒泡（dock 批 2026-10-29 实测修复）。
     e.stopPropagation();
+    if (r.action === 'favorites') {
+      logEvent('hub-open', { page: r.page });
+      openFavoritesPage({ onOpened: () => dockTo('canvas') });
+      return;
+    }
     touchLayer();
     logEvent('hub-open', { page: r.page });
     pushPage(r.page);
@@ -795,7 +805,12 @@ const DECK_SIDE_STEP_RATIO = 0.66;  // 邻卡中心距 = 卡宽 × 0.66（露约
 const DECK_SCALE_SIDE = 0.84;    // 邻卡缩径
 const DECK_SCALE_FAR = 0.72;     // 第二邻卡缩径
 const DECK_SWITCH_PX = 56;       // 横拖过阈即换中央卡（松手吸附）
-const DECK_AXIS_PX = 8;          // 轴锁死区（内 = 点按）
+// 轴锁（2026-11-23 作者报「斜滑被误判成滚动/误触发」）：死区 = 合位移半径 14px
+// （max(|dx|,|dy|) 越出即判轴）；判轴 = 越出那一刻的主导轴（|dx| vs |dy|），
+// 一次性锁定到本次手势生命周期（touchend/cancel 才解锁，中途不翻转）。
+// 14 而非 8/10：斜向手指常在头 2–3 帧带出 10–12px 的反向分量（实测 dy=12 先于
+// dx=−130 的横滑），8px 档会在那一刻把斜滑误锁成纵轴。
+const DECK_AXIS_PX = 14;         // 轴锁死区（内 = 点按）
 const DECK_SWIPE_Y_PX = 48;      // 纵拖过阈：上滑或下滑关闭当前标签
 
 // ── 手势仲裁（内容操作优先，作者令 2026-11-01「拖动图谱、调整图片大小这类
@@ -1556,12 +1571,16 @@ function buildDeckView(wrap) {
 function bindDeckSwipe(stage) {
   /** @type {{id: number, x0: number, y0: number, axis: string|null}|null} */
   let g = null;
+  /** 只读 QA 探针：本次手势锁定的轴（x|y|null）与累计判轴次数。 */
+  const probe = { axis: /** @type {string|null} */ (null), claims: 0 };
+  (/** @type {any} */ (window)).__nfDeckSwipe = probe;
   stage.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (performance.now() < deckDragEndedAt) return;  // 拖后松手的 click 抑制窗内不再武装
     const t = /** @type {Element} */ (e.target);
     if (t.closest('button')) return;         // 卡内 ✕ 不参与翻页
     g = { id: e.pointerId, x0: e.clientX, y0: e.clientY, axis: null };
+    probe.axis = null;
     // capture 延到轴锁后才抢：一上手就 setPointerCapture 会把 pointerup 整体
     // 重定向到舞台 ⇒ 卡面（含卡内 ✕ / 点卡换入）的 click 永不触发（探针实证）。
   });
@@ -1569,8 +1588,12 @@ function bindDeckSwipe(stage) {
     if (!g || e.pointerId !== g.id) return;
     const dx = e.clientX - g.x0;
     const dy = e.clientY - g.y0;
-    if (!g.axis && (Math.abs(dx) > DECK_AXIS_PX || Math.abs(dy) > DECK_AXIS_PX)) {
+    // 一次性判轴：越出死区（合位移 max(|dx|,|dy|) > DECK_AXIS_PX）那一刻取主导轴，
+    // 之后 g.axis 不再改写 ⇒ 本次手势内轴恒定（不因后续斜向分量翻转）。
+    if (!g.axis && Math.max(Math.abs(dx), Math.abs(dy)) > DECK_AXIS_PX) {
       g.axis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+      probe.axis = g.axis;
+      probe.claims += 1;
       if (g.axis) {
         try { stage.setPointerCapture(e.pointerId); } catch { /* 合成事件无 capture */ }
         stage.dataset.dragging = '1';             // CSS 关过渡（直写变量即跟手）
@@ -1828,7 +1851,38 @@ function buildCanvasPage(body) {
   stack.setAttribute('aria-label', tt('堆叠卡视图', 'Stacked cards'));
   stack.innerHTML = '<i data-lucide="layers"></i>';
   stack.addEventListener('click', () => { logEvent('canvas-stack-toggle'); toggleDeck(); });
-  toolbar.append(close, count, stack);
+  // 文档星标（r2 · 作者令「电脑和手机端星标都要」）：手机端桌面胶囊被隐藏（mobileLayer.css），
+  // 星标落在工具条内，与桌面同一写入口 toggleFavoritePath；激活态经 FAV_SYNC_EVENT / 收藏变更重绘。
+  const star = document.createElement('button');
+  star.type = 'button';
+  // Author-approved r2 mobile favorite star: same g2-fab + canvas-button family as mf-cv-stack.
+  star.className = 'mf-cv-star g2-fab canvas-button';
+  star.innerHTML = '<i data-lucide="star" class="canvas-fav-ic"></i>';
+  const paintStar = () => {
+    const tgt = activeFavoriteTarget();
+    star.hidden = !tgt;
+    if (!tgt) return;
+    const on = isFavoritePath(tgt.path);
+    star.classList.toggle('is-on', on);
+    star.setAttribute('aria-pressed', on ? 'true' : 'false');
+    const label = tt(on ? '取消收藏' : '收藏文档', on ? 'Remove from favorites' : 'Favorite document');
+    star.title = label;
+    star.setAttribute('aria-label', label);
+  };
+  star.addEventListener('click', () => {
+    const tgt = activeFavoriteTarget();
+    if (!tgt) return;
+    const nowOn = toggleFavoritePath(tgt);
+    paintStar();
+    star.classList.remove('is-pop');
+    void star.offsetWidth;
+    if (nowOn) star.classList.add('is-pop');
+    window.__showToast?.(tt(nowOn ? '已收藏' : '已取消收藏', nowOn ? 'Added to favorites' : 'Removed from favorites'), 'success');
+  });
+  window.addEventListener(FAV_SYNC_EVENT, paintStar);
+  onFavoritesChange(paintStar);
+  toolbar.append(close, count, stack, star);
+  paintStar();
 
   const host = document.createElement('div');
   host.className = 'mf-cv-host';

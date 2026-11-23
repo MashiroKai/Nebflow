@@ -7,6 +7,7 @@
 import state from '../state.js';
 import { sendWs } from '../ws.js';
 import { t } from '../i18n.js';
+import { key } from '../branding.js';
 // 术语统一批（2026-11-06 作者令逐字「统一 根据英文」）：身份/类型徽标词**只**从单源
 // 词表取（js/termWords.js）——本文件的三个产词函数（bgDelegateBadgeWord /
 // bgAgentflowWord / bgMemberKindWord）不再自带词表、也不再走 locale 键族
@@ -19,6 +20,7 @@ import { findViewBySessionId, activeView, setActiveView, chatViews } from '../ch
 import { fmtUptime, isFailedSnapshotStatus } from '../managePanel.js';
 import { openStepPopup as openFlowStepPopup } from '../flowAgentPopup.js';
 import { openStepPopup as openBgAgentPopup } from '../bgAgentPopup.js';
+import { resolveProviderLabel } from '../providerFailureStatus.js';
 // 两级面板数据侧 stub 读取口（delegate-ui 批：rows/children/chain——provider 镜像；
 // liveSource 挂载在 delegateChainProvider.js，由 main.js 侧 import 触发）。
 import { listDelegateRows, listDelegateChildren, getChainByTask } from '../delegateChainStub.js';
@@ -332,7 +334,7 @@ function bgIdleDetail(info) {
 
 /** Session-id prefix predicate (single point): `dispatcher-` = Project task
  *  dispatcher session. `node-` = Project Flow Map node session, `delegate-` /
- *  `subtask-` = Delegate / SubTask sub-agents. */
+ *  `subtask-` = 子代理（历史 id 前缀；SubTask kind 已在阶段 B3 换标为 Delegate）. */
 function isDispatcherSession(id) {
   return typeof id === 'string' && id.startsWith('dispatcher-');
 }
@@ -735,18 +737,19 @@ function bgMemberKindWord(member) {
   // kernel/执行体的**只读侦察子代理本体**（BlockingSubagent.scala:81 的唯一 spawn 点，
   // 机制固定 = AgentCore.SubagentFixedTools，叶子不派生），身份词 = `subagent`。
   // 为什么必须在这里抢先（不能靠 info.kind / source 链）：引擎把这条腿**按控制面
-  // 归组**注册成 `AgentKind.SubTask`（BlockingSubagent.scala 的 registerAgent(kind=
-  // AgentKind.SubTask)——为了 AgentControl 的 cancel/restart 白名单与无 Mail 面的语义），
-  // 快照面 `kind` 因此逐字是 "SubTask"（WebSocketRoutes.activeAgentEntryJson 的
-  // `"kind" -> rec.kind.toString`）；而术语统一批把 `SubTask` 归一成 `delegate`
+  // 归组**注册进同一控制面家族（阶段 B3 换标前逐字是 `AgentKind.SubTask`，换标后为
+  // `AgentKind.Delegate`——为了 AgentControl 的 cancel/restart 白名单与无 Mail 面的
+  // 语义），快照面 `kind` 因此只反映「可管可 cancel 的族」，不区分侦察子代理与
+  // Delegate 批次；而术语统一批把 `SubTask` 归一成 `delegate`
   // （termWords.badgeFaceOfKind）——于是**真的子智能体在面板上被贴上了 delegate 标签**
   // （作者截图实证：kernel「节点卡点审计」下的两个子行，store 证据 = subagent-tasks/
   // delegate-nebflow-94ce9d8e.json 的 source:"subagent" + taskId "subagent-*"）。
   // 判据边界（防止把别的 delegate 混改）：只认会话 id 前缀 `subagent-`——`subtask-*`
-  // （SubTaskTool 的并行工人）与 `delegate-*`（Delegate 批次）逐字不动，`SubTask`
-  // 数据词在 store source / 协议 kind 两条既有路径上仍归一为 `delegate`。
+  // （历史工人 id 前缀，SubTaskTool 已退役、旧会话仍在盘上）与 `delegate-*`（Delegate
+  // 批次）逐字不动，`SubTask`/`subtask` 数据词在 store source / 协议 kind 两条既有
+  // 路径上仍归一为 `delegate`（旧快照兼容，保留不删）。
   // 真实身份与路由零改动：本函数只产**显示词**，AgentKind / MailAddress / 控制面
-  // 白名单全在原处（SubTask 依旧无 Mail 面、依旧可 cancel/restart）。
+  // 白名单全在原处（子代理仍无 Mail 面、依旧可 cancel/restart）。
   if (sid.startsWith('subagent-')) return badgeWord('subagent');
   const source = String(m.source || '');
   const word = source || String(info.kind || '') || bgAgentKindFromSession(sid);
@@ -1732,15 +1735,25 @@ function bgRowPlan(model, bucketSid) {
  */
 function bgPanelModel(bucketSid) {
   const bgAgents = { ...((bucketSid && state.sessionBgAgents[bucketSid]) || {}) };
+  // CPU 修复批（2026-11-21）：原实现对每个子任务线性扫一遍 Object.keys（O(n²)，实测
+  // 59% self-time）。改为一次性建索引：归一化会话 id → 首个命中的键（与原 find 同序取
+  // 第一个），本轮新写入的键同步登记，结果与原实现逐项一致。
+  const keyBySid = new Map();
+  const normSid = (v) => String(v || '').replace(/^team-/, '');
+  for (const key of Object.keys(bgAgents)) {
+    const sid = normSid(bgAgents[key]?.sessionId || key);
+    if (!keyBySid.has(sid)) keyBySid.set(sid, key);
+  }
   for (const child of listScopedTasks(bucketSid)) {
-    const existing = Object.keys(bgAgents).find(key =>
-      String(bgAgents[key]?.sessionId || key).replace(/^team-/, '') === child.taskId);
+    const existing = keyBySid.get(child.taskId);
     // Durable status wins; the existing key preserves management/click routing.
-    bgAgents[existing || child.taskId] = {
+    const target = existing || child.taskId;
+    bgAgents[target] = {
       ...(existing ? bgAgents[existing] : {}),
       ...bgScopeStoreInfo(child, child.parentSessionId),
       durableTask: true,
     };
+    if (!keyBySid.has(child.taskId)) keyBySid.set(child.taskId, target);
   }
   const entries = visibleBgAgentEntries(bgAgents);
   const { groups, leftovers, orphanBy } = bgDelegateGroups(entries, bucketSid);
@@ -2116,7 +2129,8 @@ export function bgTaskRowHtml(id, info, opts = {}) {
   // agentflow 错标修复批（2026-11-06）：两个词**同读一个来源对象** opts.registryRow
   // （注册行镜像；成员行恒 null）——组头层级不再自己决定身份词，kernel / 旧盘行因此
   // 拿不到 agentflow 词。
-  // 修订批九点②补漏：快照 kind（AgentKind.SubTask）同走显示词归一（数据面不动）。
+  // 修订批九点②补漏：快照 kind（换标前 AgentKind.SubTask / 换标后 Delegate）同走
+  // 显示词归一（数据面不动；'SubTask' 字面量留作旧快照兼容）。
   const registryRow = opts.headLevel ? (opts.registryRow || null) : null;
   const kind = opts.headLevel
     ? bgDelegateBadgeWord(bgDelegateExecMode(registryRow))
@@ -2645,6 +2659,60 @@ function countPendingRecovery(model) {
   return n;
 }
 
+// ── 历史折叠（作者令 2026-11-23「很多卡在那」· 590 历史卡堆叠）─────────────────────
+// 终态（done/error）的顶层行 = 历史。展示上限 BG_HISTORY_VISIBLE 条，其余收进一行
+// 「历史 · N 条」折叠钮（默认收起，可展开）。运行中的行永不折叠。
+// 「清除历史视图」= 客户端本地隐藏（后端归档端点已整体退役，PresenceRoutes.scala:1204，
+// 无法真删）：被隐藏的终态行写入本地键；行再次进入运行态即自动解除隐藏。
+export const BG_HISTORY_VISIBLE = 6;
+const BG_HISTORY_HIDDEN_KEY = key('bg_history_hidden_v1');
+let bgHistoryExpanded = false;
+
+function bgHistoryHiddenSet() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(BG_HISTORY_HIDDEN_KEY) || '[]');
+    return new Set(Array.isArray(arr) ? arr.map(String) : []);
+  } catch (_) { return new Set(); }
+}
+function bgHistoryHiddenSave(set) {
+  try { localStorage.setItem(BG_HISTORY_HIDDEN_KEY, JSON.stringify([...set])); } catch (_) { /* 配额：本次会话内有效 */ }
+}
+
+/** 历史候选 = 无父的顶层终态行（标签面 root/struct 与运行中行不入）。 */
+function bgHistoryCandidates(tree) {
+  return tree.order.filter((row) => !tree.parentOf.get(row)
+    && row.level !== 'root' && row.level !== 'struct' && !row.storeChild
+    && (bgPlanRowState(row) === 'done' || bgPlanRowState(row) === 'error'));
+}
+
+/**
+ * 历史折叠计划（纯函数，便于闸测）：返回 { folded:Set<row>, foldCount, candidates }。
+ * - 用户已「清除历史视图」的终态行：不出镜、不计入折叠数；
+ * - 其余历史候选：前 BG_HISTORY_VISIBLE 条出镜，余下进折叠组（展开态则全部出镜）。
+ */
+export function bgHistoryFoldPlan(tree) {
+  const hidden = bgHistoryHiddenSet();
+  const candidates = bgHistoryCandidates(tree);
+  const userHidden = new Set(candidates.filter((r) => hidden.has(String(bgRowSessionKey(r)))));
+  const rest = candidates.filter((r) => !userHidden.has(r));
+  const folded = bgHistoryExpanded ? new Set() : new Set(rest.slice(BG_HISTORY_VISIBLE));
+  return { folded, foldCount: folded.size, userHidden, candidates: rest };
+}
+
+/** 历史折叠钮（组头样式的一行；data-* 供点击委派与闸测读数）。 */
+function bgHistoryFoldHtml(foldCount, candidateCount) {
+  // 无可折叠条数且未展开 ⇒ 不给折叠钮（只留清除入口）；展开态恒给「收起历史」。
+  const toggle = bgHistoryExpanded
+    ? '<button type="button" class="bg-history-toggle" data-bg-history-toggle>' + escapeHtml(t('subagents.historyCollapse')) + '</button>'
+    : foldCount > 0
+      ? '<button type="button" class="bg-history-toggle" data-bg-history-toggle>'
+        + escapeHtml(t('subagents.historyFold', { count: foldCount }) + ' · ' + t('subagents.historyExpand')) + '</button>'
+      : '';
+  return '<div class="bg-history-fold" data-bg-history-fold="' + candidateCount + '">' + toggle
+    + '<button type="button" class="bg-history-clear" data-bg-history-clear>' + escapeHtml(t('subagents.historyClear')) + '</button>'
+    + '</div>';
+}
+
 export function renderBgAgentDropdown() {
   if (!activeView) return;
   const dropdownEl = activeView.dom.bgagentDropdownEl;
@@ -2656,6 +2724,9 @@ export function renderBgAgentDropdown() {
   // （bgPanelModel 单点 = 主桶可见行 ∪ 作用域桶链行 ∪ 延续态组头）——计数签与
   // 列表永不打架的口径随模型单点延续。
   const model = bgPanelModel(sid);
+  // 计数口径（2026-11-23 作者裁定）：头部 / 智能体签 = **running 数**（model.activeCount，
+  // 实际并行在跑）——折叠/收起不改变它，也不计已完成的默认收起委派；徽标存在性仍读 model.total。
+  const runningCount = model.activeCount;
   const bgAgents = model.bgAgents;
   // Author ruling 2026-09-14 16:30: an idle dispatcher row is neither listed nor
   // counted (it survives in the keep-alive window and the snapshot reports it —
@@ -2688,11 +2759,19 @@ export function renderBgAgentDropdown() {
     // 恢复 chip 在 bgStoreChildHtml；两档共用同一 REST 缝（delegateApi.restore*）。
     // DOM 构建器写法（component-contract R5：不裸写 innerHTML——文本全 textContent）。
     const pendingCount = countPendingRecovery(model);
-    headerEl.textContent = t('subagents.header', { count: model.total }) + digestText;
+    headerEl.textContent = t('subagents.header', { count: runningCount }) + digestText;
     for (const group of digest?.providerGroups || []) {
       const line = document.createElement('div');
-      line.textContent = t('subagents.providerFailureGroup', {
-        provider: group.provider, count: group.count,
+      // 族区分呈现（2026-11-21 作者裁定）：presentation 由后端唯一给出，前端不猜族。
+      // format/image-capability = 形状不对（我们的请求与上游契约不符）；auth/model/quota
+      // = 需要人处理；其余（可用性族）才是「服务商不可用」。
+      const key = group.presentation === 'shape'
+        ? 'subagents.providerFailureGroupShape'
+        : group.presentation === 'config'
+          ? 'subagents.providerFailureGroupConfig'
+          : 'subagents.providerFailureGroup';
+      line.textContent = t(key, {
+        provider: resolveProviderLabel(group), count: group.count,
       });
       line.title = group.reason || '';
       headerEl.appendChild(line);
@@ -2715,6 +2794,7 @@ export function renderBgAgentDropdown() {
     // 收敛批第二律：空态同样写回「本帧本地行数 = 0」，签与行集任一时刻同源。
     listEl.innerHTML = '';
     listEl.setAttribute('data-bg-row-total', '0');
+    listEl.setAttribute('data-bg-running-count', '0');
     return;
   }
   // ── 两级渲染（C2/R6 + 面板树批 2026-10-29 ①）：delegate 组头（徽标=编排模式）
@@ -2745,9 +2825,18 @@ export function renderBgAgentDropdown() {
     // 经 chainBySid 兜底解析（与链子行同一缝）。
     if (g.synthesized) chainBySid.set(g.sid, g.info);
   }
+  // 历史折叠（2026-11-23）：超出展示上限的终态顶层行 / 用户已清除的历史行不出镜；
+  // 折叠钮仅在首个被折叠行的位置出现一次。子树随父（hidden 沿父链下传）。
+  const histPlan = bgHistoryFoldPlan(tree);
+  let histFoldEmitted = false;
   for (const row of tree.order) {
     const parentRow = tree.parentOf.get(row) || null;
     if (parentRow && hidden.has(parentRow)) { hidden.add(row); continue; }
+    if (histPlan.folded.has(row) || histPlan.userHidden.has(row)) { hidden.add(row); continue; }
+    if (!histFoldEmitted && histPlan.candidates.length && row === histPlan.candidates[0]) {
+      histFoldEmitted = true;
+      htmlParts.push(bgHistoryFoldHtml(histPlan.foldCount, histPlan.candidates.length));
+    }
     const depth = tree.depth.get(row) || 0;
     const kids = tree.kids.get(row) || [];
     const childCount = kids.length;
@@ -2852,9 +2941,29 @@ export function renderBgAgentDropdown() {
   // 与本地行不同轴——本批不动其归属。
   htmlParts.push(remoteHtml);
   listEl.innerHTML = htmlParts.join('');
+  // 历史折叠钮委派（展开/收起 = 切本地标志并重绘；清除 = 把当前终态历史行写入本地隐藏键）。
+  const histToggle = listEl.querySelector('[data-bg-history-toggle]');
+  if (histToggle) histToggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    bgHistoryExpanded = !bgHistoryExpanded;
+    renderBgAgentDropdown();
+  });
+  const histClear = listEl.querySelector('[data-bg-history-clear]');
+  if (histClear) histClear.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const hidden = bgHistoryHiddenSet();
+    for (const row of histPlan.candidates) hidden.add(String(bgRowSessionKey(row)));
+    for (const row of histPlan.userHidden) hidden.add(String(bgRowSessionKey(row)));
+    bgHistoryHiddenSave(hidden);
+    bgHistoryExpanded = false;
+    renderBgAgentDropdown();
+  });
   // 行集收敛批（2026-11-02 第二律）：模型单点把「本帧渲染的本地行数」写进列表
   // 属性（data-bg-row-total），与头部计数同源同值——回归可机械核对「签 vs 行集」。
+  // data-bg-row-total = 行集长度（model.total，名实相符：行总数）；
+  // data-bg-running-count = running 数（头部计数 / 智能体签的同源读数）。
   listEl.setAttribute('data-bg-row-total', String(model.total));
+  listEl.setAttribute('data-bg-running-count', String(runningCount));
   listEl.setAttribute('data-bg-active-count', String(model.activeCount));
   // ui-status-redesign：statusIcon() 兜底占位（<i data-lucide>）在此升级为真图标
   // （vendor lib 已就绪时上面已是内联 SVG，此调用零替换、幂等）。
@@ -3087,10 +3196,19 @@ export function clearBgStuck(msg) {
 // 节点子智能体可见性批（2026-11-07）：provider 镜像补拉到达 ⇒ 面板在开时重渲染
 // （帧只当触发器，零帧解读——与 delegateChainView / taskList 的同名监听同园口径）。
 // 只在合并载体开着时刷：关着不打扰（下一次打开会读到新镜像）。
+// CPU 修复批（2026-11-21）：镜像更新事件成串到达时（一拍内多条增量/补拉），每条都全量
+// 重算徽标与面板是 bgPanelModel 热点的放大器。改为尾沿防抖：窗口内只落一次重算，
+// 语义不变（读的是最新镜像，不丢更新）。
+const MIRROR_REFRESH_DEBOUNCE_MS = 120;
+let mirrorRefreshTimer = 0;
 if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
   window.addEventListener(EVENTS.DELEGATE_CHAIN_MIRROR_UPDATED, () => {
-    updateBgAgentIndicator(null, { keepDropdownOpen: true });
-    const dd = activeView && activeView.dom && activeView.dom.bgDropdownEl;
-    if (dd && !dd.classList.contains('hidden')) renderBgAgentDropdown();
+    if (mirrorRefreshTimer) return;
+    mirrorRefreshTimer = setTimeout(() => {
+      mirrorRefreshTimer = 0;
+      updateBgAgentIndicator(null, { keepDropdownOpen: true });
+      const dd = activeView && activeView.dom && activeView.dom.bgDropdownEl;
+      if (dd && !dd.classList.contains('hidden')) renderBgAgentDropdown();
+    }, MIRROR_REFRESH_DEBOUNCE_MS);
   });
 }

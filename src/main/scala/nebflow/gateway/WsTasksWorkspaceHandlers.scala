@@ -45,6 +45,7 @@ private[gateway] object WsTasksWorkspaceHandlers:
     "updateScheduledTask" -> handleUpdateScheduledTask,
     "toggleScheduledTask" -> handleToggleScheduledTask,
     "completeTodo" -> handleCompleteTodo,
+    "answerTodoDecision" -> handleAnswerTodoDecision,
     "uncompleteTodo" -> handleUncompleteTodo,
     "getTaskList" -> handleGetTaskList,
     "completeTask" -> handleCompleteTask,
@@ -952,13 +953,21 @@ private[gateway] object WsTasksWorkspaceHandlers:
     val cpId = json.hcursor.downField("id").as[String].getOrElse("")
     if cpSessionId.nonEmpty && cpId.nonEmpty then
       sharedResources.scheduledTaskStore.findTaskById(cpId).flatMap {
-        case Some(t) if t.isTodo && t.decision.nonEmpty =>
-          // Fail closed until validation, secret storage and durable delivery are wired.
+        case Some(t) if t.isTodo && t.decision.exists(_.answer.isEmpty) =>
+          // 期 1 完成门控：决策待办未作答不可完成（作答过的放行，走下方正常完成腿）。
+          // secret 题本期不可作答 ⇒ 给出专属码，客户端据码禁用而非弹串。
+          val d = t.decision.get
+          val (code, msg) =
+            if d.secret then
+              nebflow.core.scheduler.DecisionAnswerRules.CodeSecret -> "这是敏感决策题，本期不能在待办里完成；请走原始会话。"
+            else nebflow.core.scheduler.DecisionAnswerRules.CodeUnanswered -> "先作答再完成：这是决策待办，请先选择或填写答案。"
           wsSend(
             io.circe.Json.obj(
               "type" -> "error".asJson,
               "msgType" -> "completeTodo".asJson,
-              "message" -> "Decision answers are not supported yet; the todo was not completed.".asJson
+              "code" -> code.asJson,
+              "id" -> t.id.asJson,
+              "message" -> msg.asJson
             )
           )
         case Some(t) if t.isTodo =>
@@ -1025,6 +1034,123 @@ private[gateway] object WsTasksWorkspaceHandlers:
     else IO.unit
     end if
   end handleCompleteTodo
+
+  /**
+   * 作答注入正文（模型面）：选项取 title（不取 id，agent 读人话）；自由文本单列。
+   * 纯函数，供 mailbox 载荷与单测共用。
+   */
+  private[gateway] def decisionAnswerPayload(
+    t: nebflow.core.scheduler.ScheduledTask,
+    ans: nebflow.core.scheduler.DecisionAnswer
+  ): String =
+    val d = t.decision.getOrElse(nebflow.core.scheduler.TodoDecision())
+    val titles = ans.selectedOptionIds.flatMap(id => d.options.find(_.id == id).map(_.title.trim))
+    val picked = if titles.isEmpty then "（无）" else titles.mkString("、")
+    val other = ans.otherText.filter(_.nonEmpty).map(s => s"\n补充文字：$s").getOrElse("")
+    val title = t.name.map(_.trim).filter(_.nonEmpty).getOrElse(t.content.trim)
+    s"[TODO-DECISION-ANSWER] 作者已作答待办决策「$title」（id=${t.id}）。\n" +
+      s"问题：${d.question}\n所选：$picked$other"
+
+  /**
+   * `answerTodoDecision`（待办决策统一批 2026-11-22，期 1）：决策作答写**真源**
+   * （`decision.answer`），不是聊天文本。帧 `{sessionId, id, selectedOptionIds[], otherText?, via?}`。
+   * 校验走 [[nebflow.core.scheduler.DecisionAnswerRules]]；拒绝回 error 帧带 `code`，
+   * 客户端据码渲染。成功：写回 → notifyTaskChange → 回执 `todoDecisionAnswered`。
+   * 作答**不改完成态**；「作答即完成」由客户端编排 answer + completeTodo 两帧。
+   * 已完成的待办不接受改答（回 `decision_completed`）。
+   */
+  private def handleAnswerTodoDecision(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val json = parsedJson(text)
+    val ansId = json.hcursor.downField("id").as[String].getOrElse("")
+    val ansSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+    val selected = json.hcursor.downField("selectedOptionIds").as[List[String]].getOrElse(Nil)
+    val otherText = json.hcursor.downField("otherText").as[Option[String]].getOrElse(None)
+    val via = json.hcursor.downField("via").as[String].getOrElse("")
+    def fail(code: String, msg: String): IO[Unit] =
+      wsSend(
+        io.circe.Json.obj(
+          "type" -> "error".asJson,
+          "msgType" -> "answerTodoDecision".asJson,
+          "code" -> code.asJson,
+          "id" -> ansId.asJson,
+          "message" -> msg.asJson
+        )
+      )
+    if ansSessionId.isEmpty || ansId.isEmpty then
+      fail("decision_bad_request", "作答帧缺 sessionId 或 id。")
+    else
+      sharedResources.scheduledTaskStore.findTaskById(ansId).flatMap {
+        case Some(t) if t.isTodo && t.decision.nonEmpty && t.isCompleted =>
+          fail("decision_completed", "该待办已完成，不能再作答。")
+        case Some(t) if t.isTodo && t.decision.nonEmpty && t.decision.exists(_.answer.nonEmpty) =>
+          fail("decision_already_answered", "该决策已作答，不能重复作答。")
+        case Some(t) if t.isTodo && t.decision.nonEmpty =>
+          val now = System.currentTimeMillis()
+          nebflow.core.scheduler.DecisionAnswerRules
+            .validate(t.decision.get, selected, otherText, now, via) match
+            case Left((code, msg)) => fail(code, msg)
+            case Right(ans) =>
+              val updated = t.copy(decision = t.decision.map(_.copy(answer = Some(ans))))
+              val event = nebflow.actor.AgentCommand.ExternalEvent(
+                source = "todo",
+                eventType = "decision-answer",
+                payload = decisionAnswerPayload(updated, ans),
+                metadata = io.circe.JsonObject(
+                  "todoId" -> t.id.asJson,
+                  "engineOwned" -> true.asJson
+                ),
+                correlationId = Some(t.id)
+              )
+              // 先入箱（I1 必达）：入箱失败 ⇒ 不写作答、显式报错，不留「答了但 agent 没收到」。
+              nebflow.core.mail.SessionMailbox
+                .mailOnce(
+                  t.sessionId,
+                  event,
+                  "todo-decision-answer",
+                  s"todo-decision-answer-${t.id}",
+                  coalesce = false,
+                  producer = "todo-decision",
+                  deduplicateReceipts = true
+                )
+                .flatMap {
+                  case nebflow.core.mail.SessionMailbox.MailResult.Failed(cause) =>
+                    fail("decision_not_persisted", s"作答未送达（$cause），请重试。")
+                  case _ =>
+                    for
+                      _ <- sharedResources.scheduledTaskStore
+                        .updateTask(t.sessionId, t.id)(x =>
+                          x.copy(decision = x.decision.map(_.copy(answer = Some(ans))))
+                        )
+                        .void
+                      // 门铃（尽力而为；信已在盘上，会话任何唤醒点都会扫箱）。
+                      _ <- sharedResources.agentRegistry.get.flatMap(reg =>
+                        reg.get(t.sessionId).traverse_(r => r.ref ! nebflow.actor.AgentCommand.MailboxArrived)
+                      )
+                      _ <- sharedResources.scheduledTaskService.traverse_(_.notifyTaskChange())
+                      _ <- wsSend(
+                        io.circe.Json.obj(
+                          "type" -> "todoDecisionAnswered".asJson,
+                          "id" -> updated.id.asJson,
+                          "sessionId" -> updated.sessionId.asJson,
+                          "answer" -> ans.asJson,
+                          "task" -> listTaskJson(updated)
+                        )
+                      )
+                    yield ()
+                }
+        case Some(_) =>
+          fail("decision_not_decision", "该条目不是决策待办，不能作答。")
+        case None =>
+          fail("decision_not_found", "条目已不存在，未保存作答。")
+      }
+    end if
+  end handleAnswerTodoDecision
 
   /**
    * `uncompleteTodo` — 取消完成（待办体系统一批 2026-11-04 新增帧）：清

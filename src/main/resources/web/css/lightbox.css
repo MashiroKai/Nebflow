@@ -15,6 +15,8 @@
    内联盒，四边归位到可视区域）。`height:100dvh` 是 CSS 侧兜底：动态视口里
    100% 会跟着「最大视口」走，dvh 跟的是当前可视高度。 */
 .nf-lightbox {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: fixed;
   inset: 0;
   height: 100dvh;
@@ -73,8 +75,8 @@ body.nf-lightbox-open { overflow: hidden; }
 }
 .nf-lightbox-close:hover { opacity: 0.7; transform: scale(1.08); }
 .nf-lightbox-close:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.7);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 .nf-lightbox-status {
@@ -186,8 +188,8 @@ img.nf-zoom-img { cursor: pointer; }
 }
 .nf-lightbox-ctl:hover { background: var(--glass-control-bg-hover); color: var(--ds-ink-inverse); }
 .nf-lightbox-ctl:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.7);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .nf-lightbox-ctl svg { width: 15px; height: 15px; }
 .nf-lightbox-pct {
@@ -220,7 +222,9 @@ body.mobile-layer.nf-lightbox-open #chat,
 body.mobile-layer.nf-lightbox-open .mobile-page-body { overflow: hidden; }
 
 /* 跟手拖动期间浏览器不得接管手势（滚动/边缘滑）：浮层内没有别的可滚内容。 */
-.nf-lightbox[data-nf-lb-gallery="on"] { touch-action: none; overflow: hidden; background: var(--ds-media-letterbox); }
+.nf-lightbox[data-nf-lb-gallery="on"] {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); touch-action: none; overflow: hidden; background: var(--ds-media-letterbox); }
 /* 视频/音频件（画廊腿）：与 img 同一套 contain 盒；缩放/平移由 js/lightbox.js 写
    transform（媒体查看器缩放批 2026-11-18）。transform-origin 保持 CSS 默认 center
    —— 那正是该模块的坐标约定（元素由浮层 flex 居中 ⇒ 元素中心 = 视口中心，缩放锚点
@@ -279,8 +283,8 @@ body.mobile-layer .nf-lightbox .nf-lightbox-close { display: flex; }
 }
 .nf-lightbox-opentab:hover { opacity: 0.85; transform: scale(1.08); }
 .nf-lightbox-opentab:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.7);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -145,6 +145,54 @@ object DelegateLedgerReconcile:
 
   // ── 腿 3：boot 对账（假中断候选的逐条裁定）─────────────────────────────
 
+  /**
+   * 确认终态行的活动期重启旗摘除：取消墓碑及带 restart-loss 指纹的重启旗是
+   * 跨 boot 的语义证据，必须保留；其他终态行的重启旗可摘除。
+   *
+   * 触发条件（逐条，任一不满足 ⇒ 零触碰）：
+   *  - 登记条目在册；
+   *  - 任务行在册且 status ∈ {completed, failed, cancelled}（**fail-close**：行缺失 /
+   *    读失败 / 在飞 / `pending-recovery` 一律不清——`pending-recovery` 是等作者手动
+   *    恢复的态，摘旗会让 [[DelegateRevival.eligibility]] 的 settled 闸拒绝手动恢复）。
+   *
+   * 挂接：boot sweep settle 腿（markInterruptedRecords 之前）——重启后对账一次，幂等。
+   * 返回本拍实际摘除的条目数（测试/日志读数）。
+   */
+  def reconcileTerminalMarks(store: nebflow.core.SubAgentTaskStorePort): IO[Int] =
+    IO.blocking(
+      DelegateRegistry.list().filter(r => r.cancelRequestedAt.isDefined || r.restartInterruptedAt.isDefined)
+    ).flatMap(_.traverse(r => clearIfTerminalRow(store, r)))
+      .map(_.count(identity))
+      .handleErrorWith(e =>
+        logger.warn(s"[ledger-reconcile] terminal-mark reconcile failed (marks left as-is): ${e.getMessage}").as(0)
+      )
+
+  private def clearIfTerminalRow(store: nebflow.core.SubAgentTaskStorePort, rec: DelegateRegistry.Record): IO[Boolean] =
+    store.findByTaskId(rec.id).attempt.flatMap {
+      case Right(Some(t)) if TerminalTaskStatuses.contains(t.status) =>
+        IO.blocking {
+          // Cancellation and restart-loss are durable recovery semantics, not transient UI marks.
+          val cancelOk = Right(())
+          val restartLoss = t.lastError.exists(_.startsWith(nebflow.agent.SubAgentStartupRecovery.RestartLossFingerprint))
+          val restartOk =
+            if rec.restartInterruptedAt.isDefined && !restartLoss then DelegateRegistry.clearRestartInterrupted(rec.id) else Right(())
+          (cancelOk, restartOk)
+        }.flatMap {
+          case (Right(_), Right(_)) =>
+            IO(
+              logger
+                .info(s"[ledger-reconcile] '${rec.id}' terminal row '${t.status}' — tombstone/restart marks cleared")
+            ).as(true)
+          case (c, r) =>
+            IO(logger.warn(s"[ledger-reconcile] terminal-mark clear failed for '${rec.id}': cancel=$c restart=$r"))
+              .as(false)
+        }
+      case Right(_) => IO.pure(false) // 在飞 / pending-recovery / 行缺失：fail-close 零触碰
+      case Left(err) =>
+        IO(logger.warn(s"[ledger-reconcile] task-row read failed for '${rec.id}' (marks kept): ${err.getMessage}"))
+          .as(false)
+    }
+
   /** boot sweep 收尾调用（markInterruptedRecords 之后）：旗先落、对账后收敛。 */
   def reconcileInterruptedRecords(store: nebflow.core.SubAgentTaskStorePort): IO[Report] =
     IO.blocking(

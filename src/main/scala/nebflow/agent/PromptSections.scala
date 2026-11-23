@@ -78,7 +78,8 @@ object PromptSections:
     skillCatalog: String = "",
     /** Pre-rendered flow catalog (per-agent, from SkillService.buildPerAgentFlowCatalog). */
     flowCatalog: String = "",
-    /** Pre-rendered team catalog (from TeamCatalog.buildCatalog). */
+    /** Pre-rendered team catalog — 恒空串（团队类型面删除批阶段 B2 后无生产者；
+     *  order 816 section 的 condition=nonEmpty 因此永不渲染，字段保留至阶段 3）。 */
     teamCatalog: String = "",
     /** Pre-rendered memory block (from ContextRefresher.buildMemoryBlock). */
     memoryBlock: String = "",
@@ -246,6 +247,18 @@ object PromptSections:
       |- On ambiguous requirements write an explicit [ASSUMPTION] line in the Mail and continue — the Lead rules or escalates.
       |- Your [RESULT] Mail back to the Lead ≤ 300 tokens: status, key artifact paths, next-step advice only.
       |""".stripMargin
+
+  /**
+   * 2026-11-21 作者令停教：显示/TTS 面封存期间提示词不再教 `<voice>` 块
+   * （作者 2026-11-21 10:08「按你推荐」）。本 latch 是唯一开关——
+   * order-500 段与数据根同序覆盖文件（`prompts/sections/voice.md`）一并失效，
+   * 段文本本体与前端/TtsService **原样保留**（零改动、零删除）。恢复语音功能时
+   * 把本值翻回 false 即重新挂载本段（可逆，无其它改动点）。
+   */
+  private[agent] val voiceTeachingParked: Boolean = true
+
+  /** `voiceSection` 在提示词里的槽位；同序数据根文件亦按此槽位停教。 */
+  private[agent] val VoiceSectionOrder = 500
 
   /** Injected after the agent prompt when voice output is enabled. */
   val voiceSection: String =
@@ -466,8 +479,12 @@ object PromptSections:
     // 有工具必有用法指南。
 
     // --- Feature-flag sections ---
+    // 2026-11-21 作者令停教（`voiceTeachingParked`）：显示/TTS 面封存期间提示词
+    // 不再教 `<voice>` 块。停教由 `all` 的单一漏斗实施（本段与数据根同序覆盖文件
+    // 一并拦下）；段定义本身与文本体 `voiceSection` 原样保留 ⇒ 恢复语音功能时把
+    // latch 翻回 false 即重新挂载本段，无其它改动点。
     PromptSection(
-      500,
+      VoiceSectionOrder,
       condition = _.voiceEnabled,
       body = voiceSection
     ),
@@ -775,7 +792,11 @@ External executors receive the task text only — no platform tools or plugins a
   def all: List[PromptSection] =
     val fileSections = loadFileSectionsCached()
     val fileOrders = fileSections.map(_.order).toSet
-    dynamicSections.filterNot(s => fileOrders.contains(s.order)) ++ fileSections
+    val sections = dynamicSections.filterNot(s => fileOrders.contains(s.order)) ++ fileSections
+    // 停教漏斗（2026-11-21 作者令，见 `voiceTeachingParked`）：order-500 槽位整体
+    // 不挂载——既拦下内置段，也拦下数据根的同序覆盖文件（`prompts/sections/voice.md`
+    // 原样留在盘上，只是不再进提示词）。恢复语音功能时 latch 翻回 false。
+    if voiceTeachingParked then sections.filterNot(_.order == VoiceSectionOrder) else sections
 
   /**
    * Render just the file-based Environment section (order < 200) — cache

@@ -784,7 +784,16 @@ object DelegateRegistry:
               case None =>
                 try
                   val ts = System.currentTimeMillis()
-                  put(rec.copy(cancelRequestedAt = Some(ts), cancelRequestedBy = Some(by)))
+                  // 终态联动（2026-11-21 冻结三路恢复批）：取消即终止，同一次写里清冻结四槽——
+                  // 否则 digest（providerGroups 只读 frozenSince）会把已终止会话继续当在冻项展示。
+                  put(rec.copy(
+                    cancelRequestedAt = Some(ts),
+                    cancelRequestedBy = Some(by),
+                    frozenSince = None,
+                    frozenReason = None,
+                    frozenDetail = None,
+                    frozenTrigger = None
+                  ))
                   Right(ts)
                 catch case e: Throwable => Left(s"markCancelRequested: write failed: ${e.getMessage}")
       }
@@ -807,6 +816,35 @@ object DelegateRegistry:
                 put(rec.copy(restartInterruptedAt = None))
                 Right(())
               catch case e: Throwable => Left(s"clearRestartInterrupted: write failed: ${e.getMessage}")
+      }
+
+  /**
+   * 取消墓碑摘除（面板行收口面补齐批 2026-11-21 · 甲′）：`cancelRequestedAt =
+   * None` + `cancelRequestedBy = None`（两槽同生共死——发起方标签是墓碑的观测面，
+   * 墓碑不在则标签无意义）。**非破坏性对偶面**：记录/子代理记账/转录/轮次台账/
+   * worktree 原样留存，零删除、零归档旗写。
+   *
+   * 写入纪律（语义红线 = 防误删保险丝的延伸）：**只对「任务行已确认终态」的行调用**
+   * ——调用点单点在 [[DelegateLedgerReconcile.clearMarksForTerminalRow]]（fail-close：
+   * 读不出任务行 ⇒ 不清）。任何可能仍在飞的行绝不摘标记（在飞行仍会被复活/续命
+   * 腿认领，墓碑是它们的封口）。
+   *
+   * 幂等：未旗 = `Right(())` 零写（unpin / clearRestartInterrupted 同款）。查无记录
+   * = `Left`（墓碑只对真实 spawn 生效）。写锁同缝串行（与墓碑/归档/轮次写同缝）。
+   */
+  def clearCancelRequested(id: String): Either[String, Unit] =
+    if !validId(id) then Left(s"clearCancelRequested: invalid session id '$id'")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"clearCancelRequested: no registry record for '$id'")
+          case Some(rec) =>
+            if rec.cancelRequestedAt.isEmpty && rec.cancelRequestedBy.isEmpty then Right(()) // 幂等：未旗零写
+            else
+              try
+                put(rec.copy(cancelRequestedAt = None, cancelRequestedBy = None))
+                Right(())
+              catch case e: Throwable => Left(s"clearCancelRequested: write failed: ${e.getMessage}")
       }
 
   /**

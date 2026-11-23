@@ -27,6 +27,15 @@ import org.http4s.dsl.io.*
  *                                        (breadcrumb back to the root in `view`).
  * `GET /api/wiki/graph?project=__user__` — C-batch reserved (user history graph);
  *                                        returns an empty placeholder view.
+ * `GET /api/wiki/doc`                  — 文档元数据（canvas-popup-unify 批 ④：
+ *                                        canvas 点文件的「说明」弹窗数据腿）。
+ *                                        参数 = `project`+`rel`，或一个
+ *                                        `<project>/.stand/docs/<rel>` 路径。
+ *                                        返回读者提要（读序 = frontmatter
+ *                                        `summary:` → 旧文档 `<!-- reader-summary -->`
+ *                                        完整段落 → none）、frontmatter 的
+ *                                        type/status/tags、标题、更新时间、落位。
+ *                                        读不到文档 ⇒ 200 + `available:false`。
  * `GET /api/wiki/vaults`               — lightweight manifest (project → vault
  *                                        path + local presence) for the panel
  *                                        project switcher; no content scan.
@@ -79,6 +88,21 @@ private[gateway] object WikiRoutes:
           val project = req.params.get("project").map(_.trim).filter(_.nonEmpty)
           val vault = req.params.get("vault").map(_.trim).filter(_.nonEmpty)
           service.graph(project, vault, force).flatMap(Ok(_))
+        }
+
+      case req @ GET -> Root / "wiki" / "doc" =>
+        // 文档元数据（canvas-popup-unify 批 ④ · 2026-11-22）：点击说明弹窗的
+        // 数据腿。参数 = project+rel，或一个 `<project>/.stand/docs/<rel>` 路径；
+        // 两者都给时以 project+rel 为准。读不到文档 ⇒ 200 + available:false
+        // （显示层照常画壳），只有参数不可解析 / 项目不存在才是 4xx。
+        withAuth(req) {
+          val project = req.params.get("project").map(_.trim).filter(_.nonEmpty)
+          val rel = req.params.get("rel").map(_.trim).filter(_.nonEmpty)
+          val path = req.params.get("path").map(_.trim).filter(_.nonEmpty)
+          service.docMeta(project, rel, path).flatMap {
+            case Left(err)  => NotFound(Json.obj("error" -> err.asJson))
+            case Right(body) => Ok(body)
+          }
         }
 
       case req @ GET -> Root / "wiki" / "vaults" =>

@@ -22,7 +22,7 @@ class MailIdleGateSpec extends FunSuite:
 
   private def rec(
     sid: String,
-    kind: AgentKind = AgentKind.Team,
+    kind: AgentKind = AgentKind.Root,
     status: AgentStatus = AgentStatus.Idle,
     parentRef: Option[AR] = None,
     outstanding: Int = 0
@@ -74,10 +74,12 @@ class MailIdleGateSpec extends FunSuite:
     )
     assert(!MailIdleGate.isAgentTreeIdle("t", registry))
 
-  test("SubTask 子记录在飞 → 不空闲"):
+  // 阶段 B3 换标（§4.1 衍生清单 3）：子代理会话 = Delegate kind；SubTask kind 不再
+  // 由引擎产出，本用例改锚换标后的身份（`subagent-*` 会话 id 前缀不变）。
+  test("子代理子记录（换标后的 Delegate）在飞 → 不空闲"):
     val registry = Map(
       "t" -> rec("t"),
-      "subtask-1" -> rec("subtask-1", AgentKind.SubTask, parentRef = Some(nullRef))
+      "subagent-1" -> rec("subagent-1", AgentKind.Delegate, parentRef = Some(nullRef))
     )
     assert(!MailIdleGate.isAgentTreeIdle("t", registry))
 
@@ -88,8 +90,8 @@ class MailIdleGateSpec extends FunSuite:
     )
     assert(!MailIdleGate.isAgentTreeIdle("t", registry))
 
-  test("Delegate / SubTask 子记录在飞 → 不空闲"):
-    for kind <- List(AgentKind.Delegate, AgentKind.SubTask) do
+  test("Delegate 族子记录在飞 → 不空闲（换标后唯一成员）"):
+    for kind <- List(AgentKind.Delegate) do
       val registry = Map(
         "t" -> rec("t"),
         s"child-${kind.toString}" -> rec(s"child-${kind.toString}", kind, parentRef = Some(nullRef))
@@ -101,7 +103,7 @@ class MailIdleGateSpec extends FunSuite:
     // 若不排除 Team kind，gate 检查发送者会永久误判忙。
     val registry = Map(
       "t" -> rec("t"),
-      "member" -> rec("member", AgentKind.Team, parentRef = Some(nullRef))
+      "member" -> rec("member", AgentKind.Root, parentRef = Some(nullRef))
     )
     assert(MailIdleGate.isAgentTreeIdle("t", registry))
 

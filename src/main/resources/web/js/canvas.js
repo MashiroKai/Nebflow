@@ -25,6 +25,8 @@ import { setSideBarCollapsed, isMobileViewport } from './activityBar.js';
 // 胶囊标签截断（作者令 2026-11-05 12:10 第④条「可辨识前缀 + 关键尾部」）：
 // 切法单源在 capsuleLabel.js（桌面/触屏腿与手机层腿共用一份），本模块只消费。
 import { splitCapsuleLabel, createTextMeasurer, capsuleTextAvail, CAPSULE_ELLIPSIS } from './capsuleLabel.js';
+// 文档收藏（2026-11-23 前端功能批）：胶囊左座收藏钮 + 侧边栏收藏区；存储与渲染单源在 canvasFavorites.js。
+import { toggleFavoritePath, isFavoritePath, mountSidebarFavorites, onFavoritesChange } from './canvasFavorites.js';
 // keyboard-first 三期：叠卡/胶囊环/卡窗的键位搬进规则表（keyRules.js），本模块
 // 提供三件事——① 状态 → 上下文键（派生，无推送）② 动作函数（deckKeyAction 等）
 // ③ 不再持有任何 document 级 keydown 监听。
@@ -117,8 +119,8 @@ function writerChanged(role, lost = false) {
   if (lost) {
     localUnsynced = true;
     // 静默接管批（2026-11-19）：失权端**零用户可见通知**地把当前编辑缓冲落成
-    // 未合并草稿（这里就是「从写者掉到只读」的唯一时刻），事后由非阻断的取回
-    // 入口呈现。绝不弹阻断式通知（作者原话「现在通知很烦」）。
+    // 未合并草稿（这里就是「从写者掉到只读」的唯一时刻）。绝不弹通知（作者原话
+    // 「现在通知很烦」）。2026-11-22 作者令：取回条（另存通知）已撤，草稿只静默落本机。
     captureSeatDraft();
   }
   if (role !== 'writer') {
@@ -128,41 +130,11 @@ function writerChanged(role, lost = false) {
     persistDirty = false;
   }
 }
-const writerRejectionNotices = new Set();
-// 「保存失败」通知同因只报一次（2026-11-18 P0 作者报障「现在怎么老是出现 canvas
-// 保存失败的通知 好烦」）。页内 Set 只挡同一页里的重复；刷新页面时模块重建、
-// Set 清空 —— 而写者席位被别的控制台窗口占住（或占位者已消失、席位无人回收）时
-// 失败是**持久的**，于是每次加载都重弹一遍。去重账落到 sessionStorage（同一浏览器
-// 页签内跨刷新存活）：同因每会话只报一次；换页签/换窗口是新会话，各自的首次真实
-// 失败照报。去重只压缩重复，绝不吞掉首次失败。
-const NOTICE_SEEN_KEY = key('canvas_notice_seen');
-function noticeSeenBefore(reason) {
-  if (writerRejectionNotices.has(reason)) return true;
-  try {
-    const seen = JSON.parse(sessionStorage.getItem(NOTICE_SEEN_KEY) || '{}');
-    return !!seen[reason];
-  } catch { return false; } // storage 不可用 ⇒ 退化回页内 Set
-}
-function markNoticeSeen(reason) {
-  writerRejectionNotices.add(reason);
-  try {
-    const seen = JSON.parse(sessionStorage.getItem(NOTICE_SEEN_KEY) || '{}');
-    seen[reason] = Date.now();
-    sessionStorage.setItem(NOTICE_SEEN_KEY, JSON.stringify(seen));
-  } catch { /* 页内 Set 已覆盖本次会话 */ }
-}
-// 真失败要给**可执行的下一步**，而不是一句「保存失败」：席位是单写者、非抢占的，
-// 唯一可执行的恢复 = 让占位窗口让位。正文保持作者裁定的原句（字符串逐字不动），
-// 下一步进 toast 的 hint 次级行；通知带亲手关闭钮。
-const SAVE_FAIL_HINT = '若已打开多个控制台窗口，请关闭其他窗口后重试；仍失败请稍后重新加载页面。';
-function writerNotice(message, reason) {
-  if (!reason || noticeSeenBefore(reason)) return;
-  markNoticeSeen(reason);
-  window.__showToast?.(message, 'info', { closable: true, hint: SAVE_FAIL_HINT });
-}
+// 保存失败**静默**保留（作者令 2026-11-22 20:41「删掉这个弹窗」）：不弹任何通知；
+// 本地兜底（localUnsynced 置位 + 失权端草稿）照旧，失败不打扰。
 const canvasWriter = createCanvasWriterClient({
   changed: writerChanged,
-  failed: () => { localUnsynced = true; writerChanged('reader'); writerNotice('Canvas 保存失败，本地变更已保留。', 'save-failed'); },
+  failed: () => { localUnsynced = true; writerChanged('reader'); },
   async query() {
     try {
       const query = new URLSearchParams(canvasIdentity());
@@ -211,26 +183,105 @@ const canvasWriter = createCanvasWriterClient({
 //   · 失权端可能**已经死了**（强杀 / 后台冻结 / 换设备）⇒ 它收不到信号、也写不出自己
 //     的内存；那部分字节物理上找不回（本设计如实承认，不假装找回）；
 //   · 「不弹通知」+「不丢改动」要同时成立 ⇒ 只剩一条路：失权端**零用户可见通知**地把
-//     当前编辑缓冲落成一份「未合并草稿」（静默发生），事后以一个**非阻断的取回入口**
-//     呈现（下面的 chip）。
+//     当前编辑缓冲落成一份「未合并草稿」（静默发生）。取回入口的呈现已于 2026-11-22
+//     撤除（见下方 ④），草稿机制本身保留。
 // 触发信号**复用既有消息通道**：席位变更帧 `canvasWriterChanged`（服务端静默接管时
 // 定向送达被顶下的写者，并广播全端）；本模块按 `msg.epoch > 自己的 epoch` 判「我丢了
 // 席位」——见 bindPersistReconnect 的 onMessage 处理器。**不新增第二套草稿/席位协议。**
 // 三条边界：
 //   ① 何时落：本窗口**从写者掉到只读**的那一刻（`writerChanged(role, lost=true)`），
 //      落一次；正常卸载的主动 release 不落（那条路 flushPendingPersist 已写穿）。
-//   ② 落在哪：**本浏览器** localStorage 的**单槽**（`key('canvas_seat_draft')`，最新
-//      覆盖最旧）。草稿天然是失权端自己的东西，不占用服务端任何共享面、不跨设备。
+//   ② 落在哪：**本浏览器** localStorage 的**本页签自己的槽**（`key('canvas_seat_draft'):<tabId>`，
+//      按页签隔离、上限 8 槽 LRU，见上方「按页签隔离」块）。草稿天然是失权端自己的东西，
+//      不占用服务端任何共享面、不跨设备。
+//   ④ 2026-11-22 作者令「去掉这个通知」：取回条（chip）整体撤除，失权端不再呈现任何
+//      「已另存为未合并草稿」文案；草稿仍静默落在 ② 的本页签槽，restoreSeatDraft 机制保留。
+//      恢复时机（2026-11-23）：页签打开（main.js boot，restoreTabs 之后）与切回（visibilitychange）
+//      各触发一次，只恢复本页签自己的草稿。
 //   ③ 边界·不覆盖他人正在写的内容：落草稿**不写服务端、不发任何共享帧**；取回时只把
 //      草稿里缺的页签**补开**进本地视图（并集，绝不删本地已有），再走正常写路径
 //      （写路径会按需静默接管席位）。草稿永远不会盖掉别的窗口正在写的内容。
-const LS_DRAFT_KEY = key('canvas_seat_draft');
-const DRAFT_CHIP_CLASS = 'canvas-draft-chip';
+// ── 按页签隔离（作者令 2026-11-23 21:19「canvas ask 草稿缺陷，没有分标签页存放」）──
+// 旧形态是全局单槽：B 页丢席位另存会覆盖 A 页草稿。现在每个浏览器页签一槽：
+//   · 页签身份 = 既有 canvasTabInstanceId（页签加载即生成，不新造第二套 id）。为让「刷新后
+//     仍找回自己的草稿」，它在 sessionStorage（**每页签独立**、刷新保留）里存一份，
+//     首次加载以它为种子；sessionStorage 不跨页签共享，故两页签永不共用一槽。
+//   · 槽键 = `${key('canvas_seat_draft')}:${tabId}`；读写只碰本页签的槽。
+//   · 上限 SEAT_DRAFT_SLOT_MAX = 8 个页签槽；超出（或配额满）时淘汰 `at`（最后一次落草稿
+//     时刻）最早的他页槽（LRU）。本页槽永不被淘汰。
+//   · 旧单槽键 `key('canvas_seat_draft')` 迁移（migrateLegacySeatDraft）：由**还没有自有槽**
+//     的第一个打开的页签收进自己的槽并删旧键；旧体不可读 ⇒ 直接丢弃并删旧键；
+//     自有槽已存在的页签不收旧单槽（旧单槽留给下一个没有槽的页签）。
+const LS_DRAFT_PREFIX = key('canvas_seat_draft');
+const SEAT_DRAFT_SLOT_MAX = 8;
+const SEAT_DRAFT_TAB_SS_KEY = key('canvas_draft_tab');
+const canvasDraftTabId = (() => {
+  try {
+    const kept = sessionStorage.getItem(SEAT_DRAFT_TAB_SS_KEY);
+    if (kept) return kept;
+    sessionStorage.setItem(SEAT_DRAFT_TAB_SS_KEY, canvasTabInstanceId);
+  } catch { /* 无 sessionStorage：退回本次加载的页签实例 id */ }
+  return canvasTabInstanceId;
+})();
+const seatDraftSlotKey = () => `${LS_DRAFT_PREFIX}:${canvasDraftTabId}`;
 
-/** 读回本机的未合并草稿（无/坏体 ⇒ null，绝不清空既有）。 */
+/** 列出本机全部页签草稿槽键（不含旧单槽键）。 */
+function seatDraftSlotKeys() {
+  const out = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(`${LS_DRAFT_PREFIX}:`)) out.push(k);
+    }
+  } catch { /* 存储不可用 */ }
+  return out;
+}
+
+/** 某槽的最后落草稿时刻（坏体 ⇒ 0，即最先被淘汰）。 */
+function seatDraftSlotAt(slotKey) {
+  try {
+    const rec = JSON.parse(localStorage.getItem(slotKey) || 'null');
+    return rec && typeof rec.at === 'number' ? rec.at : 0;
+  } catch { return 0; }
+}
+
+/** LRU 淘汰：保证「他页槽数 ≤ cap」，淘汰最久未动（at 最早）的他页槽。keep = 本页槽键。 */
+function evictSeatDraftSlots(keep, cap) {
+  const others = seatDraftSlotKeys().filter((k) => k !== keep);
+  if (others.length <= cap) return;
+  others.sort((a, b) => seatDraftSlotAt(a) - seatDraftSlotAt(b));
+  for (const k of others.slice(0, others.length - cap)) {
+    try { localStorage.removeItem(k); } catch { /* ignore */ }
+  }
+}
+
+/** 写一个槽：配额满时先淘汰全部他页槽再试一次；仍失败返回 false（尽力而为，不阻断）。 */
+function writeSeatDraftSlot(slotKey, json) {
+  try { localStorage.setItem(slotKey, json); return true; } catch { /* 配额满 */ }
+  evictSeatDraftSlots(slotKey, 0);
+  try { localStorage.setItem(slotKey, json); return true; } catch { return false; }
+}
+
+/** 旧单槽一次性迁移（见上方块注释）。只在本页签还没有自有槽时收编。 */
+function migrateLegacySeatDraft() {
+  try {
+    const legacy = localStorage.getItem(LS_DRAFT_PREFIX);
+    if (legacy === null) return;
+    const slot = seatDraftSlotKey();
+    if (localStorage.getItem(slot) !== null) return;   // 自有槽优先
+    let rec = null;
+    try { rec = JSON.parse(legacy); } catch { rec = null; }
+    const usable = rec && rec.v === 2 && Array.isArray(rec.tabs) && rec.tabs.length > 0;
+    if (!usable) { localStorage.removeItem(LS_DRAFT_PREFIX); return; }   // 不可读 ⇒ 丢弃
+    evictSeatDraftSlots(slot, SEAT_DRAFT_SLOT_MAX - 1);
+    if (writeSeatDraftSlot(slot, legacy)) localStorage.removeItem(LS_DRAFT_PREFIX); // 写不进则保留旧键，等下次
+  } catch { /* 迁移尽力而为 */ }
+}
+
+/** 读回**本页签**的未合并草稿（无/坏体 ⇒ null，绝不清空既有）。 */
 function readSeatDraft() {
   try {
-    const raw = localStorage.getItem(LS_DRAFT_KEY);
+    const raw = localStorage.getItem(seatDraftSlotKey());
     if (!raw) return null;
     const rec = JSON.parse(raw);
     if (!rec || rec.v !== 2 || !Array.isArray(rec.tabs) || rec.tabs.length === 0) return null;
@@ -282,76 +333,15 @@ function captureSeatDraft() {
     if (sessionTombstones.size > 0) rec.tombstones = [...sessionTombstones.values()];
     const buffers = collectSeatDraftBuffers();
     if (buffers.length > 0) rec.buffers = buffers;
-    localStorage.setItem(LS_DRAFT_KEY, JSON.stringify(rec));
-    renderDraftEntry();
+    const slot = seatDraftSlotKey();
+    evictSeatDraftSlots(slot, SEAT_DRAFT_SLOT_MAX - 1);   // 本槽 + 他页 ≤ 8
+    writeSeatDraftSlot(slot, JSON.stringify(rec));
   } catch { /* storage 满/不可用：草稿尽力而为，绝不阻断 */ }
 }
 
-/** 清掉本机草稿（取回成功 / 用户忽略）。 */
+/** 清掉本页签的草稿（取回成功 / 用户忽略）。只动自己的槽，绝不碰他页槽。 */
 function clearSeatDraft() {
-  try { localStorage.removeItem(LS_DRAFT_KEY); } catch { /* ignore */ }
-}
-
-/** 草稿条的取回入口（非阻断、不抢焦点、不进层栈）：挂在**激活页签的滚动面**里。
- *  手机层会把激活 pane 收编进全屏画布页 ⇒ 同一条桌面/手机都可见（单一落点）。
- *  **落点判据（铁律 9：编辑面可滚不静默裁切）**：md/txt 族查看器的滚动面是 pane 内
- *  `position:absolute; inset:0` 的 `.canvas-md-scroll / .canvas-txt-scroll`——把条目
- *  `prepend` 进 pane 静态流会被滚动面盖住、压住正文首行（既有 `.canvas-update-hint`
- *  就是这么浮着的）。故这里挂进滚动面**自身的文档流**（正文整体下移，零遮挡、零裁切），
- *  并 `position:sticky; top:0` —— 静置时条目占着自己那一格（绝不压住正文首行），
- *  滚动时才贴着滚动口上缘停靠（不会被滚走）。**不许**写 `top:<滚动面顶垫>`：
- *  滚动口上缘 ≠ 宿主上缘，那样 sticky 会把条目往下顶进正文（实测遮过 H1）。
- *  样式**全走既有 token**（不新增第二套颜色/尺寸/圆角）。 */
-function renderDraftEntry() {
-  const rec = readSeatDraft();
-  const pane = activeTabId ? tabs.get(activeTabId)?.paneEl : null;
-  // 撤掉不在当前激活 pane 上的旧条（换签/取回/忽略后不留残影）。
-  for (const e of tabs.values()) {
-    if (e.paneEl && e.paneEl !== pane) e.paneEl.querySelector?.('.' + DRAFT_CHIP_CLASS)?.remove();
-  }
-  if (!rec) { pane?.querySelector?.('.' + DRAFT_CHIP_CLASS)?.remove?.(); return; }
-  if (!pane || !pane.isConnected) return;
-  if (pane.querySelector('.' + DRAFT_CHIP_CLASS)) return;  // 幂等：已在场
-  const host = pane.querySelector('.canvas-md-scroll, .canvas-txt-scroll') || pane;
-  const inScrollFace = host !== pane;
-  const chip = document.createElement('div');
-  chip.className = DRAFT_CHIP_CLASS;
-  chip.setAttribute('role', 'status');
-  chip.setAttribute('style', [
-    ...(inScrollFace
-      ? ['position:sticky', 'top:0', 'z-index:6',
-        'margin:0 var(--ds-space-indent-x) var(--ds-space-2)']
-      : ['position:relative', 'z-index:5',
-        'margin:var(--cv-safe-top, 56px) var(--ds-space-indent-x) var(--ds-space-2)']),
-    'display:flex', 'align-items:center', 'gap:var(--ds-space-inline-gap)',
-    'padding:var(--ds-space-2) var(--ds-space-inline-x)',
-    'border-radius:var(--ds-radius-button)',
-    'background:var(--st-control-bg)', 'color:var(--st-text)',
-    'font:var(--ds-fs-hint)/1.4 -apple-system,"Segoe UI",sans-serif',
-    'border:1px solid var(--st-control-border)',
-    'box-shadow:var(--st-control-shadow)',
-  ].join(';'));
-  const text = document.createElement('span');
-  text.className = 'canvas-draft-chip-text';
-  // 有落不回的正文 ⇒ 文案改成冲突说明（零通知仍成立：这是取回条自身的状态，
-  // 不是弹窗/toast；不给用户留一条「点了取回但其实没回来」的静默假象）。
-  const conflicted = [...pendingSeatDraftBuffers.values()].some((b) => b.verdict);
-  text.textContent = conflicted ? t('canvas.draftConflict') : t('canvas.draftAvailable');
-  text.setAttribute('style', 'flex:1 1 auto;');
-  const restore = document.createElement('button');
-  restore.className = 'canvas-draft-chip-restore';
-  restore.type = 'button';
-  restore.textContent = t('canvas.draftRestore');
-  restore.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:var(--ds-space-1) var(--ds-space-inline-x);border-radius:var(--ds-radius-input);border:1px solid var(--st-control-border);background:var(--st-control-bg-hover);color:inherit;font:inherit;');
-  restore.onclick = () => { restoreSeatDraft(); };
-  const dismiss = document.createElement('button');
-  dismiss.className = 'canvas-draft-chip-dismiss';
-  dismiss.type = 'button';
-  dismiss.textContent = t('canvas.draftDismiss');
-  dismiss.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:var(--ds-space-1) var(--ds-space-inline-x);border-radius:var(--ds-radius-input);border:1px solid var(--st-control-border);background:transparent;color:inherit;font:inherit;');
-  dismiss.onclick = () => { clearSeatDraft(); renderDraftEntry(); };
-  chip.append(text, restore, dismiss);
-  host.prepend(chip);
+  try { localStorage.removeItem(seatDraftSlotKey()); } catch { /* ignore */ }
 }
 
 /** 试着把暂存的草稿正文写回落回的页签（一 tick 一次；由 restoreSeatDraft 循环驱动）。
@@ -368,6 +358,8 @@ function flushSeatDraftBuffers() {
     const entry = [...tabs.values()].find((t) => t.absPath === absPath);
     if (!entry) continue;                       // 页签还没回来 —— 下一 tick
     if (buf.verdict) continue;                  // 已判定冲突，等用户决定
+    // 页签上已有未保存的本地改动（切回时常见）：绝不拿草稿盖掉正在编辑的内容 ⇒ 记冲突、草稿留着。
+    if (isTabDirty(entry)) { buf.verdict = 'local-dirty'; conflicts.push(absPath); continue; }
     if (buf.truncated) { buf.verdict = 'truncated'; conflicts.push(absPath); continue; }
     if (buf.baseVer && entry._fileVer && entry._fileVer !== buf.baseVer) {
       buf.verdict = 'conflict'; conflicts.push(absPath); continue;
@@ -393,7 +385,17 @@ function flushSeatDraftBuffers() {
  *  正文**写回编辑器缓冲，再走正常写路径（写路径按需静默接管席位）。
  *  **确认后清槽**：只有全部正文都落回（或本来就没有正文）才清本机草稿；有一条落不回去
  *  （冲突/截断/页签始终没回来）就**留着**草稿与取回条，让人还能再试一次。 */
-async function restoreSeatDraft() {
+let seatDraftRestoring = null;   // 同一时刻只跑一次（开页 / 切回 可能叠加）
+
+/** 只恢复**本页签自己**的草稿（打开 / 切回页签时调用，见 restoreOwnSeatDraft）。 */
+function restoreSeatDraft() {
+  if (seatDraftRestoring) return seatDraftRestoring;
+  seatDraftRestoring = restoreSeatDraftOnce().finally(() => { seatDraftRestoring = null; });
+  return seatDraftRestoring;
+}
+
+async function restoreSeatDraftOnce() {
+  migrateLegacySeatDraft();
   const rec = readSeatDraft();
   if (!rec) return;
   pendingSeatDraftBuffers.clear();
@@ -419,11 +421,15 @@ async function restoreSeatDraft() {
     // 有冲突：草稿留着（别让「取回」变成「丢草稿」），取回条改成冲突提示。
     try {
       const keep = { ...rec, buffers: rec.buffers };
-      localStorage.setItem(LS_DRAFT_KEY, JSON.stringify(keep));
+      writeSeatDraftSlot(seatDraftSlotKey(), JSON.stringify(keep));
     } catch { /* ignore */ }
   }
-  renderDraftEntry();
   if (stuck === 0) persistTabs();              // 写穿；席位由写路径按需静默接管
+}
+
+/** 对外：页签打开 / 切回时恢复**本页签**的草稿（幂等，无草稿即空操作）。 */
+export function restoreOwnSeatDraft() {
+  return restoreSeatDraft();
 }
 
 function allowCanvasMutation() {
@@ -2924,9 +2930,7 @@ function renderCanvasHeader() {
   deckTitleEl.classList.toggle('is-dirty', !!(entry && isTabDirty(entry)));
   syncHeaderActions();
   syncRefBackButton();   // F5 返回原文档：随激活页签重sync可见性/座位
-  // 失权端草稿取回入口（静默接管批 2026-11-19）：随激活页签/页签集变化在这里对齐
-  // （幂等；草稿缺席即无动作）。
-  renderDraftEntry();
+  syncFavoriteButton();  // 收藏钮：随激活页签刷新已收藏态（胶囊左座）
   // 触屏常驻横向档同步（作者令 2026-11-05 12:10）：本函数是「页签集 / 激活签 /
   // 脏标记」三处变化的公共出口 ⇒ 横排胶囊环在这里对齐新状态（桌面腿 no-op）。
   if (ringSyncFn) ringSyncFn();
@@ -2969,6 +2973,60 @@ function cardPopIcon(cls, kids) {
   }
   return svg;
 }
+/* ── 文档收藏钮（2026-11-23 前端功能批 · 作者令「按钮放在顶部胶囊左侧」）──
+ *  胶囊左座（.canvas-header 首子元素，先于 #canvas-title）。仅对带 absPath 的文件
+ *  页签可见（URL 页/临时页无收藏语义 ⇒ 隐藏）。已收藏 = is-on（实心），未收藏 = 描边。
+ *  写入唯一入口 = canvasFavorites.toggleFavoritePath（去重/置顶在 core 层）。 */
+/** 星标同步广播：桌面胶囊星标与手机 canvas 工具条星标共用同一份激活态（事件派发在前，
+ *  监听方读 activeFavoriteTarget() 自取当前激活页签）。 */
+export const FAV_SYNC_EVENT = 'nebflow-canvas-fav-sync';
+
+/** 当前激活页签的收藏目标（无 absPath = null；URL/临时页不可收藏）。 */
+export function activeFavoriteTarget() {
+  const entry = activeCanvasEntry();
+  return entry && entry.absPath ? { path: entry.absPath, title: entry.title } : null;
+}
+
+function syncFavoriteButton() {
+  window.dispatchEvent(new Event(FAV_SYNC_EVENT));
+  const hdr = document.querySelector('#canvas-panel .canvas-header');
+  if (!hdr) return;
+  let btn = /** @type {HTMLButtonElement|null} */ (document.getElementById('canvas-fav-btn'));
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.id = 'canvas-fav-btn';
+    btn.type = 'button';
+    btn.className = 'canvas-fav-btn';
+    // 星形图标走 namespace SVG 构建（零裸 innerHTML，同 cardPopIcon 口径）；已收藏态 CSS 填充。
+    btn.appendChild(cardPopIcon('canvas-fav-ic', [
+      ['path', { d: 'M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6-4.9-4.6 6.6-.8z' }],
+    ]));
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const entry = activeCanvasEntry();
+      if (!entry || !entry.absPath) return;
+      const nowOn = toggleFavoritePath({ path: entry.absPath, title: entry.title });
+      syncFavoriteButton();
+      // 星标点亮动效（重触发：先移再加 class）+ 收藏成功轻提示（r2 · 作者令「点亮星标 + toast 一闪」）。
+      btn.classList.remove('is-pop');
+      void btn.offsetWidth;
+      if (nowOn) btn.classList.add('is-pop');
+      window.__showToast?.(t(nowOn ? 'canvas.fav.added' : 'canvas.fav.removed'), 'success');
+    });
+    hdr.insertBefore(btn, hdr.firstChild);
+  }
+  const entry = activeCanvasEntry();
+  const hasPath = !!(entry && entry.absPath);
+  btn.hidden = !hasPath;
+  if (!hasPath) return;
+  const on = isFavoritePath(entry.absPath);
+  btn.classList.toggle('is-on', on);
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  const label = t(on ? 'canvas.fav.remove' : 'canvas.fav.add');
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
+}
+
 function syncHeaderActions() {
   const hdr = document.querySelector('#canvas-panel .canvas-header');
   if (!hdr) return;
@@ -5434,6 +5492,9 @@ export function quoteActiveCardRef() {
 
 /** Initialize canvas event listeners. Call on DOM ready. */
 export function initCanvas() {
+  // 文档收藏（2026-11-23）：侧边栏收藏区挂载（幂等）+ 收藏变化回写胶囊钮态。
+  mountSidebarFavorites();
+  onFavoritesChange(() => syncFavoriteButton());
   writerChanged('reader');
   canvasWriter.refresh();
   // UI 批⑧：独立卡窗模式引导（?card-window=1）—— 必须先于 restoreTabs（main.js
@@ -5446,6 +5507,11 @@ export function initCanvas() {
   if (closeBtn) {
     closeBtn.addEventListener('click', closeCanvas);
   }
+
+  // 切回页签 = 本页签重新可见：只恢复**本页签自己**的草稿（按页签隔离，见 canvasDraftTabId）。
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) restoreSeatDraft();
+  });
 
   // Event delegation on the tab bar (defensive fix for task L: per-tab listeners
   // could silently stop firing after long sessions — e.g. listener loss on tabs

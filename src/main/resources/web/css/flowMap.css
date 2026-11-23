@@ -120,7 +120,9 @@
    暗 #181c26F0，α≥0.90），旧 `--glass-bg-opaque` 现只是它的别名（sapphire.css:50）。
    本批直接挂**唯一玻璃底令牌**，不再是第二套值；成员的类/登记表归 glass 批（见报告
    「待对齐点」：`.solar-node.fm-node` 尚未写进 glass.css 成员登记表，值已同源）。 */
-.flowmap-card .solar-node.fm-node { background: var(--nf-glass-bg); }
+.flowmap-card .solar-node.fm-node {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--nf-glass-bg); }
 .fm-node > * { flex: 0 0 auto; }
 .fm-node:hover { filter: brightness(1.04); }
 
@@ -176,9 +178,15 @@
   border: 1px solid;
   white-space: nowrap;
 }
-.fm-flag-merge   { background: rgb(45 212 191 / 0.12);  color: rgb(45 212 191 / 1);  border-color: rgb(45 212 191 / 0.35); }
-.fm-flag-loop    { background: rgb(192 132 252 / 0.12); color: rgb(192 132 252 / 1); border-color: rgb(192 132 252 / 0.35); }
+.fm-flag-merge   {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: rgb(45 212 191 / 0.12);  color: rgb(45 212 191 / 1);  border-color: rgb(45 212 191 / 0.35); }
+.fm-flag-loop    {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: rgb(192 132 252 / 0.12); color: rgb(192 132 252 / 1); border-color: rgb(192 132 252 / 0.35); }
 .fm-flag-pending {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: rgb(var(--amber, 255 152 0) / 0.12);
   color: rgb(var(--amber, 255 152 0) / 1);
   border-color: rgb(var(--amber, 255 152 0) / 0.4);
@@ -194,12 +202,16 @@
    ——单侧取值会在另一侧掉到阈值下（实测：深色底用 rgb(129 140 248) 仅 4.32:1
    < 4.5，故深色侧上提一档；读数见 .nebflow/evidence/20260915_vchip/vchip-readings.json）。 */
 .fm-flag-verifier {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: rgb(99 102 241 / 0.13);
   color: rgb(67 56 202);
   border-color: rgb(99 102 241 / 0.45);
 }
 @media (prefers-color-scheme: dark) {
   .fm-flag-verifier {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
     background: rgb(129 140 248 / 0.18);
     color: rgb(165 180 252);
     border-color: rgb(165 180 252 / 0.55);
@@ -217,6 +229,8 @@
    窄卡/长 N 时截断，完整文案恒在 title）。🔴 这是本批对既有卡几何的**唯一**改动，
    且只在排队态命中（未排队节点 head 行 DOM/样式逐字不变）。 */
 .fm-flag-queue {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: rgb(56 189 248 / 0.14);
   color: rgb(56 189 248 / 1);
   border-color: rgb(56 189 248 / 0.4);
@@ -267,9 +281,15 @@
   text-transform: uppercase;
   opacity: 0.85;
 }
-.fm-cfg-skill   { background: rgb(45 212 191 / 0.12); color: rgb(45 212 191 / 1);   border-color: rgb(45 212 191 / 0.35); }
-.fm-cfg-mcp     { background: rgb(192 132 252 / 0.12); color: rgb(192 132 252 / 1); border-color: rgb(192 132 252 / 0.35); }
-.fm-cfg-preset  { background: rgb(251 191 36 / 0.12);  color: rgb(251 191 36 / 1);  border-color: rgb(251 191 36 / 0.35); }
+.fm-cfg-skill   {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: rgb(45 212 191 / 0.12); color: rgb(45 212 191 / 1);   border-color: rgb(45 212 191 / 0.35); }
+.fm-cfg-mcp     {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: rgb(192 132 252 / 0.12); color: rgb(192 132 252 / 1); border-color: rgb(192 132 252 / 0.35); }
+.fm-cfg-preset  {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: rgb(251 191 36 / 0.12);  color: rgb(251 191 36 / 1);  border-color: rgb(251 191 36 / 0.35); }
 
 /* 详情 viewer 配置行：key 着色 + 值常规色（复用 .flow-def-source 灰字基线） */
 .flow-node-cfg-line {
@@ -424,6 +444,8 @@
    琥珀描边 + 轻琥珀底光 + result 摘要琥珀化，区别于 failed 的终结红。
    --amber 在 sapphire.css 按亮暗主题定义（亮 255 152 0 / 暗 255 168 60），双主题免适配。 */
 .solar-node.fm-node.blocked {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   border-color: rgb(var(--amber) / 0.55);
   box-shadow: 0 0 0 1px rgb(var(--amber) / 0.22), 0 2px 14px rgb(var(--amber) / 0.10);
 }
@@ -695,7 +717,9 @@
   .solar-node.fm-node { transition: opacity 0.35s ease; }
   .flowmap-card .solar-canvas { transition: none; }
   .fm-result-summary, .fm-desc, .solar-node-status { animation: none; }
-  .fm-node.fm-node-flash { animation: none; box-shadow: 0 0 0 4px rgba(7, 193, 96, 0.3); }
+  .fm-node.fm-node-flash {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); animation: none; box-shadow: 0 0 0 4px rgba(7, 193, 96, 0.3); }
   /* 审计 §4 #12：边箭头的 0.35s fill/opacity 过渡此前无覆盖（两态同值）。
      此处只压审计点名的这一个选择器，不扩面到同行其它过渡（.flow-edge.fm-edge
      等由审计 #5 的动画档位另行覆盖）。 */
@@ -728,7 +752,7 @@
   transition: opacity 0.15s ease, background 0.15s ease;
 }
 .fm-chain-chev:hover { opacity: 1; background: rgba(128, 128, 128, 0.14); }
-.fm-chain-chev:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); }
+.fm-chain-chev:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 .fm-chain-chev svg { width: 10px; height: 10px; display: block; }
 /* 展开态控件（链入口成员卡 head 行右端）：chevron 转 90° 朝下 = 「已展开，点击折起」，
    与归档条目 .fm-entry.expanded .fm-entry-chev 同一语义语言。 */
@@ -749,7 +773,7 @@
   transition: opacity 0.15s ease, background 0.15s ease;
 }
 .fm-chain-cancel:hover { opacity: 1; background: rgba(128, 128, 128, 0.14); }
-.fm-chain-cancel:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); }
+.fm-chain-cancel:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 .fm-chain-cancel svg { width: 9px; height: 9px; display: block; }
 /* 紧随其后的 chevron：余白已被取消控件吸走 ⇒ 让出 auto（两控件成右对齐的一组）。
    无取消控件时本规则不生效 ⇒ chevron 保持原 `margin-left:auto`，既有视觉零漂移。 */
@@ -898,6 +922,7 @@
   color: var(--color-text); opacity: 0.6;
   transition: all 0.2s ease;
   padding: 0;
+  box-shadow: var(--btn-shadow);
 }
 .fm-fab svg { width: 18px; height: 18px; display: block; }
 @media (hover: hover) {
@@ -913,10 +938,11 @@
   border-color: rgb(var(--sapphire) / 0.35);
   background: rgb(var(--sapphire) / 0.12);
   transform: none;
+  box-shadow: var(--btn-shadow);
 }
 .fm-fab:focus-visible {
-  outline: var(--btn-ring-w) solid var(--btn-ring);
-  outline-offset: var(--btn-ring-offset); }
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 /* 计数徽章（§4.3：team-mail-badge 构型；计数 = 面板链条目数，TTL 清理同步减） */
 .fm-archive-badge {
@@ -964,6 +990,7 @@
   color: var(--cv-hint-color);
 }
 .fm-panel-close {
+  border-radius: var(--ds-radius-chip); /* 圆角标准批 2026-11-22（作者令「要圆角的框」「落为标准」· 规范 §2.6）：F7 判据下的环基座。 */
   margin-left: auto; border: none; background: transparent; cursor: pointer;
   font: 400 var(--ds-fs-callout)/1 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted);
   opacity: 0.5; padding: var(--ds-space-half) var(--ds-space-1); transition: opacity 0.15s;
@@ -971,7 +998,7 @@
 }
 .fm-panel-close svg { width: 12px; height: 12px; display: block; }
 .fm-panel-close:hover { opacity: 1; }
-.fm-panel-close:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); border-radius: var(--ds-radius-badge); }
+.fm-panel-close:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); } /* round2：环规则不再改圆角（环半径 = 组件半径，§2.6） */
 .fm-panel-body {
   flex: 1; overflow-y: auto; padding: var(--ds-space-3) 14px;
   scrollbar-width: thin; scrollbar-color: var(--color-frame-border) transparent;
@@ -1008,7 +1035,7 @@
   transition: background 0.15s, border-color 0.15s;
 }
 .fm-entry:hover { background: rgba(128, 128, 128, 0.1); border-color: rgba(128, 128, 128, 0.18); }
-.fm-entry:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); }
+.fm-entry:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 .fm-entry.expanded { background: rgba(128, 128, 128, 0.1); border-color: rgba(91, 127, 191, 0.25); }
 .fm-entry.flash { animation: fm-entry-flash 0.5s ease 1; }
 @keyframes fm-entry-flash {
@@ -1073,7 +1100,7 @@
 }
 .fm-member:last-child { margin-bottom: 0; }
 .fm-member:hover { background: rgba(128, 128, 128, 0.09); border-color: rgba(128, 128, 128, 0.16); }
-.fm-member:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); }
+.fm-member:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 .fm-member-row { display: flex; align-items: center; gap: var(--ds-space-1h); min-width: 0; }
 .fm-member-name {
   flex: 0 1 auto; min-width: 0; font: 500 var(--ds-fs-hint)/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
@@ -1137,6 +1164,7 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .fm-detail-close {
+  border-radius: var(--ds-radius-chip); /* 圆角标准批 2026-11-22（作者令「要圆角的框」「落为标准」· 规范 §2.6）：F7 判据下的环基座。 */
   margin-left: auto; flex: 0 0 auto; border: none; background: transparent; cursor: pointer;
   font: 400 var(--ds-fs-callout)/1 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted);
   opacity: 0.5; padding: var(--ds-space-half) var(--ds-space-1); transition: opacity 0.15s;
@@ -1144,7 +1172,7 @@
 }
 .fm-detail-close svg { width: 12px; height: 12px; display: block; }
 .fm-detail-close:hover { opacity: 1; }
-.fm-detail-close:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); border-radius: var(--ds-radius-badge); }
+.fm-detail-close:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); } /* round2：环规则不再改圆角（环半径 = 组件半径，§2.6） */
 .fm-detail-body {
   flex: 1; min-height: 0; overflow-y: auto; padding: var(--ds-space-3) 14px;
   display: flex; flex-direction: column; /* 卡内唯一竖向滚动容器（2026-09-11 滚动一体化批） */
@@ -1230,8 +1258,12 @@
 .fm-md h3, .fm-md h4 { font-size: var(--ds-fs-hint); }
 .fm-md h5, .fm-md h6 { font-size: var(--ds-fs-hint); }
 .fm-md table { display: block; overflow-x: auto; border-collapse: collapse; margin: var(--ds-space-1h) 0; font-size: var(--ds-fs-hint); }
-.fm-md th, .fm-md td { border: 1px solid var(--color-border); padding: var(--ds-space-1) var(--ds-space-2); }
-.fm-md th { background: var(--color-frame-hover); }
+.fm-md th, .fm-md td {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); border: 1px solid var(--color-border); padding: var(--ds-space-1) var(--ds-space-2); }
+.fm-md th {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--color-frame-hover); }
 .fm-md a { color: rgb(var(--sapphire)); }
 .fm-md hr { border: none; border-top: 1px solid var(--color-border); margin: var(--ds-space-2) 0; }
 .fm-md strong { font-weight: 600; }
@@ -1253,14 +1285,22 @@
 /* 终态卡的节点名保持主字色（--color-text）：名字是卡的第一信息面，去强调由
    状态词 + 静环 + 轨道点三处承担；颜色见上方 .solar-node.fm-node .solar-node-label
    （0,4,0）档，此处只在报告里记明「terminal 的 dim 名随本批下线」。 */
-.solar-node.fm-node.terminal.completed .solar-ring { border-color: var(--color-success); opacity: 0.55; }
+.solar-node.fm-node.terminal.completed .solar-ring {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); border-color: var(--color-success); opacity: 0.55; }
 /* ui-status-redesign（盘点 #22）：失败环 = 图案载体 ✓，色值归 --status-error-icon
    （暗档随 token 提亮）。 */
-.solar-node.fm-node.terminal.failed .solar-ring { border-color: var(--status-error-icon); opacity: 0.55; }
-.solar-node.fm-node.terminal.cancelled .solar-ring { border-color: var(--color-text-muted); opacity: 0.55; }
+.solar-node.fm-node.terminal.failed .solar-ring {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); border-color: var(--status-error-icon); opacity: 0.55; }
+.solar-node.fm-node.terminal.cancelled .solar-ring {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); border-color: var(--color-text-muted); opacity: 0.55; }
 
 /* hover 联动加亮（§5.6）：条目/成员 hover → 可见下游卡 .fm-adj */
 .solar-node.fm-node.fm-adj {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   transform: scale(1.03);
   filter: brightness(1.03);
   border-color: rgb(var(--sapphire) / 0.5);
@@ -1272,12 +1312,16 @@
    过渡复用既有节点 transform/opacity 与边 stroke/width/opacity 过渡，零新增动画。
    本块排在 .fm-adj/.terminal 之后：dim 需压过 terminal 的 .78 透明度（同特异度后胜）。 */
 .solar-node.fm-node.fm-hi {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   transform: scale(1.12);
   border-color: rgb(var(--sapphire) / 0.45);
   box-shadow: 0 6px 22px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.08);
   z-index: 2;
 }
 .solar-node.fm-node.fm-nb {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   transform: scale(1.06);
   border-color: rgb(var(--sapphire) / 0.35);
 }

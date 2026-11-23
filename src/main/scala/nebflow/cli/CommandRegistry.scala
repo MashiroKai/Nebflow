@@ -62,7 +62,11 @@ object CommandRegistry:
       // 密钥 CLI 批（密钥能力三件套 A 件，作者令 2026-11-01）：append-only 一行
       // —— `secrets`（`stand secrets list` = 元数据清单零值；bare = 用法提示）。
       // 同 phase 3b token/sessions 族：密钥域 CLI 读面，离线归类见 CliRouter。
-      SecretsCommand
+      SecretsCommand,
+      // 测试输入面 M2（workspace-compute R1a，作者令 2026-11-19）：append-only 一行
+      // —— `test`（snapshot / verify / diff / slot：快照冻结、清单校验、独占执行槽）。
+      // 纯本机命令，离线归类同 secrets 族（见 CliRouter 的 OfflineSubcommands）。
+      TestCommand
     ).map(c => c.name -> c).toMap
 
   def get(name: String): Option[CliCommand] = commands.get(name)

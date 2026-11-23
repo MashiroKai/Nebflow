@@ -24,6 +24,7 @@ import state from '../state.js';
 import { activeView } from '../chatView.js';
 import { t } from '../i18n.js';
 import { renderMarkdownWithMath, shouldFollowBottom } from '../utils.js';
+import { applyReplayFace } from '../outputTag.js';
 import { restoreFromBackendHistory, findLastRealMessage } from '../persistence.js';
 import {
   renderToolPending, renderAskUser, renderPermissionPrompt, reclaimAskUserCards,
@@ -242,7 +243,13 @@ export function replayHistoryPageInitialLoad(msg, view) {
         row.className = 'row ai';
         activeView.stream.currentAiBubble = document.createElement('div');
         activeView.stream.currentAiBubble.className = 'bubble ai';
-        activeView.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText, true, { cache: !isStillBusy }) + (isStillBusy ? '<span class="cursor"></span>' : '');
+        // 追加批（2026-11-22）：缓冲身份取服务端戳（sessionTextIdentity 与 sessionTexts 同写；
+        // 仅剩 pendingRestore 时取其落盘的 isRoot）。root ⇒ 报告面（与主腿同款）；
+        // 非 root / 缺戳 ⇒ 下方原全文渲染逐字不变。
+        const txtRoot = state.sessionTexts[sid] ? state.sessionTextIdentity[sid] === true : pd?.isRoot === true;
+        if (!applyReplayFace(activeView.stream.currentAiBubble, activeView.stream.aiText, { root: txtRoot, streaming: isStillBusy, cache: !isStillBusy })) {
+          activeView.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText, true, { cache: !isStillBusy }) + (isStillBusy ? '<span class="cursor"></span>' : '');
+        }
         row.appendChild(activeView.stream.currentAiBubble);
         chat.appendChild(row);
         if (!isStillBusy) {

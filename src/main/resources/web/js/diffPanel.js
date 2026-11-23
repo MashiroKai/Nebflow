@@ -39,6 +39,8 @@ let batchGeneration = 0;
 let currentPayload = null;
 /** init 幂等闸。 */
 let initialized = false;
+/** locale 监听幂等闸（面板重建不叠加监听）。 */
+let localeListenerBound = false;
 
 /** Batch identity — same key convention as the canvas tab id suffix
  *  (diffCanvas.openFileChangesCanvas)：nodeId 优先，无主批次回落 generatedAt /
@@ -56,38 +58,77 @@ function totalsOf(payload) {
   }, { a: 0, r: 0 });
 }
 
-/** Build the panel skeleton once (boot). Panel family language: .panel +
- *  .panel-header/.panel-title（css/sidebar.css 基座）——内容面样式落
- *  css/diffView.css 的 .nfp-* 规则。 */
+/** 面板 DOM 结构完备性（缺任一子件 = 实例残缺，须整体重建，不得半残渲染）。 */
+function isPanelComplete(panel) {
+  return !!(panel.querySelector('.nfp-meta') && panel.querySelector('.nfp-empty') && panel.querySelector('.nfp-list'));
+}
+
+/** Build the panel skeleton (boot + 每次开图兜底). Panel family language:
+ *  .panel + .panel-header/.panel-title（css/sidebar.css 基座）——内容面样式落
+ *  css/diffView.css 的 .nfp-* 规则。残缺实例（子件缺失）⇒ 替换为完备实例。 */
 function ensurePanelDom() {
-  if (document.getElementById(PANEL_ELEM_ID)) return;
+  const existing = document.getElementById(PANEL_ELEM_ID);
+  if (existing && isPanelComplete(existing)) return;
+  if (existing) existing.remove();
   const host = document.getElementById(HOST_ID);
   if (!host) return;
   const panel = document.createElement('div');
   panel.id = PANEL_ELEM_ID;
   panel.className = 'panel';
   panel.setAttribute('data-panel-id', PANEL_ID);
-  panel.innerHTML = `
-    <div class="panel-header">
-      <span class="panel-title" id="panel-title-${PANEL_ID}"></span>
-      <span class="nfp-meta"></span>
-    </div>
-    <div class="nfp-body">
-      <div class="nfp-empty" data-cv-hint="empty"></div>
-      <div class="nfp-list" role="listbox" aria-label="changed files"></div>
-    </div>`;
+  // 静态骨架改为 DOM API 构造（同形同序，无插值）——免裸 innerHTML 写入（component-contract R5）。
+  const header = document.createElement('div');
+  header.className = 'panel-header';
+  const title = document.createElement('span');
+  title.className = 'panel-title';
+  title.id = 'panel-title-' + PANEL_ID;
+  const meta = document.createElement('span');
+  meta.className = 'nfp-meta';
+  header.append(title, meta);
+  const body = document.createElement('div');
+  body.className = 'nfp-body';
+  const empty = document.createElement('div');
+  empty.className = 'nfp-empty';
+  empty.setAttribute('data-cv-hint', 'empty');
+  const list = document.createElement('div');
+  list.className = 'nfp-list';
+  list.setAttribute('role', 'listbox');
+  list.setAttribute('aria-label', 'changed files');
+  body.append(empty, list);
+  panel.append(header, body);
   host.appendChild(panel);
   applyPanelText(panel);
   // 语言切换跟随面板族既例（activityBar.initSidePanels 的 locale-changed 同款）。
-  window.addEventListener('locale-changed', () => applyPanelText(panel));
+  if (!localeListenerBound) {
+    localeListenerBound = true;
+    window.addEventListener('locale-changed', () => {
+      const p = document.getElementById(PANEL_ELEM_ID);
+      if (p) applyPanelText(p);
+    });
+  }
 }
 
-/** Apply i18n captions (title + empty state). */
+/** Apply i18n captions (title + empty state), then re-derive visibility. */
 function applyPanelText(panel) {
   const title = panel.querySelector(`#panel-title-${PANEL_ID}`);
   if (title) title.textContent = t('panel.diff');
-  const empty = panel.querySelector('.nfp-empty');
-  if (empty && !currentPayload) empty.textContent = t('panel.diffEmpty');
+  syncEmptyState();
+}
+
+/** 空态单一真值（2026-11-19 误报修）：空态可见 ⇔ 面板列表无行 ⇔ 当前没有任何
+ *  已承载的 diff。列表行是唯一渲染产物——打开链（chip / 程序化 / 重放 / 重连）
+ *  凡走 openDiffBatch 都经 renderBatch 落行，关页签 / 残缺重建同样经此收口；
+ *  空态不再由散落的 hidden 写入与一次性文案门控分别决定。 */
+function syncEmptyState() {
+  const panel = document.getElementById(PANEL_ELEM_ID);
+  if (!panel) return;
+  const empty = /** @type {HTMLElement | null} */ (panel.querySelector('.nfp-empty'));
+  const list = /** @type {HTMLElement | null} */ (panel.querySelector('.nfp-list'));
+  if (!empty || !list) return;
+  const hasDiff = list.querySelectorAll('.nf-fc').length > 0;
+  empty.textContent = hasDiff ? '' : t('panel.diffEmpty');
+  empty.hidden = hasDiff;
+  list.hidden = !hasDiff;
 }
 
 /** Render one file row into the list — reuses the .nf-fc row family
@@ -191,13 +232,10 @@ function renderBatch(payload) {
   if (!panel) return;
   const files = Array.isArray(payload?.files) ? payload.files : [];
   const list = /** @type {HTMLElement | null} */ (panel.querySelector('.nfp-list'));
-  const empty = /** @type {HTMLElement | null} */ (panel.querySelector('.nfp-empty'));
   const meta = /** @type {HTMLElement | null} */ (panel.querySelector('.nfp-meta'));
-  if (!list || !empty || !meta) return;
+  if (!list || !meta) return;
   list.innerHTML = '';
-  empty.hidden = files.length > 0;
-  list.hidden = files.length === 0;
-  if (!files.length) return;
+  if (!files.length) { syncEmptyState(); return; }
   // 二次加载清剿批 2026-10-24（作者报障「点了没反应」）：行点击链的失败腿曾有
   // `.catch(() => {})` 静默吞掉（动态 import 失败 / canvas 通道不可用 / 面板 DOM
   // 不在）——任何取数/渲染路径必须有失败可见反馈（作者令②）。失败 ⇒ meta 槽
@@ -222,6 +260,16 @@ function renderBatch(payload) {
     list.appendChild(row);
   });
   setMetaTotals();
+  syncEmptyState();
+}
+
+/** 关页签收口：本批次已不在 Canvas ⇒ 清面板行与 meta，空态随之回到真实态。 */
+function clearBatch() {
+  const list = /** @type {HTMLElement | null} */ (document.querySelector(`#${PANEL_ELEM_ID} .nfp-list`));
+  if (list) list.innerHTML = '';
+  const meta = metaEl();
+  if (meta) { meta.classList.remove('nfp-meta-err'); meta.textContent = ''; }
+  syncEmptyState();
 }
 
 /** Boot hook (main.js, after initActivityBar)：建面板 DOM + 注册进侧栏面板注册表。
@@ -239,6 +287,7 @@ export function initDiffPanel() {
     currentBatchKey = null;
     currentPayload = null;
     syncChipActive(null);
+    clearBatch();
     try {
       const bar = await import('./activityBar.js');
       if (currentBatchKey !== null || closeGeneration !== batchGeneration) return;
@@ -271,6 +320,7 @@ export async function openDiffBatch(payload, opts = {}) {
     // 的渲染路径也必须有失败可见反馈（作者令②），否则 = 「点了没反应」。列表可能
     // 半渲染——下次成功 open 全量重建（renderBatch 先清空）。
     setMetaError(null);
+    syncEmptyState();
     return;
   }
   syncChipActive(key);

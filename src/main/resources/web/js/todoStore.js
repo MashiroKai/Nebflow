@@ -94,7 +94,12 @@ const FRAME = {
   complete: 'completeTodo',
   uncomplete: 'uncompleteTodo',
   remove: 'deleteScheduledTask',
+  answer: 'answerTodoDecision',
 };
+
+/** 在飞的决策作答（id → resolve）。作答回执 `todoDecisionAnswered` 或带
+ *  msgType=answerTodoDecision 的 error 帧到达时结算；作答是真源，完成门控据此放行。 */
+const pendingAnswers = new Map();
 
 /** 待批准镜像行（`name` = perm-<id>）不属人待办面：它的销账归 permission 流
  *  （后端 completeTodo 会把镜像行算进周报），收件箱只认人建待办 / 问句条目。
@@ -519,6 +524,26 @@ function completedHandler(msg) {
   if (it) { it.completed = true; emit(); }
 }
 
+/** 作答回执：以后端 task 真值回写本地行（decision.answer 落地），结算在飞作答。 */
+function answeredHandler(msg) {
+  if (fixtureMode) return;
+  const id = msg && msg.id;
+  if (!id) return;
+  const row = msg.task;
+  if (row && row.id) {
+    const mapped = mapRow(row);
+    const i = items.findIndex((x) => x.id === mapped.id);
+    if (i >= 0) items[i] = { ...items[i], ...mapped };
+    else items.push(mapped);
+  } else {
+    const it = items.find((x) => x.id === id);
+    if (it && it.decision) it.decision = { ...it.decision, answer: msg.answer || null };
+  }
+  emit();
+  const res = pendingAnswers.get(id);
+  if (res) { pendingAnswers.delete(id); res({ ok: true, answer: msg.answer || null }); }
+}
+
 function deletedHandler(msg) {
   if (fixtureMode) return;
   const id = msg && msg.id;
@@ -537,6 +562,12 @@ function deletedHandler(msg) {
 /** 服务端显式拒绝（带 msgType 的 error 帧）⇒ 回滚 + 报错，不静默吞。 */
 function errorHandler(msg) {
   if (!msg || !msg.msgType) return;
+  // 作答被拒：结算在飞作答（带 code，不回滚、不 refresh——作答从未落库）。
+  if (msg.msgType === FRAME.answer) {
+    const res = pendingAnswers.get(msg.id);
+    if (res) { pendingAnswers.delete(msg.id); res({ ok: false, code: msg.code || '', message: msg.message || '' }); }
+    return;
+  }
   const ourFrames = [FRAME.create, FRAME.update, FRAME.complete, FRAME.uncomplete, FRAME.remove];
   if (!ourFrames.includes(msg.msgType)) return;
   // Correlated creates are handled by their owning sheet, not the legacy optimistic queue.
@@ -559,6 +590,7 @@ function wire() {
   onMessage('scheduledTaskCreated', createdHandler);
   onMessage('scheduledTaskUpdated', updatedHandler);
   onMessage('scheduledTaskCompleted', completedHandler);
+  onMessage('todoDecisionAnswered', answeredHandler);
   onMessage('scheduledTaskDeleted', deletedHandler);
   onMessage('error', errorHandler);
   // 重连后重拉（断线期间的写操作/浮出全部补齐）。
@@ -642,15 +674,21 @@ function surfacedItems() {
   return surfaced(items);
 }
 
+/** 计数面过滤（作者 2026-11-18 裁定：转入的问句条目「不再弹窗和计数气泡显示」）。
+ *  问句转入行仍在列表里可见、可作答，但不进任何角标 / 计数口径。 */
+function countable(list) {
+  return surfaced(list).filter((it) => it.source !== 'ask');
+}
+
 function openCount() {
   maybePull();
-  return surfaced(items).filter((it) => !it.completed).length;
+  return countable(items).filter((it) => !it.completed).length;
 }
 
 function overdueCount() {
   maybePull();
   const now = Date.now();
-  return surfaced(items).filter((it) => !it.completed && it.due != null && it.due < now).length;
+  return countable(items).filter((it) => !it.completed && it.due != null && it.due < now).length;
 }
 
 /** Due today (open items whose due falls inside the local calendar day: today 00:00 <= due < tomorrow 00:00). */
@@ -660,7 +698,7 @@ function dueTodayCount() {
   start.setHours(0, 0, 0, 0);
   const from = start.getTime();
   const to = from + 24 * 3600_000;
-  return surfaced(items).filter((it) => !it.completed && it.due != null && it.due >= from && it.due < to).length;
+  return countable(items).filter((it) => !it.completed && it.due != null && it.due >= from && it.due < to).length;
 }
 
 function completedCount() {
@@ -671,7 +709,7 @@ function completedCount() {
 /** Open item count under one tag (the count shown on the list card rows). */
 function openCountOf(tagId) {
   maybePull();
-  return surfaced(items).filter((it) => !it.completed && it.tagId === tagId).length;
+  return countable(items).filter((it) => !it.completed && it.tagId === tagId).length;
 }
 
 /** All items including completed ones (read-only copy; used by the completed matrix and smoke probes). */
@@ -853,6 +891,27 @@ function completeItem(id) {
     scheduleRefresh();
   }
   emit();
+}
+
+/** 决策作答（`answerTodoDecision` 帧，期 1）：作答写后端真源，**不**走聊天文本。
+ *  @param {string} id @param {{selectedOptionIds?:string[], otherText?:string, via?:string}} payload
+ *  @returns {Promise<{ok:boolean, code?:string, message?:string, answer?:object}>}
+ *  完成门控依赖本回执：ok 之后才允许 completeItem（作答即完成的编排在视图层）。 */
+function answerItem(id, payload) {
+  const it = items.find((x) => x.id === id);
+  if (!it || !it.sessionId) return Promise.resolve({ ok: false, code: 'no_session', message: '' });
+  if (fixtureMode) return Promise.resolve({ ok: true, answer: null });
+  return new Promise((resolve) => {
+    pendingAnswers.set(id, resolve);
+    sendWs({
+      type: FRAME.answer,
+      sessionId: it.sessionId,
+      id,
+      selectedOptionIds: Array.isArray(payload.selectedOptionIds) ? payload.selectedOptionIds : [],
+      otherText: payload.otherText || undefined,
+      via: payload.via || 'mobile',
+    });
+  });
 }
 
 /** 取消完成（`uncompleteTodo`；后端清 completedAt + 追加 DoneRecord(via:"undo")）。 */
@@ -1103,7 +1162,7 @@ export const todoStore = {
   /** 显式拉取/刷新（渲染层挂载点可调用；不调用也已惰性自动首拉）。 */
   init: maybePull,
   refresh,
-  createItem, createItemConfirmed, updateItem, completeItem, uncompleteItem, removeItem,
+  createItem, createItemConfirmed, updateItem, completeItem, answerItem, uncompleteItem, removeItem,
   createTag, updateTag, deleteTag, reorderTag,
   subscribe,
   /** 测试缝：确定性夹具（shots 几何 spec 用；__ 前缀 = 非产品路径）。 */

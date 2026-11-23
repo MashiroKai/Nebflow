@@ -2282,7 +2282,10 @@ object GatewayMain extends IOApp:
                                                     // 缺省启用）。不重启引擎不生效，随下一波上线。
                                                     val consoleTakeover = ConsoleTakeover(
                                                       wsHub.sendTo,
-                                                      NebflowLogger.forName("nebflow.console-takeover")
+                                                      NebflowLogger.forName("nebflow.console-takeover"),
+                                                      pendingStorePath = Some(
+                                                        PathUtil.dataRoot.toNIO.resolve("console-takeover-pending.json")
+                                                      )
                                                     )
                                                     logger.info(
                                                       s"console-takeover: single-instance gate " +
@@ -2411,28 +2414,46 @@ object GatewayMain extends IOApp:
                                                           //     双重计数（污染观测面）；隧道请求由桥接层
                                                           //     单点计数（信封 IP 键）。
                                                           val gatewayApp: org.http4s.HttpApp[IO] = Router(
-                                                            "/api" -> (chatRoutes.routes <+> restApiRoutes.routes <+> restApiRoutes
-                                                              .presenceWsRoutes(wsb) <+> StaticRoutes
-                                                              .pluginAssetsRoutes(
-                                                                tokenRef,
-                                                                gatewaySessions,
-                                                                // canvas-media Wave1 (OD-2=V-C): the
-                                                                // Trusted-only resolver feeding the
-                                                                // tokenized plugin-asset route.
-                                                                name =>
-                                                                  nebflow.core.plugin.PluginRegistry
-                                                                    .scan()
-                                                                    .map(
-                                                                      _.find(p => p.name == name && p.trust.trusted)
-                                                                        .map(p => os.Path(p.dir))
-                                                                    )
-                                                              )),
+                                                            // 手机面板卡顿修复批 2026-11-21（根因二a）：
+                                                            // `/api` 的**有界 JSON** 面接 gzip。
+                                                            // 修前本树一律 identity（历史 10.99MB /
+                                                            // 任务行 1.1MB 裸传，作者场景过门户隧道）。
+                                                            // 原「gzip 不得包 /api」的理由只对**流**成立
+                                                            // （SSE / WS 升级），故新中间件按内容类型
+                                                            // 正向白名单 + text/event-stream 排除，
+                                                            // 流面一字不碰——理由复核与 ETag 取舍见
+                                                            // [[ApiGzipMiddleware]] 类头注。
+                                                            "/api" -> ApiGzipMiddleware(
+                                                              chatRoutes.routes <+> restApiRoutes.routes <+> ConsoleTakeoverRoutes
+                                                                .routes(
+                                                                  gatewaySessions,
+                                                                  consoleTakeover,
+                                                                  logger
+                                                                ) <+> restApiRoutes
+                                                                .presenceWsRoutes(wsb) <+> StaticRoutes
+                                                                .pluginAssetsRoutes(
+                                                                  tokenRef,
+                                                                  gatewaySessions,
+                                                                  // canvas-media Wave1 (OD-2=V-C):
+                                                                  // The Trusted-only resolver feeding the
+                                                                  // tokenized plugin-asset route.
+                                                                  name =>
+                                                                    nebflow.core.plugin.PluginRegistry
+                                                                      .scan()
+                                                                      .map(
+                                                                        _.find(p => p.name == name && p.trust.trusted)
+                                                                          .map(p => os.Path(p.dir))
+                                                                      )
+                                                                )
+                                                            ),
                                                             // Logto AC+PKCE loopback callback (RFC 8252) —
                                                             // root-level, outside /api: the provider's browser
                                                             // redirect carries no gateway token.
                                                             "/auth" -> restApiRoutes.authCallbackRoutes,
-                                                            // Static tree only — gzip must never wrap the
-                                                            // "/api" tree (SSE stream, presence WS).
+                                                            // Static tree only.
+                                                            // `/api` now carries its own bounded-JSON gzip
+                                                            // ([[ApiGzipMiddleware]]); streaming and WS
+                                                            // upgrade faces remain outside every gzip arm.
                                                             // Phase 3b: the `/?ticket=` redemption face is
                                                             // composed AHEAD of the gzipped static tree —
                                                             // its match predicate ("query carries a non-empty
@@ -2718,6 +2739,11 @@ object GatewayMain extends IOApp:
                                                             // 经 ProcessSeal 引导——封存下零注册、只留一行 `[seal]` 说明；
                                                             // 同拍搭车的 DelegateDeliveryReceipts 等邻居
                                                             // 不属邮件/心跳，不动（见 TaskStuckWatcher 注）。
+                                                            // 裁定（送达链路修复批 2026-11-23 P1④）：11-03 封存令对
+                                                            // 本腿属**误伤**——held 催注是投递可靠性自检，不是邮件
+                                                            // 投递进程；dev/sbt 启动配置（build.sbt javaOptions）已显式
+                                                            // `-Dnebflow.mail.process.enabled=true`，gateway 重启后本腿
+                                                            // 重新进 boot 链（封存/开启两档语义与 ProcessSeal 不变）。
                                                             _ <- ProcessSeal.launch(
                                                               ProcessSeal.Realm.Mail,
                                                               "HeldDeliveryWatchdog"

@@ -919,5 +919,12 @@ case class AgentError(
    * executor distinguish "LLM stall, checkpoint-restart may heal it" from
    * hard failures without string-matching error messages.
    */
-  retryable: Option[Boolean] = None
+  retryable: Option[Boolean] = None,
+  /**
+   * LLM 失败卡片批（2026-11-21）：是否为 LLM 类失败（provider 侧）。单点写入点 =
+   * AgentProcessing 调 `nebflow.llm.LlmFailureSignal.isLlmClass`；下游（BackoffSupervisor
+   * subtask 路径）只读本字段，不再凭 `errorType == LlmFailed` 反推（该枚举对所有致命
+   * 错误都标 LlmFailed，会把工具/代码异常误判为 LLM 类）。缺省 false = 非 LLM 类。
+   */
+  llmClass: Boolean = false
 )

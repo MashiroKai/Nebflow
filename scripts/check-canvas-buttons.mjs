@@ -17,7 +17,7 @@ for (const [file, patterns] of Object.entries({
   'js/viewers/html.js': ['glass-control nf-frame-nav-back'],
   'js/askDock.js': ['ask-fab', 'ask-fab note-fab'],
   'js/canvas.js': ['deck-fab g2-fab', 'g2-fab canvas-button', 'canvas-pop-btn', 'canvas-refback-btn', 'deck-card-pop', 'canvas-merge-btn'],
-  'js/mobile/navController.js': ['mf-cv-close g2-fab', 'mf-cv-stack g2-fab'],
+  'js/mobile/navController.js': ['mf-cv-close g2-fab', 'mf-cv-stack g2-fab', 'mf-cv-star g2-fab'],
 })) {
   const src = read(file);
   for (const name of patterns) {
@@ -34,6 +34,14 @@ for (const file of ['js/viewers/readerChrome.js', 'js/viewers/annotations.js', '
 // Closed ask/note morph seeds must not paint a second glass layer below the FAB.
 const askCss = read('css/ask.css');
 if (!/\.ask-dock\.closed\s+\.ask-input\s*,\s*\.note-dock\.closed\s+\.note-body\s*\{[^}]*visibility:\s*hidden\s*;/s.test(askCss)) failures.push('closed ask/note glass seeds must be hidden');
+// 引用入口图标单源（mobile-tab-quote-icon 批 2026-11-19）：该字形经 XML 解析建节点
+// （quoteEntryIconNode），无 xmlns 的 <svg> 落 null 命名空间 ⇒ path 无描边、黑填充 ⇒ 图标不可见。
+// 门禁：单源字形串必须显式带 SVG 命名空间（运行期真渲染断言见 tests/canvas-tab-reference.spec.mjs R13）。
+{
+  const quoteLogo = read('js/quoteLogo.js');
+  const entry = quoteLogo.match(/export const QUOTE_ENTRY_ICON = '<svg([^']*)'/);
+  if (!entry || !/\bxmlns="http:\/\/www\.w3\.org\/2000\/svg"/.test(entry[1])) failures.push('js/quoteLogo.js: QUOTE_ENTRY_ICON <svg> must declare xmlns (XML-parsed node would lose stroke/fill)');
+}
 
 /* ── G-CB3 单一 Canvas 面（canvas-button-unify 批 2026-11-18）────────────────
    作者令逐字口径：「单枚 Canvas 按钮共用既有全站按钮几何/行中线/毛玻璃实现」+
@@ -82,7 +90,7 @@ for (const r of rules) {
     }
   }
 }
-const CANVAS_SINGLE = /(?:\.canvas-button|\.canvas-source-toggle|\.canvas-ref-select|\.canvas-find-toggle|\.canvas-refresh-toggle|\.ask-fab|\.mf-cv-close|\.mf-cv-stack|#deck-fab|#canvas-head-close)/;
+const CANVAS_SINGLE = /(?:\.canvas-button|\.canvas-source-toggle|\.canvas-ref-select|\.canvas-find-toggle|\.canvas-refresh-toggle|\.ask-fab|\.mf-cv-close|\.mf-cv-stack|\.mf-cv-star|#deck-fab|#canvas-head-close)/;
 // G-CB3c（回归修复后口径，canvas-button-unify 收口 2026-11-18）：单钮投影只许
 // ① none（摘除），或 ② **glass.css 那一条「Canvas 单钮共享面」**的
 // var(--ds-shadow-float)（退役私有钩子的回归修复值；选择器必须整列
@@ -101,7 +109,8 @@ for (const r of rules) {
   }
   if (!CANVAS_SINGLE.test(r.selector)) continue;
   if (value === 'none') continue;
-  if (value === 'var(--ds-shadow-float)' && isSharedFaceRule(r.file, r.selector)) continue;
+  // 2026-11-22 统一批：共享面投影 = 全站按钮阴影单源令牌 var(--btn-shadow)（design-system.css）。
+  if (value === 'var(--btn-shadow)' && isSharedFaceRule(r.file, r.selector)) continue;
   failures.push(`G-CB3c private shadow in ${r.file}: ${r.selector} = ${value}`);
 }
 // G-CB3d：canvas-button 是身份钩子而非面 ⇒ 每个挂它的发射点必须同时挂一个已登记
@@ -112,7 +121,7 @@ const REGISTERED_FAMILIES = [
   'canvas-tab-close', 'canvas-video-btn', 'deck-fab', 'deck-card-pop', 'deck-card-x',
   'epub-nav-btn', 'epub-toc-item', 'epub-menu-btn', 'epub-anno-swatch', 'xlsx-sheet-tab',
   'g2-fab', 'ask-fab', 'note-fab',
-  'lt-btn', 'viewer-retry-btn', 'nf-frame-nav-back', 'glass-control', 'mf-cv-close', 'mf-cv-stack',
+  'lt-btn', 'viewer-retry-btn', 'nf-frame-nav-back', 'glass-control', 'mf-cv-close', 'mf-cv-stack', 'mf-cv-star',
 ];
 const jsFiles = [...readdirSync(join(web, 'js')).filter(f => f.endsWith('.js')).map(f => `js/${f}`),
   ...readdirSync(join(web, 'js', 'viewers')).filter(f => f.endsWith('.js')).map(f => `js/viewers/${f}`),
@@ -157,10 +166,10 @@ try {
   const issues = await page.evaluate(() => {
     const errors = [];
     const visible = e => { const s = getComputedStyle(e); return e.getClientRects().length && s.display !== 'none' && s.visibility === 'visible' && Number(s.opacity) > 0; };
-    const registry = ['canvas-find-toggle', 'canvas-source-toggle', 'canvas-ref-select', 'ask-fab', 'mf-cv-close', 'mf-cv-stack', 'mf-stack-x', 'mobile-back-btn', 'mh-chrome-btn', 'mh-sess-more', 'bgagent-more', 'bgagent-stop-fab', 'reminder-fab-add', 'tfl-fab-add', 'tfl-topmenu-btn', 'pf-edit-submit', 'pf-edit-cancel', 'fm-pick-back', 'fm-pick-fab', 'ta-fab', 'ta-save', 'mh-search-bar', 'deck-fab'];
+    const registry = ['canvas-find-toggle', 'canvas-source-toggle', 'canvas-ref-select', 'ask-fab', 'mf-cv-close', 'mf-cv-stack', 'mf-cv-star', 'mf-stack-x', 'mobile-back-btn', 'mh-chrome-btn', 'mh-sess-more', 'bgagent-more', 'bgagent-stop-fab', 'reminder-fab-add', 'tfl-fab-add', 'tfl-topmenu-btn', 'pf-edit-submit', 'pf-edit-cancel', 'fm-pick-back', 'fm-pick-fab', 'ta-fab', 'ta-save', 'mh-search-bar', 'deck-fab'];
     const buttons = [...document.querySelectorAll('button.g2-fab,button.canvas-find-toggle,button.canvas-source-toggle,button.canvas-ref-select,button.ask-fab,#deck-fab,#canvas-head-close')].filter(visible);
     for (const e of buttons) if (!registry.some(name => e.classList.contains(name)) && e.id !== 'canvas-head-close') errors.push(`unregistered circular button: ${e.className}`);
-    const family = buttons.filter(e => e.matches('.canvas-find-toggle,.canvas-source-toggle,.canvas-ref-select,.ask-fab,.mf-cv-close,.mf-cv-stack'));
+    const family = buttons.filter(e => e.matches('.canvas-find-toggle,.canvas-source-toggle,.canvas-ref-select,.ask-fab,.mf-cv-close,.mf-cv-stack,.mf-cv-star'));
     const ref = family.find(e => e.classList.contains('canvas-find-toggle'));
     if (!ref || family.length < 5) errors.push(`fixture missing canvas controls: ${family.length}`);
     if (ref) {

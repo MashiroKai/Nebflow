@@ -41,6 +41,8 @@
 }
 
 .scroll-under-glass::after {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: inherit;
   content: '';
   position: absolute;
   top: 100%;
@@ -98,6 +100,8 @@ body:not(.mobile-layer) .canvas-header.scroll-under-glass::after {
     --sug-tint: rgba(22, 24, 29, 0.46);
   }
   .scroll-under-glass::after {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: inherit;
     background: linear-gradient(to bottom, var(--sug-tint), rgba(22, 24, 29, 0));
   }
 }

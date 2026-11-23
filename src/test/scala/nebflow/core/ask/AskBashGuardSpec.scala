@@ -85,6 +85,49 @@ final class AskBashGuardSpec extends CatsEffectSuite:
       }
   }
 
+  // ── 读面裁定（2026-11-23）：git 只读检视增补 branch(列举) / for-each-ref / rev-parse ──
+  test("validator accepts read-only git branch listing, ref and parse forms") {
+    List(
+      "git branch",
+      "git branch -a",
+      "git branch -vv",
+      "git branch --show-current",
+      "git branch --list 'feat/*'",
+      "git branch -r --contains HEAD~3",
+      "git branch --merged=main",
+      "git branch --format=%(refname:short)",
+      "git for-each-ref --format=%(refname) refs/heads",
+      "git rev-parse --abbrev-ref HEAD"
+    ).foreach { cmd =>
+      AskBashGuard.validate(cmd) match
+        case Right(_) => ()
+        case Left(why) => fail(s"[$cmd] must validate, refused: $why")
+    }
+  }
+
+  test("validator refuses git branch writes and --output file sinks (listing-only face)") {
+    List(
+      "git branch new-feature",
+      "git branch -d old",
+      "git branch -D old",
+      "git branch -m old new",
+      "git branch -c a b",
+      "git branch -f main HEAD~1",
+      "git branch --set-upstream-to=origin/main",
+      "git branch -u origin/main",
+      "git branch --edit-description",
+      "git branch --contains",
+      "git branch --no-such-flag",
+      "git diff --output=leak.txt HEAD~1",
+      "git log --output leak.txt",
+      "git show --output=leak.txt HEAD"
+    ).foreach { cmd =>
+      AskBashGuard.validate(cmd) match
+        case Right(_) => fail(s"[$cmd] must be refused")
+        case Left(why) => assert(why.contains("git"), why)
+    }
+  }
+
   test("validator refuses expansion and combination metacharacters anywhere") {
     List(
       "echo $(rm victim.md)",

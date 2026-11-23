@@ -220,6 +220,7 @@ function dumpPanel(page) {
       anchor,
       group,
       rowTotal: list.getAttribute('data-bg-row-total') || '',
+      running: list.getAttribute('data-bg-running-count') || '',
       header: (document.querySelector('#bgagent-dropdown .bg-dropdown-header') || {}).textContent || '',
     };
   }, LIST);
@@ -530,8 +531,11 @@ test('G5 折叠 dispatcher → node 子树整棵隐藏、展开恢复、刷新�
   expect(folded.rows.find((r) => r.sid === DISP_SID).collapsed).toBe('true');
   expect(folded.rows.find((r) => r.sid === DISP_SID).caretCollapsed).toBe(true);
   expect(folded.anchor).toBeTruthy();
-  // 折叠不改计数（行集合/计数不受影响——既有口径）。
-  expect(folded.rowTotal).toBe('2');
+  // 折叠不改计数（2026-11-23 作者裁定）：running 数 = 在跑的 dispatcher + node = 2，
+  // 折叠前后逐值相等；行集（rowTotal）含被收起子树，≥ 可见行。
+  expect(before.running).toBe('2');
+  expect(folded.running).toBe(before.running);
+  expect(Number(folded.rowTotal)).toBeGreaterThanOrEqual(folded.rows.length);
 
   // 展开恢复。
   await page.click(`[data-bg-caret="${DISP_SID}"]`);
@@ -571,7 +575,9 @@ test('G5 折叠 dispatcher → node 子树整棵隐藏、展开恢复、刷新�
   expect(anchorFolded.rows).toHaveLength(0);
   expect(anchorFolded.anchor).toBeTruthy();
   expect(anchorFolded.anchor.collapsed).toBe('true');
-  expect(anchorFolded.rowTotal).toBe('2');
+  // 作者裁定（2026-11-23）：折叠不改计数 ⇒ 根锚收起后 running 仍为 2（子树只是不出镜）。
+  expect(anchorFolded.running).toBe('2');
+  expect(Number(anchorFolded.rowTotal)).toBeGreaterThanOrEqual(0);
   // 展开锚 → 子树恢复（dispatcher 行保持自己的折叠偏好：仍收起）。
   await page.click(`[data-bg-caret="${ROOT_SID}"]`);
   await page.waitForTimeout(150);

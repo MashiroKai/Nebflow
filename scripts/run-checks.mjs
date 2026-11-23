@@ -11,12 +11,11 @@ const nodeCheck = (name, script, profiles = ['static', 'frontend'], options = {}
   ...options,
 });
 
-// 设计规范单源外置（single-source-rehome 批 2026-11-18）：规范正文（毛玻璃 / 输入面 /
-// 面板 / 按钮 / 披露 / 文案 六篇 + 几何刻度账本）唯一一份在 stand-dev 插件包内，本仓
-// 不保留第二份拷贝；这些闸靠 scripts/lib/design-spec-source.mjs 定位它。规范面缺席
-// （CI 检出、未装插件）时闸以退出码 2 结束 —— 标 envSkip 后这里记为 SKIP（不假绿成
-// PASS，CI 仍能跑完）。
-const SPEC_EXTERNAL = { envSkip: true };
+// 设计规范正文（毛玻璃 / 输入面 / 面板 / 按钮 / 披露 / 文案 六篇 + 几何刻度账本 + 令牌
+// 账本 css）单源在**本仓** `design-language/`，随提交分发；这些闸靠
+// scripts/lib/design-spec-source.mjs 定位它。2026-11-21 裁定批起没有「规范面缺席」这一
+// 档：正文恒在 checkout 里，闸缺席 = 判据消失 = 必须可见的红（原先的 envSkip/SKIP 口径
+// 已撤销，退出码 2 一律按 FAIL 计）。
 
 const scriptTests = readdirSync(new URL('./tests/', import.meta.url))
   .filter(name => name.endsWith('.test.mjs')).sort().map(name => `scripts/tests/${name}`);
@@ -44,13 +43,73 @@ export const CHECKS = [
   nodeCheck('noclip-floating', 'check-noclip-floating'),
   { name: 'noclip-floating-geometry', profiles: ['frontend'], timeoutMs: 240_000,
     argv: [process.execPath, 'tests/noclip-floating-geometry.spec.mjs'] },
+  // 截断/重叠巡检闸（作者令 2026-11-24 09:54 + 继续令「一次建全」2026-11-25）：
+  // 真 Chromium 390×844 量全面板清册——发起群聊 / 后台 agent 弹窗 / 主会话消息流 /
+  // 联系人 / 设置 / 待办列表 / 看板文档阅读面 / AskUser 决策卡（P1–P8），另加桌面
+  // 1280×800 同面板族抽检（D1–D2）；每面配负对照（还原修前形态必须红，否则闸失明
+  // ⇒ FAIL）。判据 O0–O4 与修前同尺，不因面板增多而放宽。
+  { name: 'mobile-overlap-sweep', profiles: ['frontend'], timeoutMs: 240_000,
+    argv: [process.execPath, 'tests/mobile-overlap-sweep.spec.mjs'] },
+  // 手机图片「点开大图预览失败」闸（2026-11-23 · IMG_2039）：原图腿败 + 卡面缩略在场 ⇒ 仍开灯箱
+  // 不 toast；原图腿通 ⇒ 灯箱图解码；负对照无缩略 ⇒ toast 必现（路径活着）。
+  { name: 'mobile-image-preview-fallback', profiles: ['frontend'], timeoutMs: 120_000,
+    argv: [process.execPath, 'tests/mobile-image-preview-fallback.spec.mjs'] },
+  // 手机消息流末条被输入框遮挡闸（2026-11-23 · IMG_2036）：#input-area 整框为控件矩形；
+  // O2 断言真实 reserve ≥ 输入框高度（静止 / 8 行草稿两态），负对照 = 陈旧 reserve。
+  { name: 'mobile-composer-occlusion', profiles: ['frontend'], timeoutMs: 120_000,
+    argv: [process.execPath, 'tests/mobile-composer-occlusion.spec.mjs'] },
+  // 失败卡「恢复即过期」（项 3 · 2026-11-23）：真实 WS 桩驱动 digest + delegateWoken，断言转灰/计数/负对照。
+  { name: 'provider-failure-expired', profiles: ['frontend'], timeoutMs: 180_000,
+    argv: ['npm', 'exec', '--no', '--', 'playwright', 'test', 'tests/provider-failure-expired.spec.mjs', '--workers=1'] },
+  // 后台面板历史卡堆叠折叠（项 1 · 2026-11-23）：H1–H6。
+  { name: 'bg-panel-history-fold', profiles: ['frontend'], timeoutMs: 180_000,
+    argv: ['npm', 'exec', '--no', '--', 'playwright', 'test', 'tests/bg-panel-history-fold.spec.mjs', '--workers=1'] },
   nodeCheck('design-tokens', 'check-design-tokens'),
+  // 全面板圆角令牌覆盖（2026-11-23 作者第三次点名「按钮是方的」）：全局扫描，任何未接令牌的
+  // 方角 / 字面量圆角命中即红，除非登记放行理由（ALLOW 表）。
+  nodeCheck('radius-tokens', 'check-radius-tokens'),
+  // 文档收藏纯逻辑闸（2026-11-23 前端功能批）：收藏切换 / 同文档去重=置顶 / 归一化 / 上限。
+  // 主会话多选合并 Ask 现场探针（loopback mock LLM + 隔离网关；CI 安全）。
+  { name: 'selection-ask-multi-live', profiles: ['static'], timeoutMs: 300_000,
+    argv: [process.execPath, 'tests/selection-ask-multi-live.mjs'] },
+  { name: 'canvas-favorites-core', profiles: ['static'], timeoutMs: 60_000,
+    argv: [process.execPath, '--test', 'tests/canvas-favorites-core.test.mjs'] },
+  // 面板缺陷批（2026-11-23）防回归·静态档：失败卡服务商名读回（④）+ 标题回填契约（③⑤）。
+  { name: 'provider-label-resolve', profiles: ['static'], timeoutMs: 60_000,
+    argv: [process.execPath, '--test', 'tests/provider-label-resolve.test.mjs'] },
+  { name: 'failure-card-title-chain', profiles: ['static'], timeoutMs: 60_000,
+    argv: [process.execPath, '--test', 'tests/failure-card-title-chain.test.mjs'] },
+  // 文档收藏渲染级闸（真 Chromium，三端）：需浏览器 ⇒ frontend 腿（与其它 spec 同档）。
+  { name: 'canvas-favorites-render', profiles: ['frontend'], timeoutMs: 240_000,
+    argv: [process.execPath, 'tests/canvas-favorites-render.spec.mjs'] },
+  // 按钮样式统一闸（button-style-unify-canvas-ref 批 2026-11-22）：全站实底静止按钮面
+  // 消费统一阴影令牌 var(--btn-shadow)（canvas 基准）；裸写投影/字面量圆角即红。
+  nodeCheck('button-style-unify', 'check-button-style-unify'),
+  // 主会话交互卡统一风格（作者裁定 B，2026-11-21）：卡族（.option-box / llm-failure-card / .nfc）
+  // 卡面表面属性只许经 var(--…) 令牌承载；新造字面量卡面即红。与 check-component-contract
+  // 判据不重叠（本闸只读 CSS 卡面声明，不看 JS DOM 写法）。
+  nodeCheck('interaction-card-family', 'check-interaction-card-family'),
+  // LLM 失败卡「点按消失」接线静态闸（2026-11-22）+ Chromium 手机视口三态 spec。
+  nodeCheck('llm-failure-dismiss', 'check-llm-failure-dismiss'),
+  { name: 'llm-failure-card-dismiss', profiles: ['frontend'], timeoutMs: 180_000,
+    argv: [process.execPath, 'tests/llm-failure-card-dismiss.spec.mjs'] },
+  // 服务商受限通知「卡片化收编」静态闸（provider-notice-card-unify 批 2026-11-23）：
+  // 失败组走 llm-failure-card 家族卡面（不再裸横幅）；窗口受限型卡态 + provider id 兜底。
+  nodeCheck('provider-notice-unify', 'check-provider-notice-unify'),
+  // 双档令牌镜像闸（2026-11-21）：base.css 的亮/暗显式档 ≡ 媒体暗档，逐令牌；与卡族闸同档。
+  nodeCheck('theme-token-mirror', 'check-theme-token-mirror'),
   nodeCheck('message-style', 'check-msgstyle-single-source'),
   nodeCheck('message-item-unify', 'check-message-item-unify'),
   // notice-unify 批（2026-11-18，作者令「形成 lint 检查…统一到 2-3 种风格和类型的通知」）：
   // 通知族只允许声明的三型（toast 瞬时浮动 / banner 常驻横幅 / inline 就地提示）；
   // 未声明的通知类名或非单源的 toast/banner 样式定义即红（第四种风格 / 内联手写通知）。
   nodeCheck('notice-unify', 'check-notice-unify'),
+  // 待办收件箱 UI 批（作者令 2026-11-21 ①「次级面板的输入框抽成标准组件复用，并加
+  // 检查」）：次级 LLM 输入框只有一个装配点（js/input/secondaryComposer.js）——每个
+  // 消费面（ask / 待办详情页回复条 / 快速决策卡页悬浮控件带）都必须走它，自拼
+  // textarea + 发送键即红；造型只许令牌、发送键只许 ds-turn-btn--send。仓内规范正文
+  // 落仓前 S6 打印「接口预留」事实行，落仓后自动接管判据。
+  nodeCheck('secondary-composer', 'check-secondary-composer'),
   nodeCheck('chat-ui', 'check-chat-ui'),
   { name: 'chat-ui-computed', profiles: ['frontend'], timeoutMs: 120_000,
     argv: [process.execPath, 'tests/chat-ui-computed.mjs'] },
@@ -78,6 +137,10 @@ export const CHECKS = [
     argv: [process.execPath, 'tests/canvas-tab-handover.spec.mjs'] },
   { name: 'mobile-decision-preview-occlusion', profiles: ['frontend'], timeoutMs: 120_000,
     argv: [process.execPath, 'tests/mobile-decision-preview-occlusion.spec.mjs'] },
+  // 叠卡视图一次性轴锁闸（作者 2026-11-23 10:23 报：斜滑被误判成纵向）：真触屏 CDP
+  // 序列 A1–A4 + 负对照 N1 + touch-action 静态钉；修前 A3/A3b 红、修后全绿。
+  { name: 'mobile-stack-swipe-axis-lock', profiles: ['frontend'], timeoutMs: 240_000,
+    argv: [process.execPath, 'tests/mobile-stack-swipe-axis-lock.spec.mjs'] },
   // 滚域末端净空单源批（2026-11-18 作者令「滚到底底部内容必须完整显示」）：17 个
   // 全屏页逐页 E1–E5（过底 / 末行 ≤ dock 上缘 − 8 / 净空在内容级且 = token /
   // token 非零 / dock 带内无卡死件）+ E0 静态单源。改到哪页漏净空即红。
@@ -106,9 +169,32 @@ export const CHECKS = [
   nodeCheck('ask-todo-lifecycle', 'check-ask-todo-lifecycle'),
   nodeCheck('self-explaining', 'check-self-explaining'),
   nodeCheck('badge-words', 'check-badge-words'),
+  // ack-badge-pool 批（2026-11-23）：零 report 块回合 ✻ 字句池（ack 池）门禁 —
+  // 池非空/两语言对齐/{d} 占位与字数/取词分派单点/轮换同构。
+  nodeCheck('ack-phrases', 'check-ack-phrases'),
   nodeCheck('circular', 'check-circular'),
   nodeCheck('fixture-secrets', 'check-fixture-secrets'),
   nodeCheck('api-routes', 'check-api-routes'),
+  // 性能设计红线批（2026-11-21 11:37 作者令「把这次卡顿的教训落成性能测试 spec 红线
+  // 自动化——包括网络、内存、加载速度等设计红线」）。
+  //
+  // 动机：诊断批（panel-mobile-perf-diagnostics）实测手机面板主线程被压到 2.1fps，
+  // 三条主因全部**零编译错、零类型错、零既有测试红**——它们是形态缺陷：
+  //   ① 历史接口写死 `getUiMessages(sid, 0, 0)`（`?limit=50` 与不传参字节完全相同，
+  //      10 991 449B 裸传）；② `/api` 全族 JSON 无压缩；③ 面板每渲一轮逐父发子代理
+  //      请求（一拍 116+ 条）。
+  // 两道腿各管一面，不可互相替代：
+  //   perf-redlines         = **静态**源码形态（整表读 / 压缩管线 / 超频轮询），零浏览器；
+  //   perf-redlines-runtime = **运行时**字节与压缩覆盖（真起浏览器量出向字节）。
+  //     运行时腿默认打 6138 活面板；无实例时退出码 2 ⇒ 记为 SKIP（不假绿成 PASS）。
+  nodeCheck('perf-redlines', 'check-perf-redlines'),
+  {
+    name: 'perf-redlines-runtime',
+    profiles: ['frontend'],
+    timeoutMs: 240_000,
+    argv: [process.execPath, 'tests/perf-redlines-runtime.mjs'],
+    envSkip: true,
+  },
   nodeCheck('provider-panel', 'check-provider-panel'),
   // 统一模型不可用卡批（2026-11-18）：一套 kind（InteractionKind.ModelUnavailable）+ 一套
   // 拼帧点，全槽共用（small-llm/kernel/node/dispatcher/subagent）；切换就地写回槽
@@ -116,8 +202,8 @@ export const CHECKS = [
   // fail-closed 缺省不得被本批翻面。前后端两面都断言 ⇒ static + frontend 双 profile。
   nodeCheck('model-fallback-card', 'check-model-fallback-card'),
   nodeCheck('freeze-state', 'check-freeze-state'),
-  nodeCheck('flat-buttons', 'check-flat-buttons', ['static', 'frontend'], SPEC_EXTERNAL),
-  nodeCheck('glass', 'check-glass-unify', ['static', 'frontend'], SPEC_EXTERNAL),
+  nodeCheck('flat-buttons', 'check-flat-buttons', ['static', 'frontend']),
+  nodeCheck('glass', 'check-glass-unify', ['static', 'frontend']),
   { name: 'glass-runtime', profiles: ['frontend'], timeoutMs: 300_000,
     argv: [process.execPath, 'scripts/check-glass-runtime.mjs'] },
   // 边框权重闸（dark-border-weight 批 2026-11-18）：暗档「边框太明显」——
@@ -179,20 +265,43 @@ export const CHECKS = [
   // Canvas Ask 状态可见性与失败上报闸（2026-11-18）：状态判定单点 + 失败不许静默
   // + 文案完整 + 凭据不出诊断线（形态见 scripts/check-ask-status.mjs 头注）。
   nodeCheck('ask-status', 'check-ask-status'),
-  nodeCheck('input-surface', 'check-input-surface', ['static', 'frontend'], SPEC_EXTERNAL),
+  nodeCheck('input-surface', 'check-input-surface', ['static', 'frontend']),
+  // 焦点环统一批（focus-ring-unify-impl 2026-11-22，作者已批 B 案）：全站键盘焦点指示器
+  // 一条规则 + 一个色源（--nf-focus-ring #9ca3af · 内缩 2px · 禁光晕）。静态腿判「源码
+  // 写的是不是那一条」（F1–F6，含别名收编 0 引用与豁免台账只减）；运行时腿判「屏幕画出来
+  // 的是不是那一条」（P-1–P-4，差分像素 + 对比读数 + 玻璃弹层内可读）。规范正文 =
+  // design-language/references/frontend/focus-ring-spec.md。round2（2026-11-22 作者令
+  // 「我说了要圆角的框」/「落为标准」）：静态腿加 F7（圆角标准 + 方角登记机制废除）与
+  // F8（焦点规则不得改圆角），运行时腿加 P-5（计算圆角 ≥6px，微格/胶囊档放行）。
+  nodeCheck('focus-ring', 'check-focus-ring', ['static', 'frontend']),
+  { name: 'focus-ring-runtime', profiles: ['frontend'], timeoutMs: 600_000,
+    argv: [process.execPath, 'scripts/check-focus-ring-runtime.mjs'] },
+  // 全面圆角批（作者令 2026-11-22 10:17「还是存在部分不是圆角的 得全面圆角 而且成为规范
+  // 和自动化/lint检查」）：F7/P-5 只判**焦点环基座**（可交互件）；本闸判**全树画框面**
+  // （徽章 / chip / 统计卡 / 提示条 / 分隔面 / 媒体占位等不参与 Tab 序的方角）。
+  // 静态腿 = G1–G4（画框规则必须有圆角档，结构全幅按几何具名豁免）；运行时腿 = P-6
+  // （check-focus-ring-runtime.mjs 内的计算样式普查）。规范正文同 §2.6/§3/§4。
+  nodeCheck('round-corners', 'check-round-corners', ['static', 'frontend']),
   nodeCheck('dropdown-single-control', 'check-dropdown-single-control'),
   nodeCheck('mobile-canvas-strip', 'check-mobile-canvas-strip'),
-  nodeCheck('panel-unify', 'check-panel-unify', ['static', 'frontend'], SPEC_EXTERNAL),
+  // dock 悬浮批（作者裁定 2026-11-21 10:41「手机端 dock 在其他页面都是悬浮效果，但主会话
+  // 却是截断的——落成标准和规范，进行自动化检查，都得是悬浮的」）：这是**第 9 道设计闸**
+  // （前 8 道 = 读数/造型/面板/披露/文案/令牌那批），判据面与前 8 道不重叠 —— 前 8 道
+  // 全部只读「件自己的声明」，而本条的缺陷在**件与宿主之间**：`#mobile-pages` 容器上色
+  // 把 dock 带区变垫层，聊天根内容被硬切。为什么不能只扫 `#mobile-dock`：改前实测五个
+  // 页面的胶囊几何逐值正确（r999/三边 inset/blur 全在档）⇒ 只扫本体必全绿，而作者看到的
+  // 红就在带区。单源正文 = design-language/references/frontend/mobile-chrome-spec.md。
+  nodeCheck('mobile-dock-float', 'check-mobile-dock-float', ['static', 'frontend']),
+  nodeCheck('panel-unify', 'check-panel-unify', ['static', 'frontend']),
   nodeCheck('settings-ios-rows', 'check-settings-ios-rows'),
   // 前端设计要求批（ui-design-requirements 2026-11-18）：作者令「浮现式披露 / 不要有重复的
   // 功能和信息 / 统一按钮 / 解释性文字写作要求」四条规范的可执行面。三条都是纯静态扫描
   // （无浏览器、无实例），故与其它前端闸同在 static+frontend 两个 profile 下跑。
-  // 规范正文（改判据改规范，脚本只是执行器）唯一一份在 stand-dev 插件包内
-  // （references/frontend/ 的 disclosure-dedup-spec.md / explanatory-copy-spec.md /
-  //  flat-button-spec.md §5/§6），本仓无第二份拷贝 —— 故 SPEC_EXTERNAL。
-  nodeCheck('ui-structure', 'check-ui-structure', ['static', 'frontend'], SPEC_EXTERNAL),
-  nodeCheck('copy-budget', 'check-copy-budget', ['static', 'frontend'], SPEC_EXTERNAL),
-  nodeCheck('button-source', 'check-button-source', ['static', 'frontend'], SPEC_EXTERNAL),
+  // 规范正文（改判据改规范，脚本只是执行器）单源在仓内 design-language/references/frontend/
+  // （disclosure-dedup-spec.md / explanatory-copy-spec.md / flat-button-spec.md §5/§6）。
+  nodeCheck('ui-structure', 'check-ui-structure', ['static', 'frontend']),
+  nodeCheck('copy-budget', 'check-copy-budget', ['static', 'frontend']),
+  nodeCheck('button-source', 'check-button-source', ['static', 'frontend']),
   // 陈旧面板行批（2026-11-18）：后台智能体面板「活跃行 ⊆ 引擎活跃快照」不变量——
   // durable store 的重启打断行（pending-recovery）曾被折成「进行中」+ 690h 时钟。
   nodeCheck('bg-panel-active-liveness', 'check-bg-panel-active-liveness'),
@@ -207,7 +316,7 @@ export const CHECKS = [
   ...[
     ['js-types', 'check-js-types'], ['ime', 'check-ime-guard'],
     ['component-contract', 'check-component-contract'], ['takeover-identify', 'check-takeover-identify'],
-    ['design-spec', 'check-design-spec-sync', SPEC_EXTERNAL], ['prompt-source', 'check-prompt-single-source'],
+    ['design-spec', 'check-design-spec-sync'], ['prompt-source', 'check-prompt-single-source'],
     ['prompt-imports', 'check-prompt-catalog-imports'], ['provider-models', 'check-provider-modellist'],
     ['local-coupling', 'check-local-coupling'], ['tag-format', 'check-tag-format'],
     ['evidence-manifests', 'check-evidence-manifests'], ['scala-layers', 'check-scala-layers'],
@@ -238,6 +347,10 @@ export const CHECKS = [
       'scripts/check-js-types.mjs', 'scripts/run-checks.mjs', 'scripts/check-sdd.mjs', 'scripts/check-openspec.mjs', 'scripts/check-message-item-unify.mjs',
       // 前端设计要求批（2026-11-18）：三条新闸与它们的共享判定库同受 lint 覆盖。
       'scripts/check-ui-structure.mjs', 'scripts/check-copy-budget.mjs', 'scripts/check-button-source.mjs',
+      // 写时复制 M1 闸（2026-11-19）：新闸本体同受 lint 覆盖。
+      'scripts/check-wt-cow.mjs',
+      // dock 悬浮批（2026-11-21，第 9 道设计闸）
+      'scripts/check-mobile-dock-float.mjs',
       'scripts/lib/', 'scripts/tests/'] },
   { name: 'script-tests', profiles: ['static'], timeoutMs: 120_000,
     argv: [process.execPath, '--test', ...scriptTests] },
@@ -270,6 +383,14 @@ export const CHECKS = [
   // 单测覆盖四类拒绝面；不注册则等于没有这道闸。
   { name: 'isolated-java-launch-tests', profiles: ['static'], timeoutMs: 120_000,
     argv: ['python3', '-B', 'scripts/tests/test-isolated-java-launch.py'] },
+  // 写时复制建树 M1 闸（workspace-compute R1a，作者令 2026-11-19）。envSkip：非 darwin
+  // 下 clonefile(2) 不存在，闸以退出码 2 显式 SKIP 并打印原因 —— 记 SKIP 而不是 PASS。
+  // 判据与负控口径见脚本文件头（①②③④ + 三条回退面；STAND_WT_DEGRADE 为负控开关）。
+  { name: 'wt-cow', profiles: ['static'], timeoutMs: 600_000, envSkip: true,
+    argv: [process.execPath, 'scripts/check-wt-cow.mjs'] },
+  // 写时复制后端的单元测试（种子索引、回退原因枚举、中断恢复），与 stand-wt 单测同档。
+  { name: 'stand-wt-cow-tests', profiles: ['static'], timeoutMs: 300_000, envSkip: true,
+    argv: ['python3', '-B', 'scripts/tests/test-stand-wt-cow.py'] },
   // 微信侧车单测（九个 *.test.mjs）按目录点名收集，防目录新增文件漏跑。
   { name: 'weixin-sidecar-tests', profiles: ['static'], timeoutMs: 180_000,
     argv: [process.execPath, '--test', ...weixinTests] },
@@ -355,13 +476,11 @@ export async function runCheck(check, { cwd = ROOT, log = console.log } = {}) {
       process.removeListener('SIGINT', onInterrupt);
       process.removeListener('SIGTERM', onTerminate);
       const elapsedMs = Math.round(performance.now() - start);
-      // envSkip 闸的退出码 2 = 规范面（stand-dev 插件包）缺席的环境错误，不是违规 ——
-      // 记为 SKIP 而非 FAIL，也不假绿成 PASS（CI 仍能跑完；standalone 直跑仍是退出码 2）。
-      const skipped = check.envSkip === true && !failure && !timedOut && !interrupted && !signal && code === 2;
-      const ok = !failure && !timedOut && !interrupted && !signal && (code === 0 || skipped);
+      // 没有「跳过」这一档：任何非零退出（含规范面缺失的退出码 2）都是失败的检查。
+      const ok = !failure && !timedOut && !interrupted && !signal && code === 0;
       const reason = interrupted ?? (timedOut ? 'timeout' : failure ? failure.message : signal ? `signal ${signal}` : `exit ${code}`);
-      log(`${ok ? (skipped ? 'SKIP' : 'PASS') : 'FAIL'} ${check.name} (${elapsedMs}ms; ${reason})`);
-      resolveResult({ name: check.name, ok, skipped, code, signal, interrupted, timedOut, error: failure?.message, elapsedMs });
+      log(`${ok ? 'PASS' : 'FAIL'} ${check.name} (${elapsedMs}ms; ${reason})`);
+      resolveResult({ name: check.name, ok, code, signal, interrupted, timedOut, error: failure?.message, elapsedMs });
     };
     const stop = () => {
       if (stopping || finished) return;
@@ -412,15 +531,12 @@ export async function main(args = process.argv.slice(2)) {
     return 0;
   }
   let failures = 0;
-  let skipped = 0;
   for (const check of checks) {
     const result = await runCheck(check);
     if (result.interrupted) return result.interrupted === 'SIGINT' ? 130 : 143;
-    if (result.skipped) skipped++;
     if (!result.ok) failures++;
   }
-  const tail = skipped ? ` (${skipped} skipped: 规范面缺席 — 见 scripts/lib/design-spec-source.mjs)` : '';
-  console.log(`${profile}: ${checks.length - failures}/${checks.length} checks passed${tail}`);
+  console.log(`${profile}: ${checks.length - failures}/${checks.length} checks passed`);
   return failures ? 1 : 0;
 }
 

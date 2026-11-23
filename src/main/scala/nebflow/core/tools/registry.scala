@@ -73,12 +73,10 @@ object ToolRegistry:
       // Perception mail (mail-perception-impl batch): draft + snapshot card;
       // the user always triggers the actual send (card/canvas).
       "EmailSend" -> PerceptionMailTool,
-      // Team task tools (任务工具重做 2026-08-30: 任务=进展展示，工具只配
-      // team——category=team 机制层注入全体成员；session 域 TaskCreate/Update/
-      // Query 已退役，TTL 清理见 TaskStore)
-      "TeamTaskCreate" -> TeamTaskCreateTool,
-      "TeamTaskUpdate" -> TeamTaskUpdateTool,
-      "TeamTaskList" -> TeamTaskListTool,
+      // 团队任务工具（TeamTaskCreate/Update/List）随团队类型面删除批阶段 B2 退役
+      // （作者裁定 Q11）：它们的注入面 = category=team 机制层，团队退役后无注入方；
+      // ToolContext.teamName 恒 None ⇒ 三个工具必 hard-reject。存储 TaskStore 保留
+      // （session 域 TaskList 仍在用），本批只撤工具面。
       // Scheduled tasks
       "Schedule" -> ScheduleTool,
       // Unified agent communication —— **唯一消息原语**（R2「一个 Mail 统一」，
@@ -210,8 +208,14 @@ object ToolRegistry:
       // PDF note/ask 批（2026-11-18）：ask 会话绑定 PDF 的按需取页件（只读解析
       // 产物，不整篇载入；答案引用页码的取数面）。授权面同 ask_edit/ask_write
       // （AskExclusiveTools 剥除非 ask 角色；工具内侧 isAskSession 双保险）。
-      "PdfPage" -> PdfPageTool
+      "PdfPage" -> PdfPageTool,
     )
+    // browser-verbs-p0 插件分发裁定（作者 2026-11-22）：浏览器九动词**不在** builtins——
+    // 实现登记于此（执行查表用），默认工具面无名字；授权 = 项目派发挂载 browser-use 插件
+    // （插件 `org.nebflow/engine-tools` 声明 → PluginMcpManager 前缀来源 → buildAllowedToolSet
+    // 挂载腿）。builtinToolNames 过滤之（不进前端内建清单）。
+    // desktop-observe-p0 同裁定：桌面六动词经 computer-use 插件挂载，同登记于此。
+    val pluginEngine: Map[String, Tool] = BrowserPluginTools.All ++ DesktopPluginTools.All
     // imagegen 双层批（2026-10-24）+ 功能开放批（2026-10-30 作者令「直接开放
     // 出来」，缺省编入）：编译期 seal 门控保留为应急开关——显式 `STAND_IMAGEGEN=0`
     // 构建（ImageGenSeal.CompiledIn=false，final val 常量折叠）本注册整段消失；
@@ -222,7 +226,7 @@ object ToolRegistry:
       nebflow.core.ImageGenSeal.CompiledIn,
       nebflow.service.ConfigService.imagegenEnabledForToolFace
     )
-    tools.putAll((builtins ++ experimental).asJava)
+    tools.putAll((builtins ++ experimental ++ pluginEngine).asJava)
   }
 
   private[nebflow] def imageGenTools(compiledIn: Boolean, panelEnabled: Boolean): Map[String, Tool] =
@@ -243,7 +247,10 @@ object ToolRegistry:
 
   /** Builtin tool names (non-MCP), used by frontend to build configurable tool list. */
   def builtinToolNames: List[String] =
-    tools.asScala.keys.filterNot(_.startsWith("mcp__")).toList.sorted
+    tools.asScala.keys.filterNot(n => n.startsWith("mcp__") || pluginEngineNames.contains(n)).toList.sorted
+
+  /** 插件分发的引擎工具名（不进内建清单）。 */
+  private val pluginEngineNames: Set[String] = (BrowserVerbNames.All ++ DesktopVerbNames.All).toSet
 
   /**
    * 面判定（P0-1 / P-M1，2026-09-20）：该注册名对应的实例是否为**外部工具**

@@ -15,16 +15,25 @@
 // 判据（每条都有命中数读数）：
 //   D1 落草稿被定义且**接线**：canvas.js 有 captureSeatDraft，且「丢席位」那一刻
 //      （writerChanged(role, lost=true)）真的调它一次（丢席位是唯一触发点）。
-//   D2 落在本机单槽：草稿键 = key('canvas_seat_draft')，写入走 localStorage.setItem。
-//   D3 事后取回入口在场：renderDraftEntry + 取回入口类名 + restoreSeatDraft +
-//      随激活页签重渲（renderCanvasHeader 里有调用）。
+//   D2 落在本机**本页签自己的槽**：草稿键前缀 = key('canvas_seat_draft')，槽键 = 前缀:tabId；
+//      写入走 writeSeatDraftSlot（内部 localStorage.setItem）。
+//   D3 取回通知已撤（作者令 2026-11-22「去掉这个通知」）：不得再有 renderDraftEntry /
+//      取回条类名 / 页头重渲调用；restoreSeatDraft 机制保留。
 //   D4 零用户可见通知：落草稿那条路**不得**出现 writerNotice( / __showToast（作者嫌烦）。
 //   D5 不越界：落草稿**只写本机**（captureSeatDraft 体内无 fetch(，不写服务端）。
 //   D6 取回是并集：restoreSeatDraft 走 reconcileFromServer（只补开缺失），且不清本地存档。
 //   D7 服务端席位是**静默抢占**：claimCanvas 无「非抢占守卫」；notifyDisplacedWriter 在场
 //      且被 claimCanvas 调用；活性惰性腿（seatExpiryReason / expireCanvasSeatIfHolderVanished /
 //      Instance.goneSince）已整体移除（单源断言：删干净，不留半条腿）。
-//   D8 i18n：取回入口三条文案在 zh-CN 与 en 两份都在场（缺一份 = 另一语种空白按钮）。
+//   D8 i18n：取回通知文案键在 zh-CN 与 en 两份都已删净（残键 = 另一语种漏删）。
+//   （原 D9 取回条落点判据随取回条撤除而退役。）
+//   D9 按页签隔离（2026-11-23）：槽键含页签 id（canvasDraftTabId，既有 canvasTabInstanceId 为种子）；
+//      无裸写前缀键（否则两页签共用全局单槽 = 缺陷复现）。
+//   D10 容量与 LRU：SEAT_DRAFT_SLOT_MAX = 8；落草稿前经 evictSeatDraftSlots 淘汰他页槽。
+//   D11 旧单槽迁移：migrateLegacySeatDraft 存在，且在取回路径里先于读取被调用。
+//   D12 恢复接线：main.js boot 在 restoreTabs 之后调 restoreOwnSeatDraft；canvas.js 切回
+//      （visibilitychange）调 restoreSeatDraft —— 两条腿都必须真接上，不留死代码。
+//   D13 不覆盖在编辑：flushSeatDraftBuffers 对脏页签判 local-dirty，不写回。
 //
 // 用法：node scripts/check-canvas-seat-draft.mjs [--json]
 // 退出码：0 = 全绿；1 = 有 FAIL；2 = 装配错误（源文件读不到 ⇒ 不判，绝不假装通过）。
@@ -66,9 +75,10 @@ const slice = (from, to) => {
   const b = a >= 0 ? jsCode.indexOf(to, a) : -1;
   return a >= 0 && b > a ? jsCode.slice(a, b) : '';
 };
-const writerChangedBlock = slice('function writerChanged(', 'const writerRejectionNotices');
+const writerChangedBlock = slice('function writerChanged(', 'const canvasWriter = createCanvasWriterClient(');
 const captureBlock = slice('function captureSeatDraft(', 'function clearSeatDraft(');
 const restoreBlock = slice('function restoreSeatDraft(', 'function allowCanvasMutation(');
+// 落草稿核的 restoreSeatDraftOnce 与 flush 同在 restoreSeatDraft~allowCanvasMutation 之间，上面切片覆盖。
 
 // ── D1 落草稿被定义且接线 ──
 const hasCapture = /function captureSeatDraft\s*\(/.test(canvasJs);
@@ -77,17 +87,19 @@ check('D1', hasCapture && wiredOnLoss,
   `captureSeatDraft=${hasCapture} fired-on-seat-loss=${wiredOnLoss}`);
 
 // ── D2 落在本机单槽 ──
-const hasKey = /const\s+LS_DRAFT_KEY\s*=\s*key\(\s*'canvas_seat_draft'\s*\)/.test(canvasJs);
-const writesSlot = /localStorage\.setItem\(\s*LS_DRAFT_KEY/.test(captureBlock);
-check('D2', hasKey && writesSlot, `draft-key=canvas_seat_draft present=${hasKey} writes-slot=${writesSlot}`);
+const hasKey = /const\s+LS_DRAFT_PREFIX\s*=\s*key\(\s*'canvas_seat_draft'\s*\)/.test(jsCode)
+  && /const\s+seatDraftSlotKey\s*=\s*\(\)\s*=>\s*`\$\{LS_DRAFT_PREFIX\}:\$\{canvasDraftTabId\}`/.test(jsCode);
+const writesSlot = /writeSeatDraftSlot\(/.test(captureBlock)
+  && /function writeSeatDraftSlot\([\s\S]{0,200}?localStorage\.setItem\(\s*slotKey/.test(jsCode);
+check('D2', hasKey && writesSlot, `draft-prefix=canvas_seat_draft slot=prefix:tabId present=${hasKey} writes-own-slot=${writesSlot}`);
 
-// ── D3 事后取回入口在场 ──
-const hasRender = /function renderDraftEntry\s*\(/.test(canvasJs);
-const chipClass = /const\s+DRAFT_CHIP_CLASS\s*=\s*'canvas-draft-chip'/.test(canvasJs);
+// ── D3 取回通知已撤（作者令 2026-11-22「去掉这个通知」），取回机制保留 ──
+// 负向判据：取回条渲染函数 / chip 类名 / 页头重渲调用全部不在代码里；restoreSeatDraft 仍在。
+const noChip = !/function renderDraftEntry\s*\(/.test(jsCode)
+  && !/DRAFT_CHIP_CLASS/.test(jsCode) && !/renderDraftEntry\(/.test(jsCode);
 const hasRestore = /function restoreSeatDraft\s*\(/.test(canvasJs);
-const rerendered = /function renderCanvasHeader\s*\([\s\S]*?renderDraftEntry\(\)/.test(canvasJs);
-check('D3', hasRender && chipClass && hasRestore && rerendered,
-  `render=${hasRender} chip-class=${chipClass} restore=${hasRestore} rendered-with-header=${rerendered}`);
+check('D3', noChip && hasRestore,
+  `notice-chip-absent=${noChip} restore-mechanism-kept=${hasRestore}`);
 
 // ── D4 零用户可见通知（作者嫌烦的就是它）──
 const silent = !/writerNotice\s*\(/.test(writerChangedBlock) && !/__showToast/.test(writerChangedBlock);
@@ -119,23 +131,41 @@ const legRemoved = !/seatExpiryReason/.test(code)
 check('D7', preemptive && notifier && legRemoved,
   `claim-preemptive=${preemptive} notifyDisplacedWriter=${notifier} liveness-leg-removed=${legRemoved}`);
 
-// ── D8 i18n 两语种 ──
-const KEYS = ['canvas.draftAvailable', 'canvas.draftRestore', 'canvas.draftDismiss'];
-const inZh = KEYS.filter((k) => zh.includes(`'${k}'`));
-const inEn = KEYS.filter((k) => en.includes(`'${k}'`));
-check('D8', inZh.length === KEYS.length && inEn.length === KEYS.length,
-  `zh=${inZh.length}/${KEYS.length} en=${inEn.length}/${KEYS.length}`);
+// ── D8 取回通知文案已撤：两语种都不得残留 canvas.draft* 通知键（残键 = 另一语种漏删）──
+const KEYS = ['canvas.draftAvailable', 'canvas.draftRestore', 'canvas.draftDismiss', 'canvas.draftConflict', 'canvas.draftConflictKeep'];
+const leftZh = KEYS.filter((k) => zh.includes(`'${k}'`));
+const leftEn = KEYS.filter((k) => en.includes(`'${k}'`));
+check('D8', leftZh.length === 0 && leftEn.length === 0,
+  `residual-keys zh=${leftZh.length} en=${leftEn.length}`);
 
-// ── D9 取回入口落点（铁律 9：编辑面可滚不静默裁切）──
-// md 族滚动面是 pane 内 absolute inset:0 的 .canvas-md-scroll；把条目 prepend 进 pane
-// 静态流会被滚动面盖住并压住正文首行（实测遮过 H1）。唯一无遮挡无裁切的落点 = 挂进
-// 滚动面**自身的文档流**。故断言「解析滚动面 + prepend 到它 + 不再 prepend 到 pane」。
-const entryBlock = slice('function renderDraftEntry(', 'function restoreSeatDraft(');
-const resolvesFace = /querySelector\(\s*'\.canvas-md-scroll,\s*\.canvas-txt-scroll'\s*\)/.test(entryBlock);
-const prependsToFace = /host\.prepend\(\s*chip\s*\)/.test(entryBlock);
-const noPanePrepend = !/pane\.prepend\(\s*chip\s*\)/.test(entryBlock);
-check('D9', resolvesFace && prependsToFace && noPanePrepend,
-  `resolves-scroll-face=${resolvesFace} prepends-into-face=${prependsToFace} no-pane-overlay=${noPanePrepend}`);
+// ── D9 按页签隔离：无裸前缀写入（全局单槽形态已不可复现） ──
+const bareWrite = /localStorage\.setItem\(\s*LS_DRAFT_PREFIX\s*[,)]/.test(jsCode)
+  || /localStorage\.setItem\(\s*key\(\s*'canvas_seat_draft'\s*\)/.test(jsCode);
+const perTab = /const\s+canvasDraftTabId\s*=/.test(jsCode) && !bareWrite;
+check('D9', perTab, `per-tab-slot=${perTab} bare-global-write=${bareWrite}`);
+
+// ── D10 容量上限 8 + LRU 淘汰在落草稿路径上 ──
+const capMatch = /const\s+SEAT_DRAFT_SLOT_MAX\s*=\s*8\s*;/.test(jsCode);
+const evictFn = /function\s+evictSeatDraftSlots\s*\(/.test(jsCode);
+const evictOnWrite = /evictSeatDraftSlots\(\s*slot\s*,\s*SEAT_DRAFT_SLOT_MAX\s*-\s*1\s*\)/.test(captureBlock);
+check('D10', capMatch && evictFn && evictOnWrite,
+  `cap-8=${capMatch} LRU-evict-fn=${evictFn} evict-on-capture=${evictOnWrite}`);
+
+// ── D11 旧单槽迁移 ──
+const migFn = /function\s+migrateLegacySeatDraft\s*\(/.test(jsCode);
+const migCalled = /function\s+restoreSeatDraftOnce\s*\([\s\S]{0,120}?migrateLegacySeatDraft\(\)/.test(jsCode);
+check('D11', migFn && migCalled, `migrate-fn=${migFn} called-before-restore=${migCalled}`);
+
+// ── D12 恢复接线（开页 + 切回）──
+const mainJs = readIf(join(WEB, 'js/main.js'));
+const openWired = mainJs !== null && /restoreTabs\(\)\.then\([\s\S]{0,240}?restoreOwnSeatDraft\(\)/.test(mainJs)
+  && /import\s*\{[^}]*restoreOwnSeatDraft[^}]*\}\s*from\s*'\.\/canvas\.js'/.test(mainJs);
+const switchWired = /visibilitychange[\s\S]{0,160}?restoreSeatDraft\(\)/.test(jsCode);
+check('D12', openWired && switchWired, `open-restore(main.js after restoreTabs)=${openWired} switch-back-restore=${switchWired}`);
+
+// ── D13 不覆盖在编辑中的页签 ──
+const dirtyGuard = /function flushSeatDraftBuffers[\s\S]{0,1200}?isTabDirty\(entry\)[\s\S]{0,80}?local-dirty/.test(jsCode);
+check('D13', dirtyGuard, `flush-skips-dirty-tab=${dirtyGuard}`);
 
 const fails = results.filter((r) => !r.ok);
 if (JSON_OUT) {

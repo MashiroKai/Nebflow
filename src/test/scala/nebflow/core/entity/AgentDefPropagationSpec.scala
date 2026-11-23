@@ -68,11 +68,14 @@ class AgentDefPropagationSpec extends CatsEffectSuite:
     assertEquals(defn.skills, List("visual-style"))
     assertEquals(defn.flows, List("*"), "wildcard flows must survive verbatim")
 
-  test("loadTeamAgent → toAgentDef carries flows + skills (team-member spawn path)"):
+  // 团队类型面删除批阶段 B2：`loadTeamAgent`（teams/<team>/agents/）随团队面删除，
+  // 本用例改锚到同款「局部目录优先」的 `loadFlowAgent`（flows/<flow>/agents/）——
+   // 断言对象（toAgentDef 携带 flows + skills）不变。
+  test("loadFlowAgent → toAgentDef carries flows + skills (flow-local spawn path)"):
     for
       _ <- reset()
-      _ <- IO(writeAgentJson(tempRoot / "teams" / "proj" / "agents" / "FlowCaller", flowsAgentJson))
-      entryOpt <- EntityLoader.loadTeamAgent("proj", "FlowCaller")
+      _ <- IO(writeAgentJson(tempRoot / "flows" / "proj" / "agents" / "FlowCaller", flowsAgentJson))
+      entryOpt <- EntityLoader.loadFlowAgent("proj", "FlowCaller")
       defn = entryOpt.map(_.toAgentDef)
     yield
       assert(defn.isDefined, "team agent entry must load")

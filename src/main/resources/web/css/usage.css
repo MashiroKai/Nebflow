@@ -5,6 +5,8 @@
    summary cards only, intraday 24h curve (SVG), heatmap dimension param. */
 
 #usage-overlay {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: fixed;
   inset: 0;
   display: flex;
@@ -226,8 +228,8 @@
    （input-focus-ring 批 2026-11-05）；下列按键/开关仍走自己的描边环。 */
 .ud-srange:focus-visible, .ud-hdim:focus-visible,
 .ud-cm:focus-visible, .ud-dim:focus-visible {
-  outline: 2px solid var(--glass-etched-border-focus);
-  outline-offset: 1px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .ud-colormode { margin-left: auto; }
 
@@ -277,6 +279,10 @@
 .ud-cell {
   width: var(--ud-cell, 11px);
   height: var(--ud-cell, 11px);
+  /* 圆角标准批（作者令 2026-11-22 08:03；§2.6）：热力格 11px 是**微格**（短边 < 12px），
+     按规范的几何档留 2px —— 6px 半径在 11px 格上会被浏览器钳到 50%（格变圆点，
+     热力图读起来从「格子密度」变成「珠串」）。这不是登记豁免：判据是几何
+     （短边 < 12px ⇒ --ds-radius-thin），门禁 F7 用同一条规则核对。 */
   border-radius: var(--ds-radius-thin);
   cursor: pointer;
   border: none;
@@ -284,8 +290,8 @@
 }
 .ud-cell[data-date]:hover { box-shadow: 0 0 0 1px var(--sapphire-edge-strong); }
 .ud-cell[data-date]:focus-visible {
-  outline: 2px solid rgb(var(--sapphire));
-  outline-offset: 1px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .ud-cell.ud-active { box-shadow: 0 0 0 2px rgb(var(--sapphire)); }
 .ud-pad { visibility: hidden; pointer-events: none; }
@@ -465,7 +471,9 @@
   text-overflow: ellipsis;
   max-width: 160px;
 }
-.ud-table tbody tr:hover { background: var(--glass-etched-bg); }
+.ud-table tbody tr:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--glass-etched-bg); }
 .ud-table .num { text-align: right; }
 .ud-drill-empty, .ud-drill-error {
   font-size: var(--ds-fs-hint);

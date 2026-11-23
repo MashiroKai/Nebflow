@@ -215,6 +215,91 @@ export function wikiGraphEnabled() {
   return state.parsedConfig?.features?.wikiGraph === true; // 缺席 = 封存（默认 OFF）
 }
 
+/**
+ * PANEL_HIDE_WORKSPACE_SECTIONS — 项目面板「▶ 工作区」**入口不设置**开关
+ * （hide-workspace-sections 批，作者令 2026-11-21 逐字：「git 可视化面板和项目面板
+ * 的工作区都**先隐藏**（「先」=暂时隐藏，功能保留可恢复，不是删除）」；同日 12:03
+ * 澄清逐字：「我要的是git可视化面板完全先封存 项目面板也不设置入口」）。
+ *
+ * 语义 = **UI 不出现**（条件渲染），不是数据不取、更不是代码删除：
+ *   · 项目面板：项目卡内「▶ 工作区」折叠区块（`projectWorkspaces.js` 的
+ *     `.project-workspaces` `<details>`）整块不挂载 ⇒ 卡上零入口；
+ *     卡片其余字段（名称 / 工作区**路径**字段行 / AGENTS.md / 运行中 agent /
+ *     描述）照常 —— 路径字段行与本折叠区块同名不同物，不在隐藏范围。
+ *   · Git 可视化面板：**不归本开关**（12:03 澄清把该项从「藏区块」升为「整面板
+ *     封存」）⇒ 见下方独立开关 `GITVIZ_SEALED`。两个开关语义彼此正交，禁混用：
+ *     本开关只动项目卡上的那一个折叠区块，动不到 gitviz 面板的任何像素。
+ *
+ * 形态 = **模块常量**（不走配置通道，也不接 `__NEBFLOW_RELEASE__` 剥除）：
+ * 作者令明说「先隐藏」⇒ 恢复点 = 改这一行为 `false` 即全量回。
+ * 本仓封存惯例的取舍申报：`voiceEnabled()`/`wikiGraphEnabled()` 用 nebflow.json
+ * 键是因为那是**长期**产品开关；本批是**临时**动作，配置项会把一次性动作钉进产品
+ * 配置面（多一个要长期维护的键）。故取 `TRUST_SEALED`（本文件:92）的模块常量形态，
+ * 读取为静态 import、无 latch 时序。
+ *
+ * 恢复步骤（一改即回）：
+ *   1) 本常量 `true` → `false`（一行）；
+ *   2) 前端产物重建（`node scripts/build-web.mjs`；dev 树（sbt run 直供 source）
+ *      刷新页面即生效）；
+ *   3) 打包态需重启宿主（前端资源内嵌 jar；重启窗口由 Nebula 统一安排）。
+ *
+ * 隐藏 ≠ 删数据/删代码：`projectWorkspaces.js` 整个模块、i18n 键、CSS
+ * （projectPanel.css:1094-1106 的 `.project-workspaces*`）、后端只读端点
+ * `GET /api/projects/<name>/workspaces` 全部原样保留。
+ */
+export const PANEL_HIDE_WORKSPACE_SECTIONS = true;
+
+/**
+ * panelWorkspaceSectionsHidden — 上常量的读取面（面板侧一律经本函数判定，
+ * 不直接 import 常量：将来若改回配置驱动，只改本函数体，调用点零改动）。
+ */
+export function panelWorkspaceSectionsHidden() {
+  return PANEL_HIDE_WORKSPACE_SECTIONS === true;
+}
+
+/**
+ * GITVIZ_SEALED — 「Git 可视化」面板**整面板封存**开关
+ * （hide-workspace-sections 批，作者 2026-11-21 12:03 console 逐字：
+ * 「我要的是git可视化面板完全先封存 项目面板也不设置入口」）。
+ *
+ * 语义 = **入口全部下掉**（不是藏某个区块、也不是删面板）：
+ *   · 封存后面板**仍完整存在且可用**（`gitVizView.js` 一行未删、
+ *     `openGitViz()` 仍导出、CSS/数据面/问答腿全部在），只是**产品面零入口**；
+ *   · 逐点盘查结论：本仓面板入口只有一处（+ 其派生重渲支路），无第二处：
+ *       ① 项目卡卡头「Git 可视化」钮 `.project-gitviz-btn[data-gitviz-project]`
+ *          —— 模板 `projectTab.js` 的 `projectCardHtml()`；点击 ⇒ 卡片翻转进
+ *          次级面板（`openGitViz`）——**唯一**真实入口；
+ *       ② 面板重渲支路 `rerenderProjectsTab()` 的
+ *          `pane.dataset.projectsView === 'git-viz'` 分支 —— 只在①进入后才可能
+ *          命中，且 `projectsView` 不落盘（canvas 恢复不持久化视图种类）⇒
+ *          ①封住即整面板不可达，刷新/重连也不会自己回到该视图。
+ *     工作台/看板 tile、侧边栏 slot、命令面板项、深链 URL：**本仓不存在**
+ *     （`index.html` 只有一张 `<link>` 样式表引用，零按钮零路由）。
+ *   · 后端 `gitviz_graph` / `gitviz_handoff` **工具面**与 `askOpen kind="gitviz"`
+ *     是 agent 取数/交办腿，不是面板入口，不归本开关（零删除，原样保留）。
+ *
+ * 形态 = **模块常量**，与 `PANEL_HIDE_WORKSPACE_SECTIONS` 同款取舍（临时动作，
+ * 不钉进 nebflow.json 长期产品配置面）。两个开关各自独立：翻任一个不影响另一个。
+ *
+ * 恢复步骤（一改即回）：
+ *   1) 本常量 `true` → `false`（一行）⇒ 卡头钮回挂、点击即进面板；
+ *   2) 前端产物重建（`node scripts/build-web.mjs`；dev 树刷新页面即生效）；
+ *   3) 打包态需重启宿主（前端资源内嵌 jar；重启窗口由 Nebula 统一安排）。
+ *
+ * 封存 ≠ 删代码：`gitVizView.js` / `gitViz.css` / `GITVIZ_BTN_SVG` 图标 /
+ * i18n 键 `project.gitVizOpen`（zh-CN:90, en:91）/ 数据面 `API.gitGraph`
+ * 与 `GET /api/projects/<name>/git-graph` 全部原样保留。
+ */
+export const GITVIZ_SEALED = true;
+
+/**
+ * gitvizSealed — 上常量的读取面（同 `panelWorkspaceSectionsHidden()` 的形态约定：
+ * 调用点只认函数，将来改配置驱动时零改调用点）。
+ */
+export function gitvizSealed() {
+  return GITVIZ_SEALED === true;
+}
+
 // `outputBlockEnabled()`（output-block-gate 批 2026-11-01 的 `<output>` 用户可见块
 // 特性总闸）已在 report 块可见性批（作者令 2026-11-20）**整件退役**：可见性改由
 // 逐条消息的**发射会话身份**决定（帧上的 `isRoot` 正面打标），不再有「关 = 全文

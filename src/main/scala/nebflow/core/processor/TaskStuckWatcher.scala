@@ -86,7 +86,8 @@ object TaskStuckWatcher:
   val LoopFreezeReasonWire: String = "loop"
 
   /** 与 WebSocketRoutes.filterActiveAgents 相同的 task 集合（保持单一事实源意识）。 */
-  private val taskKinds = Set(AgentKind.Delegate, AgentKind.Flow, AgentKind.SubTask)
+  // B3：SubTask 换标后子代理会话即 Delegate（§4.1 衍生清单 3），集合不再需要该成员。
+  private val taskKinds = Set(AgentKind.Delegate, AgentKind.Flow)
 
   /**
    * 2026-09-10 卡死判据换轴（唯一判据事实源）：本 watcher 的扫描 + AgentControlTool
@@ -501,17 +502,16 @@ object TaskStuckWatcher:
     assessDetailed(rec, now, thresholdMs, toolPhaseThresholdMs, elapsed).map(a => (a.secs, a.reason))
 
   /**
-   * 扫描集合 = taskKinds + Root + Team。Root（Nebula 主窗口）虽不在活跃子代理列表
+   * 扫描集合 = taskKinds + Root。Root（Nebula 主窗口）虽不在活跃子代理列表
    * （filterActiveAgents 语义），但其 turn 同样可能卡死（如 12:39 现场 Nebula
    * 自身撞限流）——设计 §4.4 要求根 agent 也通知（不自动重启）。
    *
-   * #22 (2026-08-19)：Team 加入扫描——Mail 激活的 team agent turn 静默挂死
-   * 2 小时（Frontend 12:28-13:45 三案之一），因 Team 不在扫描集合而零可见
-   * 性、零恢复。Team 是 AgentControl §4 只读 kind（用户可见的长驻会话），
-   * 不自动 Stop——只广播 taskStuck(action=attention) 留痕，由用户/Nebula
-   * 决策（AgentControl restart / 手动干预）。
+   * B5：原 #22 的 Team 成员已随枚举值删除——Mail 激活的长驻会话改登记为 Root，
+   * 因此仍由 Root 腿承载「只广播 taskStuck(attention) 留痕、绝不自动 Stop」的原语义。
    */
-  private val scannedKinds: Set[AgentKind] = taskKinds + AgentKind.Root + AgentKind.Team
+  // B5：Team 枚举值已删——Mail 激活的长驻会话现登记为 Root + parentSessionId，
+  // 由下方「Root kind + 有父会话」的 attention-only 腿承载原 Team 语义（不自动 Stop）。
+  private val scannedKinds: Set[AgentKind] = taskKinds + AgentKind.Root
 
   /**
    * 周期扫描循环：scan → sleep(interval) → 递归。由 GatewayMain 以 fiber 启动
@@ -1262,14 +1262,18 @@ object TaskStuckWatcher:
     // `recoverable=false` 使 L3 节点级腿被跳过（见下方各分支的门）；`classifyNote`
     // 照常留痕。§2.1 的「LLM 层三档看护接管」在此落成：L1 的 halt 正是把控制权交还
     // LLM 层有界重试的既有原语（见 L1 分支注释）。
-    // #22: Team kind 只读——长驻用户可见会话，绝不自动 Stop（AgentControl §4）。
-    // 2026-08-19 Frontend 僵尸 turn 若有此广播，2 小时静默会变成即时可见。
-    else if rec.kind == AgentKind.Team then
+    // #22 的「长驻、用户可见、只广播不 Stop」看护腿（B5 换承载）：Team 枚举值已删，
+    // Mail 激活的长驻会话现登记为 Root kind **且带 parentSessionId**（激活方会话）——
+    // 判据因此改为「Root kind + 有父会话」，语义与改动前逐字相同：只广播
+    // taskStuck(action=attention) 留痕，绝不发 Stop（let-it-crash：crash+recover 优于
+    // 长期挂死），turn 级死循环由 loop guard 处理，用户/Nebula 用 AgentControl 决策。
+    // 真正的树根 Nebula（parentSessionId 为空）不进本腿，走下方 Root 分级腿。
+    else if rec.kind == AgentKind.Root && rec.parentSessionId.nonEmpty then
       logger.warn(
-        s"TaskStuckWatcher: team agent ${rec.sessionId} stuck in Processing for ${idleSecs}s " +
+        s"TaskStuckWatcher: mail-activated agent ${rec.sessionId} stuck in Processing for ${idleSecs}s " +
           s"[judge: $reason] " +
           "— the actor is never auto-stopped (let-it-crash: crash+recover beats chronic hang), " +
-          "but a looping turn may be terminated by loop guard; the team Manager or Nebula can " +
+          "but a looping turn may be terminated by loop guard; the session owner or Nebula can " +
           "cancel/restart it via AgentControl"
       ) *>
         classifyNote *>

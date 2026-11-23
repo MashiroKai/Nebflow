@@ -30,7 +30,11 @@
 
 import { h } from './dom.js';
 import { askBubbleClass, chatComposerClass } from './chatUi.js';
-import { renderMarkdownWithMath } from './utils.js';
+import { renderMarkdownWithMath, createIconsIn } from './utils.js';
+// 图片附件（ask 附图批）：压缩管线 = 主会话同款（input/attachments.js 单点导出），
+// 上行帧形状 = 主会话 userMessage.attachments 同形（name/mimeType/data/size）。
+import { imageAttachmentPayload } from './input/attachments.js';
+import { attachmentImageUrl } from './persistence.js';
 import { createTurnToggle, requestTurnInterrupt } from './input/composer.js';
 // 次级 LLM 输入框唯一模板（todo-mobile 批 2026-11-18 作者令「把 Canvas Ask 用的那一套
 // 输入框整理成统一模板，放进站内单源」）：本内核的输入条装配点与待办详情面共用同一份
@@ -44,6 +48,8 @@ import { createScrollPill, bottomDistance, AT_BOTTOM_PX } from './scrollPill.js'
 // 都不计未读）。抽取批后本内核是 canvas 档唯一的落列/计数写点，故该腿落在这里（作者线
 // 该腿写在旧 askDock.js 的 settleCol，那一段已被抽取批搬空 ⇒ 按其语义在本处重建）。
 import { countUnread } from './unreadCount.js';
+import { timeDividerIndices, timeDividerLabel, msgTs, carryTs } from './askTimeDivider.js';
+import { formatHm } from './timeFormat.js';
 // card-tool-revive 批（2026-11-18 作者裁定②）：ask 会话里 Card 工具返回的 HTML 卡
 // 由对话列显形——渲染**复用唯一单源** cardRegistry.renderWithRegistry（哨兵解析 +
 // 沙箱 iframe + 主题注入那一套语义原样借用），零第二套渲染、零裸 HTML 内联、零自造
@@ -102,7 +108,7 @@ function setMarkdownHtml(node, text, streaming) {
  * @typedef {Object} AskSession
  * @property {string} sid
  * @property {string} [fileName]
- * @property {Array<{role: string, text: string}>} msgs
+ * @property {Array<{role: string, text: string, ts?: number, images?: any[]}>} msgs
  * @property {boolean} [stateSent]
  * @property {boolean} [unread]
  * @property {boolean} [busy]
@@ -130,8 +136,131 @@ function setMarkdownHtml(node, text, streaming) {
  *   后的通用回调（状态可见性批：内核只报「哪一帧到了」，帧语义归消费者）
  * @property {() => void} [onStop] 覆盖停止钮动作（状态可见性批：canvas 档在消费者
  *   侧收口回合事实；缺省 = 本内核的 dlg.stopAsk）
+ * @property {(node: HTMLElement, msg: any) => void} [termLinks] 回答词条化钩子（多选
+ *   合并 Ask 批 2026-11-23，设计正本 §5 G4）：消费方在**终态落列**的 ai 气泡体上挂
+ *   词条链接腿；本内核不认识词表（缺省 = 零动作，canvas 档逐字现状）。
  * @property {string} [panelClass] 面板类（缺省 'ask-dock'）
  */
+
+/** 单条提问的图片件数上限（= 后端 AttachContract.MaxAttachmentsPerMessage，同值 9）。 */
+const ASK_MEDIA_MAX = 9;
+/** 单图字节上限（= 主会话图片上限 10MB，前端预检；后端 ImageInject 硬帽同族）。 */
+const ASK_MEDIA_MAX_BYTES = 10 * 1024 * 1024;
+
+/**
+ * 图片托盘（ask 附图批）：输入条上方的缩略件条 + 附件钮/粘贴/拖放三入口的单源。
+ * 每件 = {name, url(本地 objectURL 供气泡即时显示), payload(Promise，压缩后的 WS 载荷)}。
+ * take() 把待发件一次性交出（压缩未完成的等它完成；失败件静默出册并 toast）。
+ * @param {(zh:string,en:string)=>string} tt
+ */
+function createMediaTray(tt) {
+  /** @type {{name:string, url:string, payload:Promise<any>}[]} */
+  let items = [];
+  const strip = h('div', { class: 'ask-media-strip', 'data-ask-media-strip': true });
+  strip.style.display = 'none';
+  const fileInput = h('input', { type: 'file', accept: 'image/*', multiple: true, 'aria-hidden': 'true' });
+  fileInput.style.display = 'none';
+  // 附件钮 = 主会话 `#attach-btn` 同一组件类 `.icon-btn`（几何/图标档/hover/焦点单源在
+  // design-system 与 input.css 的 `.icon-btn` 族）；`.ask-attach` 只是身份钩子。
+  const attachBtn = h('button', {
+    type: 'button',
+    class: 'icon-btn ask-attach',
+    'aria-label': tt('附加图片', 'Attach image'),
+    title: tt('附加图片（也可粘贴 / 拖入）', 'Attach images (paste or drop also works)'),
+  }, [h('i', { 'data-lucide': 'paperclip' })]);
+  createIconsIn(attachBtn);
+  attachBtn.addEventListener('click', () => fileInput.click());
+
+  const render = () => {
+    strip.replaceChildren();
+    items.forEach((it) => {
+      const img = h('img', { class: 'ask-media-thumb', src: it.url, alt: it.name, title: it.name });
+      const rm = h('button', {
+        type: 'button',
+        class: 'ask-media-rm',
+        'aria-label': tt('移除 ', 'Remove ') + it.name,
+        'on:click': () => {
+          URL.revokeObjectURL(it.url);
+          items = items.filter((x) => x !== it);
+          render();
+        },
+      }, ['×']);
+      strip.appendChild(h('div', { class: 'ask-media-chip' }, [img, rm]));
+    });
+    strip.style.display = items.length ? '' : 'none';
+  };
+
+  const add = (files) => {
+    const imgs = Array.from(files || []).filter((f) => /^image\//.test(f.type || ''));
+    if (!imgs.length) return;
+    for (const file of imgs) {
+      if (items.length >= ASK_MEDIA_MAX) {
+        window.__showToast?.(tt(`最多附 ${ASK_MEDIA_MAX} 张图片`, `At most ${ASK_MEDIA_MAX} images`), 'error');
+        break;
+      }
+      if (file.size > ASK_MEDIA_MAX_BYTES) {
+        window.__showToast?.(tt(`图片过大（上限 10MB）：${file.name}`, `Image too large (max 10MB): ${file.name}`), 'error');
+        continue;
+      }
+      const payload = imageAttachmentPayload(file);
+      // 失败件：静默出册 + toast（take() 会跳过它）。
+      payload.catch(() => {
+        window.__showToast?.(tt(`图片读取失败：${file.name}`, `Failed to read image: ${file.name}`), 'error');
+      });
+      items.push({ name: file.name, url: URL.createObjectURL(file), payload });
+    }
+    render();
+  };
+
+  fileInput.addEventListener('change', () => {
+    add(fileInput.files);
+    fileInput.value = '';
+  });
+
+  return {
+    strip, fileInput, attachBtn,
+    add,
+    count: () => items.length,
+    /** 交出待发件（载荷 + 本地预览 url；tray 清空，url 归气泡所有、不在此回收）。 */
+    async take() {
+      const taken = items;
+      items = [];
+      render();
+      const settled = await Promise.all(taken.map((it) =>
+        it.payload.then((p) => ({ ...p, url: it.url }), () => null)));
+      return settled.filter(Boolean);
+    },
+    clear() {
+      items.forEach((it) => URL.revokeObjectURL(it.url));
+      items = [];
+      render();
+    },
+  };
+}
+
+/** 气泡内图片的可显示地址：live 件用本地 objectURL，回放件用 path → /uploads 路由。 */
+function imageSrcOf(img) {
+  if (img && img.url) return img.url;
+  return attachmentImageUrl((img && img.path) || '');
+}
+
+/** 卡行身份键（card-visible-reconcile 批 2026-11-21）：卡行的身份 = **载荷本身**
+ *  ——同一份 `___<AGENT>_HTML___` 载荷重渲时复用同一个卡行节点（保住已挂载的
+ *  iframe 文档），不同载荷/新增卡才建新行。键 = 长度 + FNV-1a 32 位 + 首 24 字
+ *  （碰撞面只在「同长同哈希同首段」同时成立，且退化为复用而非错配内容——
+ *  复用前仍按 key 全等匹配，故错配只会表现为卡不刷新，不会串内容）。
+ *  @param {string} text */
+function cardKey(text) {
+  const s = typeof text === 'string' ? text : String(text || '');
+  let hash = 0x811c9dc5;
+  // 全量走一遍（卡载荷 ~11KB；重渲频率 = 每帧一拍，成本可忽略）：只采样会让
+  // 「改了中间几个字」的两份载荷误配成同一张卡。
+  for (let i = 0; i < s.length; i++) {
+    hash ^= s.charCodeAt(i);
+    hash = (hash + ((hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24))) >>> 0;
+  }
+  return s.length + ':' + hash.toString(36) + ':' + s.slice(0, 24);
+}
 
 /**
  * 造一份 Ask 对话框实例（DOM 只建一次；wire() 只绑一次）。
@@ -166,11 +295,18 @@ export function createAskDialog(cfg) {
     onSend: () => { dlg.submit(); },
   });
   const { root: inputRow, input, sendBtn: send, stopBtn: stop } = composer;
+  // 附图入口（ask 附图批）：附件钮位于输入条内「文本框之后、发送钮之前」——与主会话
+  // `#input-bar` 的 DOM 次序逐一对齐（textarea → attach → send/stop，UI 小修 2026-11 作者令
+  // 「以主会话为基准」）；缩略件条在输入条之上。
+  const media = createMediaTray(tt);
+  inputRow.insertBefore(media.attachBtn, send);
+  inputRow.appendChild(media.fileInput);
   const col = h('div', { class: 'ask-col' });
   const colwrap = h('div', { class: 'ask-colwrap' }, [col]);
   const panel = h('div', { class: (cfg.panelClass || 'ask-dock') + ' closed' }, [
     handle,
     colwrap,
+    media.strip,
     inputRow,
   ]);
 
@@ -196,6 +332,29 @@ export function createAskDialog(cfg) {
       wired = true;
       panel.addEventListener('click', (e) => e.stopPropagation());
       panel.addEventListener('pointerdown', (e) => e.stopPropagation());
+      // 粘贴图片进输入框 = 附图（纯文本粘贴零拦截，走浏览器默认）。
+      input.addEventListener('paste', (e) => {
+        const files = [];
+        for (const item of Array.from((e.clipboardData && e.clipboardData.items) || [])) {
+          if (item.kind === 'file' && /^image\//.test(item.type || '')) {
+            const f = item.getAsFile();
+            if (f) files.push(f);
+          }
+        }
+        if (!files.length) return;
+        e.preventDefault();
+        media.add(files);
+      });
+      // 拖放图片到面板 = 附图（非图片文件不接，不拦浏览器默认）。
+      const hasFiles = (e) => !!(e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files'));
+      panel.addEventListener('dragover', (e) => { if (hasFiles(e)) { e.preventDefault(); } });
+      panel.addEventListener('drop', (e) => {
+        if (!hasFiles(e)) return;
+        const files = Array.from(e.dataTransfer.files || []).filter((f) => /^image\//.test(f.type || ''));
+        if (!files.length) return;
+        e.preventDefault();
+        media.add(files);
+      });
       turnToggle = createTurnToggle({
         sendBtn: /** @type {HTMLElement} */ (send),
         stopBtn: /** @type {HTMLElement} */ (stop),
@@ -237,35 +396,141 @@ export function createAskDialog(cfg) {
     },
 
     // ── 转录渲染 ──────────────────────────────────────────────────────────
+    // 卡行增量化（card-visible-reconcile 批 2026-11-21，现场 = 同一份 HTML 两张卡
+    // 一败一成）：修前本函数**整列清空重建**（cleanupCardIframes + textContent=''
+    // + 逐行重建）。卡一旦在列内，每一拍整列重渲就是一次「摘掉已挂载的卡 iframe
+    // 再重新排队挂载」：`_nfCleanup` 剥掉 srcdoc 并断开观察者（cardRegistry:582-591），
+    // 新 iframe 回到未挂载态（chat.css:4072 opacity:0、高度只有 150px 默认盒），
+    // 只能靠 IntersectionObserver 或 3s 兜底 timer 重新挂上（cardRegistry:565-597）。
+    // 于是 done 收口那一刻卡是**空白 150px**、且列高随之塌缩（实测 2439→984），
+    // 滚动位跳动把卡甩到视口外 604px —— 用户看到的就是「没有卡」。
+    //
+    // 根因层修法（不是加超时补丁）：卡行的**身份 = 载荷**。重渲时对同一份载荷
+    // 复用已在列的卡行节点，**不摘除、不移动**（实测：iframe 节点一旦被移出/
+    // 移动到别的父节点，浏览器就重建其浏览上下文并重跑文档脚本 ——
+    // probe_iframe_survive/reorder 的哨兵探针），因此只有「原地不动」能保住已渲染
+    // 的卡；也只对**真正被移出**的卡行调 cleanupCardIframes 释放 browsing context
+    // （原释放契约不放松：泄漏面仍是每张 2–10MB 的独立上下文）。
     render() {
       const s = cfg.activeSession();
-      // 卡 iframe 释放（渲染单源的硬契约）：整列清空/重建前必须让每张卡的
-      // IntersectionObserver 松开并丢掉 srcdoc，否则独立 browsing context（每张
-      // 2–10MB）会被观察者钉住永不回收（cardRegistry.cleanupCardIframes 头注）。
-      cleanupCardIframes(col);
-      col.textContent = '';
-      if (!s) return;
       // v2.1 显示面减法：只出 user/ai 两族——sys（回执/状态噪声类）转录仍存但永不呈现。
-      const vis = s.msgs.filter((m) => m.role !== 'sys');
-      vis.forEach((m) => {
+      const vis = s ? s.msgs.filter((m) => m.role !== 'sys') : [];
+      const rowsDesired = vis.map((m) => (m.role === 'card'
         // card-tool-revive 批（2026-11-18 作者裁定②）——卡载荷行：ask 面**唯一**的
         // iframe 落点。渲染腿 = cardRegistry.renderWithRegistry（哨兵解析 + 沙箱
         // `allow-scripts allow-same-origin` iframe + 主题注入，与主会话卡行同一单源），
         // 本函数只给宿主节点与行几何；卡行不参与气泡族（不进 askBubbleClass）。
-        if (m.role === 'card') {
+        ? { kind: 'card', key: cardKey(m.text), text: m.text, msg: m }
+        : { kind: 'bubble', role: m.role, text: m.text, msg: m }));
+      // 时间分隔线（canvas ask 时间分隔线批）：段界处（会话开头 / 间隔 > 5 分钟）在该行
+      // 之前插一条 kind:'divider'。分段口径单点在 askTimeDivider.js；本处只落位。
+      // 必须在 mark 插入与建池之前完成（同 mark：插入会平移下标）。
+      const divAt = timeDividerIndices(vis);
+      const desired = [];
+      rowsDesired.forEach((d, i) => {
+        if (divAt.has(i)) desired.push({ kind: 'divider', ts: msgTs(d.msg) });
+        desired.push(d);
+      });
+
+      // 回合标记（canvas ask 状态可视批 2026-11-21，作者 13:00 令）：最后一条用户问
+      // 之后挂一行「处理中 / 已回复 / 已中止 / 失败」——终态**常驻**，不随 2.6s 驻留
+      // 收回（状态行的 DONE 驻留到期即隐，正是作者「看不到已回复」的根因）。
+      // 态 = 会话内存里的 replyState（arm/settle 点写），刷新后不回放。
+      // 必须在建池/建索引**之前**插入（插入会平移 desired 下标）。
+      if (s && s.replyState) {
+        let at = -1;
+        desired.forEach((d, i) => { if (d.kind === 'bubble' && d.role === 'user') at = i; });
+        if (at >= 0) desired.splice(at + 1, 0, { kind: 'mark', state: s.replyState });
+      }
+
+      // ① 认脸：已在列的卡行按载荷建池（同载荷多张卡 = 先进先出配对）。
+      /** @type {Map<string, HTMLElement[]>} */
+      const pool = new Map();
+      const existing = Array.from(col.children);
+      for (const node of existing) {
+        if (!node.classList || !node.classList.contains('ask-card-row')) continue;
+        const k = node.dataset ? node.dataset.nfCardKey || '' : '';
+        if (!pool.has(k)) pool.set(k, []);
+        /** @type {HTMLElement[]} */ (pool.get(k)).push(/** @type {HTMLElement} */ (node));
+      }
+      /** @type {Map<number, Element>} */
+      const keep = new Map();
+      desired.forEach((d, i) => {
+        if (d.kind !== 'card') return;
+        const q = pool.get(d.key);
+        if (q && q.length) keep.set(i, q.shift());
+      });
+      const kept = new Set(keep.values());
+
+      // ② 只移出**没被复用**的节点；卡行被真移出时才释放其 browsing context。
+      for (const node of existing) {
+        if (kept.has(node)) continue;
+        node.remove();
+        try { cleanupCardIframes(/** @type {HTMLElement} */ (node)); } catch { /* 释放失败不阻断渲染 */ }
+      }
+
+      // ③ 原地补齐：ref 恒指向「下一个被复用的卡行」（或 null = 尾插）。复用节点
+      //    从不移动 ⇒ 其 iframe 文档、srcdoc、观察者、已量出的高度全部保持。
+      /** @type {Element|null} */
+      let ref = col.firstElementChild;
+      for (let i = 0; i < desired.length; i++) {
+        const keptNode = keep.get(i);
+        if (keptNode) { ref = keptNode.nextElementSibling; continue; }
+        const d = desired[i];
+        /** @type {Element} */
+        let node;
+        if (d.kind === 'card') {
           const row = h('div', { class: 'ask-card-row' });
+          if (row.dataset) row.dataset.nfCardKey = d.key;
           const host = h('div', { class: 'ask-card-host' });
           row.appendChild(host);
-          col.appendChild(row);
-          renderWithRegistry(host, m.text, 'Card');
-          return;
+          renderWithRegistry(host, d.text, 'Card');
+          node = row;
+        } else if (d.kind === 'divider') {
+          // 时间分隔线：细横线 + 居中浅色小字（ask.css `.ask-time-divider*`）。
+          node = h('div', { class: 'ask-time-divider', role: 'separator', 'data-ts': String(d.ts) }, [
+            h('span', { class: 'ask-time-divider-label' },
+              [timeDividerLabel(d.ts, Date.now(), formatHm, tt)]),
+          ]);
+        } else if (d.kind === 'mark') {
+          const label = {
+            working: tt('处理中…', 'Working…'),
+            replied: tt('已回复', 'Replied'),
+            stopped: tt('已中止', 'Stopped'),
+            failed: tt('失败，见上方提示', 'Failed, see the notice above'),
+          }[d.state] || '';
+          node = h('div', {
+            class: 'ask-reply-mark',
+            role: 'status',
+            'data-nf-reply-state': d.state,
+          }, [label]);
+        } else {
+          // glass-unify 批 2026-11-05：气泡挂唯一毛玻璃工具类 `.nf-glass`。
+          // （`m.role` 是转录行原文：check-chat-ui / check-glass-unify 两处静态
+          //  守卫锚定这条唯一落点，故行对象按原名 `m` 传下来。）
+          const m = d.msg;
+          const b = h('div', { class: askBubbleClass(m.role) });
+          if (m.role === 'user') {
+            // 附图行（ask 附图批）：图在正文之上；有图不算空正文——图+无文字的行照常成泡。
+            const srcs = (m.images || []).map(imageSrcOf).filter(Boolean);
+            if (srcs.length) {
+              b.appendChild(h('div', { class: 'ask-msg-imgs' },
+                srcs.map((src) => h('img', { class: 'ask-msg-img', src, alt: '', loading: 'lazy' }))));
+            }
+            if (m.text) b.appendChild(document.createTextNode(m.text));
+          } else {
+            setMarkdownHtml(b, m.text, false); // 唯一 HTML 落点见 setMarkdownHtml
+            // 回答词条化（多选合并 Ask 批 2026-11-23；设计正本 §5 G4「在
+            // createAskDialog 增加 termLinks 钩子」）：本内核**零词表知识**——词条匹配
+            // 规则、消解裁定、气泡/深链腿全在 termLexicon.js + viewers/markdown.js 那一
+            // 族，消费者经 cfg 注入。只在**终态落列**（render）走一次，流式增量
+            // （updateStreaming）不扫，避免每帧一次图谱遍历。
+            if (m.role === 'ai') cfg.termLinks?.(b, m);
+          }
+          node = b;
         }
-        // glass-unify 批 2026-11-05：气泡挂唯一毛玻璃工具类 `.nf-glass`。
-        const b = h('div', { class: askBubbleClass(m.role) });
-        if (m.role === 'user') b.textContent = m.text;
-        else setMarkdownHtml(b, m.text, false); // 唯一 HTML 落点见 setMarkdownHtml
-        col.appendChild(b);
-      });
+        col.insertBefore(node, ref);
+      }
       // 落列后的跟随/计数由调用点经 settleCol/snapCol 单点决定（本函数只建 DOM）。
     },
 
@@ -355,11 +620,15 @@ export function createAskDialog(cfg) {
       const s = await cfg.ensureSession();
       if (!s) return;
       const v = input.value.trim();
-      if (!v) return;
+      // 附图批：图片是输入的一部分——「有图无字」也是一条可发的提问（有图不算空）。
+      const picked = await media.take();
+      if (!v && !picked.length) return;
       input.value = '';
       input.style.height = 'auto';
       // ④ 双泡修复批 2026-10-31：发问时**不再预压空 ai 泡**——等待期只有 typing。
-      s.msgs.push({ role: 'user', text: v });
+      const userRow = { role: 'user', text: v, ts: Date.now() };
+      if (picked.length) userRow.images = picked.map((p) => ({ name: p.name, url: p.url }));
+      s.msgs.push(userRow);
       cfg.onPersist?.(s);
       dlg.render();
       dlg.settleCol([{ role: 'user', self: true }]); // Local sends are not unseen.
@@ -368,20 +637,24 @@ export function createAskDialog(cfg) {
       if (!s.stateSent) cfg.ensureBound(s);
       // 状态可见性批（通用挂钩）：send 的返回值原样回传消费者——canvas 档据它落
       // 「已提交排队 / 会话未连接」态；改前这个返回值在消费侧被当场丢弃。
-      const sent = cfg.send(s, v);
+      // 附图批：第三参 = 图片载荷（WS 帧 attachments 同形；无图 = []）。
+      const sent = cfg.send(s, v, picked.map(({ name, mimeType, data, size }) => ({ name, mimeType, data, size })));
       cfg.onQueued?.(s, sent);
     },
 
     /** 臂：该会话 turn 在飞 → 中断钮上位（活动会话才动 chrome；幂等）。 */
     armTurn(s) {
       s.busy = true;
+      s.replyState = 'working';
       s.lastFrameAt = Date.now();
       if (s === cfg.activeSession() && turnToggle) turnToggle.busy();
     },
     /** 收：终态（busy 清 + 中断钮让位；幂等）。 */
-    settleTurn(s) {
+    settleTurn(s, outcome = 'replied') {
       if (!s) return;
       s.busy = false;
+      // 只从「处理中」落到终态；已落终态（如先点停、后到的服务端 done）不被覆盖。
+      if (s.replyState === 'working') s.replyState = outcome;
       if (s === cfg.activeSession() && turnToggle) turnToggle.idle();
     },
     /** 用户点停：帧出口走包单点（与主会话 #stop-btn 逐字节同帧）；UI 即刻收口。 */
@@ -389,7 +662,7 @@ export function createAskDialog(cfg) {
       const s = cfg.activeSession();
       if (!s || !s.busy) return;
       requestTurnInterrupt(s.sid);
-      dlg.settleTurn(s);
+      dlg.settleTurn(s, 'stopped');
       if (dlg.isOpen()) { dlg.removeTyping(); dlg.render(); dlg.snapCol(); }
     },
 
@@ -397,7 +670,7 @@ export function createAskDialog(cfg) {
     say(text) {
       const s = cfg.activeSession();
       if (!s) return;
-      s.msgs.push({ role: 'ai', text });
+      s.msgs.push({ role: 'ai', text, ts: Date.now() });
       dlg.removeTyping();
       dlg.render();
       dlg.settleCol([{ role: 'ai' }]); // 提示行 = 一条助手族消息（离底才计未读）
@@ -431,14 +704,28 @@ export function createAskDialog(cfg) {
           // ask-mail 批（2026-11-16）：引擎下发的会话 Mail 地址（`ask:<sid>` 逐字，
           // 与本地派生同式——引擎字段优先，仅存内存不落盘：每帧 askState 都重发）。
           if (typeof msg.mailAddress === 'string' && msg.mailAddress) entry.mailAddress = msg.mailAddress;
-          const serverMsgs = Array.isArray(msg.messages)
+          let serverMsgs = Array.isArray(msg.messages)
             ? msg.messages
               .filter((m) => m && typeof m.text === 'string')
-              .map((m) => ({
-                role: m.role === 'user' ? 'user' : m.role === 'sys' ? 'sys' : 'ai',
-                text: m.text,
-              }))
+              .map((m) => {
+                const row = {
+                  role: m.role === 'user' ? 'user' : m.role === 'sys' ? 'sys' : 'ai',
+                  text: m.text,
+                };
+                // 时间戳（canvas ask 时间分隔线批）：服务端下发的 timestamp/ts 原样带入；缺席不落键。
+                const rowTs = msgTs(m);
+                if (rowTs) row.ts = rowTs;
+                // 附图批：回放行的附件（服务端 .ui.json 的 {name,type,path}）→ 气泡图（path 寻址）。
+                const imgs = Array.isArray(m.attachments)
+                  ? m.attachments.filter((a) => a && typeof a.path === 'string' && a.path)
+                    .map((a) => ({ name: a.name || '', path: a.path }))
+                  : [];
+                if (row.role === 'user' && imgs.length) row.images = imgs;
+                return row;
+              })
             : entry.msgs;
+          // 服务端回放未带时间的行，沿用本地同位行的 ts（只补缺，防状态帧抹掉分隔线）。
+          if (Array.isArray(msg.messages)) serverMsgs = carryTs(serverMsgs, entry.msgs);
           const localLastUser = entry.msgs.filter((m) => m.role === 'user').slice(-1)[0];
           const adopted = serverMsgs.length >= entry.msgs.length ? serverMsgs : entry.msgs;
           const adoptedLastUser = adopted.filter((m) => m.role === 'user').slice(-1)[0];
@@ -470,7 +757,7 @@ export function createAskDialog(cfg) {
           if (!(entry === cfg.activeSession() && dlg.isOpen())) entry.unread = true;
           dlg.armTurn(entry);
           const last = entry.msgs[entry.msgs.length - 1];
-          if (!last || last.role !== 'ai') entry.msgs.push({ role: 'ai', text: '' });
+          if (!last || last.role !== 'ai') entry.msgs.push({ role: 'ai', text: '', ts: Date.now() });
           const ai = entry.msgs[entry.msgs.length - 1];
           ai.text += msg.delta || '';
           if (entry === cfg.activeSession() && dlg.isOpen()) {
@@ -498,7 +785,7 @@ export function createAskDialog(cfg) {
         case 'interrupted': {
           const wasBusy = entry.busy;
           if (!(entry === cfg.activeSession() && dlg.isOpen())) entry.unread = true;
-          dlg.settleTurn(entry);
+          dlg.settleTurn(entry, 'stopped');
           cfg.onPersist?.(entry);
           if (entry === cfg.activeSession()) {
             if (dlg.isOpen()) { dlg.removeTyping(); dlg.render(); const last = entry.msgs[entry.msgs.length - 1]; dlg.settleCol(wasBusy && last && last.role === 'ai' ? [last] : []); } // Partial answer, once.
@@ -509,11 +796,11 @@ export function createAskDialog(cfg) {
         case 'error': {
           // v2.1：错误不再起 sys 气泡——文本落助手气泡槽（问答面只出两族）。
           if (!(entry === cfg.activeSession() && dlg.isOpen())) entry.unread = true;
-          dlg.settleTurn(entry);
+          dlg.settleTurn(entry, 'failed');
           const last = entry.msgs[entry.msgs.length - 1];
           const errText = tt('出错了：', 'Error: ') + (msg.message || 'unknown');
           if (last && last.role === 'ai' && !last.text) last.text = errText;
-          else entry.msgs.push({ role: 'ai', text: errText });
+          else entry.msgs.push({ role: 'ai', text: errText, ts: Date.now() });
           cfg.onPersist?.(entry);
           if (entry === cfg.activeSession()) {
             if (dlg.isOpen()) { dlg.removeTyping(); dlg.render(); dlg.settleCol([{ role: 'ai' }]); } // Error bubble.
@@ -525,7 +812,7 @@ export function createAskDialog(cfg) {
           // 注入族（injected:true）：迁移自 askDock（canvas 回问腿）；选区档同一条腿。
           if (msg.injected) {
             if (!(entry === cfg.activeSession() && dlg.isOpen())) entry.unread = true;
-            entry.msgs.push({ role: 'user', text: msg.text || '' });
+            entry.msgs.push({ role: 'user', text: msg.text || '', ts: Date.now() });
             cfg.onPersist?.(entry);
             if (entry === cfg.activeSession()) {
               if (dlg.isOpen()) { dlg.removeTyping(); dlg.render(); dlg.settleCol([{ role: 'user' }]); } // User-role injection is excluded.

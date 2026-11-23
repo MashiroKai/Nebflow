@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "change": "askuser-merge-card",
+  "mappings": [
+    {
+      "requirement": "AMC-REQ-001",
+      "scenario": "AMC-SCN-001",
+      "implementation": [
+        "src/main/scala/nebflow/core/tools/AskUserQuestionTool.scala",
+        "src/main/scala/nebflow/shared/askUser.scala"
+      ],
+      "tests": [
+        {
+          "path": "tests/askuser-merge-contract.test.mjs",
+          "name": "AskUserQuestion exposes a merge question contract"
+        }
+      ]
+    },
+    {
+      "requirement": "AMC-REQ-001",
+      "scenario": "AMC-SCN-002",
+      "implementation": [
+        "src/main/scala/nebflow/agent/AgentActor.scala",
+        "src/main/scala/nebflow/shared/askUser.scala"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "No automated assertion asserts the absence of the merge key in isolation; the byte-identical claim rests on the retained pre-existing frame-shape test plus the field being an Option that is only emitted when present.",
+        "steps": "Ask a two-option question with no merge field and dump the askUser frame produced by AgentActor.buildAskUserJson.",
+        "expected": "The frame contains no merge key on items[0] and is byte-identical to the pre-change shape."
+      }
+    },
+    {
+      "requirement": "AMC-REQ-002",
+      "scenario": "AMC-SCN-003",
+      "implementation": [
+        "src/main/scala/nebflow/core/tools/AskUserQuestionTool.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/tools/AskUserQuestionToolSpec.scala",
+          "name": "merge configuration survives parse and JSON answer stays intact"
+        }
+      ]
+    },
+    {
+      "requirement": "AMC-REQ-002",
+      "scenario": "AMC-SCN-004",
+      "implementation": [
+        "src/main/scala/nebflow/core/tools/AskUserQuestionTool.scala"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "The secret-plus-merge parse path has no dedicated test in this change; the guard is the single expression that clears merge when secret is set, verified by reading the parse branch.",
+        "steps": "Parse one question carrying secret: true together with a merge object and inspect the resulting AskItem.",
+        "expected": "The AskItem has secret = true and merge = None; no exception is raised for the whole card."
+      }
+    },
+    {
+      "requirement": "AMC-REQ-003",
+      "scenario": "AMC-SCN-005",
+      "implementation": [
+        "src/main/scala/nebflow/agent/AgentActor.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/AskUserBuildJsonSpec.scala",
+          "name": "merge configuration is forwarded in the ask event"
+        }
+      ]
+    },
+    {
+      "requirement": "AMC-REQ-003",
+      "scenario": "AMC-SCN-006",
+      "implementation": [
+        "src/main/scala/nebflow/agent/AgentActor.scala",
+        "src/main/scala/nebflow/core/tools/AskUserQuestionTool.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/AskUserDualModeRuntimeSpec.scala",
+          "name": "merge answer reaches the model through the real hub and answer bridge"
+        }
+      ]
+    },
+    {
+      "requirement": "AMC-REQ-004",
+      "scenario": "AMC-SCN-007",
+      "implementation": [
+        "src/main/scala/nebflow/core/tools/AskUserQuestionTool.scala",
+        "src/main/resources/web/js/chat.js",
+        "src/main/resources/web/css/chat.css"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/tools/AskUserQuestionToolSpec.scala",
+          "name": "merge configuration survives parse and JSON answer stays intact"
+        }
+      ]
+    }
+  ]
+}

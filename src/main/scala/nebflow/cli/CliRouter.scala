@@ -332,7 +332,14 @@ object CliRouter:
     ("secrets", "list"),
     ("secrets", "usage"),
     ("secrets", "show"),
-    ("secrets", "meta")
+    ("secrets", "meta"),
+    // 测试输入面 M2（workspace-compute R1a，作者令 2026-11-19）：`test` 的四个子命令
+    // 全是**纯本机面**（快照读写 <dataRoot>/snapshots、槽读写 <dataRoot>/test-slot），
+    // 不经网关；按 secrets 族同一判据离线归类（网关不在时恰恰更该可用）。
+    ("test", "snapshot"),
+    ("test", "verify"),
+    ("test", "diff"),
+    ("test", "slot")
   )
 
   private[cli] def isOffline(cmdName: String, subName: String): Boolean =

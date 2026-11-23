@@ -1,15 +1,14 @@
-// canvas-save-failure-dedup.spec.mjs — Canvas「保存失败」通知的**前端门禁**
-// （canvas-save-failure 批，2026-11-18 P0）。静态面见
-// scripts/check-canvas-save-notice.mjs。
+// canvas-save-failure-dedup.spec.mjs — Canvas「保存失败」**静默保留**的前端门禁。
+// 历史：2026-11-18 P0 加过去重通知；2026-11-22 作者令「删掉这个弹窗」→ 失败不再弹任何通知，
+// 本地兜底保留。静态面见 scripts/check-canvas-save-notice.mjs。
 //
 // 装置：真 node http 服务器（复刻 ConsoleTakeover/ConfigRoutes 的单写者席位语义，
-// 非抢占；席位被占即 409）+ 真 src/main/resources/web + 真 js/canvas.js。每个
-// /api/canvas* 调用都是真实 HTTP，状态码与响应体原文可读。
+// 非抢占；席位被占即 409）+ 真 src/main/resources/web + 真 js/canvas.js。
 //
-// 钉住两条作者点名的判据：
+// 钉住三条判据：
 //   A 保存成功路径绝不触发失败通知（零误报）；
-//   B 同一失败原因只产生一条通知 —— 页内多次写收敛成一条，且**刷新不重弹**
-//     （页内 Set 会在刷新时清空 ⇒ 席位被持久占住时每次加载重弹 = 作者报的「老是」）。
+//   B 写者席位被占导致的保存失败：页内多次写、刷新后均**不弹任何通知**（静默）；
+//   C 失败时本地兜底仍在：本地页签不丢，写路径照常发出（409 真实落在服务端）。
 
 import { test, expect } from '@playwright/test';
 import { startSeatServer, bootPage, driveWrite, toasts } from './_canvas-save-failure-harness.mjs';
@@ -35,49 +34,45 @@ test('A: 保存成功路径绝不触发失败通知（写入真落地 200）', a
   } finally { await context.close(); }
 });
 
-test('B: 同一次失败只产生一条通知，且刷新不重弹', async ({ browser }) => {
+test('B: 席位被占的保存失败静默，页内多次写与刷新后均不弹任何通知', async ({ browser }) => {
   server.clearSeat();
   await server.seedGhostSeat();               // 席位被一个已消失的窗口占住
   const { context, page, errors } = await bootPage(browser, server.base);
   try {
-    // B1 页内：连写三次 ⇒ 服务端三次拒授，通知仍只有一条。
+    // B1 页内：连写三次 ⇒ 服务端三次拒授，且零通知。
     for (let i = 0; i < 3; i++) await driveWrite(page, `r-${i}`);
     const refusals = server.net.filter((n) => n.path.endsWith('/claim') && n.status === 409);
     expect(refusals.length, 'the server must genuinely refuse the write (409)').toBeGreaterThan(0);
     expect(refusals[0].body).toContain('writer_already_held');
     let t = await toasts(page);
-    expect(t.filter((x) => x.includes(FAIL))).toHaveLength(1);
+    expect(t.filter((x) => x.includes(FAIL))).toHaveLength(0);
 
-    // B2 跨刷新：同因不再重弹（这就是「老是」的根 — 席位持久占住 + 页内 Set 随刷新清空）。
+    // B2 跨刷新：仍然静默。
     for (let i = 0; i < 2; i++) {
       await page.reload({ waitUntil: 'domcontentloaded' });
       await page.waitForSelector('#activity-bar', { state: 'attached' });
       await driveWrite(page, `r-reload-${i}`);
       t = await toasts(page);
-      expect(t.filter((x) => x.includes(FAIL)), `reload ${i + 1} must not re-pop the same cause`).toHaveLength(0);
+      expect(t.filter((x) => x.includes(FAIL)), `reload ${i + 1} must stay silent`).toHaveLength(0);
     }
     expect(errors).toEqual([]);
   } finally { await context.close(); }
 });
 
-test('C: 通知带可执行的下一步，且可亲手关闭', async ({ browser }) => {
+test('C: 失败时本地兜底保留——页签不丢，且无任何通知节点出现', async ({ browser }) => {
   server.clearSeat();
   await server.seedGhostSeat();
   const { context, page } = await bootPage(browser, server.base);
   try {
     await driveWrite(page, 'c-1');
-    const toast = page.locator('.nebflow-toast', { hasText: FAIL }).first();
-    await expect(toast).toBeVisible();
-    // 可执行的下一步：次级一行 hint，不是一句「保存失败」。
-    const hint = toast.locator('.nebflow-toast-hint');
-    await expect(hint).toBeVisible();
-    const hintText = (await hint.innerText()).trim();
-    expect(hintText.length).toBeGreaterThanOrEqual(12);
-    // 可关闭：亲手关闭钮在场，点掉即消失。
-    const close = toast.locator('.nebflow-toast-close');
-    await expect(close).toBeVisible();
-    await close.click();
+    await driveWrite(page, 'c-2');
+    await page.waitForTimeout(800);
+    // 本地页签仍在（静默保留的内容可见）。
+    await expect(page.locator('.canvas-tab-pane[data-tab-id="c-1"]')).toHaveCount(1);
+    await expect(page.locator('.canvas-tab-pane[data-tab-id="c-2"]')).toHaveCount(1);
+    // 失败不弹通知：DOM 中无任何保存失败 toast（含 hint 次级行）。
     await expect(page.locator('.nebflow-toast', { hasText: FAIL })).toHaveCount(0);
+    await expect(page.locator('.nebflow-toast-hint')).toHaveCount(0);
   } finally { await context.close(); }
 });
 

@@ -80,7 +80,7 @@ class MailQueueRootSpec extends FunSuite:
     val res = resourcesWith(
       Map(
         "agent-1" -> record("nebula-root-sid", AgentKind.Root),
-        "agent-2" -> record("team-sid", AgentKind.Team)
+        "agent-2" -> record("team-sid", AgentKind.Root)
       )
     )
     assertEquals(
@@ -116,7 +116,7 @@ class MailQueueRootSpec extends FunSuite:
     )
 
   test("resolveNebulaRootSession（档② meta）no Root record ⇒ None"):
-    val res = resourcesWith(Map("agent-2" -> record("team-sid", AgentKind.Team)))
+    val res = resourcesWith(Map("agent-2" -> record("team-sid", AgentKind.Root)))
     assertEquals(MailTool.resolveRootSession(res, senderSessionId = "").unsafeRunSync(), None)
 
   test("resolveNebulaRootSession（档② meta）empty registry ⇒ None"):

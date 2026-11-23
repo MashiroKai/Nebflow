@@ -63,7 +63,7 @@ export { enterAskMode, cancelAskMode, enterSkillMode, cancelSkillMode, enterComp
 import { addFileAttachment, pendingAttCount, isRefOnlyFrame, syncRefOnlyGate, showAttError, joinAbsPath } from './input/attachments.js';
 export { addFileAttachment, wireAttachmentsOf, isRefOnlyFrame, syncRefOnlyGate, appendRefToActiveView, initGlobalFileDrop } from './input/attachments.js';
 // 输入行为包（2026-11-02 作者令）：键盘契约装配 + 中断帧单点（ask 与主会话共用）。
-import { bindComposerKeys, requestTurnInterrupt, growComposerInput, composerPlaceholder } from './input/composer.js';
+import { bindComposerKeys, requestTurnInterrupt, growComposerInput, setComposerText, composerPlaceholder } from './input/composer.js';
 
 // ---------- 真人消息 turn 标志（2026-09-16 msunread-r2；作者裁定 ①）----------
 // 「本机派发了一条真人消息 = 本 turn 的起点」的 per-session turn 级标志。
@@ -1282,12 +1282,7 @@ function recallQueuedItem(sessionId, item) {
     const text = item.mode === 'compact'
       ? `/compact ${item.text}`.trim()
       : item.skillName ? `/${item.skillName} ${item.text}` : item.text;
-    view.dom.input.value = text;
-    view.dom.input.style.height = 'auto';
-    view.dom.input.focus();
-    // Place cursor at end
-    const len = view.dom.input.value.length;
-    view.dom.input.setSelectionRange(len, len);
+    setComposerText(view.dom.input, text, { focus: true });
     // A-batch (msgqueue-recall-attach, 2026-09-14): the splice above removed the
     // last live reference to item.attachments, so the attachment payload used to
     // vanish right here with no trace. Feed it back through the SAME path send()
@@ -1501,19 +1496,79 @@ function dispatchQueuedItemNow(sessionId, item, opts = {}) {
   return true;
 }
 
-// Send an explicit todo reply without borrowing either composer's draft or attachments.
-// injectUserMessage renders and persists through activeView, so scope that binding
-// synchronously to the primary view and restore the caller even on failure.
-export function sendPrimaryTodoReply(text) {
+// ── 待办回复（作者报障批 2026-11-21 IMG_1993）─────────────────────────────
+// 断电事实（改前）：待办详情页/决策卡的回传出口是 sendPrimaryTodoReply →
+// injectUserMessage，而 injectUserMessage 有三条早退（空文本 / **会话忙** /
+// **WS 未开**），每条都只 console.warn 后 return false ⇒ 页面把它读成「回复未发送，
+// 请检查主会话状态和连接后重试」。作者主会话在线且**正在跑回合**（正常状态）时
+// 也走 busy 那条早退 —— 这就是 IMG_1993 的红字：不是断线，是「忙态被当成失败」。
+//
+// 修法（不是加一条新链路，而是与输入框共用同一条派发台）：
+//   · 忙态 ⇒ 队列直通腿（`{quiesce:false, newTurn:false, wire:'immediate'}` 的
+//     immediateInput 帧）＝「立即发送」等价形：引擎在**最近安全边界**把回复并入
+//     在飞回合，不打断、不丢弃、不当作失败（queuedirect 批同一语义）；
+//   · 空闲 ⇒ drain 腿（新 turn 起点）；
+//   · 断线 ⇒ 既有离线队列（乐观「待送达」气泡 + 重连按 pinned id 补发）。
+// 三条腿都是本文件既有实现（queueMessage / dispatchQueuedItemNow），本函数只做
+// **目标会话解析 + 选腿**，零第二套帧形。
+//
+// 目标会话：默认 primary（主会话）。调用方传入该**待办行自己的 sessionId** 时用它
+// （行级寻址面，todoStore mapRow 已投影）—— 待办归属哪个会话就回到哪个会话。
+/**
+ * @param {string} text 回复正文（已含 `#待办名·id` 前缀的整帧正文）
+ * @param {{sessionId?: string|null}} [opts]
+ * @returns {{ok: boolean, mode: 'new-turn'|'turn-boundary'|'offline', reason?: string,
+ *   sessionId?: string, clientMessageId?: string}}
+ */
+export function sendTodoReply(text, opts = {}) {
+  const trimmed = String(text == null ? '' : text).trim();
+  if (!trimmed) return { ok: false, mode: 'new-turn', reason: 'empty' };
   const primary = chatViews.primary;
-  if (!primary || !primary.sessionId || !text?.trim()) return false;
-  const previous = activeView;
-  try {
-    setActiveView(primary);
-    return injectUserMessage(text, { sessionId: primary.sessionId });
-  } finally {
-    setActiveView(previous);
+  const sessionId = String(opts.sessionId || (primary && primary.sessionId) || state.activeSessionId || '').trim();
+  if (!sessionId) return { ok: false, mode: 'new-turn', reason: 'no-session' };
+  // 呈现面：只有该会话正在被某个视图显示时才上屏气泡（帧照样出线、落盘照样写）。
+  const view = findViewBySessionId(sessionId) || null;
+  const shown = !!view && activeView === view;
+
+  // ① 断线腿：既有离线队列（乐观「待送达」气泡 + 重连补发，同 send() 的离线支）
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+    const queued = queueMessage(/** @type {any} */ (view || { sessionId }), trimmed, [], null, null,
+      { offline: true, rendered: true });
+    if (shown) renderUserBubble(trimmed, [], undefined, { msgId: queued.clientMessageId, pending: true });
+    state.updateConnBanner?.();
+    return { ok: true, mode: 'offline', sessionId, clientMessageId: queued.clientMessageId };
   }
+
+  // ② 派发腿：忙 = 最近安全边界注入；空闲 = 新 turn 起点。同一条派发台。
+  const busy = state.busySessionIds.has(sessionId);
+  const item = {
+    id: ++queueCounter,
+    text: trimmed,
+    attachments: [],
+    skillName: null,
+    mode: null,
+    clientMessageId: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    ts: Date.now(),
+  };
+  dispatchQueuedItemNow(sessionId, item,
+    busy ? { quiesce: false, newTurn: false, wire: 'immediate' } : {});
+  return {
+    ok: true,
+    mode: busy ? 'turn-boundary' : 'new-turn',
+    sessionId,
+    clientMessageId: item.clientMessageId,
+  };
+}
+
+// 旧出口（boolean）。签名保留（todoFace.js / 既有消费面语义零改动），实现收编到
+// sendTodoReply：**忙态不再是失败** —— 这正是本批要修的那条红字。
+/**
+ * @param {string} text
+ * @param {string|null} [sessionId] 待办行自己的 sessionId（缺省 = 主会话）
+ * @returns {boolean}
+ */
+export function sendPrimaryTodoReply(text, sessionId = null) {
+  return sendTodoReply(text, { sessionId }).ok;
 }
 
 // ---------- Inject User Message (for plugin card interactions) ----------
@@ -1628,8 +1683,9 @@ export function initInput(view) {
   // 闸的视觉态 = 发送键禁用（syncRefOnlyGate）+ placeholder 文案（下方两个 helper）。
 
   // Auto-resize textarea + 同步纯引用帧闸（文本变化会改变闸判据）。
+  // 显示缺陷批 2026-11-21：`height='auto'` 不再手写在调用点 —— 量高原语
+  // （growComposerInput）自己先塌陷再量、并按光标锚定视口，本条只剩「接线」。
   input.addEventListener('input', () => {
-    input.style.height = 'auto';
     growComposerInput(input);
     syncRefOnlyGate(view);
     // 输入使闸解除时（blocked→false）占位符立即回到附件/通用文案 ——
@@ -1883,11 +1939,11 @@ export function initInput(view) {
         } else if (view.historyIndex > 0) {
           view.historyIndex--;
         }
-        input.value = state.inputHistory[view.historyIndex];
+        // 程序化回填走唯一入口（显示缺陷批 2026-11-21）：写值 → 量高（封顶）→
+        // 光标落末尾并锚定视口。此前是「写值 + height='auto' + 量高 + 落光标」——
+        // 量高时读的还是上一次的光标位置，20 行历史一召回就只剩视口开头那一段。
+        setComposerText(input, state.inputHistory[view.historyIndex]);
         recallHistoryAttachments(view);
-        input.style.height = 'auto';
-        growComposerInput(input);
-        input.setSelectionRange(input.value.length, input.value.length);
         return true;
       }
       if (e.key === 'ArrowDown' && input.selectionStart === input.value.length && input.selectionEnd === input.selectionStart) {
@@ -1895,15 +1951,12 @@ export function initInput(view) {
         if (view.historyIndex === -1) return true;
         if (view.historyIndex >= state.inputHistory.length - 1) {
           view.historyIndex = -1;
-          input.value = view.historyDraft;
+          setComposerText(input, view.historyDraft);
         } else {
           view.historyIndex++;
-          input.value = state.inputHistory[view.historyIndex];
+          setComposerText(input, state.inputHistory[view.historyIndex]);
         }
         recallHistoryAttachments(view);
-        input.style.height = 'auto';
-        growComposerInput(input);
-        input.setSelectionRange(input.value.length, input.value.length);
         return true;
       }
     }
@@ -1955,26 +2008,23 @@ export function initInput(view) {
         // Replace [voiceAnchor, voiceAnchor + voiceInterimLen) with new interim text
         const before = input.value.substring(0, voiceAnchor);
         const after = input.value.substring(voiceAnchor + voiceInterimLen);
-        input.value = before + text + after;
+        const next = before + text + after;
         voiceInterimLen = text.length;
-        voiceBaseline = input.value;
-        input.focus();
-        input.setSelectionRange(voiceAnchor + text.length, voiceAnchor + text.length);
-        input.style.height = 'auto';
-        growComposerInput(input);
+        voiceBaseline = next;
+        // 程序化写值走唯一入口（显示缺陷批 2026-11-21）：落点 = 本段文本末尾，
+        // 量高与锚定由入口一次做完（改前量高读的是写值前的光标 ⇒ 视口留在旧段）。
+        setComposerText(input, next, { caret: voiceAnchor + text.length, focus: true });
       },
       onText: (text) => {
         // Replace interim with final text + trailing space
         const before = input.value.substring(0, voiceAnchor);
         const after = input.value.substring(voiceAnchor + voiceInterimLen);
         const insert = text + ' ';
-        input.value = before + insert + after;
+        const next = before + insert + after;
         voiceInterimLen = 0;
         voiceAnchor = before.length + insert.length;
-        voiceBaseline = input.value;
-        input.setSelectionRange(voiceAnchor, voiceAnchor);
-        input.style.height = 'auto';
-        growComposerInput(input);
+        voiceBaseline = next;
+        setComposerText(input, next, { caret: voiceAnchor });
       },
       onState: (state, data) => {
         updateVoiceUI(state, data);

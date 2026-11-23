@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "change": "workspace-compute",
+  "mappings": [
+    {
+      "requirement": "WCP-REQ-001",
+      "scenario": "WCP-SCN-001",
+      "implementation": [
+        "openspec/changes/workspace-compute/design.md",
+        "openspec/changes/workspace-compute/specs/workspace-compute/spec.md",
+        "openspec/changes/workspace-compute/proposal.md",
+        "openspec/changes/workspace-compute/tasks.md",
+        "openspec/changes/workspace-compute/trace.json"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "本轮交付为提案。写时复制的物理共享、写入隔离和 Git 索引须在支持该能力的实际卷上验证。",
+        "steps": "在隔离 APFS 测试卷从同一提交创建种子、普通基准树与两棵受管树。比较 git ls-files --stage、HEAD、内容和模式。仅在第一棵树上原地改写、暂存、重命名、删除并提交，从节点打开该树，在管理器中核对路径与交付目录，复查其余两份内容。",
+        "expected": "初始内容与标准检出一致，索引和 HEAD 各自独立。基准树、另一树及种子未被写穿，项目能定位新树。"
+      }
+    },
+    {
+      "requirement": "WCP-REQ-001",
+      "scenario": "WCP-SCN-002",
+      "implementation": [
+        "openspec/changes/workspace-compute/design.md",
+        "openspec/changes/workspace-compute/specs/workspace-compute/spec.md"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "存量工作树和克隆故障的回退须结合实际 Git 注册状态逐项核验，拟在实现后补入故障注入测试。",
+        "steps": "准备含已暂存、未暂存、未跟踪内容的旧树并保存清单。重新打开旧树，在不支持克隆的卷上建新树；在另一命名工作树的注册与物化之间注入中断后重试，比较各树注册、HEAD、索引与内容。",
+        "expected": "旧树内容无损，新树给出可核对的实际后端和目标基线；失败或重试只处理本次创建的资源。"
+      }
+    },
+    {
+      "requirement": "WCP-REQ-002",
+      "scenario": "WCP-SCN-003",
+      "implementation": [
+        "openspec/changes/workspace-compute/design.md",
+        "openspec/changes/workspace-compute/specs/workspace-compute/spec.md"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "登录、设备端授权、撤销传播及并发容量属于多设备集成行为，本提案尚无可报告的端到端用例。",
+        "steps": "使用隔离测试账号和设备，分别尝试仅登录、开启贡献、暂停、重新授权后撤销和异账号认领。当容量已经预约或执行环境不匹配时再投同类任务。检查调度记录、快照下载权限以及在途状态。",
+        "expected": "只向已授权、条件匹配且可预约的设备发放任务和快照。其余请求拒绝或排队，暂停和撤销的影响可见。"
+      }
+    },
+    {
+      "requirement": "WCP-REQ-003",
+      "scenario": "WCP-SCN-004",
+      "implementation": [
+        "openspec/changes/workspace-compute/design.md",
+        "openspec/changes/workspace-compute/specs/workspace-compute/spec.md"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "快照和差量传输需要实现后的两端数据路径，现有文件传输测试尚不能证明未提交输入可复测。",
+        "steps": "在隔离仓库增加指定未跟踪文件，改写一个已跟踪文件，删除另一个，设置可执行位并放入指向仓库外的符号链接、私密配置。提交任务后继续编辑。给远端预置一部分内容和一块错误数据，记录缺件请求并核验最后的清单和内容。",
+        "expected": "实际执行只看到原快照冻结的数据和模式；正确已有数据可以复用，损坏输入先修复；外部链接目标内容、未授权配置和凭据未传输。"
+      }
+    },
+    {
+      "requirement": "WCP-REQ-004",
+      "scenario": "WCP-SCN-005",
+      "implementation": [
+        "openspec/changes/workspace-compute/design.md",
+        "openspec/changes/workspace-compute/specs/workspace-compute/spec.md"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "任务放置、已有 Bash 路由与多执行环境的兼容性依赖完整引擎装配，本轮仅约定验收过程。",
+        "steps": "在两台已授权测试设备上同时提交可独立运行的分片、依赖同一隔离实例的多步测试、一个显式固定到不相容设备的任务。另开原有设备会话读写文件。从结果核对设备、预约、工作路径、测试实例端口和数据根。",
+        "expected": "独立分片可分别执行，多步测试保持同一上下文，无容量争用或工作区串写。固定约束失败有原因，原会话文件与 Bash 路由未变。"
+      }
+    },
+    {
+      "requirement": "WCP-REQ-005",
+      "scenario": "WCP-SCN-006",
+      "implementation": [
+        "openspec/changes/workspace-compute/design.md",
+        "openspec/changes/workspace-compute/specs/workspace-compute/spec.md"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "断线、协调端重启和迟到回执需结合持久存储与真实设备复验，单个远程命令完成不覆盖这些时序。",
+        "steps": "对隔离任务重复投递一次认领，在执行中断开设备并重启隔离协调端。分别观察可重试和不可重试任务；重派后回放旧尝试的完成消息。让正常运行的一项测试断言失败，在另一执行中请求取消，再令离线设备重连并核验所属 PID 与监听端口。",
+        "expected": "任务可查到不同尝试和唯一有效终态。旧消息未覆盖新结果，断言失败单独呈现，不确定或离线取消可辨认；回收只影响任务自有资源。"
+      }
+    },
+    {
+      "requirement": "WCP-REQ-006",
+      "scenario": "WCP-SCN-007",
+      "implementation": [
+        "openspec/changes/workspace-compute/design.md",
+        "openspec/changes/workspace-compute/specs/workspace-compute/spec.md"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "清单聚合、结果归档和垃圾回收共享所有权边界，遗漏、重复与断连情形需要完整集成环境。",
+        "steps": "为测试指定分片和必收的报告，重复回传一个分片，暂扣另一个分片并篡改一份回传产物。观察判定后分别补交正确内容。准备有活跃租约、待确认产物、用户工作树、已释放临时对象的集合，先审阅候选，再在隔离目录核对回收清单。",
+        "expected": "缺失或损坏时无全组成功；最后的产物清单、校验信息和执行记录可对应。仅符合策略且无有效引用的临时对象被回收。"
+      }
+    },
+    {
+      "requirement": "WCP-REQ-007",
+      "scenario": "WCP-SCN-008",
+      "implementation": [
+        "openspec/changes/workspace-compute/design.md",
+        "openspec/changes/workspace-compute/specs/workspace-compute/spec.md"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "实际磁盘增量及端到端耗时取决于主机、卷、缓存和网络，需要在两台真实设备上保留原始测量。",
+        "steps": "按 design.md 规定的基线、样本和门槛，从同一提交与工作区快照创建普通和写时复制工作树，以卷实际分配增量核对静置与改写后的占盘。对相同测试清单运行单机与双机冷、热组，收齐从提交至最后一个有效结果的时间线、用例清单和产物记录。",
+        "expected": "所有可比较组的快照和覆盖相同，原始数据能重算 design.md 中的门槛；结果列出通过、未达标或不可比较的原因。"
+      }
+    },
+    {
+      "requirement": "WCP-REQ-008",
+      "scenario": "WCP-SCN-009",
+      "implementation": [
+        "openspec/changes/workspace-compute/design.md",
+        "openspec/changes/workspace-compute/specs/workspace-compute/spec.md"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "按需文件系统属于 R2 候选功能，目录、读写与离线恢复需在实际挂载和完整物化后对照。",
+        "steps": "在同一快照创建两棵独立投影及一棵完整基准树，列目录并通过原生工具读取冷文件。改写、暂存、删除和重命名第一棵树文件，使用同一组 Git 和构建命令比较视图；在缺块时断网后重连，再切换到完整物化并复核修改。",
+        "expected": "初始命名空间与标准树一致，读取校验和正确且修改、重命名与删除隔离。缺块失败可诊断，后备路径保留变更与 Git 状态。"
+      }
+    }
+  ]
+}

@@ -5,9 +5,10 @@
 // 单页资料 / 只读身份 / 设备清单含逐设备退出 / 无空动作、无子页）。
 //
 // ══ 页面成员（自上而下）══════════════════════════════════════════════════
-//   ① 资料卡：头像 + 名 + 邮箱（未登录态给登录键）—— 结构 `mf-me-card sp-identity`
+//   ① 资料卡：**头像**（未登录态给登录键）—— 结构 `mf-me-card sp-identity`
 //      + `mf-me-avatar-frame huge` 逐字保留（`scripts/check-panel-uniform.mjs`
-//      的登记判据，共享居中身份结构）。
+//      的登记判据，共享居中身份结构）。卡内名/邮箱块（`.mf-me-names`）已撤：
+//      身份读数只留 ② 一处（disclosure-dedup-spec.md §3.2 表 2 · U2）。
 //   ② 只读身份读数：username / nickname / email / 绑定 —— 全部
 //      `settingsIdentity.js getIdentityReadout()` 单点，禁第二份取数。
 //      profile-complete 批（2026-11-18 作者令「个人主页信息很多都没获取全」）：
@@ -119,10 +120,13 @@ function websiteText() {
 /** 资料卡 + 只读身份 + 官网指引 + 设备清单（单页全部内容；底部账号卡已随 #4 退役）。 */
 function buildMeHome(body) {
   const id = getIdentityReadout();
-  // ① 资料卡：大头像 + 名 + 邮箱（未登录态给登录键，与顶栏批登录面同源）。
+  // ① 资料卡：**只有头像**（未登录态给登录键，与顶栏批登录面同源）。
   //    大头像 = 官网出口（profile-complete 批，作者令「再次点击头像跳转官网」）：
   //    `<a>` 直落官网首页、新标签页打开（`rel="noopener noreferrer"`）。几何与
   //    绘制全走既有 `.mf-me-avatar-frame` 规则（标签从 div 换 a，类名与结构逐字不变）。
+  //    卡内的名/邮箱块（`.mf-me-names`）已撤：身份**读数**的唯一渲染点 = ② 的读数行
+  //    （disclosure-dedup-spec.md §3.2 表 2 · U2「同一信息组只允许 1 个渲染点」；
+  //    名与邮箱原本卡里报一次、读数行再报一次 = 同页两处渲染 ⇒ 重复）。
   const card = el(body, 'mf-me-card sp-identity');
   const frame = /** @type {HTMLAnchorElement} */ (el(card, 'mf-me-avatar-frame huge', 'a'));
   frame.href = getHomeUrl();
@@ -136,9 +140,6 @@ function buildMeHome(body) {
     </picture>
     <img class="mf-me-avatar-photo" alt="" hidden>`;
   paintAvatarFrame(frame);
-  const names = el(card, 'mf-me-names');
-  const nameEl = el(names, 'mf-me-name');
-  const subEl = el(names, 'mf-me-sub');
   if (!id.loggedIn) {
     const login = document.createElement('button');
     login.className = 'mf-me-login glass-control';
@@ -182,10 +183,6 @@ function buildMeHome(body) {
 
   const paintIdentity = () => {
     const s = getIdentityReadout();
-    nameEl.textContent = s.loggedIn
-      ? (s.nickname || s.username || s.email || t('profile.signedIn'))
-      : t('settings.identityNotSignedIn');
-    subEl.textContent = s.loggedIn ? (s.email || '') : '';
     vName.textContent = s.username || unknownText();
     vNick.textContent = s.nickname || unknownText();
     vEmail.textContent = s.email || unknownText();

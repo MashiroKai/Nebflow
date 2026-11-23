@@ -1,0 +1,186 @@
+/* canvasFavorites.css — Canvas 文档收藏三端样式（2026-11-23 前端功能批）。
+   收藏钮 = 顶部胶囊左座（.canvas-fav-btn）；侧边栏区 = #canvas-fav-section；手机 = .mf-hub-fav 内的同源列表。
+   颜色 / 圆角 / 焦点环只经 var(--ds-*) 令牌；文本不截断（换行而非省略号）。 */
+
+.canvas-fav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  margin-right: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ds-radius-pill);
+  background: transparent;
+  color: inherit;
+  opacity: 0.62;
+  cursor: pointer;
+  flex: none;
+}
+.canvas-fav-btn:hover { opacity: 1; }
+.canvas-fav-btn:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
+.canvas-fav-btn[hidden] { display: none; }
+.canvas-fav-btn.is-on { opacity: 1; }
+.canvas-fav-btn .canvas-fav-ic { fill: none; }
+.canvas-fav-btn.is-on .canvas-fav-ic { fill: currentColor; color: var(--ds-fav-star, currentColor); }
+/* 手机工具条星标（.mf-cv-star，族 = g2-fab，尺寸/态层由 g2-fab 供给）：只补星形填充。 */
+.mf-cv-star .canvas-fav-ic { fill: none; }
+.mf-cv-star.is-on .canvas-fav-ic { fill: currentColor; color: var(--ds-fav-star, currentColor); }
+/* 点亮动效：星标缩放回弹 + 光晕扩散（r2）。 */
+.canvas-fav-btn.is-pop .canvas-fav-ic, .mf-cv-star.is-pop .canvas-fav-ic { animation: canvas-fav-pop 420ms cubic-bezier(.2, .9, .3, 1.3); }
+@keyframes canvas-fav-pop {
+  0% { transform: scale(.6); }
+  60% { transform: scale(1.25); }
+  100% { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .canvas-fav-btn.is-pop .canvas-fav-ic { animation: none; }
+}
+
+.canvas-fav-section {
+  margin: 8px 8px 4px;
+  padding: 6px 4px;
+}
+.canvas-fav-head {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  opacity: 0.6;
+  padding: 2px 6px 4px;
+  text-align: left;
+  cursor: pointer;
+}
+.canvas-fav-head:hover { opacity: 1; }
+
+.canvas-fav-list { display: flex; flex-direction: column; gap: 2px; }
+.canvas-fav-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+.canvas-fav-row:hover .canvas-fav-title { text-decoration: underline; }
+/* 文本不截断：长标题换行显示（noclip 判据：不用 ellipsis 裁切）。 */
+.canvas-fav-title {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.canvas-fav-meta { font-size: 11px; opacity: 0.55; }
+.canvas-fav-row.is-invalid { opacity: 0.45; cursor: default; }
+.canvas-fav-row.is-invalid:hover .canvas-fav-title { text-decoration: none; }
+.canvas-fav-badge {
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: var(--ds-radius-badge);
+}
+.canvas-fav-empty { font-size: 12px; opacity: 0.6; padding: 6px 8px; }
+
+/* ── 收藏页（r2 · 微信收藏形态）：全屏 overlay，顶栏 / 搜索 / 分类 tab / 卡片列表。 ── */
+.cfp-page {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  border-radius: var(--ds-radius-shell) var(--ds-radius-shell) 0 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg);
+  color: var(--color-text);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+.cfp-page.is-open { opacity: 1; transform: none; }
+.cfp-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 52px;
+  padding: env(safe-area-inset-top, 0) 16px 0;
+  position: relative;
+  flex: none;
+}
+.cfp-back {
+  width: 36px; height: 36px; border: 0; background: transparent; color: inherit;
+  font-size: 30px; line-height: 1; cursor: pointer; padding: 0;
+}
+.cfp-title { position: absolute; left: 50%; transform: translateX(-50%); margin: 0; font-size: 17px; font-weight: 600; }
+.cfp-search { padding: var(--ds-space-2) var(--ds-space-6); flex: none; }
+.cfp-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 36px;
+  padding: 0 12px;
+  color: inherit;
+  font-size: 15px;
+}
+/* 搜索框造型 + 焦点环 = 共享输入面 .nf-field（inputSurface.css 单源，I2/F1 口径）。 */
+.cfp-tabs {
+  display: flex;
+  gap: 18px;
+  padding: 6px 16px 10px;
+  overflow-x: auto;
+  flex: none;
+}
+.cfp-tabs[hidden] { display: none; }
+.cfp-tab {
+  flex: none; border: 0; background: transparent; color: var(--color-text-muted);
+  font-size: 15px; padding: 4px 0; cursor: pointer; position: relative;
+}
+.cfp-tab.is-on { color: var(--color-text); font-weight: 600; }
+.cfp-tab.is-on { box-shadow: inset 0 -2px 0 currentColor; border-radius: var(--ds-radius-thin); }
+.cfp-body { flex: 1; min-height: 0; overflow-y: auto; padding: var(--ds-space-1) var(--ds-space-4) var(--ds-space-6); -webkit-overflow-scrolling: touch; }
+.cfp-list { display: flex; flex-direction: column; gap: var(--ds-space-2); }
+.cfp-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-3);
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  padding: var(--ds-row-pad);
+  border: 0;
+  border-radius: var(--ds-radius-button);
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+}
+.cfp-row:active { opacity: .75; }
+.cfp-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--ds-space-1); }
+.cfp-row-title { color: var(--color-text); font-size: var(--ds-fs-title); font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; white-space: normal; }
+.cfp-row-meta { display: flex; gap: var(--ds-space-2); font-size: var(--ds-fs-hint); color: var(--color-text-muted); line-height: 1.4; }
+.cfp-row-src { min-width: 0; overflow-wrap: anywhere; }
+.cfp-row-date { flex: none; }
+.cfp-thumb {
+  flex: none;
+  width: var(--ds-space-8); height: var(--ds-space-8); border-radius: var(--ds-radius-input); overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--color-bg);
+  font-size: var(--ds-fs-meta); color: var(--color-text-muted);
+}
+.cfp-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cfp-pdf-badge { color: inherit; font-size: inherit; font-weight: 600; }
+.cfp-empty { text-align: center; padding: var(--ds-space-12) var(--ds-space-4); color: var(--color-text-muted); font-size: var(--ds-fs-body); line-height: 1.6; }
+
+/* 收藏页在 1200 档（桌面）：居中定宽卡片，手机 ≤ 480 撑满。 */
+@media (min-width: 768px) {
+  .cfp-page { inset: 40px 0 0; }
+  .cfp-bar, .cfp-search, .cfp-tabs, .cfp-body { width: 100%; max-width: 760px; margin: 0 auto; box-sizing: border-box; }
+  .cfp-body { padding-bottom: 40px; }
+}
+.cfp-row.is-invalid { opacity: .45; }

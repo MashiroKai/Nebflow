@@ -24,7 +24,7 @@ import scala.concurrent.duration.*
  * - **E3 可投递判据**：`External` 是唯一不可投递的 kind（其余全部可投递给 actor）。
  * - **E4 不进任务型面板集**：`filterActiveAgents` 不因登记而把外部腿当成 task 行。
  * - **E5 不进孤儿处置面**：父会话终态时，外部腿不会被判成「假孤儿」。
- * - **E6 词表**：`AgentKind.values` **恰好**是 `Root/Team/Flow/Delegate/External/SubTask`
+ * - **E6 词表**：`AgentKind.values` **恰好**是 `Root/Flow/Delegate/External`
  *   —— 死的 `Ephemeral`/`Plan` 不得回来。
  *
  * 零进程、零数据根：全部用 `Ref` + 纯函数。
@@ -45,10 +45,11 @@ class AgentKindExternalSpec extends CatsEffectSuite:
     )
 
   // ── E6（先钉词表：其余用例的枚举前提）──────────────────────────────
-  test("E6 词表：AgentKind 恰好是 Root/Team/Flow/Delegate/External/SubTask（死的 Ephemeral/Plan 不得复活）") {
+  test("E6 词表：AgentKind 恰好是 Root/Flow/Delegate/External（死的 Ephemeral/Plan 不得复活）") {
     assertEquals(
       AgentKind.values.toList.map(_.toString),
-      List("Root", "Team", "Flow", "Delegate", "External", "SubTask")
+      // B5：Team 与 SubTask 已删（作者裁定 Q11/Q1）；Flow 保留（活跃生产者）。
+      List("Root", "Flow", "Delegate", "External")
     )
   }
 
@@ -95,7 +96,7 @@ class AgentKindExternalSpec extends CatsEffectSuite:
     val nonMessagable = AgentKind.values.toList.filterNot(ExternalAgentRecord.isMessagable)
     assertEquals(nonMessagable, List(AgentKind.External))
     assert(ExternalAgentRecord.isMessagable(AgentKind.Delegate))
-    assert(ExternalAgentRecord.isMessagable(AgentKind.SubTask))
+    assert(ExternalAgentRecord.isMessagable(AgentKind.Delegate))
     assert(ExternalAgentRecord.isMessagable(AgentKind.Flow))
     assert(ExternalAgentRecord.isMessagable(AgentKind.Root))
   }
@@ -105,7 +106,7 @@ class AgentKindExternalSpec extends CatsEffectSuite:
     val registry = Map(
       "external-codex-1" -> rec("external-codex-1", AgentKind.External),
       "delegate-1" -> rec("delegate-1", AgentKind.Delegate),
-      "subtask-1" -> rec("subtask-1", AgentKind.SubTask),
+      "subtask-1" -> rec("subtask-1", AgentKind.Delegate),
       "flow-1" -> rec("flow-1", AgentKind.Flow)
     )
     nebflow.gateway.WebSocketRoutes.filterActiveAgents(registry).map { rows =>
@@ -118,7 +119,7 @@ class AgentKindExternalSpec extends CatsEffectSuite:
   test("E5 孤儿面：父会话终态时外部腿不被判成假孤儿（ref=null 无从 Stop）") {
     val registry = Map(
       "external-codex-2" -> rec("external-codex-2", AgentKind.External, parent = "delegate-9"),
-      "subtask-2" -> rec("subtask-2", AgentKind.SubTask, parent = "delegate-9")
+      "subtask-2" -> rec("subtask-2", AgentKind.Delegate, parent = "delegate-9")
     )
     val orphans = CancelCascade.detectOrphans(registry, Set("delegate-9"))
     assertEquals(

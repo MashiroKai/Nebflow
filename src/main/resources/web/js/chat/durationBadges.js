@@ -3,6 +3,13 @@ import { t } from '../i18n.js';
 // formatFooterTime = footer-time 批（2026-10-06）的分层 footer label（今天仍为纯
 // 时钟 formatHm 语义，更早按本地日历日加日期层）——A 侧 chat.js 本簇改动随簇迁入。
 import { messageFooter } from '../chatItem.js';
+// ack-badge-pool 批（2026-11-23 作者令）：零 <report> 块回合的 ✻ 字句换 ack 池。
+// 块判据复用 outputTag.hasOutputBlock（围栏感知，与渠道侧/气泡零块面同一实现，
+// 不许第二套判据）；依赖方向单向（outputTag 只 import utils/dom，无环）。
+import { hasOutputBlock } from '../outputTag.js';
+// badge-tip-mix 机制回插（Reapply e818dc14e，2026-11-23 作者令「保留机制，文案后续再补」）：
+// 每 6 次徽章出现 1 条「提示：」使用提示，与浪漫池物理分离（badgeTips.js）。
+import { defaultBadgeTipMixer, composeTipPhrase } from './badgeTips.js';
 
 /**
  * Format milliseconds into a human-readable duration string.
@@ -40,17 +47,67 @@ export function formatLiveDuration(ms) {
 const THINKING_COUNT = 19;
 
 /**
+ * ack-badge-pool 批（2026-11-23 作者令）：零 <report> 块回合的 ✻ 字句池。
+ * 语义 = 收到 / 已办 / 轻量完成（同一宇宙意象、同一口气），键 ack.0–ack.17，
+ * {d} 仍为时长占位。条数断言在 scripts/check-ack-phrases.mjs（池非空 / 字数 /
+ * 两语言包对齐 / ACK_COUNT 常量一致）。
+ */
+const ACK_COUNT = 18;
+
+/** Shared draw: `seed != null` = deterministic `seed % count`（live 腿种子 =
+ *  徽章计数、回放腿 = 消息下标 —— 轮内必然前进 ⇒ 不连出同条）；无种子随机。
+ *  轮换机制沿用 think 池原形（2026-11-23 作者令「轮换沿用现机制」）。 */
+function pickFromPool(prefix, count, durationMs, seed) {
+  const idx = seed != null
+    ? ((seed % count) + count) % count
+    : Math.floor(Math.random() * count);
+  return '✻ ' + t(prefix + idx, { d: formatDuration(durationMs) });
+}
+
+/**
  * Pick a cosmology-themed thinking phrase with duration embedded.
  * e.g. "Counted some stars for 12s"
+ * 每次调用 = 一次徽章出现：混入器（badgeTips.js，每 6 次出现 1 条使用提示，绝不连出两条）
+ * 命中时以「提示：」标注的提示文案代替浪漫文案（composeTipPhrase），时长仍保留；其余走浪漫池（无标注）。
+ * @param {number} durationMs
+ * @param {number} [seed]
+ * @param {{next: () => (string|null)}} [tipMixer] 可注入（测试用），默认模块级混入器
+ * @returns {string} The full phrase text with duration.
+ */
+export function pickThinkingPhrase(durationMs, seed, tipMixer = defaultBadgeTipMixer) {
+  // badge-tip-mix 机制（Reapply e818dc14e）：混入器命中 ⇒ 「提示：」tip 短语；
+  // miss ⇒ 浪漫池（ack-badge-pool 批的 pickFromPool 轮换原形，seed 语义不变）。
+  // ack 池（pickAckPhrase）不接入混入器——与作者令「机制原样回插」一致，扩展待后续批。
+  const tip = tipMixer.next();
+  const d = formatDuration(durationMs);
+  if (tip) return composeTipPhrase(tip, d);
+  return pickFromPool('think.', THINKING_COUNT, durationMs, seed);
+}
+
+/**
+ * ack 池取词（零 <report> 块回合专用）——同形同轮换，语义换 ack。
  * @param {number} durationMs
  * @param {number} [seed]
  * @returns {string} The full phrase text with duration.
  */
-export function pickThinkingPhrase(durationMs, seed) {
-  const idx = seed != null
-    ? ((seed % THINKING_COUNT) + THINKING_COUNT) % THINKING_COUNT
-    : Math.floor(Math.random() * THINKING_COUNT);
-  return '✻ ' + t('think.' + idx, { d: formatDuration(durationMs) });
+export function pickAckPhrase(durationMs, seed) {
+  return pickFromPool('ack.', ACK_COUNT, durationMs, seed);
+}
+
+/**
+ * 回合字句分派单点（ack-badge-pool 批 2026-11-23）：终稿全文带 ≥1 个平衡的
+ * <report> 块 ⇒ think 池原样（「有 /report 的回合不动」）；零块（叙述、遗留
+ * 内容、只在代码围栏里的标签）⇒ ack 池。判据 = outputTag.hasOutputBlock，
+ * 与气泡零块面（markZeroBlockFace）同一谓词 —— 徽章字句与气泡面永不分叉。
+ * @param {string} text 该条消息的全文（data 原文，非展示裁剪面）
+ * @param {number} durationMs
+ * @param {number} [seed]
+ * @returns {string}
+ */
+export function pickTurnPhrase(text, durationMs, seed) {
+  return hasOutputBlock(String(text || ''))
+    ? pickThinkingPhrase(durationMs, seed)
+    : pickAckPhrase(durationMs, seed);
 }
 
 /**
@@ -103,11 +160,15 @@ export function createMsgFooterBadge(timestamp, copyText) {
 export function createDurationBadgeElement(durationMs, model, seed, timestamp, copyText) {
   // 装配单点 = chatItem.messageFooter（消息条目统一批 2026-11-18）：phrase/model
   // 走 duration 元数据档（#346 汇总行回读，footer 本体仍只渲染时间 + 复制）。
+  // ack-badge-pool 批（2026-11-23）：池分派看 copyText —— 本函数的全部调用方
+  // （live chat.js finishAi 的 stream.aiText、回放 persistence.js 的 m.text /
+  //   m.answer）传的都是该条消息的全文原文，正好是块判据要的输入；
+  // turn header 的 ✻ 段回读 data-nf-phrase ⇒ live 与两条回放腿自动同面。
   return messageFooter({
     timestamp,
     copyText,
     timeFormat: 'day',
-    duration: { phrase: pickThinkingPhrase(durationMs, seed), model },
+    duration: { phrase: pickTurnPhrase(copyText, durationMs, seed), model },
   });
 }
 

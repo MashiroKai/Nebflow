@@ -382,13 +382,11 @@ async function run() {
     const cmd = document.querySelector('.option-box .perm-cmd');
     const reason = document.querySelector('.option-box .perm-reason');
     const scope = [...document.querySelectorAll('.option-box .perm-scope-item')].map((r) => r.textContent);
-    const badge = document.querySelector('.option-box .perm-risk-badge');
     const src = document.querySelector('.perm-source-badge');
     return {
       cmd: cmd ? cmd.textContent : '',
       reason: reason ? reason.textContent : '',
       scope,
-      badge: badge ? badge.textContent : '',
       source: src ? src.textContent : '',
       toggle: !!document.querySelector('.perm-cmd-toggle'),
     };

@@ -1,35 +1,26 @@
 #!/usr/bin/env node
-// check-canvas-save-notice.mjs — Canvas「保存失败」通知的**静态门禁**
-// （canvas-save-failure 批，2026-11-18 P0：作者报障「现在怎么老是出现 canvas 保存
-// 失败的通知 好烦」）。
+// check-canvas-save-notice.mjs — Canvas 保存失败「静默保留」的**静态门禁**。
 //
-// 运行面对应 tests/canvas-save-failure-dedup.spec.mjs（真 DOM/真网络计数）。本文件是
-// **静态面**：把「这条通知的设计约束」钉成可机检 —— 真几何腿只能量它撞上的那几态，
-// 静态腿量**全部声明**：改回「页内 Set 就完事」「去掉可关闭」「hint 空话」这类
-// 回归，在没跑到该态时几何腿全绿，静态腿立刻红。
+// 历史：2026-11-18 P0 加过「保存失败」toast（带去重账 + hint + 关闭钮）。
+// 2026-11-22 作者令「删掉这个弹窗」：保存失败改为**静默保留**——不弹任何通知，
+// 本地兜底（localUnsynced + 失权端草稿）照旧。本门禁随之翻转为「不得再出现」。
 //
 // 判据（每条都有命中数读数）：
-//   N1 跨刷新去重：canvas.js 的保存失败通知去重账必须落到 sessionStorage
-//      （页内 Set 只挡同一页；刷新清空 ⇒ 席位被持久占住时每次加载重弹 = 「老是」）
-//   N2 同因单发射点：全树只允许一条 'save-failed' 原因字面量（不新增第二套通知）
-//   N3 正文逐字保留：作者裁定原句 'Canvas 保存失败，本地变更已保留。' 必须原样在场
-//   N4 可执行下一步：通知必须带 hint 次级行，且 hint 不是一句空话（≥12 字、
-//      且不等于正文本身）
-//   N5 可关闭：通知必须带 closable，且 modal.js 的 showToast 真的实现关闭钮
-//   N6 hint 渲染：modal.js 真的把 opts.hint 渲染成 .nebflow-toast-hint
-//   N7 富通知不改旧面：modal.js 的富结构门 = **形状开关集合**（closable / hint /
-//      action）的析取 —— 任一在场才切富结构，三开关全不在必为 false（普通 toast 的
-//      DOM 与旧版一致 —— 本批不碰其他通知）。判据随 notice-unify 批（2026-11-18 裁定
-//      ①）从「两开关字面」放宽到「三开关集合」：action（正文列动作钮）是合法形状开关，
-//      不改类型数；集合不全 / 出现常量 / 非析取即红（防恒真把普通 toast 拖进富结构）。
+//   S1 失败路径静默且兜底保留：canvasWriter 的 failed 处理器置 localUnsynced 并
+//      调 writerChanged('reader')，且处理器体内不含任何通知调用。
+//   S2 写者段无通知：从 `let localUnsynced` 到 canvasWriter 构造之间不出现
+//      __showToast / showToast / writerNotice。
+//   S3 全前端无「保存失败」弹窗文案：web/js 下不出现 'Canvas 保存失败' 字面量。
+//   S4 去重/hint 残骸清零：不出现 writerNotice / SAVE_FAIL_HINT / NOTICE_SEEN_KEY /
+//      canvas_notice_seen（死代码不留）。
 //
 // 用法：
 //   node scripts/check-canvas-save-notice.mjs                    # 当前树（门禁用）
-//   node scripts/check-canvas-save-notice.mjs --web-root <dir>   # 另一棵树（改前取证）
+//   node scripts/check-canvas-save-notice.mjs --web-root <dir>   # 另一棵树
 //   node scripts/check-canvas-save-notice.mjs --json             # 机器读
 // 退出码：0 = 全绿；1 = 有 FAIL。
-import { readFileSync } from 'node:fs';
-import { join, isAbsolute, normalize } from 'node:path';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join, isAbsolute, normalize, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = fileURLToPath(new URL('..', import.meta.url));
@@ -43,75 +34,45 @@ const argVal = (name, def = null) => {
 const JSON_OUT = argv.includes('--json');
 const WEB_SPEC = argVal('web-root', '') || join(HERE, 'src/main/resources/web');
 const WEB = normalize(isAbsolute(WEB_SPEC) ? WEB_SPEC : join(HERE, WEB_SPEC));
-
 const CANVAS = join(WEB, 'js', 'canvas.js');
-const MODAL = join(WEB, 'js', 'modal.js');
-
-/** 作者裁定原句（与 canvas-readonly-toast / canvas-reader-nonblocking 的断言同一份）。 */
-const CANONICAL = 'Canvas 保存失败，本地变更已保留。';
+const FAIL_TEXT = 'Canvas 保存失败';
 
 const results = [];
 const check = (id, ok, note) => results.push({ id, ok, note });
 
+const walk = (dir) => readdirSync(dir).flatMap((f) => {
+  const p = join(dir, f);
+  return statSync(p).isDirectory() ? walk(p) : (['.js', '.mjs', '.html'].includes(extname(p)) ? [p] : []);
+});
+
 let canvasJs = '';
-let modalJs = '';
 try { canvasJs = readFileSync(CANVAS, 'utf8'); } catch { /* handled below */ }
-try { modalJs = readFileSync(MODAL, 'utf8'); } catch { /* handled below */ }
 
-if (!canvasJs || !modalJs) {
-  check('N0', false, `missing source (canvas.js=${!!canvasJs} modal.js=${!!modalJs}) under ${WEB}`);
+if (!canvasJs) {
+  check('S0', false, `missing source canvas.js under ${WEB}`);
 } else {
-  // 通知区块 = writerRejectionNotices 起到 canvasWriter 构造前。
-  const blockStart = canvasJs.indexOf('const writerRejectionNotices');
-  const blockEnd = canvasJs.indexOf('const canvasWriter = createCanvasWriterClient(');
-  const block = blockStart >= 0 && blockEnd > blockStart ? canvasJs.slice(blockStart, blockEnd) : '';
+  const start = canvasJs.indexOf('let localUnsynced = false;');
+  const end = canvasJs.indexOf('const canvasWriter = createCanvasWriterClient(');
+  const block = start >= 0 && end > start ? canvasJs.slice(start, end) : '';
+  const handler = /failed:\s*\(\)\s*=>\s*\{([^}]*)\}/.exec(canvasJs);
+  const handlerBody = handler ? handler[1] : '';
 
-  // N1 —— 去重账跨刷新存活（sessionStorage），且通知闸真的查它。
-  const hasSeenStore = /sessionStorage\.getItem\(\s*NOTICE_SEEN_KEY\s*\)/.test(block)
-    && /sessionStorage\.setItem\(\s*NOTICE_SEEN_KEY\s*[,)]?/.test(block);
-  const noticeGuardsOnSeen = /function writerNotice\([\s\S]{0,400}noticeSeenBefore\(/.test(block);
-  check('N1', hasSeenStore && noticeGuardsOnSeen,
-    `sessionStorage seen-store=${hasSeenStore} writerNotice-guards-on-it=${noticeGuardsOnSeen}`);
+  const silentFallback = /localUnsynced\s*=\s*true/.test(handlerBody) && /writerChanged\(\s*'reader'\s*\)/.test(handlerBody);
+  const handlerSilent = !/__showToast|showToast|writerNotice/.test(handlerBody);
+  check('S1', !!handler && silentFallback && handlerSilent,
+    `failed handler: fallback-kept=${silentFallback} silent=${handlerSilent}`);
 
-  // N2 —— 同因只有一个发射点。
-  const reasonLiterals = (canvasJs.match(/'save-failed'/g) || []).length;
-  check('N2', reasonLiterals === 1, `'save-failed' literals=${reasonLiterals} (expect 1)`);
+  const noNoticeInBlock = block.length > 0 && !/__showToast|showToast|writerNotice/.test(block);
+  check('S2', noNoticeInBlock, `writer block carries no toast/notice call=${noNoticeInBlock} (block ${block.length} chars)`);
 
-  // N3 —— 正文原句逐字在场（writerNotice 的调用点 args）。
-  const noticeCall = /writerNotice\(\s*'([^']*)'/.exec(canvasJs);
-  check('N3', !!noticeCall && noticeCall[1] === CANONICAL,
-    noticeCall ? `message literal=${JSON.stringify(noticeCall[1])}` : 'writerNotice( literal not found');
+  const files = walk(join(WEB, 'js'));
+  const literalHits = files.filter((f) => readFileSync(f, 'utf8').includes(FAIL_TEXT));
+  check('S3', literalHits.length === 0,
+    `'${FAIL_TEXT}' literal files=${literalHits.length}${literalHits.length ? ' ' + literalHits.map((f) => f.slice(WEB.length + 1)).join(',') : ''}`);
 
-  // N4 —— 可执行的下一步（hint 非空话）。
-  const hintLit = /const SAVE_FAIL_HINT\s*=\s*'([^']*)'/.exec(canvasJs);
-  const hintUsed = /\{\s*closable:\s*true\s*,\s*hint:\s*SAVE_FAIL_HINT\s*\}/.test(block);
-  const hintText = hintLit ? hintLit[1] : '';
-  check('N4', !!hintLit && hintUsed && hintText.length >= 12 && hintText !== CANONICAL,
-    `hint literal=${JSON.stringify(hintText)} used=${hintUsed} (len>=12 & != message)`);
-
-  // N5 —— 可关闭 + modal.js 真的实现关闭钮。
-  const closablePassed = /\{\s*closable:\s*true\s*,\s*hint:\s*SAVE_FAIL_HINT\s*\}/.test(block);
-  const modalCloseBtn = /nebflow-toast-close/.test(modalJs) && /opts\.closable/.test(modalJs);
-  check('N5', closablePassed && modalCloseBtn,
-    `notice passes closable=${closablePassed} modal-close-button=${modalCloseBtn}`);
-
-  // N6 —— hint 渲染成次级行。
-  const modalHint = /opts\.hint/.test(modalJs) && /nebflow-toast-hint/.test(modalJs);
-  check('N6', modalHint, `modal renders opts.hint -> .nebflow-toast-hint=${modalHint}`);
-
-  // N7 —— 富结构只在形状开关（closable / hint / action）任一在场时启用（普通 toast 面零改动）。
-  // 判据 = rich 门恰为三开关的 `!!(… || … || …)` 析取，且不出现 true/false 常量：
-  //   三开关全不在 ⇒ false（保零回退）；恒真 / 集合不全 / 非析取 ⇒ 红。
-  const richLine = /(?:const|let|var)\s+rich\s*=\s*([^\n;]+)/.exec(modalJs);
-  const richExpr = richLine ? richLine[1].trim() : '';
-  const richTerms = (/^!!\(([^()]*)\)$/.exec(richExpr)?.[1] ?? '')
-    .split('||').map((t) => t.trim()).filter(Boolean);
-  const richWanted = ['opts.closable', 'opts.hint', 'opts.action'];
-  const richGate = richTerms.length === richWanted.length
-    && richWanted.every((t) => richTerms.includes(t))
-    && !/\b(?:true|false)\b/.test(richExpr);
-  check('N7', richGate,
-    `rich gate = ${richExpr || '(not found)'} — switches=[${richTerms.join(', ') || 'none'}]`);
+  const residue = ['writerNotice', 'SAVE_FAIL_HINT', 'NOTICE_SEEN_KEY', 'canvas_notice_seen']
+    .filter((t) => canvasJs.includes(t));
+  check('S4', residue.length === 0, `dead dedup/hint residue=${residue.length ? residue.join(',') : 'none'}`);
 }
 
 const fails = results.filter((r) => !r.ok);

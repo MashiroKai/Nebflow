@@ -216,11 +216,12 @@ test('T4 mobile P2 face on real shapes: main-session search + kind filter narrow
   const rows = page.locator('#search-results .search-result');
   await expect(rows).toHaveCount(2);
 
-  // 角色行（P2 二筛选行）在真形状数据上收窄：AI 档 ⇒ 仅 ai 种植行（「工具」档
-  // 随作者令①退役——tool 行不入结果，角色档不再列出）。
-  await page.locator('#mh-search-kind').selectOption('ai');
+  // 来源筛选（P2 唯一筛选行）在真形状数据上收窄：助手档 ⇒ 仅 ai 种植行
+  // （「工具」档随作者令①退役——tool 行不入结果）。search-page-density 批：
+  // 角色 select `#mh-search-kind` 退役，来源改由 chips 三档承担。
+  await page.locator('#search-filter-row .search-source-chip[data-source="agent"]').click();
   await expect(rows).toHaveCount(1, { timeout: 8000 });
   await expect(rows.first()).toHaveAttribute('data-kind', 'ai');
-  await page.locator('#mh-search-kind').selectOption('');
+  await page.locator('#search-filter-row .search-source-chip[data-source=""]').click();
   await expect(rows).toHaveCount(2, { timeout: 8000 });
 });

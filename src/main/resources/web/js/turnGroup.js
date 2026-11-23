@@ -88,7 +88,7 @@ import { settleWorklineAsHeader, removeWorkline, priorTurnBadgeSettled, buildBad
 // output 块语法批（作者令 2026-10-31）：turn-header 角标 = 「看思考过程与工具
 // 结果」的现成入口——output 气泡的展开/收起随同一 toggle 换面（展开 = 原文
 // 全量 + <output> 语法原样现形）。
-import { setOutputExpanded } from './outputTag.js';
+import { setOutputExpanded, setZeroBlockExpanded } from './outputTag.js';
 
 /* ---------- row classification ---------- */
 
@@ -158,7 +158,7 @@ function isTuckableRow(row) {
  *  set at row-build time). Such a turn gets a header even with zero tuckable
  *  rows: the badge is the ONLY expand entry to the raw full text. */
 function rowHasOutputFace(row) {
-  return !!(row.querySelector && row.querySelector('.bubble[data-nf-output], .bubble[data-nf-defer-output]'));
+  return !!(row.querySelector && row.querySelector('.bubble[data-nf-output], .bubble[data-nf-defer-output], .bubble[data-nf-zero-output]'));
 }
 
 /** Swap every output-faced bubble in `rows` to the expanded (raw full text,
@@ -167,6 +167,9 @@ function swapOutputFaces(rows, expanded) {
   for (const row of rows) {
     const b = row.querySelector('.bubble[data-nf-output]');
     if (b) setOutputExpanded(b, expanded);
+    // 零块 root 戳（零块可见性批 2026-11-21）：同一角标同一开关，换成原文/全文。
+    const z = row.querySelector('.bubble[data-nf-zero-output]');
+    if (z) setZeroBlockExpanded(z, expanded);
   }
 }
 

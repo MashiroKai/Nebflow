@@ -108,3 +108,20 @@ export function frag(...children) {
   appendChildren(box, children);
   return box;
 }
+
+/**
+ * 把已净化的 HTML 串（典型 = renderMarkdownWithMath 的产物）落到 node 的子树 ——
+ * 组件契约 R5 的合规写法（同 askDialog.js setMarkdownHtml：DOMParser(text/html) →
+ * importNode → replaceChildren；零脚本执行，属性/文本/子树与 innerHTML 逐字相同）。
+ *
+ * 前缀 `<body>`：让解析器直接进入 in-body 模式。否则前导的 `<style>`/`<meta>`/
+ * `<link>` 会被吸进 document.head（于是从子树消失），前导空白会被丢弃；加前缀后
+ * 它们与 innerHTML（in-body 片段解析）落在同一位置，子树逐字节一致。
+ *
+ * @param {Element} node 目标节点（其全部子节点被替换）
+ * @param {string|null|undefined} html
+ */
+export function setHtmlTree(node, html) {
+  const parsed = new DOMParser().parseFromString('<body>' + (html == null ? '' : String(html)), 'text/html');
+  node.replaceChildren(...Array.from(parsed.body.childNodes, (n) => document.importNode(n, true)));
+}

@@ -74,7 +74,7 @@ class RequestContextCacheSpec extends FunSuite:
 
   test("empty history and absent/empty clocks do not lose context or add blank messages") {
     for empty <- List(None, Some("")) do
-      assertEquals(messages(anthropic.bodyOf(params(Nil, empty), false)), Nil)
+      intercept[IllegalStateException] { anthropic.bodyOf(params(Nil, empty), false) }
       assertEquals(openai.requestMessages(params(Nil, empty), false).size, 1) // system only
     val am = messages(anthropic.bodyOf(params(Nil, Some(clock1)), false))
     assertEquals(am.size, 1)

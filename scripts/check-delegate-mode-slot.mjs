@@ -26,9 +26,13 @@
 //        (`DelegateRegistry.rawModeOf`, no `isModeWord` filter inside its body),
 //        an explicit readable reason exists (`delegateSlotUnresolvedReason`) and
 //        it is actually recorded (`recordUnresolvedDelegateSlot`).
-//   T5  Request face wired = AgentSessionExecution feeds the record mode into
-//        slotChainOf and keeps the composition order slot > pin > base
-//        (`.orElse(agentModelWithPin(freshDef.model, effectivePin))`).
+//   T5  Request face wired = the record mode still reaches slotChainOf with the
+//        composition order slot > pin > base, and it happens at ONE point. 该
+//        单点自 P1 统一模型层（feat/model-decision-unify，2026-11-22 落地）起是
+//        `ModelDecision.composeAgentModel`：AgentSessionExecution 只传
+//        (sessionId, rawModeOf, base, pin) 并取 `._1`，内联组合段已消失。
+//        闸按「不变式」判而不是按「旧位置」判：仍会咬住回退（谁把组合段搬回
+//        请求面内联即红）与参数错位（slotChainOf 拿不到 record mode 即红）。
 //   T6  Spec pins the contract = the four mode cases, the unknown-mode fallback
 //        case, the retired prefix rule and the priority regression are asserted.
 //   T7  Probe-before-trust = every detector regex hits a synthetic sample
@@ -48,6 +52,9 @@ const FILES = {
   roles: 'src/main/scala/nebflow/core/ModelRoles.scala',
   registry: 'src/main/scala/nebflow/core/delegate/DelegateRegistry.scala',
   exec: 'src/main/scala/nebflow/agent/AgentSessionExecution.scala',
+  // P1 统一模型层（feat/model-decision-unify，2026-11-22 落地）：请求面组合
+  // （槽 > 钉链 > base）从 AgentSessionExecution 内联段下移到这个单点。
+  decision: 'src/main/scala/nebflow/llm/ModelDecision.scala',
   spec: 'src/test/scala/nebflow/core/ModelRolesSpec.scala',
 };
 
@@ -70,9 +77,15 @@ const RE_REASON =
 const RE_RECORDED = /recordUnresolvedDelegateSlot\(sessionId, delegateMode\)/;
 
 // ── T5: the request face is wired and the order is untouched ───────────────
-const RE_CALLSITE =
-  /slotChainOf\(\s*stateForLlm\.sessionId,\s*nebflow\.core\.delegate\.DelegateRegistry\.rawModeOf\(stateForLlm\.sessionId\)\s*\)/;
-const RE_ORDER = /slotChainOf\([\s\S]*?\)\s*\.orElse\(agentModelWithPin\(freshDef\.model, effectivePin\)\)/;
+// 请求面（AgentSessionExecution）必须把 record mode 交给统一层单点，参数顺序
+// (sessionId, rawModeOf(sessionId), base, pin) 逐位钉住。
+const RE_ROUTE =
+  /ModelDecision\s*\.composeAgentModel\(\s*stateForLlm\.sessionId,\s*nebflow\.core\.delegate\.DelegateRegistry\.rawModeOf\(stateForLlm\.sessionId\),\s*freshDef\.model,\s*effectivePin\s*\)/;
+// 组合序只在统一层出现一次：先 slotChainOf(record mode)，否则 pin 物化，否则 base。
+const RE_ORDER_AT_POINT =
+  /slotChainOf\(\s*sessionId,\s*delegateMode\s*\)\s*match[\s\S]*?pin match[\s\S]*?Some\(p\.toAgentModelConfig\)/;
+// 回退护栏：请求面不得再出现旧内联组合（`slotChainOf(...).orElse(agentModelWithPin(...))`）。
+const RE_OLD_INLINE = /slotChainOf\([\s\S]*?\)\s*\.orElse\(agentModelWithPin\(freshDef\.model, effectivePin\)\)/;
 
 // ── T6: the spec pins the contract ─────────────────────────────────────────
 // 换行不敏感（全仓格式化批 2026-11-21）：scalafmt 把 `slotOfDelegateMode(Some("kernel")),
@@ -126,14 +139,19 @@ const PROBES = [
     'reason-recorded detector',
   ],
   [
-    RE_CALLSITE,
-    '              .slotChainOf(\n                stateForLlm.sessionId,\n                nebflow.core.delegate.DelegateRegistry.rawModeOf(stateForLlm.sessionId)\n              )',
-    'request-face-wiring detector',
+    RE_ROUTE,
+    '            agentModel = nebflow.llm.ModelDecision\n              .composeAgentModel(\n                stateForLlm.sessionId,\n                nebflow.core.delegate.DelegateRegistry.rawModeOf(stateForLlm.sessionId),\n                freshDef.model,\n                effectivePin\n              )\n              ._1,',
+    'request-face-routing detector',
   ],
   [
-    RE_ORDER,
+    RE_ORDER_AT_POINT,
+    '    ModelRoles.slotChainOf(sessionId, delegateMode) match\n      case Some(slotChain) =>\n        (Some(slotChain), Nil)\n      case None =>\n        pin match\n          case Some(p) => (Some(p.toAgentModelConfig), Nil)',
+    'composition-order-at-single-point detector',
+  ],
+  [
+    RE_OLD_INLINE,
     '            agentModel = nebflow.core.ModelRoles\n              .slotChainOf(a, b)\n              .orElse(agentModelWithPin(freshDef.model, effectivePin)),',
-    'composition-order detector',
+    'inline-composition-retired detector',
   ],
 ];
 
@@ -260,16 +278,22 @@ for (const [re, sample, label] of PROBES) {
 
 // ── T5: the request face is wired, the order is untouched ──────────────────
 {
-  const c = RE_CALLSITE.test(files.exec);
-  if (c) {
-    const line = firstHit(files.exec, /\.slotChainOf\(/);
-    pass(`T5 request face feeds the record mode into slotChainOf: ${show(FILES.exec, line ? line.line : 0, 'slotChainOf(sessionId, DelegateRegistry.rawModeOf(sessionId))')}`);
-  } else fail(`T5 AgentSessionExecution no longer feeds the record mode into slotChainOf: ${FILES.exec}`);
+  if (RE_ROUTE.test(files.exec)) {
+    const line = firstHit(files.exec, /\.composeAgentModel\(/);
+    pass(`T5 request face feeds the record mode into the single composition point: ${show(FILES.exec, line ? line.line : 0, 'ModelDecision.composeAgentModel(sessionId, DelegateRegistry.rawModeOf(sessionId), base, pin)')}`);
+  } else fail(`T5 AgentSessionExecution no longer routes the record mode into ModelDecision.composeAgentModel: ${FILES.exec}`);
 
-  if (RE_ORDER.test(files.exec)) {
-    pass('T5 composition order preserved: slot chain > dispatch pin > agent chain (`.orElse(agentModelWithPin(...))`)');
+  if (RE_ORDER_AT_POINT.test(files.decision)) {
+    const line = firstHit(files.decision, /slotChainOf\(\s*sessionId,\s*delegateMode\s*\)/);
+    pass(`T5 composition order preserved at the single point: slot chain > dispatch pin > agent chain: ${show(FILES.decision, line ? line.line : 0, 'slotChainOf(sessionId, delegateMode) match … pin match … toAgentModelConfig')}`);
   } else {
-    fail(`T5 the slot > pin > base composition is gone from the request face: ${FILES.exec}`);
+    fail(`T5 the slot > pin > base composition is gone from the single point: ${FILES.decision}`);
+  }
+
+  if (RE_OLD_INLINE.test(files.exec)) {
+    fail(`T5 the old inline composition came back at the request face (two truth sources): ${FILES.exec}`);
+  } else {
+    pass('T5 the request face keeps no inline slot > pin > base composition (single point only)');
   }
 }
 

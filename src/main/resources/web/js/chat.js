@@ -2,11 +2,11 @@
 // All DOM manipulation for messages, bubbles, tool cards, option boxes, and status.
 
 import state, { AGENT_PALETTE } from './state.js';
-import { permissionDetails } from './permissionDetails.js';
 import { mainBubbleClass } from './chatUi.js';
 // 消息条目统一批 2026-11-18：气泡节点装配基座单点（chatItem.js）。
 import { messageBubbleNode } from './chatItem.js';
 import { key } from './branding.js';
+import { bindImeGuard, commitEnter } from './imeGuard.js';
 // voice 块补封批 2026-10-31（作者令「封存所有会话的 voice 块」，漏网面）：TTS
 // 输出族（<voice> 块 + VoicePlayer 播报）与全双工同 flag 封存（voiceEnabled，
 // 缺席即封存；utils 渲染面剥签，此处把住播放面三入口 prefetch/enqueue/replay）。
@@ -33,7 +33,7 @@ import { askSourceParts, removePendingAsk, askAnswerFrame, cancelAskFrame, notif
 import { renderRefBlock, normalizeTaskRef, parseTaskReturnText, buildTaskRefLine, CLOSE_X_SVG } from './reference.js';
 // quote-message 一期（spec §7）：主聊天区右键引用 —— 菜单/引用条/引用块/跳转收口在
 // msgQuote.js 单模块（chat.js 只挂点，不复制逻辑）。
-import { attachQuoteMenu, renderQuoteBlock, quoteFromRef, nextChatMsgId, syncQuoteJumpStates, scheduleQuoteButtonMount } from './msgQuote.js';
+import { attachQuoteMenu, renderQuoteBlock, quoteFromRef, nextChatMsgId, syncQuoteJumpStates, scheduleQuoteButtonMount, revealQuoteTarget } from './msgQuote.js';
 // 图标眼单源（设计语言批 2026-10-21）：AskUser 密钥题的「显示」眼与设置页
 // provider 密码域（sidebar.js）同一份 SVG——providersUi.js 单向提供，无环。
 import { eyeSvg, eyeOffSvg } from './sidebar/providersUi.js';
@@ -84,11 +84,11 @@ function worklineLabel(rawLabel) {
 import { createMsgFooterBadge, renderDurationBadge } from './chat/durationBadges.js';
 // output 块语法批（作者令 2026-10-31）：<output> 包裹内容 = 用户可见全部——
 // 正常态只渲染块内（框外正文摘除），turn-header 角标展开见 outputTag.js。
-import { applyOutputFace } from './outputTag.js';
+import { applyOutputFace, markZeroBlockFace } from './outputTag.js';
 import { bindCollapsibleToggle } from './chat/collapsible.js';
 // 输入行为包批（2026-11-02 作者令）：busy↔idle 按钮 chrome = input/composer.js
 // 统一状态机（主会话 setBusy/clearBusy 与 canvas ask 共用同一实现）。
-import { applyTurnChrome } from './input/composer.js';
+import { applyTurnChrome, setComposerText } from './input/composer.js';
 import { withFocusKey } from './focusTrap.js';
 // 审批卡三要素（命令正文 / 为什么危险 / 作用域）单点 —— 报障批 2026-11-19。
 // live 渲染与两条历史重放腿共用同一个 builder，卡面形态不得分叉。
@@ -540,20 +540,28 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
   // quote-message 一期：带引用发送 ⇒ 气泡上方引用块（微信形态）。数据单点 =
   // 附件里的 chat-message ref（live/排队/草稿恢复共用同一形状 ⇒ 三个入路零
   // 额外处理）；该 ref 不进气泡内的 ref 卡循环（引用块是它唯一的消费面）。
-  const quoteAtt = (attachments || []).find(a => a && a.type === 'ref' && a.refType === 'chat-message');
-  const quoteBox = quoteAtt ? (() => { const q = quoteFromRef(quoteAtt); return q ? renderQuoteBlock(q) : null; })() : null;
+  // 🔴 多选引用批（2026-11-22 作者令「还有支持 多选引用」）：旧 `.find(...)` 只取
+  // 首条是「一条回复只带一条引用」的第二个断点 —— 改为按 refs 顺序**逐条**渲染
+  // （顺序 = 用户选择顺序 = 引擎逐条注入顺序），每条各自一枚引用块、各自可点回看。
+  const quoteAtts = (attachments || []).filter(a => a && a.type === 'ref' && a.refType === 'chat-message');
+  const quoteBoxes = quoteAtts
+    .map(a => quoteFromRef(a))
+    .filter(Boolean)
+    .map(q => renderQuoteBlock(q))
+    .filter(Boolean);
   // 引用块宽度约束（2026-10-20 作者令「引用文字不要超过用户发送的文字」）：
   // 引用块 + 文本气泡同时在场 ⇒ 包进 .msg-quote-composite（气泡驱宽复合盒，
   // 规则见 chat.css 同名段）——引用块渲染宽 = 气泡宽（窄气泡跟着窄），替代原
   // 「引用块 ≤ 100% 行宽」与气泡 80% 帽的错位。仅引用无气泡（纯引用帧被
   // isRefOnlyFrame 闸拦截；此处防御性兜底）不包裹，保持整行形态零回归。
+  // 多块同盒：复合盒是 flex column（chat.css），N 块按顺序纵向叠放，宽度同一支尺。
   let composite = null;
-  if (quoteBox && text) {
+  if (quoteBoxes.length && text) {
     composite = document.createElement('div');
     composite.className = 'msg-quote-composite';
     row.appendChild(composite);
   }
-  if (quoteBox) (composite || row).appendChild(quoteBox);
+  quoteBoxes.forEach((box) => (composite || row).appendChild(box));
 
   // Text bubble (separate)
   if (text) {
@@ -847,7 +855,12 @@ export function appendAiText(text, mark) {
         // that said `isRoot: true` gets the extracted body; anything else —
         // `false`, or an unstamped legacy frame — renders its full text exactly
         // as before (the tags then stay literal: no `opts.report` below).
-        const visible = target.bubble._nfIsRoot === true ? (extractOutputInner(target.bubble._nfText || '') || '') : (target.bubble._nfText || '');
+        // 流式期：root 无 report 块的文本先照常流出（不吞）；仅当出现了标签但尚未配平
+        // （流式中间态）时才隐藏，免得裸标签闪现。终态（finishAi）零块 root 折进角标。
+        const rawStream = target.bubble._nfText || '';
+        const streamInner = target.bubble._nfIsRoot === true ? extractOutputInner(rawStream) : null;
+        const visible = target.bubble._nfIsRoot !== true ? rawStream
+          : (streamInner !== null ? streamInner : (/<\/?report>/.test(rawStream) ? '' : rawStream));
         target.bubble.hidden = !visible;
         renderStreamMarkdown(target.bubble, visible, true,
           imgKeepFor(target.bubble), false, target.mark || null);
@@ -898,7 +911,10 @@ export function finishAi(durationMs, model) {
     // 过管线（散标签转义为字面文本，防被当成 HTML 块吞文）。
     const rootFace = bubble._nfIsRoot === true;
     if (!rootFace || !applyOutputFace(bubble, activeView.stream.aiText || '')) {
+      // 零块 root（无平衡块）：过程叙述 ⇒ 盖零块戳并**折进角标**（markZeroBlockFace 置
+      // hidden；turn-header 角标展开见原文，turnGroup 读戳）。非 root 逐字不变。
       bubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '', true, rootFace ? { report: true } : undefined);
+      if (rootFace) markZeroBlockFace(bubble, activeView.stream.aiText || '');
     }
     bubble._nfText = activeView.stream.aiText || '';
     bubble._nfRendered = true;
@@ -919,6 +935,12 @@ export function finishAi(durationMs, model) {
     // animation class even if the CSS rule were ever narrowed.
     if (firstPaint && !bubble._nfStreamed && activeView.motionEnabled()) bubble.classList.add('nf-pop');
     const ts = Date.now();
+    // 零正文终轮行（footer-leak 批 2026-11-22）：空正文 ⇒ 收起整行（空泡壳 + 徽章
+    // 不上屏），DOM 保留供 turnGroup 读 terminal/nfPhrase；与回放腿 row-empty-final 同口径。
+    if (!activeView.stream.aiText) {
+      const emptyRow = bubble.closest('.row');
+      if (emptyRow) emptyRow.classList.add('row-empty-final');
+    }
     // quote-message 一期（spec §2.1/§2.5）：助手文本行挂 id + 右键（复制 + 引用）。
     // 挂点在终态收口（finishAi）——流式期行是中间面，id 与菜单在这里一次成形。
     {
@@ -2054,7 +2076,9 @@ function resendLastInput(v) {
   if (!lastMsg) return;
   const sid = v && v.sessionId;
   const resendId = (sid && state.lastUserSendId[sid]) || '';
-  if (v && v.dom && v.dom.input) v.dom.input.value = lastMsg;
+  // 程序化回填走唯一入口（输入框显示缺陷批 2026-11-21）：重发一条长消息也必须
+  // 量高 + 把光标位拉进视口，否则内容塌在一行里、尾段读不到。
+  if (v && v.dom && v.dom.input) setComposerText(v.dom.input, lastMsg);
   import('./input.js').then(({ send }) => { setActiveView(v); send(resendId || undefined); });
 }
 
@@ -2465,13 +2489,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   const confirmLabel = doneLabel || t('chat.confirm');
   const saved = askSessionId ? loadAskDrafts(askSessionId) : {};
   const questionWrappers = [];
-  // askuser-media 批（2026-11-18）长内容下滑：题的正文与选项区收进**一个滚动区**
-  // （`.option-scroll`，`max-height` + `overflow-y:auto`），按钮行留在区外常驻可见。
-  // 作者令逐字：「待办的决策卡片比较长，因此要可以支持下滑查看」。
-  // 零回归：内容不超高时 `max-height` 不生效、滚动条不出现 ⇒ 短卡视觉与改前一致。
-  // 滚动不吞点击：滚动容器只接管拖拽/滚轮，`click`（= 选择）照常抵达 `.option-btn`。
-  const scrollDiv = document.createElement('div');
-  scrollDiv.className = 'option-scroll';
+  // 无滑动（作者令 2026-11-21）：题与选项直接铺进卡盒，不套滚动区；卡内容一屏直显。
 
   // --- Conditional branching helpers ---
   // The DOM mechanics (display toggle, reveal animation, hide-reset hooking)
@@ -2559,6 +2577,145 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     // sidebar/providersUi.js，与密钥面板/设置页同一枚眼），toggle 逻辑不动
     // （type password↔text），aria-label/title 仍走 t() 双语键，aria-pressed
     // 随揭示态。信息架构与交互语义零变化（视觉语言统一批）。
+    if (item.merge && typeof item.merge === 'object' && item.secret !== true) {
+      const config = item.merge;
+      const ops = config.operations || {};
+      const enabled = key => ops[key] !== false;
+      const branches = (Array.isArray(config.branches) ? config.branches : [])
+        .filter(b => b && typeof b.name === 'string' && b.name.trim())
+        .map(b => ({ name: b.name, note: b.note || '', selected: b.selected !== false, relations: b.relations || {} }));
+      const targets = [...new Set([config.target, ...(Array.isArray(config.targets) ? config.targets : [])].filter(x => typeof x === 'string' && x))];
+      let target = targets[0] || '', decision = '', text = '';
+      const area = document.createElement('div');
+      const requestSync = () => queueMicrotask(() => { if (area.isConnected) sync(); });
+      area.className = 'ask-merge';
+      const history = [];
+      let addDraft = '', addError = '', addFocus = false;
+      const make = (tag, cls, label) => { const el = document.createElement(tag); if (cls) el.className = cls; if (label != null) el.textContent = label; return el; };
+      const button = (label, action, disabled = false) => { const b = make('button', 'option-btn', label); b.type = 'button'; b.disabled = disabled; b.onclick = action; return b; };
+      function answer() {
+        return { decision, branches: branches.filter(b => b.selected).map(b => ({name: b.name, note: b.note})), target, text: text.trim() };
+      }
+      function sync() {
+        const value = answer();
+        answers[qi] = decision && (decision !== 'approve' || value.branches.length) && (decision !== 'reject' || value.text) ? JSON.stringify(value) : null;
+        updateVisibility();
+        checkAllAnswered();
+      }
+      function record(message) { history.unshift(message); }
+      function draw() {
+        area.replaceChildren();
+        const top = make('div', 'ask-merge-row');
+        top.append(make('strong', '', '合并到 ← 目标分支'));
+        const select = make('select', 'option-custom-input'); select.setAttribute('aria-label', '目标分支');
+        targets.forEach(tgt => { const opt = make('option', '', tgt); opt.value = tgt; select.append(opt); });
+        select.value = target; select.onchange = () => { target = select.value; record('目标切换：' + target); draw(); sync(); }; top.append(select); area.append(top);
+        const bulk = make('div', 'ask-merge-row');
+        if (enabled('select')) {
+          bulk.append(button('全选', () => { branches.forEach(b => b.selected = true); record('全选'); draw(); sync(); }), button('全不选', () => { branches.forEach(b => b.selected = false); record('全不选'); draw(); sync(); }));
+        }
+        area.append(bulk);
+        const list = make('div', 'ask-merge-list');
+        let dragging = null;
+        branches.forEach((branch, index) => {
+          const row = make('div', 'ask-merge-item');
+          row.draggable = enabled('reorder');
+          row.ondragstart = e => { dragging = index; row.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; };
+          row.ondragend = () => { dragging = null; row.classList.remove('dragging'); };
+          row.ondragover = e => { if (dragging !== null) e.preventDefault(); };
+          row.ondrop = e => { e.preventDefault(); if (dragging === null || dragging === index) return; const moved = branches.splice(dragging, 1)[0]; branches.splice(index, 0, moved); dragging = null; record('调整顺序：' + moved.name); draw(); sync(); };
+          const head = make('div', 'ask-merge-row');
+          if (enabled('reorder')) {
+            const handle = make('span', 'ask-merge-handle', '⋮⋮');
+            handle.addEventListener('pointerdown', e => {
+              if (e.pointerType !== 'touch') return;
+              e.preventDefault(); handle.setPointerCapture(e.pointerId); row.classList.add('dragging');
+            });
+            handle.addEventListener('pointerup', e => {
+              if (e.pointerType !== 'touch') return;
+              row.classList.remove('dragging');
+              const targetRow = document.elementFromPoint(e.clientX, e.clientY)?.closest('.ask-merge-item');
+              const dest = Array.from(list.children).indexOf(targetRow);
+              if (dest < 0 || dest === index) return;
+              const moved = branches.splice(index, 1)[0]; branches.splice(dest, 0, moved);
+              record('调整顺序：' + moved.name); draw(); sync();
+            });
+            handle.addEventListener('pointercancel', () => row.classList.remove('dragging'));
+            head.append(handle);
+          }
+          head.append(make('span', '', String(index + 1)));
+          // 勾选面 = 本仓既有的 role="checkbox" 按钮（messages.js `attachCheck` /
+          // 多选卡 `.option-check` 同一形态），不新画一套 input[type=checkbox]：
+          // toggle-unify 门禁 T4b 判「checkbox 冒充开关」，同一文件里另有
+          // `-thumb` 类名（附件缩略图）时会误判成第二套开关。
+          const check = make('button', 'option-check ask-merge-check');
+          check.type = 'button';
+          check.setAttribute('role', 'checkbox');
+          check.setAttribute('aria-checked', branch.selected ? 'true' : 'false');
+          check.disabled = !enabled('select');
+          check.setAttribute('aria-label', '选择 ' + branch.name);
+          check.onclick = () => {
+            branch.selected = !branch.selected;
+            record((branch.selected ? '放行：' : '排除：') + branch.name);
+            draw(); sync();
+          };
+          head.append(check, make('strong', 'ask-merge-name', branch.name));
+          const relation = branch.relations[target] || {};
+          // fail-silent（作者 11-21 17:56）：契约外 / 空值 / 缺失的关系数据不渲染标签——
+          // 不再以「未知」顶替（旧口径会把调用方传错键的分支也标成「未知」）。
+          if (typeof relation.status === 'string' && relation.status.trim()) {
+            head.append(make('span', 'ask-merge-status', relation.status));
+          }
+          if (enabled('delete')) head.append(button('删除', () => { branches.splice(index, 1); record('删除：' + branch.name); draw(); sync(); }));
+          row.append(head);
+          if (relation.conflict) row.append(make('div', 'ask-merge-conflict', '冲突：' + relation.conflict));
+          const controls = make('div', 'ask-merge-row');
+          const note = make('input', 'option-custom-input'); note.value = branch.note; note.placeholder = '备注或前提条件'; note.setAttribute('aria-label', branch.name + ' 备注'); note.disabled = !enabled('note'); note.oninput = () => { branch.note = note.value; sync(); }; controls.append(note);
+          if (enabled('reorder')) {
+            const move = dest => { const moved = branches.splice(index, 1)[0]; branches.splice(dest, 0, moved); record('调整顺序：' + moved.name); draw(); sync(); };
+            controls.append(button('↑', () => move(index - 1), index === 0), button('↓', () => move(index + 1), index === branches.length - 1));
+          }
+          row.append(controls); list.append(row);
+        });
+        area.append(list);
+        if (enabled('add')) {
+          // 添加行（作者 11-21 17:56「添加条目完全不可用」修复）：输入值存闭包 addDraft，
+          // 每次 draw() 重建 DOM 时回填，不丢字；Enter 与按钮同路径；空值 / 重复给出
+          // 可见提示（旧口径静默 return = 「点了没反应」）；成功后焦点回到输入框便于连加。
+          const addRow = make('div', 'ask-merge-row');
+          const input = make('input', 'option-custom-input');
+          input.placeholder = '输入或选择分支'; input.setAttribute('aria-label', '添加分支'); input.value = addDraft;
+          input.oninput = () => { addDraft = input.value; if (addError) { addError = ''; area.querySelector('.ask-merge-add-error')?.remove(); } };
+          bindImeGuard(input);
+          input.onkeydown = e => { if (commitEnter(e, input)) addNow(); };
+          const datalist = make('datalist'); datalist.id = 'ask-merge-candidates-' + qi + '-' + Math.random().toString(36).slice(2); input.setAttribute('list', datalist.id);
+          (Array.isArray(config.candidates) ? config.candidates : []).filter(c => typeof c === 'string' && !branches.some(b => b.name === c)).forEach(c => { const opt = make('option'); opt.value = c; datalist.append(opt); });
+          addRow.append(input, datalist, button('添加条目', addNow)); area.append(addRow);
+          if (addError) area.append(make('div', 'ask-merge-conflict ask-merge-add-error', addError));
+        }
+        const comment = make('textarea', 'option-custom-input'); comment.value = text; comment.placeholder = '拒绝理由或补充意见'; comment.setAttribute('aria-label', '理由或补充意见'); comment.oninput = () => { text = comment.value; const hint = area.querySelector('.ask-merge-hint'); if (hint) hint.textContent = decision === 'reject' && !text.trim() ? '拒绝必须填写理由' : '选择回复后，点击下方确认发送。'; sync(); }; area.append(comment);
+        const actions = make('div', 'ask-merge-row');
+        [['approve','同意'],['reject','拒绝'],['supplement','补充'],['defer','暂缓']].forEach(([value,label]) => {
+          const b = button(label, () => { decision = value; record('选择：' + label); draw(); sync(); }, value === 'approve' && !branches.some(x => x.selected));
+          if (decision === value) b.classList.add('picked'); actions.append(b);
+        }); area.append(actions);
+        const hint = make('div', 'ask-merge-hint', decision === 'reject' && !text.trim() ? '拒绝必须填写理由' : '选择回复后，点击下方确认发送。'); area.append(hint);
+        if (history.length) area.append(make('div', 'ask-merge-hint', '操作历史：' + history.join('；')));
+        // 焦点回位：querySelector 给的是 Element，.focus() 只在 HTMLElement 上（js-types 闸零容忍）。
+        if (addFocus) { addFocus = false; const field = area.querySelector('input[aria-label="添加分支"]'); if (field instanceof HTMLInputElement) field.focus(); }
+      }
+      // 添加分支（同路径：按钮 / Enter）。空值、重复给出提示，不静默吞掉。
+      function addNow() {
+        const name = addDraft.trim();
+        if (!name) { addError = '请输入分支名'; addFocus = true; draw(); return; }
+        if (branches.some(b => b.name === name)) { addError = '「' + name + '」已在列表中'; addFocus = true; draw(); return; }
+        branches.push({ name, note: '', selected: true, relations: {} });
+        addDraft = ''; addError = ''; addFocus = true;
+        record('添加：' + name); draw(); sync();
+      }
+      draw(); wrapper.append(area); box.appendChild(wrapper); requestSync(); return;
+    }
+
     if (item.secret === true) {
       const row = document.createElement('div');
       row.className = 'option-secret-row';
@@ -2596,7 +2753,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
       hint.className = 'option-secret-hint';
       hint.textContent = item.ephemeral ? t('askUser.secretEphemeralHint') : t('askUser.secretHint');
       wrapper.appendChild(hint);
-      scrollDiv.appendChild(wrapper);
+      box.appendChild(wrapper);
       updateVisibility();
       return; // secret 题到此为止：下面的选项/自由输入/草稿机制整段跳过
     }
@@ -2865,12 +3022,9 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     // revealFallbackInput() 按需挂载（降级兜底，②-6）。
     if (freeInput) optsDiv.appendChild(customInput);
     wrapper.appendChild(optsDiv);
-    scrollDiv.appendChild(wrapper);
+    box.appendChild(wrapper);
     if (isMulti) syncMulti(qi); // pick up restored Other text, if any (needs the DOM in place)
   });
-
-  // 滚动区在按钮行之前入盒（题/选项可滚；取消/确认常驻可见）。
-  box.appendChild(scrollDiv);
 
   // Apply initial visibility after all questions are in DOM
   updateVisibility();
@@ -3020,7 +3174,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     //   ③ 上传中 ⇒ 置灰 + 文案「上传中…」（任何在传 chip 都阻塞发送）。
     const baseOk = questions.every((_, qi) => !shouldShow(qi) || isAnswered(qi));
     const zeroOptions = !questions.some(q => q && q.options && q.options.length > 0);
-    const attachOk = !!(answerAttach && zeroOptions && answerAttach.satisfyGate());
+    const attachOk = !!(answerAttach && zeroOptions && !questions.some(q => q && q.merge) && answerAttach.satisfyGate());
     const uploading = !!(answerAttach && answerAttach.uploading());
     confirmBtn.disabled = uploading || !(baseOk || attachOk);
     const labelSpan = confirmBtn.querySelector('span');
@@ -3821,14 +3975,17 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     3: { cls: 'perm-critical', icon: criticalIcon, i18nKey: 'chat.permLevel.critical' }
   };
   const dangerConf = dangerConfigs[level];
+  // 「危险类型」只在卡首横幅出现一次：档位（横幅底色+文案）；危险/严重档的横幅文案
+  // 带 {detail}=人话标签，注意档（warning）的文案不带 ⇒ 标签只在 >=2 档被横幅承载，
+  // 其余档由判定出处行给出一次（作者令：同一事实卡内只出现一次）。
+  const riskLabel = (detailInfo.reason && detailInfo.reason.label)
+    || (detailInfo.reason && detailInfo.reason.levelLabel) || '';
   if (dangerConf) {
     bubble.classList.add(dangerConf.cls);
     const banner = document.createElement('div');
     banner.className = 'perm-danger-banner';
     // 横幅只说**命中的规则**（后端判定给的人话标签），命令正文走下方正文块
     // —— 改前这里塞的是整条命令（且因解析失败恒为空），既不全也不该在这行。
-    const riskLabel = (detailInfo.reason && detailInfo.reason.label)
-      || (detailInfo.reason && detailInfo.reason.levelLabel) || '';
     const bannerText = t(dangerConf.i18nKey, { detail: riskLabel });
     banner.innerHTML = dangerConf.icon + '<span>' + escapeHtml(bannerText) + '</span>';
     bubble.appendChild(banner);
@@ -3898,10 +4055,13 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
 
   const allowLabel = t('chat.allow');
   const denyLabel = t('chat.deny');
-  const allowDesc = isDangerous ? t('chat.permExecCmd') : (summary || '');
+  // 装饰性说明已删（作者令「去掉冗余说明」）：允许/拒绝只留动作本身。`summary` 只在
+  // 卡上**没有任何事实块**（旧帧无 permDetail 且无可派生正文）时作为唯一信息回落 ——
+  // 有事实块时它就是同一条调用的复述，不得再出现。
+  const hasFacts = !!(detailInfo.command || detailInfo.reason || detailInfo.scope);
   const permOptions = [
-    { label: allowLabel, desc: allowDesc },
-    { label: denyLabel, desc: t('chat.skipTool') }
+    { label: allowLabel, desc: hasFacts ? '' : (summary || '') },
+    { label: denyLabel, desc: '' }
   ];
   /* Permission escalation chain (Backend contract a56f7437; target changed by
      permshield S1, 2026-09-13): when the card's mode is one step below the
@@ -3971,16 +4131,14 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     row.remove();
     window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
   }, undefined, requestId);
-  // 三要素插到原卡内容流的最前面（问句之前）：命令正文 → 理由一行 → 作用域一行，
+  // 事实块插到原卡内容流的最前面（问句之前）：完整调用信息 → 作用域一行 → 判定出处，
   // 再往下才是「允许 Bash？」与选项 —— 先看清事实，再作答。
+  // 同一事实只落一处：Write/Edit 的正文（内容 / -+ 行）由本块唯一给出，原先并列的
+  // `permissionDetails` 第二份「完整区」已退役（见 permissionDetails.js 删除批注）。
   if (cardBox && cardBox.firstElementChild) {
-    renderPermDetail(cardBox, detailInfo, t, { level, before: cardBox.firstElementChild });
+    renderPermDetail(cardBox, detailInfo, t, { before: cardBox.firstElementChild, labelShown: level >= 2 && !!riskLabel });
   } else if (cardBox) {
-    renderPermDetail(cardBox, detailInfo, t, { level });
-  }
-  // Edit/Write previews contain requested content not represented by the projected path.
-  if (cardBox && (toolName === 'Edit' || toolName === 'Write')) {
-    cardBox.insertBefore(permissionDetails(toolName, inputJson), cardBox.firstElementChild);
+    renderPermDetail(cardBox, detailInfo, t, { labelShown: level >= 2 && !!riskLabel });
   }
   // permission-landing 批 P1/P2 续做（2026-11-18）：requestId 走 showOptions 的**第 7 参**
   //（= 卡盒 data-request-id）——超时撤回（hub CloseRequest ⇒ askUserClosed{reason:
@@ -4182,6 +4340,12 @@ function renderAttachmentPreviewInner(target) {
   if (attPreview.dataset.attClearing === '1' && attachments.length === 0) return;
   if (attPreview.dataset.attClearing) delete attPreview.dataset.attClearing;
   attPreview.innerHTML = '';
+  // 多选引用批（2026-11-22 作者令「多选的就自动缩小为小图标」）：引用牌**条数**决定
+  // 形态 —— 1 条 = 现状整卡预览（逐字节不变）；≥2 条 = 每枚缩成图标 chip（类型图标 +
+  // 选择顺序号 + 定长短名 + ✕），选择顺序 = 数组顺序（= 发送时 refs 顺序）。
+  // 顺序号在这里现算（不落数据面：移除中间一条后幸存者按新序重排，牌面与现实一致）。
+  const quoteRefs = attachments.filter(a => a && a.type === 'ref' && a.refType === 'chat-message');
+  const compactQuotes = quoteRefs.length >= 2;
   attachments.forEach((att, idx) => {
     // ── 全局引用（#303 v1.1）：type='ref'（新统一模型）与旧 type='taskRef'
     // 都走 renderRefBlock —— 输入框引用块定高/截断/可展开（A1-A6）。旧 taskRef
@@ -4196,8 +4360,23 @@ function renderAttachmentPreviewInner(target) {
         attachments.splice(idx, 1);
         renderAttachmentPreview(target);
       };
+      // 多选引用批：≥2 条 ⇒ chat-message 引用牌走紧凑档（图标 chip）。单条与其余
+      // refType 逐字走原整卡面（零回归）。
+      const isQuoteRef = att.type === 'ref' && att.refType === 'chat-message';
+      const quoteOrder = isQuoteRef ? quoteRefs.indexOf(att) + 1 : 0;
       const card = renderRefBlock(ref,
-        att.refType === 'chat-message' ? { mode: 'input', closeStyle: 'disc' } : { mode: 'input' },
+        isQuoteRef
+          ? {
+            mode: 'input', closeStyle: 'disc',
+            compact: compactQuotes,
+            order: quoteOrder,
+            // 点牌回看原消息：与气泡引用块点击同一条定位/高亮实现（msgQuote 单点）。
+            // 目标不在页内（跨刷新/被裁剪）⇒ 返回 false ⇒ 牌面就地展开快照摘要。
+            onOpen: (r) => revealQuoteTarget(
+              r?.source?.messageId, r?.content ? r.content.itemIndex : undefined,
+            ),
+          }
+          : { mode: 'input' },
         remove);
       attPreview.appendChild(card);
     } else if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {

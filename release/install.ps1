@@ -38,7 +38,15 @@ $HomeDir = ".stand"
 # default is USERPROFILE + brand home. NEBFLOW_HOME is never consulted here -
 # the installer never writes the legacy root (legacy read-only is runtime-only).
 $StandBase = if ($env:STAND_HOME) { $env:STAND_HOME } else { Join-Path $env:USERPROFILE $HomeDir }
-$ConfigFile = "nebflow.json"
+$ConfigFile = "stand.json"
+# 2026-11-05 config-single-source batch (author ruling ②): the historical file
+# name stays READ-ONLY compatible — never let the installer create an empty
+# stand.json next to a populated nebflow.json (that would strand the user's
+# configuration in a file the engine no longer reads). install.sh got this
+# migration in that batch; install.ps1 was left behind and kept CREATING
+# nebflow.json on every fresh Windows install (2026-11-21 cross-machine E2E
+# defect ②), so the two installers disagreed on the config surface.
+$LegacyConfigFile = "nebflow.json"
 $WrapperName = "stand"
 $CosBaseCn = "https://$CosBucket.oss-cn-hangzhou.aliyuncs.com"
 # Single-source conclusion unchanged: the Nebflow jar download and the version
@@ -522,6 +530,11 @@ Write-V "Resolved VERSION=$Version (channel=$Channel)"
 $InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { "$env:LOCALAPPDATA\$ProductName" }
 $JarName = "$LowerName-assembly-$Version.jar"
 $CosUrl = "$CosBaseCn/$JarName"
+# Stable-name fallback (2026-11-23): stable 2026.9.19 was published under the
+# legacy nebflow-assembly-<ver>.jar name; try it when the new name 404s. The
+# file is saved under the new name either way (wrapper globs stand-assembly-*).
+$LegacyJarName = "nebflow-assembly-$Version.jar"
+$LegacyCosUrl = "$CosBaseCn/$LegacyJarName"
 
 # --- Brand banner render -----------------------------------------------------
 # The Write-Banner definition + official payload sit right after the flag
@@ -798,15 +811,6 @@ $jarPath = Join-Path $InstallDir $JarName
 if (Test-Path $jarPath) {
     Write-Ok "Already up-to-date ($Version)."
 } else {
-    # Clean up old versions (keep .nebflow user data untouched)
-    $oldJars = @(Get-ChildItem (Join-Path $InstallDir "$LowerName-assembly-*.jar") -ErrorAction SilentlyContinue) + @(Get-ChildItem (Join-Path $InstallDir "nebflow-assembly-*.jar") -ErrorAction SilentlyContinue)
-    foreach ($old in $oldJars) {
-        if ($old.FullName -ne $jarPath) {
-            Remove-Item $old.FullName -Force -ErrorAction SilentlyContinue
-            Write-V "Removed old: $($old.Name)"
-        }
-    }
-
     # Auto-detect region for download source selection
     if (-not $Region) {
         $tz = [TimeZoneInfo]::Local.Id
@@ -842,11 +846,40 @@ if (Test-Path $jarPath) {
     try {
         Save-WithProgress -Url $CosUrl -Path $jarPath -Label $JarName
     } catch {
-        Write-Err2 "Download failed from COS. Check $CosUrl"
-        exit 12
+        Write-Info "Primary name not found; trying legacy $LegacyJarName..."
+        try {
+            Save-WithProgress -Url $LegacyCosUrl -Path $jarPath -Label $LegacyJarName
+        } catch {
+            Write-Err2 "Download failed from COS. Check $CosUrl (and $LegacyCosUrl)"
+            exit 12
+        }
     }
     $size = [math]::Round((Get-Item $jarPath).Length / 1MB, 1)
     Write-Ok "Downloaded $JarName from COS ($size MB)."
+}
+
+# Upgrade residue: old-version jars are cleared on EVERY install (not only when
+# the new jar is absent - the old else-branch-only cleanup left
+# stand-assembly-2026.10.21 behind after the 2026.11.23 upgrade). The newest
+# jar is always the one selected, so a leftover never changes the running
+# version. A jar still locked by a running instance is reported, not silently
+# skipped; it goes on the next install/uninstall once that instance is stopped.
+$oldJars = @(Get-ChildItem (Join-Path $InstallDir "$LowerName-assembly-*.jar") -ErrorAction SilentlyContinue) + @(Get-ChildItem (Join-Path $InstallDir "nebflow-assembly-*.jar") -ErrorAction SilentlyContinue)
+$staleJars = @()
+foreach ($old in $oldJars) {
+    if ($old.FullName -ne $jarPath) {
+        try {
+            Remove-Item $old.FullName -Force -ErrorAction Stop
+            Write-V "Removed old: $($old.Name)"
+        } catch {
+            $staleJars += $old.FullName
+        }
+    }
+}
+if ($staleJars.Count -gt 0) {
+    Write-Warn2 "Old jar(s) still locked, not removed:"
+    foreach ($j in $staleJars) { Write-Warn2 "  $j" }
+    Write-Warn2 "Stop the running instance ('$WrapperName stop') and re-run the installer, or run the uninstaller."
 }
 
 # --- [4/7] ripgrep (rg) for search support ---
@@ -1156,7 +1189,14 @@ Set-Content -Path $cmdPath -Value $cmdContent -Encoding ASCII
 # Legacy command shim (2026-10-20 rename batch): "nebflow" is retired as the
 # command name; this thin .cmd warns on stderr, then forwards to the current
 # launcher. Fixed legacy name by design (historical fact, like rebrand.sh).
+# Written ON DEMAND only: a fresh install gets no shim. It is written when an
+# old nebflow trace exists (an existing nebflow.cmd/nebflow in InstallDir, or a
+# nebflow command on PATH), so an upgrade of an install that already had it keeps it.
 $shimPath = Join-Path $InstallDir "nebflow.cmd"
+$legacyTrace = (Test-Path (Join-Path $InstallDir "nebflow.cmd")) -or
+    (Test-Path (Join-Path $InstallDir "nebflow")) -or
+    [bool](Get-Command nebflow -ErrorAction SilentlyContinue)
+if ($legacyTrace) {
 $shimContent = @"
 @echo off
 echo WARN: 'nebflow' is deprecated - the command is now '$WrapperName'. Forwarding... 1>&2
@@ -1164,6 +1204,9 @@ echo WARN: 'nebflow' is deprecated - the command is now '$WrapperName'. Forwardi
 exit /b %ERRORLEVEL%
 "@
 Set-Content -Path $shimPath -Value $shimContent -Encoding ASCII
+} else {
+    Write-V "No legacy nebflow trace - shim not written"
+}
 
 # Add to PATH
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -1177,6 +1220,16 @@ Write-Stage 7 7 "Setting up config..."
 
 $configDir = $StandBase
 $configPath = Join-Path $configDir "$ConfigFile"
+$legacyConfigPath = Join-Path $configDir "$LegacyConfigFile"
+# config-single-source migration (parity with install.sh): carry the legacy file
+# over BEFORE the "create default" branch, so an existing install keeps every
+# value. Byte-identical copy + legacy renamed to .bak (never deleted).
+if (-not (Test-Path $configPath) -and (Test-Path $legacyConfigPath)) {
+    Write-Info "Migrating $LegacyConfigFile -> $ConfigFile..."
+    Copy-Item -Path $legacyConfigPath -Destination $configPath -Force
+    Move-Item -Path $legacyConfigPath -Destination "$legacyConfigPath.bak" -Force
+    Write-Ok "Config migrated: $configPath (backup: $legacyConfigPath.bak)"
+}
 if (-not (Test-Path $configPath)) {
     New-Item -ItemType Directory -Force -Path $configDir | Out-Null
     $configContent = "{}"

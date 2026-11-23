@@ -489,6 +489,22 @@ export default {
   'chat.quoteTypeTool': '[工具]',
   'chat.quoteTypeAsk': '[提问]',
   'chat.quoteTypeSystem': '[系统]',
+  // ── 多选引用批（2026-11-22 作者令「还有支持 多选引用 现在引用两个还做不到」）────
+  // 引用态非空时的**同一条消息**菜单项/动作名（再点 = 取消该条）。
+  'messages.unquote': '取消引用',
+  // 紧凑引用牌（选中 ≥2 条自动缩小的图标 chip）上的**短名**：按引用来源角色给
+  // 定长词，绝不靠 CSS 省略号截断（放不下的用缩略 + title，见 input.css 同名段）。
+  'chat.quoteShortAgent': 'Agent',
+  'chat.quoteShortTool': '工具',
+  'chat.quoteShortAsk': '提问',
+  'chat.quoteShortImage': '图片',
+  'chat.quoteShortFile': '文件',
+  // 紧凑引用牌的可访问名：顺序号 + 短名（读屏可辨「这是第几条引用」）。
+  'chat.quoteCompactAria': '引用 {n}：{name}',
+  'chat.quoteCompactOpenAria': '回看原消息：{name}',
+  'chat.quoteCompactHint': '点击回看原消息',
+  // 引用态条数上限（MAX_PENDING_QUOTES）触顶提示。
+  'chat.quoteLimitReached': '同时最多引用 {n} 条消息',
   // ── msgchip 批（消息身份牌带短名引用，作者令 2026-11-01）新增键 ─────────────
   'chat.msgTokenChipHint': '查看原消息',
   'chat.msgTokenPopTitle': '原消息',
@@ -761,6 +777,22 @@ export default {
   // 对话层活性批（2026-10-22）：插话即时确认标 + 断连横幅文案。
   'ws.connBanner.reconnecting': '连接断开 · 正在重连',
   'ws.connBanner.pending': '连接断开 · 正在重连 · {n} 条消息待送达',
+  // 控制台单实例批（2026-10-27）：接管独占模态（takeoverModal.js）；
+  // 四修批（2026-10-29 作者令）：退出面/重入门作废（退出直达官网个人主页），
+  // 新增接管 loading 态 + 失败提示。
+  // 接管必达批（2026-11-01 作者令①）：接管改 HTTP 腿（回执随响应必达，不依赖
+  // 本页 ws 存活），失败面错误码分类落卡面错误行 + toast——明确报错不许静默。
+  'takeover.title': '控制台已在其他位置打开',
+  'takeover.msg': '您在其他地方登录了控制台，此窗口已让出控制权。可退出，或重新接管。',
+  'takeover.retake': '重新接管',
+  'takeover.exit': '退出',
+  'takeover.retaking': '接管中…',
+  'takeover.retakeFailed': '接管失败，请重试',
+  'takeover.errNetwork': '无法连接主机——请检查网络后重试',
+  'takeover.errTimeout': '主机无响应（超时）——请稍后重试',
+  'takeover.errAuth': '登录状态已过期——重新登录后再试',
+  'takeover.errDisabled': '单实例开关已关闭，此窗口无需接管',
+  'takeover.errRefused': '主机拒绝了本次接管',
   // f1-send-queue（2026-10-19）：断线入队的待送达小标 tooltip + 队列溢出告警。
   'chat.pendingSend': '待送达 · 重连后自动补发',
   'input.queueOverflow': '消息队列已满（100 条）：最早的一条已丢弃',
@@ -899,6 +931,10 @@ export default {
   // Sub-Agents 面板（2026-08-25 subagents-panel spec）——状态标签与空态
   'subagents.header': '子智能体 · {count}',
   'subagents.empty': '当前无运行中的子智能体',
+  'subagents.historyFold': '历史 · {count} 条已折叠',
+  'subagents.historyExpand': '展开',
+  'subagents.historyCollapse': '收起历史',
+  'subagents.historyClear': '清除历史视图',
   'subagents.indicatorTitle': '后台子智能体',
   'subagents.status.running': '进行中',
   // 显式等待停靠态（Waiting）：行状态位直显「停靠等待中」（legacy 快照无申报槽的
@@ -941,6 +977,14 @@ export default {
   'subagents.frozenAutoResumes': '已自动续跑 {n} 次',
   'subagents.frozenAutoResumesSpent': '自动续跑次数已用尽——需要你：充值 / 换模型 / 取消',
   'subagents.providerFailureGroup': '后台 {count} 个任务服务商不可用 · {provider}',
+  // 项 3（2026-11-23）：引擎已恢复（恢复信号到达）后，失败卡转灰并标过期，不再显示「等待恢复中」。
+  'subagents.providerFailureExpired': '{provider} 已恢复 · {count} 个任务失败状态已过期',
+  // 卡片化收编批（2026-11-23）：失败组卡面（llm-failure-card 家族）的恢复预期行。
+  'subagents.providerFailureRecovering': '等待恢复中：引擎正在退避重试 / 探测服务商恢复，恢复后原会话续跑——不是任务失败，也不需要你做什么。',
+  // 族区分呈现（2026-11-21 作者裁定）：服务商不可用只用于可用性族；形状族与配置族
+  // 各说各的，避免把「我们的请求不合契约」读成「服务商挂了」。
+  'subagents.providerFailureGroupShape': '后台 {count} 个任务因请求/响应格式不合规未完成 · {provider}',
+  'subagents.providerFailureGroupConfig': '后台 {count} 个任务待处理（鉴权/配额/模型） · {provider}',
   'subagents.status.roundComplete': '本轮完成，可续用',
   'subagents.freezeDigestRecoverable': '{count} 条已冻结（可唤醒）',
   'subagents.freezeDigestNeedsHuman': '{count} 条冻结待你处理',
@@ -1009,6 +1053,7 @@ export default {
   // 任务归属徽标（2026-09-27 taskbadge 批）：行内 `#号 · 标题` 徽标的悬停提示
   'subagents.taskBadge': '所属任务：{text}',
   'manage.uptime': '运行 {time}',
+  'manage.readonlyRoot': '根会话 agent 只读（自我保护），不可操作',
   'manage.readonlyTeam': '团队 agent 只读，不可操作',
   'manage.readonlyFlow': 'Flow 节点 agent 只读，不可操作',
   'manage.stopSent': '已发送停止指令',
@@ -1361,15 +1406,43 @@ export default {
   'settings.modelChainTitle': '模型（按会话类别）',
   'settings.modelChainDisclosureTitle': '模型（按会话类别）',
   'settings.modelChainSectionHint': '各会话类别的模型与 /model 同步。',
-  // 模型配置两模式批（2026-11-18 作者逐字：「要么全部跟随主会话 然后才是分开配置」）：
-  // unified 档的诚实读数行——只列**真的在跟随**的类别（服务端链为空的 follower），
-  // 与同节上方「已独立配置，不受主链影响」的分叉注记读同一份状态，两行不自相矛盾。
-  'settings.modelModeUnifiedNote': '{roles} 跟随主会话。',
+  'settings.modelRulesTitle': '模型规则',
+  'settings.modelRulesHint': '脚本化的模型选择（按时段、层级、槽、调用点）。仅「规则」态生效；其余两态与原有配置一致。',
+  'modelRules.mode.follow': '全部跟随',
+  'modelRules.mode.slots': '分开配置（槽）',
+  'modelRules.mode.rules': '规则（接管）',
+  'modelRules.modeLabel': '模型选择模式',
+  'modelRules.diagram': '框图',
+  'modelRules.source': '源码',
+  'modelRules.diagramEmpty': '暂无规则。',
+  'modelRules.draftLabel': '规则草稿',
+  'modelRules.stage': '暂存预览',
+  'modelRules.apply': '应用',
+  'modelRules.stagedDiff': '暂存差异（相对已保存）',
+  'modelRules.noChanges': '无改动。',
+  'modelRules.errLine': '第 {line} 行',
+  'modelRules.loading': '加载中…',
+  'modelRules.loadError': '脚本无法解析，求值已停用',
+  'modelRules.loadFailed': '读取规则失败',
+  'modelRules.saveFailed': '保存失败',
+  'modelRules.modeSaved': '模式已保存',
+  'modelRules.applied': '已应用',
+  'modelRules.rejected': '校验未通过，未保存',
+  // 模型设置页 switch 批（2026-11-21 作者令）：两段式按钮收成一个开关 —— 开 =
+  // 分开配置，关 = 全部跟随主会话；开关下的一行当前态文字由 model.modeState* 两键
+  // 出（修前是 settings.modelModeUnifiedNote「{roles} 跟随主会话。」整句，类别名串在
+  // 句子里，窄屏在括号中间折行；现改为「引导语 + 类别胶囊」，用 model.followsNebula
+  // 作引导语，该键随之退役）。
   'settings.modelRoleTabs': '选择会话类别',
   // /model 面板文案（modelcfg Phase 1）
   'model.title': '模型配置',
   'model.modeUnified': '全部跟随主会话',
   'model.modeSeparate': '分开配置',
+  // 模型设置页 switch 批（2026-11-21）：开关语义 + 当前态两行文案（全站开关组件
+  // .nb-toggle 无内建文案位，说明文字走本节自己的 .mp-mode-state / title）。
+  'model.modeSeparateHint': '开：各类别单独设模型；关：全部跟随主会话',
+  'model.modeStateUnified': '当前：全部跟随主会话',
+  'model.modeStateSeparate': '当前：分开配置',
   'model.mainChain': '{agent} 主链',
   'model.mainChainDesc': '所有角色默认跟随此链',
   'model.chainHead': '首选',
@@ -1395,6 +1468,9 @@ export default {
   'model.scheduleRestrictedSuffix': '{windows} 不可用',
   'model.saved': '已保存',
   'model.divergedBar': '{roles} 已独立配置，不受主链影响',
+  // 设置页分叉注记的引导语（switch 批 2026-11-21）：类别名从句子中间挪到胶囊行，
+  // 句子只留这句话（/model 面板横幅仍用上面的整句键）。
+  'model.divergedNoteLead': '已独立配置，不受主链影响',
   'model.divergedView': '查看',
   'model.seedNote': '未配置，请明确选择模型后再发起请求',
   'model.singleModelNote': '单模型：模型失效时会话进入失效态、静默等待恢复；可在子代理面板或具体对话框里切换模型',
@@ -1541,6 +1617,12 @@ export default {
   'timewheel.presetDay': '白天 09–18',
   'timewheel.presetAfternoon': '午后 14–18',
   'timewheel.deadline': '截止时间',
+  // 日期档（search-page-density 批 2026-11-21）：搜索页「日期」tab 的滚轮标题与三列
+  // 单位 —— 与时段/单点档同一份组件，文案按「滚动这一列选什么」直译。
+  'timewheel.titleDate': '选择日期',
+  'timewheel.yearUnit': '年',
+  'timewheel.monthUnit': '月',
+  'timewheel.dayUnit': '日',
 
   // Model fields in modal
   'model.idPlaceholder': '模型 ID',
@@ -1644,7 +1726,6 @@ export default {
   'chat.cancel': '取消',
   'chat.allow': '允许',
   'chat.deny': '拒绝',
-  'chat.skipTool': '跳过此工具调用',
   // cardguard（作者裁定 2026-09-17 · #687①）：含卡片哨兵的工具结果不再以 <pre>
   // 兜底渲染原文 ⇒ 走卡片路径，提取失败时显示本占位（🔴 原文不进 DOM）。
   'chat.toolCardUnavailable': '卡片内容不可用（未渲染原始数据）',
@@ -1671,7 +1752,6 @@ export default {
   'chat.popMediaFailed': '媒体加载失败',
   // 递进链（作者边界一「保留递进链路」）：升级落点已由 permshield F1 改为**全局持久
   // 档位**（同盾牌一条路）⇒ 文案去掉「本次」语义，并显式说明全局 + 重启后仍生效。
-  'chat.permShowFull': '展开完整内容',
   'chat.permRequestNotDiff': '请求载荷，非文件实际 diff',
   'chat.permUpgradeAutoEdits': '允许并切换到编辑放行',
   'chat.permUpgradeAutoEditsDesc': '全局档位改为编辑放行：所有会话生效，重启后仍生效',
@@ -1830,7 +1910,6 @@ export default {
   'chat.permLevel.warning': '注意：此操作可能导致数据丢失',
   'chat.permLevel.dangerous': '危险操作：{detail}',
   'chat.permLevel.critical': '严重操作：{detail}',
-  'chat.permExecCmd': '执行命令',
   // 审批卡三要素（报障批 2026-11-19：作者「这个危险操作给的信息太少了」）——
   // 命令正文 / 为什么危险 / 作用域三块 + 折叠开关。理由与档位一律照抄后端判定。
   'perm.detail.command': '要执行的命令',
@@ -1841,9 +1920,6 @@ export default {
   'perm.detail.device': '设备',
   'perm.detail.cwd': '工作目录',
   'perm.detail.target': '目标路径',
-  'perm.detail.gate': '闸',
-  'perm.detail.rule': '规则',
-  'perm.detail.level': '风险档 L{level}',
   'perm.detail.remoteExec': '（对端下发 remote-exec）',
   'perm.detail.noRule': '该闸的固定确认项（无命中规则）',
   'chat.copied': '已复制！',
@@ -1912,6 +1988,28 @@ export default {
   'think.16': '追着光飞了 {d}，忘了回头',
   'think.17': '流星划过夜空，{d} 就不见了',
   'think.18': '乘风掠过几片星云，飞了 {d}',
+
+  // === Ack phrases（零 <report> 块回合的 ✻ 字句，ack-badge-pool 批 2026-11-23 作者令）===
+  // 语义 = 收到 / 已办 / 轻量完成；同一宇宙意象、同一口气（think 池同族）。
+  // 每条恰一个 {d} 时长占位；条数/字数/两语言对齐由 scripts/check-ack-phrases.mjs 把关。
+  'ack.0': '朝这边轻轻点了点头，用了 {d}',
+  'ack.1': '一声「收到」掠过星海，飞了 {d}',
+  'ack.2': '把回执折成纸飞机，递了 {d}',
+  'ack.3': '在星图上盖了个「已办」，花了 {d}',
+  'ack.4': '隔着舷窗挥了挥手，前后 {d}',
+  'ack.5': '流星捎来一句「办好了」，路上 {d}',
+  'ack.6': '对讲机应了一声，用了 {d}',
+  'ack.7': '灯塔眨了下眼作答，隔了 {d}',
+  'ack.8': '把答案轻轻搁上轨道，落稳用了 {d}',
+  'ack.9': '信鸽落回舷窗，扑棱了 {d}',
+  'ack.10': '沿航线报了声平安，用了 {d}',
+  'ack.11': '回音贴着星轨荡回来，荡了 {d}',
+  'ack.12': '摊开掌心递过一颗小星星，用了 {d}',
+  'ack.13': '星光点了下头，来回 {d}',
+  'ack.14': '月背传来一句「收到」，走了 {d}',
+  'ack.15': '把想说的话凝成一粒星子，凝了 {d}',
+  'ack.16': '掸掉星尘应了一声，花了 {d}',
+  'ack.17': '把「办好了」落在月面上，绕了 {d}',
 
   // === Slash commands ===
   //（/clear /compact 的下拉帮助文案随命令摘除退役，2026-10-09；*Done 两条保留 ——
@@ -2177,6 +2275,29 @@ export default {
   'canvas.imgFailUnreachable': '读不到这张图（路径无效或无权限）',
   'canvas.imgFailUnknown': '读取失败（HTTP {status}）',
   'canvas.closeTab': '关闭标签页',
+  'canvas.fav.add': '收藏文档',
+  'canvas.fav.remove': '取消收藏',
+  'canvas.fav.sectionTitle': '收藏',
+  'canvas.fav.empty': '还没有收藏的文档。在 canvas 顶部点收藏钮即可加入。',
+  'canvas.fav.invalid': '已失效',
+  'canvas.fav.added': '已收藏',
+  'canvas.fav.removed': '已取消收藏',
+  'canvas.fav.open': '收藏',
+  'canvas.favPage.open': '打开收藏页',
+  'canvas.favPage.title': '收藏',
+  'canvas.favPage.back': '返回',
+  'canvas.favPage.search': '搜索',
+  'canvas.favPage.empty': '还没有收藏。在文档顶部点星标即可收藏。',
+  'canvas.favPage.noMatch': '没有匹配的收藏',
+  'canvas.favPage.tab.note': '笔记',
+  'canvas.favPage.tab.media': '图片与视频',
+  'canvas.favPage.tab.file': '文件',
+  'canvas.favPage.tab.link': '链接',
+  'canvas.favPage.kind.note': '笔记',
+  'canvas.favPage.kind.media': '图片',
+  'canvas.favPage.kind.pdf': 'PDF',
+  'canvas.favPage.kind.file': '文件',
+  'canvas.fav.missing': '「{title}」已不存在（文档可能被移除），无法打开。',
   'canvas.stackToggle': '叠卡切换（滚轮 / 上下拖动换卡 · 前景轮换 · 点击前景卡换入 · 横向划走关闭）',
   'canvas.noRef': '该标签页暂不支持引用',
   // canvas-reveal-in-finder 批（2026-11-19，作者令「在访达/文件浏览器打开」）：
@@ -2219,13 +2340,6 @@ export default {
   'canvas.conflictDirty': '这个文件在磁盘上已被改动，你本地有未保存的编辑。',
   'canvas.conflictKeep': '保留我的',
   'canvas.conflictReload': '重载磁盘版本',
-  // 失权端草稿（静默接管批 2026-11-19）：席位静默抢占后，被顶下的窗口把当前编辑
-  // 缓冲静默落成「未合并草稿」，事后以这条非阻断的取回入口呈现（零阻断式通知）。
-  'canvas.draftAvailable': '这个窗口的编辑已另存为未合并草稿（席位已被其他窗口接管）。',
-  'canvas.draftRestore': '恢复草稿',
-  'canvas.draftDismiss': '忽略',
-  'canvas.draftConflict': '草稿没能落回：磁盘上的内容已被别的窗口改过（或正文过长只存了前缀），为不覆盖他人的修改先留在这里。',
-  'canvas.draftConflictKeep': '保留草稿',
   // B7-4 文件树搜索 + 排序（客户端，服务端顺序不动）
   'explorer.searchPlaceholder': '搜索文件…',
   'explorer.sortDefault': '默认顺序',
@@ -2391,9 +2505,11 @@ export default {
   'todo.entryTitle': '待办事项',
   'todo.entryEmpty': '全部清零',
   'todo.grpOverdue': '已到期',
-  'todo.grpDecision': '待决策',
+  // 分离纪律（2026-11-22）：AskUser 转入的即时裁定条目（ask- 镜像）与 agent 派发的
+  // 建议 / 计划待办分组命名分开，避免把「即时问题」与「闲时建议」混为一谈。
+  'todo.grpAskConverted': '提问转入 · 待答',
   'todo.grpApproval': '待批准',
-  'todo.grpPlan': '计划',
+  'todo.grpPlan': '建议 · 计划',
   // Permission / McpPermission 镜像行（引擎 AskTodoBridge perm- 产物）：点击
   // 跳回批准卡处理，卡终态随行销账。
   'todo.permChip': '待批准',
@@ -3330,7 +3446,13 @@ export default {
   'todoapple.newTodo': '新待办',
   'todoapple.createUnconfirmed': '尚未确认保存，请检查连接并重试。为避免重复，请回到原会话重试。',
   'todoapple.discardPending': '放弃重试',
-  'todoapple.replyFailed': '回复未发送，请检查主会话状态和连接后重试。',
+  'todoapple.replyFailed': '回复未发送，请重试一次。',
+  'todoapple.answerFirst': '先作答再完成',
+  'todoapple.decisionPending': '待作答',
+  'todoapple.decisionAnswered': '已作答',
+  'todoapple.answerSubmit': '提交作答',
+  'todoapple.answerRejected': '作答未保存',
+  'todoapple.answerSecretBlocked': '敏感决策题本期不能在待办里作答',
   'todoapple.notes': '备注（可选）',
   'todoapple.save': '保存',
   'todoapple.markComplete': '标记完成',
@@ -3348,6 +3470,12 @@ export default {
   // 一处键；禁教学句，只写事实）。
   'todoapple.quickDecision': '快速决策',
   'todoapple.quickCount': '第 {n} / {m} 条',
+  // 待办收件箱 UI 批（作者令 2026-11-21 ⑤）：右上角过滤钮 + 面板两行标题 + 两张
+  // 空态事实行（牌堆为空 / 过滤后为空 —— 只在事实不同的时候分开说）。
+  'todoapple.filter': '过滤',
+  'todoapple.filterPriority': '重要度',
+  'todoapple.emptyDeck': '暂无待办',
+  'todoapple.emptyFiltered': '没有符合条件的待办',
   'todoface.tagSave': '保存',
   'todoface.tagErrEmpty': '名称不能为空',
   'todoface.tagErrDup': '已有同名标签',
@@ -3504,13 +3632,14 @@ export default {
   // 绑定读数的缺口说明，逐字段出句（zh/en 同键对称）。
   'profile.githubUnavailable': '账号服务未返回 GitHub 绑定用户名（该读数来自登录时下发的 GitHub 账号）。',
   'profile.googleUnavailable': 'Google 绑定只在官网账号页维护，本机账号服务与登录凭据都不含该读数。',
-  'profile.signedIn': '已登录',
+  // `profile.signedIn`（「已登录」）随资料卡名块退役：卡内名/邮箱已撤，身份读数只留
+  // 读数行（disclosure-dedup-spec.md §3.2 表 2 · U2）⇒ 该键零发射点，整键摘除不留死键。
 
   // external-open 批（2026-11-19，作者令「支持外部文件拉取进 canvas 打开」）：
   // 外部文件 / URL 对话框的文案 + 服务端各拒因的**用户可读**说法（拒因词表
   // 与 ExternalOpenRoutes / ExternalOpenPolicy 的 reason 逐键对应）。
   'externalOpen.title': '打开外部文件',
-  'externalOpen.hint': '粘贴本机任意可读文件的绝对路径，或一个 http(s) 链接；远程内容按内容嗅探类型后落盘再打开。',
+  'externalOpen.hint': '粘贴可读文件的绝对路径或 http(s) 链接；远程内容先落盘再打开。',
   'externalOpen.placeholder': '/Users/…/报告.pdf 或 https://example.com/pic.png',
   'externalOpen.open': '打开',
   'externalOpen.cancel': '取消',

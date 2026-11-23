@@ -144,12 +144,16 @@
 
 /* ── Glass Surface ─────────────────────────────────────────────────────── */
 .glass {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
 }
 
 /* Top-edge refraction line */
 .glass::before {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: inherit;
   content: '';
   position: absolute;
   top: 0;
@@ -456,6 +460,11 @@
   border-color: transparent;
   transition: background-color 0.15s ease, color 0.15s, border-color 0.15s, opacity 0.15s;
 }
+.config-actions button,
+#memory-modal-actions button,
+#rules-modal-actions button {
+  box-shadow: var(--btn-shadow);
+}
 @media (hover: hover) {
   /* Pattern B — hover（中性 hover 档；picked/copied 态除外：accent 由各自更高
      特异档承担） */
@@ -634,6 +643,8 @@
    报告 §③：MockWS onclose 真断开后取 computed style，非「改 CSS 声称」）。 */
 :is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip).disconnected,
 :is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip).disconnected:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: var(--glass-send-bg-active);
   border-color: var(--glass-send-border-active);
   color: var(--color-text-muted);
@@ -732,6 +743,7 @@ button.glass-control.fm-login-btn {
      第二选择器 = 到达面加固（特异度载体，(0,2,1) > 铺开批的 `button.glass-control`
      (0,1,1)），机制见新头注「🔴 到达面加固」；🔴 两选择器共用**同一条声明**，零复制。 */
   color: var(--btn-primary-ink);
+  box-shadow: var(--btn-shadow);
 }
 :is(.fm-login-btn, .login-modal-btn),
 button.glass-control.fm-login-btn {
@@ -751,6 +763,7 @@ button.glass-control.fm-login-btn {
   opacity: 1; /* 挡住 .cfg-btn-primary:hover/:disabled 的透明度反馈（本族用色表达） */
   transition: background 0.15s ease, border-color 0.15s ease,
               box-shadow 0.15s ease, opacity 0.15s ease;
+  box-shadow: var(--btn-shadow);
 }
 :is(.fm-login-btn, .login-modal-btn):hover,
 button.glass-control.fm-login-btn:hover {
@@ -779,18 +792,27 @@ button.glass-control.fm-login-btn:disabled {
    `.fm-login-btn` —— 故此处「同形」的对照面 = 主键块，不再含活动条方键。） */
 .login-modal-btn.login-modal-btn-secondary,
 .login-modal-btn.login-modal-btn-secondary:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: var(--glass-control-bg);
   border-color: var(--glass-control-border);
   color: var(--color-text);
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
-  .login-modal-btn.login-modal-btn-secondary:hover { background: var(--glass-control-bg-hover); }
+  .login-modal-btn.login-modal-btn-secondary:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--glass-control-bg-hover); }
 }
 
 .login-modal-btn.login-modal-btn-secondary:active {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   border-color: var(--glass-send-border-active);
 }
 .login-modal-btn.login-modal-btn-secondary:disabled {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: var(--glass-send-bg-disabled);
   border-color: var(--glass-send-border-disabled);
   color: color-mix(in srgb, var(--color-text) 50%, transparent);
@@ -873,11 +895,11 @@ button.glass-control.fm-login-btn:disabled {
 }
 .dropbox-msg.out .dropbox-msg-bubble {
   /* 底色归 glass.css「气泡归属方底色单点」块（--nf-bub-ours-bg）；本行只留尾角。 */
-  border-bottom-right-radius: 4px;
+  border-bottom-right-radius: var(--ds-radius-badge);
 }
 .dropbox-msg.in .dropbox-msg-bubble {
   border: 1px solid var(--glass-etched-border);
-  border-bottom-left-radius: 4px;
+  border-bottom-left-radius: var(--ds-radius-badge);
 }
 
 /* meta pill — 逐条搬主对话框 .duration-badge（chat.css:1138-1149）
@@ -981,6 +1003,8 @@ button.glass-control.fm-login-btn:disabled {
    gap）⇒ 新增真节点。四会话统一批 2026-11-05：好友/群/设备的 pill 改挂
    `.duration-badge-divider`（= 本规则的主会话同源件），本组只剩 dropbox 面。 */
 .dropbox-msg-divider {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-thin);
   width: 1px;
   height: 10px;
   background: currentColor;
@@ -1091,9 +1115,9 @@ button.glass-control.fm-login-btn:disabled {
   --btn-press-scale: 0.98;        /* 按下幅度（桌面档；2% 触感，不配阴影） */
   --btn-press-scale-touch: 0.97;  /* 触屏档（无 hover 面：反馈只走按下） */
   --btn-press-fade: 0.92;         /* prefers-reduced-motion 兜底：禁位移，改用透明度 */
-  --btn-ring-w: 2px;              /* 焦点描边环宽（键盘导航可见，WCAG 2.4.7） */
-  --btn-ring-offset: 2px;         /* 环与本体间隙（不侵入邻钮） */
-  --btn-ring: var(--btn-focus-ring);
+  /* 焦点环几何/颜色已收编 `css/keyboard.css` 的 `--nf-focus-ring*`（focus-ring-unify
+     批 2026-11-22：全站一条环、一个色源）。原 `--btn-ring / -w / -offset` 三槽删除，
+     0 引用由 scripts/check-focus-ring.mjs F6 钉住。 */
   --btn-disabled-opacity: 0.5;    /* 禁用档：只降不透明 + not-allowed，不灰到不可读 */
   --btn-hover-bg: var(--glass-control-bg-hover);   /* hover 底色阶（仅 (hover:hover) 生效） */
   --btn-press-bg: color-mix(in srgb, var(--glass-control-bg-hover) 88%, var(--color-text) 12%); /* 按下底色阶 = 比 hover 再深一档 */
@@ -1125,6 +1149,17 @@ button.glass-control.fm-login-btn:disabled {
 
 /* ── 幽灵 — 无底 + 文字弱化（行级面 R12′：允许 rest 零区隔，但 hover ∧ active
    双态必有实测反馈）────────────────────────────────────────────────────── */
+/* 全面圆角批 2026-11-22（§2.6）：幽灵行/键的**几何归行自己**，不写进上面那条
+   `:is(...)` 共享材质块 —— 共享块里写统一档位会把同族里的圆形件压平（实测反例：
+   `#settings-modal-close` 由 `.g2-fab` 给 50%，被共享块的 6px 覆盖 ⇒ 圆钮变方钮）。
+   `.panel-btn`（8px）与 `.g2-fab`（50%）各自持有形状，此处只列行族成员。 */
+:is(.fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
+    .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
+    .fm-modal-title-btn, .fm-modal-close, .fm-gs-open,
+    .settings-avatar-entry, .settings-collapse-toggle,
+    .fm-context-menu button:not(.danger)) {
+  border-radius: var(--ds-radius-chip);
+}
 :is(.fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
     .neblink-peer.fm-device-row, .fm-msg-act,
     .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
@@ -1162,14 +1197,19 @@ button.glass-control.fm-login-btn:disabled {
    `--color-frame-text-muted`（暗档 = 81838a 落在输入条底衬上仅 4.29:1 ⇒ 判红）
    ⇒ 并入幽灵档：无底 + `--btn-ghost-ink`（暗档 = --color-text）⇒ 同一底衬 13.5:1 ✔。 */
 .fm-attach-btn {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: var(--btn-ghost-bg);
   border-color: transparent;
   color: var(--btn-ghost-ink);
   cursor: pointer;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   /* 同幽灵族口径（扁平化批 2026-11-05）：hover/active 双主题同构，不再按主题分叉。 */
   .fm-attach-btn:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
     color: var(--btn-ghost-ink-hover);
     border-color: var(--btn-secondary-stroke-hover);
     background: var(--btn-secondary-fill-hover);
@@ -1177,10 +1217,14 @@ button.glass-control.fm-login-btn:disabled {
 }
 
 .fm-attach-btn:active {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   border-color: var(--btn-secondary-stroke);
   background: var(--btn-unavailable-bg);
 }
 .fm-attach-btn:disabled {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: var(--btn-disabled-bg);
   border-color: var(--btn-disabled-stroke);
   color: var(--btn-disabled-ink);
@@ -1198,6 +1242,7 @@ button.glass-control,
   border-color: var(--btn-secondary-stroke);
   color: var(--btn-secondary-ink);
   cursor: pointer;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   button.glass-control:hover,
@@ -1249,15 +1294,19 @@ button.fm-req-decline {
   border-color: var(--btn-danger-stroke);
   color: var(--btn-danger-ink);
   cursor: pointer;
+  box-shadow: var(--btn-shadow);
 }
 .fm-context-menu button.danger,
 .explorer-context-menu button.danger,
 .canvas-tab-context-menu button.danger {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: var(--btn-danger-bg);
   color: var(--btn-danger-ink);
   outline: 1px solid var(--btn-danger-stroke);
   outline-offset: calc(-1 * 1px);
   cursor: pointer;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   button.glass-control.fm-gs-kick:hover,
@@ -1305,6 +1354,7 @@ button.glass-control.fm-req-accept {
   color: var(--btn-primary-ink);
   cursor: pointer;
   opacity: 1;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   #dropbox-send-btn:hover,
@@ -1342,8 +1392,8 @@ button.glass-control.fm-req-accept:active {
     button.fm-send-btn:not(.ds-turn-btn), button.fm-verify-send, button.fm-send-chip,
     button.glass-control.fm-gs-save,
     button.glass-control.fm-req-accept):focus-visible {
-  outline: 2px solid var(--btn-focus-ring);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* 开关本体 `.nb-toggle`（js/toggle.js）—— **本文件不再参与其造型**（toggle-unify 批
@@ -1382,6 +1432,8 @@ button.glass-control.fm-req-accept:active {
     .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
     .settings-avatar-entry, .settings-collapse-toggle,
     .fm-context-menu button)[aria-disabled="true"] {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: var(--btn-disabled-bg);
   border-color: var(--btn-disabled-stroke);
   color: var(--btn-disabled-ink);

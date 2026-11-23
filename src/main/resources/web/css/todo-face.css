@@ -160,8 +160,8 @@
 .tfl-capsule:hover { background: var(--ctl-neutral-bg-hover); }
 .tfl-capsule:active { background: var(--ctl-neutral-bg-active); }
 .tfl-capsule:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 /* 内容层切换（灵动岛批 2026-11-05）：展开后胶囊层**不消失、只退成内容层** ——
    同一节点仍在岛内（judge：`#todo-island` 恒为同一引用），淡出 + 失焦模糊，
@@ -502,17 +502,23 @@
   box-shadow: 0 0 3px color-mix(in srgb, var(--tag-color, var(--color-text, #000)) 30%, transparent);
 }
 .tfl-chip-tag.selected {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: color-mix(in srgb, var(--tag-color) 32%, transparent);
   border-color: color-mix(in srgb, var(--tag-color) 60%, transparent);
   box-shadow: 0 0 3px color-mix(in srgb, var(--tag-color) 55%, transparent);
 }
 .tfl-chip-tag .tfl-chip-dot { background: var(--tag-color); }
 .tfl-chip-all {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: color-mix(in srgb, var(--color-text, #000) 7%, transparent);
   border-color: transparent;
   z-index: 1;
 }
 .tfl-chip-all.selected {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: color-mix(in srgb, var(--color-text, #000) 18%, transparent);
   border-color: color-mix(in srgb, var(--color-text, #000) 45%, transparent);
   box-shadow: 0 0 3px color-mix(in srgb, var(--color-text, #000) 30%, transparent);
@@ -527,6 +533,8 @@
 /* 拖拽中：源 chip 25% 透明（复刻 isDragged opacity） */
 .tfl-chip-tag.dragging { opacity: 0.25; }
 .tfl-chip-ghost {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: fixed;
   z-index: 10000;
   pointer-events: none;
@@ -585,8 +593,12 @@
 .tfl-chip-add:hover { color: color-mix(in srgb, var(--color-text, #000) 80%, transparent); }
 /* 重要度四签行 */
 .tfl-prio-row { display: flex; align-items: center; gap: var(--ds-space-half); flex-wrap: wrap; }
-.tfl-chip-prio { background: color-mix(in srgb, var(--tag-color, var(--color-text, #000)) 5%, transparent); }
+.tfl-chip-prio {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: color-mix(in srgb, var(--tag-color, var(--color-text, #000)) 5%, transparent); }
 .tfl-chip-prio.selected {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: color-mix(in srgb, var(--tag-color) 22%, transparent);
   border-color: color-mix(in srgb, var(--tag-color) 50%, transparent);
   box-shadow: 0 0 3px color-mix(in srgb, var(--tag-color) 45%, transparent);
@@ -693,6 +705,8 @@
   border: 1.5px solid transparent;
 }
 .tfl-tag-color.selected::before {
+  /* 全面圆角批 2026-11-22（§2.6 标记类）：选中环是覆盖层，圆角跟随色点本体。 */
+  border-radius: inherit;
   box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--color-text, #fff) 80%, transparent);
 }
 /* 校验反馈行（作者报障批 2026-11-07：空名/重名原先静默关闭，零反馈 ⇒ 读作
@@ -730,11 +744,12 @@
   background: var(--color-primary);
   color: rgba(255, 255, 255, 0.96);
   font-weight: 600;
+  box-shadow: var(--btn-shadow);
 }
 .tfl-tag-btn.is-primary:hover { background: var(--color-primary-hover); }
 .tfl-tag-btn:focus-visible {
-  outline: 2px solid var(--btn-focus-ring, var(--color-info));
-  outline-offset: 1px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* ── 列表 ─────────────────────────────────────────────────────────────── */
@@ -774,7 +789,10 @@
   align-items: flex-start;
   gap: var(--ds-space-1);
   padding: var(--ds-space-1) var(--ds-space-1h);
-  border-radius: var(--ds-radius-badge);
+  /* 圆角标准批（作者令 2026-11-22 08:03「我说了要圆角的框」「落为标准」；§2.6）：
+     本行原以 badge 档 4px 登记为方角造型件，现并入可交互件标准档 6px
+     （= --ds-radius-chip），焦点环随 border-radius 走。 */
+  border-radius: var(--ds-radius-chip);
   background: color-mix(in srgb, var(--color-text, #000) 4%, transparent);
   border: 0.6px solid transparent;
   transition: opacity 0.3s ease-out, transform 0.3s ease-out, background 0.15s, border-color 0.15s;
@@ -1022,6 +1040,7 @@
   background: color-mix(in srgb, var(--color-text, #000) 14%, transparent);
   color: var(--color-text, #000);
   font-weight: 600;
+  box-shadow: var(--btn-shadow);
 }
 .tfl-edit-prio-btn .tfl-chip-dot { width: 7px; height: 7px; }
 .tfl-edit-due { display: flex; align-items: center; gap: var(--ds-space-1); }
@@ -1117,6 +1136,7 @@
   font: 500 var(--ds-fs-meta)/1 ui-monospace, SFMono-Regular, monospace;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .tfl-add-btn:hover {
@@ -1163,8 +1183,8 @@
 }
 .tfl-fab-add:active { transform: scale(0.94); }
 .tfl-fab-add:focus-visible {
-  outline: 1.5px solid color-mix(in srgb, var(--color-text) 45%, transparent);
-  outline-offset: 1px;
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 /* C 批：图标占比单源 = 直径 45%（手机腿由 body.mobile-layer .g2-fab svg
    （--band-icon，同为 45%）接管，双档同比例）。 */
@@ -1207,7 +1227,7 @@
   align-items: center;
   gap: 8px;
   padding: var(--ds-space-1h) 10px;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   border: 1px solid var(--tfl-hint-stroke);
   background: var(--tfl-hint-bg);
   color: var(--tfl-hint-text);
