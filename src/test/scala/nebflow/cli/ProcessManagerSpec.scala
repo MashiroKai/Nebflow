@@ -68,7 +68,9 @@ class ProcessManagerSpec extends FunSuite:
     metaRead: () => Option[PidMeta.Meta] = () => None,
     startInstantMs: Long => Option[Long] = _ => None,
     gatewayPortOverride: Option[Int] = Some(18108),
-    homeProof: (Long, Option[String]) => nebflow.shared.InstanceScope.HomeProof = sameHomeProof
+    homeProof: (Long, Option[String]) => nebflow.shared.InstanceScope.HomeProof = sameHomeProof,
+    homeSweep: () => List[Long] = () => Nil,
+    sweepWaitMs: Long = 0L
   ): (ProcessManager.StopDeps, Recorder) =
     val rec = new Recorder
     val deps = ProcessManager.StopDeps(
@@ -87,7 +89,9 @@ class ProcessManagerSpec extends FunSuite:
       metaRead = metaRead,
       startInstantMs = startInstantMs,
       gatewayPortOverride = gatewayPortOverride,
-      homeProof = homeProof
+      homeProof = homeProof,
+      homeSweep = homeSweep,
+      sweepWaitMs = sweepWaitMs
     )
     (deps, rec)
 
@@ -100,6 +104,58 @@ class ProcessManagerSpec extends FunSuite:
     ProcessManager.stopHardened(opts, deps).unsafeRunSync()
 
   private def selfPid(): Long = java.lang.ProcessHandle.current().pid()
+
+  // ── post-stop sweep (cli-lifecycle round2): same-home stand jars ──────────
+
+  private def launcherOwned(pid: Long): Unit =
+    ProcessManager.writePid(pid)
+    PidMeta.writeFreshFor(PidMeta.StartedByLauncher, PidMeta.ModeDaemon, pid)
+
+  test("sweep: target stopped but a same-home stand jar survives ⇒ Failed naming its pid, not Stopped") {
+    withTempRoot {
+      launcherOwned(selfPid())
+      val (deps, _) = stubDeps(homeSweep = () => List(4242L))
+      runStop(ProcessManager.StopOptions(), deps) match
+        case ProcessManager.StopOutcome.Failed(reason) =>
+          assert(reason.contains("4242"), reason)
+          assert(reason.contains("still running"), reason)
+        case other => fail(s"expected Failed with residue pid, got $other")
+    }
+  }
+
+  test("sweep: nothing left after the stop ⇒ Stopped (unchanged success face)") {
+    withTempRoot {
+      launcherOwned(selfPid())
+      val (deps, _) = stubDeps(homeSweep = () => Nil)
+      runStop(ProcessManager.StopOptions(), deps) match
+        case ProcessManager.StopOutcome.Stopped(_) => ()
+        case other => fail(s"expected Stopped, got $other")
+    }
+  }
+
+  test("sweep: the stop CLI's own pid is never reported as residue") {
+    withTempRoot {
+      launcherOwned(selfPid())
+      val (deps, _) = stubDeps(homeSweep = () => List(selfPid()))
+      runStop(ProcessManager.StopOptions(), deps) match
+        case ProcessManager.StopOutcome.Stopped(_) => ()
+        case other => fail(s"expected Stopped (self excluded), got $other")
+    }
+  }
+
+  test("sweep: a jar that exits within the wait budget ⇒ Stopped (poll, not one-shot)") {
+    withTempRoot {
+      launcherOwned(selfPid())
+      var calls = 0
+      val (deps, _) = stubDeps(
+        homeSweep = () => { calls += 1; if calls == 1 then List(4242L) else Nil },
+        sweepWaitMs = 2000L
+      )
+      runStop(ProcessManager.StopOptions(), deps) match
+        case ProcessManager.StopOutcome.Stopped(_) => assert(calls >= 2, s"calls=$calls")
+        case other => fail(s"expected Stopped after poll, got $other")
+    }
+  }
 
   // ── piece 1: identity ──────────────────────────────────────────────────
 

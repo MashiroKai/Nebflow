@@ -1179,7 +1179,14 @@ Set-Content -Path $cmdPath -Value $cmdContent -Encoding ASCII
 # Legacy command shim (2026-10-20 rename batch): "nebflow" is retired as the
 # command name; this thin .cmd warns on stderr, then forwards to the current
 # launcher. Fixed legacy name by design (historical fact, like rebrand.sh).
+# Written ON DEMAND only: a fresh install gets no shim. It is written when an
+# old nebflow trace exists (an existing nebflow.cmd/nebflow in InstallDir, or a
+# nebflow command on PATH), so an upgrade of an install that already had it keeps it.
 $shimPath = Join-Path $InstallDir "nebflow.cmd"
+$legacyTrace = (Test-Path (Join-Path $InstallDir "nebflow.cmd")) -or
+    (Test-Path (Join-Path $InstallDir "nebflow")) -or
+    [bool](Get-Command nebflow -ErrorAction SilentlyContinue)
+if ($legacyTrace) {
 $shimContent = @"
 @echo off
 echo WARN: 'nebflow' is deprecated - the command is now '$WrapperName'. Forwarding... 1>&2
@@ -1187,6 +1194,9 @@ echo WARN: 'nebflow' is deprecated - the command is now '$WrapperName'. Forwardi
 exit /b %ERRORLEVEL%
 "@
 Set-Content -Path $shimPath -Value $shimContent -Encoding ASCII
+} else {
+    Write-V "No legacy nebflow trace - shim not written"
+}
 
 # Add to PATH
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
