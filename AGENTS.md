@@ -7,7 +7,7 @@
 ## Branch and release discipline
 
 - Use `feat/*` or `bug/*` for every batch branch. Existing `fix/*` branches are grandfathered; do not rename them retroactively.
-- 批完成后默认合并 feat/base，不等作者令（闸绿为前提；conflict 或闸红才停报）。（作者令 2026-11-23：「做完就默认合并到feat base，不再等待」）
+- 批完成后默认合并 feat/base，不等作者令（闸绿为前提；conflict 或闸红才停报）。（作者令 2026-11-23：「做完就默认合并到feat base，不再等待」）**本条优先于 stand-dev merge-pipeline.md 的"显式授权"要求**：feat/*、fix/* 等开发支 → feat/base 的合并授权由本条**常设授予**（source=本批支，target=feat/base），无需逐批询问作者；merge-pipeline 的 stop-and-ask 条款仅适用于 main/release 发布线。唯一例外=作者明确要求的 demo 支：放着不合并。（作者令 2026-11-24：「现在是做完就落 除非是我明确要求的demo支 就放着不合并」「禁止自行合并的要求 检查一下 看看是哪的问题」）
 - 已合并进 feat/base 的 feat/* / fix/* 分支合并后即删（`git branch -d`）；`archive/` 前缀仅用于未合并而废弃的支。（作者令 2026-11-23：「合完的分支就应该删掉啊，这是规则」）
 - Do not push directly to USTC. Only the author opens USTC PRs and pushes release branches.
 - After upstream verification, only the author lands changes on `main`; a promotion is recorded as a **merge commit** (`merge: promote <line> to main`) (author ruling 2026-11-19). For release defects, create `bug/*` from `main`; after the fix reaches `main`, the author chooses which release line to update.
