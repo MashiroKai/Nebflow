@@ -107,6 +107,9 @@
      （meta↔micro、hint↔label、body↔body、title↔sub、display↔title），故只补
      草案里原先空缺的两档；档数增不改五档语义，消费点零改动。 */
   --ds-fs-lead: 17px;      /* Apple body 17（M5：手机档已落地 --mfs-body 17，桌面正文仍 13px 密度档） */
+  --ds-fs-page-back: 30px; /* 收藏页等文本箭头的既有字号 */
+  --ds-page-back-size: 36px; /* 顶栏文本返回按钮的既有尺寸 */
+  --ds-fav-star: currentColor; /* 保持收藏星标原有的继承色 */
   --ds-fs-title-lg: 28px;  /* 大标题档（与手机层 --mfs-title 28 同值对齐） */
 
   /* ── ③ 行高与字距（SKILL.md §3 + 值重定批 §3.3 H/L 组）── */
@@ -1041,6 +1044,19 @@
 }
 .ds-tool-card:hover,
 .ds-tool-card--pending { background: var(--ds-control-bg-hover); }
+/* Shared page-header text back control; geometry preserves the existing favorites page. */
+.page-back {
+  width: var(--ds-page-back-size);
+  height: var(--ds-page-back-size);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--ds-fs-page-back);
+  line-height: 1;
+  cursor: pointer;
+}
+
 .ds-tool-card .icon { flex-shrink: 0; margin-top: var(--ds-space-hair); }
 .ds-tool-card .icon.ok { color: var(--ds-success-icon); }
 .ds-tool-card .icon.err { color: var(--ds-danger-icon); }
