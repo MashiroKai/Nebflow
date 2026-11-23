@@ -931,6 +931,10 @@ export default {
   // Sub-Agents 面板（2026-08-25 subagents-panel spec）——状态标签与空态
   'subagents.header': '子智能体 · {count}',
   'subagents.empty': '当前无运行中的子智能体',
+  'subagents.historyFold': '历史 · {count} 条已折叠',
+  'subagents.historyExpand': '展开',
+  'subagents.historyCollapse': '收起历史',
+  'subagents.historyClear': '清除历史视图',
   'subagents.indicatorTitle': '后台子智能体',
   'subagents.status.running': '进行中',
   // 显式等待停靠态（Waiting）：行状态位直显「停靠等待中」（legacy 快照无申报槽的

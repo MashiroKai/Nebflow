@@ -979,6 +979,10 @@ export default {
   // Sub-Agents panel (2026-08-25 subagents-panel spec) — state labels + empty state
   'subagents.header': 'Sub-agents · {count}',
   'subagents.empty': 'No running sub-agents',
+  'subagents.historyFold': 'History · {count} folded',
+  'subagents.historyExpand': 'Expand',
+  'subagents.historyCollapse': 'Collapse history',
+  'subagents.historyClear': 'Clear history view',
   'subagents.indicatorTitle': 'Background sub-agents',
   'subagents.status.running': 'Running',
   // Explicit waiting dock (Waiting): the row status word is "Docked, waiting"

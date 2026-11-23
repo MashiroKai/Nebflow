@@ -7,6 +7,7 @@
 import state from '../state.js';
 import { sendWs } from '../ws.js';
 import { t } from '../i18n.js';
+import { key } from '../branding.js';
 // 术语统一批（2026-11-06 作者令逐字「统一 根据英文」）：身份/类型徽标词**只**从单源
 // 词表取（js/termWords.js）——本文件的三个产词函数（bgDelegateBadgeWord /
 // bgAgentflowWord / bgMemberKindWord）不再自带词表、也不再走 locale 键族
@@ -2658,6 +2659,60 @@ function countPendingRecovery(model) {
   return n;
 }
 
+// ── 历史折叠（作者令 2026-11-23「很多卡在那」· 590 历史卡堆叠）─────────────────────
+// 终态（done/error）的顶层行 = 历史。展示上限 BG_HISTORY_VISIBLE 条，其余收进一行
+// 「历史 · N 条」折叠钮（默认收起，可展开）。运行中的行永不折叠。
+// 「清除历史视图」= 客户端本地隐藏（后端归档端点已整体退役，PresenceRoutes.scala:1204，
+// 无法真删）：被隐藏的终态行写入本地键；行再次进入运行态即自动解除隐藏。
+export const BG_HISTORY_VISIBLE = 6;
+const BG_HISTORY_HIDDEN_KEY = key('bg_history_hidden_v1');
+let bgHistoryExpanded = false;
+
+function bgHistoryHiddenSet() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(BG_HISTORY_HIDDEN_KEY) || '[]');
+    return new Set(Array.isArray(arr) ? arr.map(String) : []);
+  } catch (_) { return new Set(); }
+}
+function bgHistoryHiddenSave(set) {
+  try { localStorage.setItem(BG_HISTORY_HIDDEN_KEY, JSON.stringify([...set])); } catch (_) { /* 配额：本次会话内有效 */ }
+}
+
+/** 历史候选 = 无父的顶层终态行（标签面 root/struct 与运行中行不入）。 */
+function bgHistoryCandidates(tree) {
+  return tree.order.filter((row) => !tree.parentOf.get(row)
+    && row.level !== 'root' && row.level !== 'struct' && !row.storeChild
+    && (bgPlanRowState(row) === 'done' || bgPlanRowState(row) === 'error'));
+}
+
+/**
+ * 历史折叠计划（纯函数，便于闸测）：返回 { folded:Set<row>, foldCount, candidates }。
+ * - 用户已「清除历史视图」的终态行：不出镜、不计入折叠数；
+ * - 其余历史候选：前 BG_HISTORY_VISIBLE 条出镜，余下进折叠组（展开态则全部出镜）。
+ */
+export function bgHistoryFoldPlan(tree) {
+  const hidden = bgHistoryHiddenSet();
+  const candidates = bgHistoryCandidates(tree);
+  const userHidden = new Set(candidates.filter((r) => hidden.has(String(bgRowSessionKey(r)))));
+  const rest = candidates.filter((r) => !userHidden.has(r));
+  const folded = bgHistoryExpanded ? new Set() : new Set(rest.slice(BG_HISTORY_VISIBLE));
+  return { folded, foldCount: folded.size, userHidden, candidates: rest };
+}
+
+/** 历史折叠钮（组头样式的一行；data-* 供点击委派与闸测读数）。 */
+function bgHistoryFoldHtml(foldCount, candidateCount) {
+  // 无可折叠条数且未展开 ⇒ 不给折叠钮（只留清除入口）；展开态恒给「收起历史」。
+  const toggle = bgHistoryExpanded
+    ? '<button type="button" class="bg-history-toggle" data-bg-history-toggle>' + escapeHtml(t('subagents.historyCollapse')) + '</button>'
+    : foldCount > 0
+      ? '<button type="button" class="bg-history-toggle" data-bg-history-toggle>'
+        + escapeHtml(t('subagents.historyFold', { count: foldCount }) + ' · ' + t('subagents.historyExpand')) + '</button>'
+      : '';
+  return '<div class="bg-history-fold" data-bg-history-fold="' + candidateCount + '">' + toggle
+    + '<button type="button" class="bg-history-clear" data-bg-history-clear>' + escapeHtml(t('subagents.historyClear')) + '</button>'
+    + '</div>';
+}
+
 export function renderBgAgentDropdown() {
   if (!activeView) return;
   const dropdownEl = activeView.dom.bgagentDropdownEl;
@@ -2770,9 +2825,18 @@ export function renderBgAgentDropdown() {
     // 经 chainBySid 兜底解析（与链子行同一缝）。
     if (g.synthesized) chainBySid.set(g.sid, g.info);
   }
+  // 历史折叠（2026-11-23）：超出展示上限的终态顶层行 / 用户已清除的历史行不出镜；
+  // 折叠钮仅在首个被折叠行的位置出现一次。子树随父（hidden 沿父链下传）。
+  const histPlan = bgHistoryFoldPlan(tree);
+  let histFoldEmitted = false;
   for (const row of tree.order) {
     const parentRow = tree.parentOf.get(row) || null;
     if (parentRow && hidden.has(parentRow)) { hidden.add(row); continue; }
+    if (histPlan.folded.has(row) || histPlan.userHidden.has(row)) { hidden.add(row); continue; }
+    if (!histFoldEmitted && histPlan.candidates.length && row === histPlan.candidates[0]) {
+      histFoldEmitted = true;
+      htmlParts.push(bgHistoryFoldHtml(histPlan.foldCount, histPlan.candidates.length));
+    }
     const depth = tree.depth.get(row) || 0;
     const kids = tree.kids.get(row) || [];
     const childCount = kids.length;
@@ -2877,6 +2941,23 @@ export function renderBgAgentDropdown() {
   // 与本地行不同轴——本批不动其归属。
   htmlParts.push(remoteHtml);
   listEl.innerHTML = htmlParts.join('');
+  // 历史折叠钮委派（展开/收起 = 切本地标志并重绘；清除 = 把当前终态历史行写入本地隐藏键）。
+  const histToggle = listEl.querySelector('[data-bg-history-toggle]');
+  if (histToggle) histToggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    bgHistoryExpanded = !bgHistoryExpanded;
+    renderBgAgentDropdown();
+  });
+  const histClear = listEl.querySelector('[data-bg-history-clear]');
+  if (histClear) histClear.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const hidden = bgHistoryHiddenSet();
+    for (const row of histPlan.candidates) hidden.add(String(bgRowSessionKey(row)));
+    for (const row of histPlan.userHidden) hidden.add(String(bgRowSessionKey(row)));
+    bgHistoryHiddenSave(hidden);
+    bgHistoryExpanded = false;
+    renderBgAgentDropdown();
+  });
   // 行集收敛批（2026-11-02 第二律）：模型单点把「本帧渲染的本地行数」写进列表
   // 属性（data-bg-row-total），与头部计数同源同值——回归可机械核对「签 vs 行集」。
   // data-bg-row-total = 行集长度（model.total，名实相符：行总数）；
