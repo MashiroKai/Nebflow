@@ -806,15 +806,6 @@ $jarPath = Join-Path $InstallDir $JarName
 if (Test-Path $jarPath) {
     Write-Ok "Already up-to-date ($Version)."
 } else {
-    # Clean up old versions (keep .nebflow user data untouched)
-    $oldJars = @(Get-ChildItem (Join-Path $InstallDir "$LowerName-assembly-*.jar") -ErrorAction SilentlyContinue) + @(Get-ChildItem (Join-Path $InstallDir "nebflow-assembly-*.jar") -ErrorAction SilentlyContinue)
-    foreach ($old in $oldJars) {
-        if ($old.FullName -ne $jarPath) {
-            Remove-Item $old.FullName -Force -ErrorAction SilentlyContinue
-            Write-V "Removed old: $($old.Name)"
-        }
-    }
-
     # Auto-detect region for download source selection
     if (-not $Region) {
         $tz = [TimeZoneInfo]::Local.Id
@@ -855,6 +846,30 @@ if (Test-Path $jarPath) {
     }
     $size = [math]::Round((Get-Item $jarPath).Length / 1MB, 1)
     Write-Ok "Downloaded $JarName from COS ($size MB)."
+}
+
+# Upgrade residue: old-version jars are cleared on EVERY install (not only when
+# the new jar is absent - the old else-branch-only cleanup left
+# stand-assembly-2026.10.21 behind after the 2026.11.23 upgrade). The newest
+# jar is always the one selected, so a leftover never changes the running
+# version. A jar still locked by a running instance is reported, not silently
+# skipped; it goes on the next install/uninstall once that instance is stopped.
+$oldJars = @(Get-ChildItem (Join-Path $InstallDir "$LowerName-assembly-*.jar") -ErrorAction SilentlyContinue) + @(Get-ChildItem (Join-Path $InstallDir "nebflow-assembly-*.jar") -ErrorAction SilentlyContinue)
+$staleJars = @()
+foreach ($old in $oldJars) {
+    if ($old.FullName -ne $jarPath) {
+        try {
+            Remove-Item $old.FullName -Force -ErrorAction Stop
+            Write-V "Removed old: $($old.Name)"
+        } catch {
+            $staleJars += $old.FullName
+        }
+    }
+}
+if ($staleJars.Count -gt 0) {
+    Write-Warn2 "Old jar(s) still locked, not removed:"
+    foreach ($j in $staleJars) { Write-Warn2 "  $j" }
+    Write-Warn2 "Stop the running instance ('$WrapperName stop') and re-run the installer, or run the uninstaller."
 }
 
 # --- [4/7] ripgrep (rg) for search support ---

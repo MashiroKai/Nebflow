@@ -271,8 +271,15 @@ object UninstallCommand extends CliCommand:
             """powershell -Command "& { iwr """ + nebflow.shared.Branding.uninstallPs1Url + """ | iex }" """
           else "curl -fsSL " + nebflow.shared.Branding.uninstallUrl + " | sh"
         val exitCode = script.!
-        if exitCode == 0 then CliResult.text("Uninstall completed")
-        else CliResult.Error("Uninstall failed", exitCode)
+        exitCode match
+          case 0 => CliResult.text("Uninstall completed")
+          // 3 = partial (release/uninstall.ps1): the rest is removed; locked
+          // leftovers are listed above and in the residue file. Not a failure.
+          case 3 =>
+            CliResult.text(
+              "Uninstall partially completed: some files were still locked and are listed above (residue file in TEMP). Reboot and re-run 'stand uninstall', or delete them by hand."
+            )
+          case _ => CliResult.Error("Uninstall failed", exitCode)
       }
 
   end UninstallRun
