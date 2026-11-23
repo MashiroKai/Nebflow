@@ -110,7 +110,7 @@ export function mountModelRulesSection(host) {
               <button type="button" data-view="diagram" class="${view === 'diagram' ? 'is-on' : ''}">${escapeHtml(t('modelRules.diagram'))}</button>
               <button type="button" data-view="source" class="${view === 'source' ? 'is-on' : ''}">${escapeHtml(t('modelRules.source'))}</button>
             </div>
-            ${view === 'diagram' ? diagramHtml(diagram) : srcHtml}
+            ${view === 'diagram' ? diagramHtml(diagram) : `<div class="mr-source-wrap">${srcHtml}</div>`}
           </section>
           <section class="mr-right">
             <textarea class="mr-draft" spellcheck="false" aria-label="${escapeHtml(t('modelRules.draftLabel'))}">${escapeHtml(draft)}</textarea>
@@ -136,9 +136,15 @@ export function mountModelRulesSection(host) {
     if (el.dataset.srcLine) {
       view = 'source';
       render();
+      // 滚到节点对应行：hljs 输出为单块，按平均行高估算行位（近似；纯文本回退时同样成立）。
       const line = Number(el.dataset.srcLine);
-      const pre = host.querySelector('.mr-source') || host.querySelector('pre');
-      if (pre) pre.setAttribute('data-focus-line', String(line));
+      const wrap = host.querySelector('.mr-source-wrap');
+      if (wrap) {
+        const total = Math.max(1, saved.split('\n').length);
+        const lh = wrap.scrollHeight / total;
+        wrap.scrollTop = Math.max(0, (line - 1) * lh - lh * 2);
+        wrap.setAttribute('data-focus-line', String(line));
+      }
       return;
     }
     if (el.dataset.act === 'stage') {

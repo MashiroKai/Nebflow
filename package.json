@@ -30,6 +30,7 @@
     "visual:list": "node scripts/visual-baseline.mjs --list",
     "check:dropdown-single-control": "node scripts/check-dropdown-single-control.mjs",
     "check:askpanel-facade": "node scripts/check-askpanel-facade.mjs && node --test tests/askpanel-facade.test.mjs",
+    "check:model-rules-panel": "node scripts/check-model-rules-panel.mjs && node --test tests/model-rules-panel.test.mjs",
     "check:ask-time-divider": "node scripts/check-ask-time-divider.mjs"
   },
   "devDependencies": {
