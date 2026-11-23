@@ -314,6 +314,12 @@ const PANELS = [
     setup: openCreateGroup,
     cfg: { scrollSel: '#fm-group-create-overlay .fm-pick-body', headerSel: '#fm-group-create-overlay .fm-pick-header', firstSel: '#fm-group-create-overlay .fm-gs-rename-input, #fm-group-create-overlay .fm-gs-title', fabSels: ['#fm-group-create-overlay .fm-pick-fab'], rowSel: '.fm-pick-row', bubbleSel: '.fm-pick-row .__none__' },
     // 桌面窗头 116px 档（--fm-head-h 桌面覆写）；让位归零 ⇒ 首行必须落进窗头之下。
+    // 判据量的是 **scrollTop=0 静止态**（首项 ≥ 窗头底）；截图发生在 MEASURE 滚到
+    // 底之后，行从悬浮玻璃头下穿过是设计内行为（同联系人搜索坞），不构成违例，
+    // 读图时勿把「滚动态截图」当修前形态。修前实测（feat/base CSS）：pick-body
+    // padding-top=2px、gs-title t83 < 窗头底 197；修后（本分支）= var(--fm-head-clear)
+    // ⇒ 126px、title t207 > 197 —— 同一修法双形态（.fm-pick-modal 骨架/带名册）
+    // 都命中，桌面零新增 CSS。
     negative: '#fm-group-create-overlay .fm-pick-body { padding-top: 2px !important; }',
   },
   {
