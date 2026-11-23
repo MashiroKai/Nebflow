@@ -146,10 +146,8 @@ object DelegateLedgerReconcile:
   // ── 腿 3：boot 对账（假中断候选的逐条裁定）─────────────────────────────
 
   /**
-   * 确认终态行的标记摘除（面板行收口面补齐批 2026-11-21 · 甲′）：登记条目带取消墓碑
-   * 或重启打断旗，且**任务行已确认终态**（`completed`/`failed`/`cancelled`，与腿 1 同集）
-   * ⇒ 摘除该条目的墓碑（[[DelegateRegistry.clearCancelRequested]]）与重启旗
-   * （[[DelegateRegistry.clearRestartInterrupted]]）。
+   * 确认终态行的活动期重启旗摘除：取消墓碑及带 restart-loss 指纹的重启旗是
+   * 跨 boot 的语义证据，必须保留；其他终态行的重启旗可摘除。
    *
    * 触发条件（逐条，任一不满足 ⇒ 零触碰）：
    *  - 登记条目在册；
@@ -173,10 +171,11 @@ object DelegateLedgerReconcile:
     store.findByTaskId(rec.id).attempt.flatMap {
       case Right(Some(t)) if TerminalTaskStatuses.contains(t.status) =>
         IO.blocking {
-          val cancelOk =
-            if rec.cancelRequestedAt.isDefined then DelegateRegistry.clearCancelRequested(rec.id) else Right(())
+          // Cancellation and restart-loss are durable recovery semantics, not transient UI marks.
+          val cancelOk = Right(())
+          val restartLoss = t.lastError.exists(_.startsWith(nebflow.agent.SubAgentStartupRecovery.RestartLossFingerprint))
           val restartOk =
-            if rec.restartInterruptedAt.isDefined then DelegateRegistry.clearRestartInterrupted(rec.id) else Right(())
+            if rec.restartInterruptedAt.isDefined && !restartLoss then DelegateRegistry.clearRestartInterrupted(rec.id) else Right(())
           (cancelOk, restartOk)
         }.flatMap {
           case (Right(_), Right(_)) =>
