@@ -20,10 +20,11 @@ const MAIN = read('src/main/resources/web/js/main.js');
 const CSS = read('src/main/resources/web/css/llmFailureCard.css');
 
 const checks = [
-  // 2026-11-23：事件回调用仓内惯例 @type {Element} 标注（js-types），正则放宽为
-  // isLlmFailureControlTarget( …e.target… )。
+  // 合并批 II 支 2（provider-notice-card-unify）冲突解：两支共改本闸——check1 取 HEAD 侧
+  // js-types 放宽形（合并后 js 保住 @type 注解），check2 取分支侧统一卡形（closest 链含
+  // .llm-failure-window 新面）。两项实测 OK 于合并树。
   ['正文点按消失（控件区除外）', /box\.addEventListener\('click'[\s\S]*isLlmFailureControlTarget\([^)]*e\.target\)[\s\S]*dismiss\(\)/.test(CARD)],
-  ['控件区判定覆盖动作行/关闭钮/按钮/下拉', /\.llm-failure-actions, \.llm-failure-close, button, select, option/.test(CARD)],
+  ['控件区判定覆盖动作行/关闭钮/按钮/下拉', /target\.closest\('\.llm-failure-actions[^']*button, select, option'\)/.test(CARD)],
   ['标题行关闭钮（显式兜底）', /className = 'llm-failure-close'[\s\S]*bClose\.onclick/.test(CARD)],
   ['换模型成功后自动淡出', /is-switched[\s\S]*setTimeout\(fadeOut, SWITCH_FADE_MS\)/.test(CARD)],
   ['消失经 onDismiss 通知宿主', /deps\.onDismiss\(m\.key\)/.test(CARD)],

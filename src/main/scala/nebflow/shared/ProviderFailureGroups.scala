@@ -24,6 +24,22 @@ object ProviderFailureGroups:
   private val SummaryFamilies = "(?i)families:\\s*([a-z0-9,\\- ]+)".r
   private val requestId = "(?i)(request[_ -]?id\\s*[:=]\\s*)[A-Za-z0-9_-]+".r
 
+  /**
+   * 无逐行明细时的 **provider 兜底解析**（provider-notice-card-unify 批 2026-11-23，
+   * 作者报障「通知里服务商显示 unknown」）：两条正文形状携带真实 provider id——
+   *   - 处置表腿：`[skipped] zhipu/glm-5.3-flash — schedule-window (…)`（CandidateDisposition.render）；
+   *   - 时段窗腿：`当前时段（06:00-01:00）全部候选模型受限：UTSC/glm-5.3-flash — …`
+   *     （ModelScheduleRestrictedError.getMessage）。
+   * 判据 = `providerId/model` 形状（含 `/`，段内无空白），非已知族词表命中即可信；
+   * 全未命中 ⇒ 维持 `unknown`（不臆测，既有语义不变）。输入是 sanitize 过的正文
+   * （换行已折叠成空格）⇒ 判据不依赖行首锚，`[tried|skipped]` 徽标按标记直接认。
+   * 提取面 = **provider 段**（`/` 之前），与逐行明细腿的 `m.group(2)` 同口径。
+   */
+  private val ProviderRef = "(?:\\[(?:tried|skipped)\\]\\s*|受限：|failed:\\s*)([A-Za-z0-9_.-]+)/[A-Za-z0-9_.-]+".r.unanchored
+
+  private def providerFallback(detail: String): String =
+    ProviderRef.findFirstMatchIn(detail).map(_.group(1)).getOrElse("unknown")
+
   def snapshot(tasks: List[Task]): List[Group] =
     val rows = tasks.flatMap { task =>
       val parsed = attempt
@@ -44,7 +60,9 @@ object ProviderFailureGroups:
           .findFirstMatchIn(detail)
           .flatMap(m => m.group(1).split("[,\\s]+").find(KnownFamilies.contains))
           .getOrElse("unknown")
-        List(("unknown", family, detail, task.id))
+        // provider 兜底（2026-11-23 作者报障）：正文携带 provider/model 形状时用它，
+        // 不再恒给 unknown（时段窗受限的「UTSC/glm-5.3-flash」此前就是这样丢的）。
+        List((providerFallback(detail), family, detail, task.id))
     }
     rows
       .groupBy { case (provider, family, reason, _) => (provider, family, reason) }

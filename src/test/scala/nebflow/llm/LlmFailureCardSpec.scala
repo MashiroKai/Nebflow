@@ -2,6 +2,7 @@ package nebflow.llm
 
 import io.circe.Json
 import munit.FunSuite
+import nebflow.shared.ModelScheduleRestrictedError
 
 /**
  * LlmFailureCard 非阻塞运行时回归（卡片批 2026-11-21；聚合键「层级+模型」第 3 轮）。
@@ -79,6 +80,42 @@ class LlmFailureCardSpec extends FunSuite:
 
   test("卡片帧声明可等待 / 可换模型两个动作") {
     val f = LlmFailureCard.failureFrame("s-7", "agent-f", "x", "llm-auth")
+    assertEquals(f.hcursor.downField("waitable").as[Boolean].toOption, Some(true))
+    assertEquals(f.hcursor.downField("switchable").as[Boolean].toOption, Some(true))
+  }
+
+  // ── 窗口受限型（provider-notice-card-unify 批 2026-11-23）─────────────────
+
+  private def scheduleError =
+    new ModelScheduleRestrictedError(List("UTSC/glm-5.3-flash", "zhipu/glm-4.7"), "06:00-01:00")
+
+  test("时段窗全受限：failureClassOf = llm-schedule-window；windowDescOf 带窗口描述") {
+    assertEquals(LlmFailureCard.failureClassOf(scheduleError, "Unknown"), "llm-schedule-window")
+    assertEquals(LlmFailureCard.windowDescOf(scheduleError), Some("06:00-01:00"))
+    // 非时段窗错误：分类回退调用方值、窗口 None（零行为变化）。
+    assertEquals(LlmFailureCard.failureClassOf(new RuntimeException("boom"), "ServerError"), "ServerError")
+    assertEquals(LlmFailureCard.windowDescOf(new RuntimeException("boom")), None)
+  }
+
+  test("时段窗全受限：modelRefOf 取受限清单首个（provider id 不再丢成 unknown）") {
+    assertEquals(LlmFailureCard.modelRefOf(scheduleError, None), "UTSC/glm-5.3-flash")
+    assertEquals(LlmFailureCard.modelRefOf(scheduleError, Some("p/preferred")), "UTSC/glm-5.3-flash")
+  }
+
+  test("窗口受限卡：waitable / switchable 双 false；帧携带 windowDesc 与分类线值") {
+    val f = LlmFailureCard.recordFailure(
+      "s-8", "agent-w", "当前时段（06:00-01:00）全部候选模型受限", "llm-schedule-window", "root", "UTSC/glm-5.3-flash", "06:00-01:00"
+    )
+    assertEquals(f.hcursor.downField("waitable").as[Boolean].toOption, Some(false))
+    assertEquals(f.hcursor.downField("switchable").as[Boolean].toOption, Some(false))
+    assertEquals(f.hcursor.downField("failureClass").as[String].toOption, Some("llm-schedule-window"))
+    assertEquals(f.hcursor.downField("windowDesc").as[String].toOption, Some("06:00-01:00"))
+    LlmFailureCard.recordSuccess("s-8", "agent-w")
+  }
+
+  test("普通失败卡：windowDesc 空串缺省，waitable / switchable 仍双 true") {
+    val f = LlmFailureCard.failureFrame("s-9", "agent-n", "x", "llm-auth")
+    assertEquals(f.hcursor.downField("windowDesc").as[String].toOption, Some(""))
     assertEquals(f.hcursor.downField("waitable").as[Boolean].toOption, Some(true))
     assertEquals(f.hcursor.downField("switchable").as[Boolean].toOption, Some(true))
   }

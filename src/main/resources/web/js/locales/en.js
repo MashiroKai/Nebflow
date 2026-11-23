@@ -1002,6 +1002,9 @@ export default {
   'subagents.frozenAutoResumes': 'auto-resumed {n} time(s)',
   'subagents.frozenAutoResumesSpent': 'auto-resume budget spent — needs you: top up / switch model / cancel',
   'subagents.providerFailureGroup': '{count} background tasks: provider unavailable · {provider}',
+  // Card-family consolidation batch (2026-11-23): recovery-expectation line on the
+  // failure-group card face (llm-failure-card family).
+  'subagents.providerFailureRecovering': 'Waiting to recover: the engine keeps retrying with backoff and probes provider recovery, then resumes the same session — not a task failure, nothing for you to do.',
   // Family-aware copy (2026-11-21 author ruling): "provider unavailable" is reserved for
   // the availability family; shape and config families say what actually went wrong.
   'subagents.providerFailureGroupShape': '{count} background tasks blocked by an invalid request/response format · {provider}',

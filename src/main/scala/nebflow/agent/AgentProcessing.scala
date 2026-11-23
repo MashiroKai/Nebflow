@@ -430,6 +430,8 @@ private[agent] object AgentProcessing:
                   ) + jitter
               // 卡片批（2026-11-21）：LLM 类冻结 ⇒ 发 llmFailure 卡（非阻塞：发帧即返回，
               // 退避到期自动续跑，续跑成功由 recordSuccess 发 recovered 收卡）。
+              // provider-notice-card-unify 批（2026-11-23）：失败分类与窗口描述经
+              // LlmFailureCard 单点投影——时段窗全受限出 `llm-schedule-window` 卡态。
               (if nebflow.llm.LlmFailureSignal.isLlmClass(error) then
                  state.sessionId.fold(IO.unit)(sid =>
                    state
@@ -438,9 +440,10 @@ private[agent] object AgentProcessing:
                          sid,
                          agentDef.name,
                          Option(error.getMessage).getOrElse("unknown").take(300),
-                         errCls.reason.toString,
+                         LlmFailureCard.failureClassOf(error, errCls.reason.toString),
                          LlmFailureCard.layerOf(depth, replyTo.isEmpty && parentRef.isDefined),
-                         LlmFailureCard.modelRefOf(error, agentDef.model.flatMap(_.preferred))
+                         LlmFailureCard.modelRefOf(error, agentDef.model.flatMap(_.preferred)),
+                         LlmFailureCard.windowDescOf(error).getOrElse("")
                        )
                      )
                      .handleErrorWith(_ => IO.unit)
@@ -523,6 +526,7 @@ private[agent] object AgentProcessing:
                 }
                 // 卡片批（2026-11-21）：致命 LLM 类失败 ⇒ llmFailure 卡（非阻塞）。判据 = agentError.llmClass
                 // （单点 LlmFailureSignal），与上级注入的 llmClass 同源。
+                // provider-notice-card-unify 批：分类/窗口描述同上方冻结腿（单点投影）。
                 _ <- cleanedState.sessionId.fold(IO.unit)(sid =>
                   if agentError.llmClass then
                     cleanedState
@@ -531,9 +535,10 @@ private[agent] object AgentProcessing:
                           sid,
                           agentDef.name,
                           Option(error.getMessage).getOrElse("unknown").take(300),
-                          errCls.reason.toString,
+                          LlmFailureCard.failureClassOf(error, errCls.reason.toString),
                           LlmFailureCard.layerOf(depth, replyTo.isEmpty && parentRef.isDefined),
-                          LlmFailureCard.modelRefOf(error, agentDef.model.flatMap(_.preferred))
+                          LlmFailureCard.modelRefOf(error, agentDef.model.flatMap(_.preferred)),
+                          LlmFailureCard.windowDescOf(error).getOrElse("")
                         )
                       )
                       .handleErrorWith(_ => IO.unit)

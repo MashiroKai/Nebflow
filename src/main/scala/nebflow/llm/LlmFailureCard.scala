@@ -2,7 +2,7 @@ package nebflow.llm
 
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.shared.FallbackExhaustedError
+import nebflow.shared.{FallbackExhaustedError, ModelScheduleRestrictedError}
 
 /**
  * LlmFailureCard —— LLM 失败卡片的**非阻塞**运行时（卡片批 2026-11-21；聚合键改造 2026-11-21 第 3 轮）。
@@ -24,7 +24,7 @@ import nebflow.shared.FallbackExhaustedError
 object LlmFailureCard:
 
   /** 组内单个失败代理。 */
-  final case class Member(agent: String, summary: String, failureClass: String)
+  final case class Member(agent: String, summary: String, failureClass: String, windowDesc: String = "")
 
   private final case class Group(layer: String, modelRef: String, members: Vector[Member])
 
@@ -36,11 +36,29 @@ object LlmFailureCard:
   def layerOf(depth: Int, teamMember: Boolean): String =
     if depth <= 0 then "root" else if teamMember then "team" else "subtask"
 
-  /** 模型判定（单点）：链穷尽时取链上首个候选；否则取代理首选；都没有给空串。 */
+  /** 模型判定（单点）：链穷尽时取链上首个候选；时段窗受限取受限清单首个；
+    * 否则取代理首选；都没有给空串。 */
   def modelRefOf(error: Throwable, preferred: Option[String]): String = error match
     case f: FallbackExhaustedError =>
       f.attempts.headOption.map(a => s"${a.providerId}/${a.model}").orElse(preferred).getOrElse("")
+    case s: ModelScheduleRestrictedError => s.restricted.headOption.getOrElse(preferred.getOrElse(""))
     case _ => preferred.getOrElse("")
+
+  /** 时段窗受限卡的失败分类线值（前端 FAILURE_CLASS 同键；唯一真源在此）。 */
+  val ScheduleWindowClass: String = "llm-schedule-window"
+
+  /**
+   * 失败分类线值（单点）：时段窗全受限 ⇒ [[ScheduleWindowClass]]（窗口受限·等待恢复型
+    * ——前端据此渲染专用卡态：等窗口、不换模型）；其余 fallback 到调用方传入的分类。
+    */
+  def failureClassOf(error: Throwable, fallback: String): String = error match
+    case _: ModelScheduleRestrictedError => ScheduleWindowClass
+    case _ => fallback
+
+  /** 时段窗受限的窗口描述串（帧 `windowDesc` 字段；非时段窗错误 = None）。 */
+  def windowDescOf(error: Throwable): Option[String] = error match
+    case s: ModelScheduleRestrictedError => Some(s.windowsDesc)
+    case _ => None
 
   private def groupFrame(sessionId: String, g: Group): Json =
     val last = g.members.last
@@ -52,14 +70,15 @@ object LlmFailureCard:
       "agents" -> g.members.map(_.agent).asJson,
       "summary" -> last.summary.asJson,
       "failureClass" -> last.failureClass.asJson,
-      "waitable" -> true.asJson,
-      "switchable" -> true.asJson
+      "windowDesc" -> last.windowDesc.asJson,
+      "waitable" -> (last.failureClass != ScheduleWindowClass).asJson,
+      "switchable" -> (last.failureClass != ScheduleWindowClass).asJson
     )
 
   /** 单代理视角的失败帧（组快照；便于单测直接断言）。 */
   def failureFrame(sessionId: String, agentName: String, summary: String, failureClass: String,
-                   layer: String = "root", modelRef: String = ""): Json =
-    groupFrame(sessionId, Group(layer, modelRef, Vector(Member(agentName, summary, failureClass))))
+                   layer: String = "root", modelRef: String = "", windowDesc: String = ""): Json =
+    groupFrame(sessionId, Group(layer, modelRef, Vector(Member(agentName, summary, failureClass, windowDesc))))
 
   private def recoveredFrame(sessionId: String, layer: String, modelRef: String, agentName: String): Json =
     Json.obj(
@@ -72,11 +91,11 @@ object LlmFailureCard:
 
   /** 登记一次 LLM 类失败并返回应发出的 `llmFailure` 组快照帧。 */
   def recordFailure(sessionId: String, agentName: String, summary: String, failureClass: String,
-                    layer: String = "root", modelRef: String = ""): Json =
+                    layer: String = "root", modelRef: String = "", windowDesc: String = ""): Json =
     lock.synchronized {
       val key = (layer, modelRef)
       val existing = groups.get(key).map(_.members.filterNot(_.agent == agentName)).getOrElse(Vector.empty)
-      val g = Group(layer, modelRef, existing :+ Member(agentName, summary, failureClass))
+      val g = Group(layer, modelRef, existing :+ Member(agentName, summary, failureClass, windowDesc))
       groups = groups.updated(key, g)
       groupFrame(sessionId, g)
     }
