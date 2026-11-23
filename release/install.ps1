@@ -530,6 +530,11 @@ Write-V "Resolved VERSION=$Version (channel=$Channel)"
 $InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { "$env:LOCALAPPDATA\$ProductName" }
 $JarName = "$LowerName-assembly-$Version.jar"
 $CosUrl = "$CosBaseCn/$JarName"
+# Stable-name fallback (2026-11-23): stable 2026.9.19 was published under the
+# legacy nebflow-assembly-<ver>.jar name; try it when the new name 404s. The
+# file is saved under the new name either way (wrapper globs stand-assembly-*).
+$LegacyJarName = "nebflow-assembly-$Version.jar"
+$LegacyCosUrl = "$CosBaseCn/$LegacyJarName"
 
 # --- Brand banner render -----------------------------------------------------
 # The Write-Banner definition + official payload sit right after the flag
@@ -841,8 +846,13 @@ if (Test-Path $jarPath) {
     try {
         Save-WithProgress -Url $CosUrl -Path $jarPath -Label $JarName
     } catch {
-        Write-Err2 "Download failed from COS. Check $CosUrl"
-        exit 12
+        Write-Info "Primary name not found; trying legacy $LegacyJarName..."
+        try {
+            Save-WithProgress -Url $LegacyCosUrl -Path $jarPath -Label $LegacyJarName
+        } catch {
+            Write-Err2 "Download failed from COS. Check $CosUrl (and $LegacyCosUrl)"
+            exit 12
+        }
     }
     $size = [math]::Round((Get-Item $jarPath).Length / 1MB, 1)
     Write-Ok "Downloaded $JarName from COS ($size MB)."
