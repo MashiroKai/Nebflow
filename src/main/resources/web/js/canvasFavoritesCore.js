@@ -80,3 +80,59 @@ export function toggleFavorite(list, item, now) {
   }
   return { list: addFavorite(list, item, now), favorited: true };
 }
+
+// ── 收藏页分类 / 搜索（2026-11-23 收藏 r2 · 微信收藏形态）。纯函数。 ──
+// 存储层只落 path/title/savedAt（引擎归一化会丢弃未知字段），类型因此在渲染时由 path
+// 扩展名推断 —— 对存量条目与新条目口径一致，无需迁移。
+
+const NOTE_EXT = new Set(['md', 'markdown', 'txt']);
+const MEDIA_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'heic', 'mp4', 'mov', 'webm', 'mkv']);
+
+/** @param {string} path @returns {string} 小写扩展名（无点）；无扩展名 = ''。 */
+export function extOf(path) {
+  const name = basenameOf(path);
+  const i = name.lastIndexOf('.');
+  return i > 0 ? name.slice(i + 1).toLowerCase() : '';
+}
+
+/**
+ * 条目内容类型：note（笔记）| media（图片与视频）| pdf | file（其它文件）。
+ * @param {string} path
+ * @returns {'note'|'media'|'pdf'|'file'}
+ */
+export function favKind(path) {
+  const ext = extOf(path);
+  if (ext === 'pdf') return 'pdf';
+  if (MEDIA_EXT.has(ext)) return 'media';
+  if (NOTE_EXT.has(ext) || ext === '') return 'note';
+  return 'file';
+}
+
+/** 类型 → 分类 tab（pdf 归入「文件」）。 */
+export function favTabOf(kind) {
+  if (kind === 'pdf') return 'file';
+  return kind;
+}
+
+/** 分类 tab 固定顺序（微信收藏口径：笔记 / 图片与视频 / 文件 / 链接）。链接预留，当前无链接型条目。 */
+export const FAV_TAB_ORDER = ['note', 'media', 'file', 'link'];
+
+/** 列表中实际存在的分类（只返回有条目的 tab；stand 没有的类型不出 tab）。
+ *  @param {FavoriteEntry[]} list @returns {string[]} */
+export function presentTabs(list) {
+  const have = new Set(list.map((e) => favTabOf(favKind(e.path))));
+  return FAV_TAB_ORDER.filter((t) => have.has(t));
+}
+
+/**
+ * 按分类 + 关键词过滤（保持原顺序 = 最新置顶）。query 大小写不敏感，匹配标题或路径。
+ * @param {FavoriteEntry[]} list @param {{ tab?: string, query?: string }} [opts]
+ */
+export function filterFavorites(list, opts = {}) {
+  const q = String(opts.query || '').trim().toLowerCase();
+  return list.filter((e) => {
+    if (opts.tab && favTabOf(favKind(e.path)) !== opts.tab) return false;
+    if (!q) return true;
+    return e.title.toLowerCase().includes(q) || e.path.toLowerCase().includes(q);
+  });
+}

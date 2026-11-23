@@ -1,4 +1,4 @@
-// canvasFavorites.js — Canvas 文档收藏：持久化 + 失效判定 + 三端列表渲染。
+// canvasFavorites.js — Canvas 文档收藏：持久化 + 失效判定 + 侧栏/收藏页渲染（收藏页见 canvasFavoritesPage.js）。
 //
 // 作者令（2026-11-23，前端功能批）：canvas 顶部胶囊左侧加收藏钮（已收藏态实心/描边区分，
 // 再点取消）；侧边栏与手机工作台加同源收藏列表（点击 = 重新打开）；文档被移除后条目置灰
@@ -97,6 +97,11 @@ export function toggleFavoritePath(item) {
   const { list, favorited } = toggleFavorite(loadFavorites(), item, Date.now());
   saveFavorites(list);
   return favorited;
+}
+
+/** 收藏页打开入口计数（工作台 / 侧栏共用）。 */
+export function favoriteCount() {
+  return loadFavorites().length;
 }
 
 /** @param {string} path */
@@ -199,24 +204,6 @@ export function onFavoritesChange(fn) {
   return () => window.removeEventListener(FAVORITES_CHANGE_EVENT, fn);
 }
 
-/** 手机工作台收藏区（工作台根页分组行之下）：标题 + 同源列表；收藏变化即时重绘。
- *  @param {{ label: string, onOpened?: () => void }} opts
- *  @returns {{ el: HTMLElement, dispose: () => void }} */
-export function buildFavoritesHubBlock(opts) {
-  const wrap = document.createElement('div');
-  wrap.className = 'mf-hub-fav';
-  const head = document.createElement('div');
-  head.className = 'mf-hub-label';
-  head.textContent = opts.label;
-  const body = document.createElement('div');
-  wrap.append(head, body);
-  const paint = () => renderFavoritesList(body, { onOpened: opts.onOpened });
-  paint();
-  const dispose = onFavoritesChange(paint);
-  void syncFavoritesFromEngine();   // 同步完成派发变更事件 ⇒ 本列表自动重绘
-  return { el: wrap, dispose };
-}
-
 /** 侧边栏收藏区：挂在会话列表（#session-list）之前，标题 + 列表。幂等。 */
 export function mountSidebarFavorites() {
   if (document.getElementById('canvas-fav-section')) return;
@@ -227,9 +214,16 @@ export function mountSidebarFavorites() {
   const section = document.createElement('section');
   section.id = 'canvas-fav-section';
   section.className = 'canvas-fav-section';
-  const head = document.createElement('div');
+  // 表头可点 = 打开收藏页（微信收藏形态的全量入口；与工作台「收藏」栏同一页）。
+  const head = document.createElement('button');
+  head.type = 'button';
   head.className = 'canvas-fav-head';
-  head.textContent = t('canvas.fav.sectionTitle');
+  head.textContent = `${t('canvas.fav.sectionTitle')} ›`;
+  head.setAttribute('aria-label', t('canvas.favPage.open'));
+  head.addEventListener('click', (e) => {
+    e.stopPropagation();
+    void import('./canvasFavoritesPage.js').then((m) => m.openFavoritesPage());
+  });
   const body = document.createElement('div');
   section.append(head, body);
   anchor.parentElement.insertBefore(section, anchor);

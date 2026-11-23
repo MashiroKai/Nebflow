@@ -2994,8 +2994,13 @@ function syncFavoriteButton() {
       e.stopPropagation();
       const entry = activeCanvasEntry();
       if (!entry || !entry.absPath) return;
-      toggleFavoritePath({ path: entry.absPath, title: entry.title });
+      const nowOn = toggleFavoritePath({ path: entry.absPath, title: entry.title });
       syncFavoriteButton();
+      // 星标点亮动效（重触发：先移再加 class）+ 收藏成功轻提示（r2 · 作者令「点亮星标 + toast 一闪」）。
+      btn.classList.remove('is-pop');
+      void btn.offsetWidth;
+      if (nowOn) btn.classList.add('is-pop');
+      window.__showToast?.(t(nowOn ? 'canvas.fav.added' : 'canvas.fav.removed'), 'success');
     });
     hdr.insertBefore(btn, hdr.firstChild);
   }

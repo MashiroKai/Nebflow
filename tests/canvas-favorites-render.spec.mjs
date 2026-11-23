@@ -17,7 +17,7 @@ import { ROOT, loadPlaywright, launchBrowser, createSession, settle } from '../s
 const PRIMARY = ROOT.includes('/.stand/worktrees/') ? ROOT.split('/.stand/worktrees/')[0] : ROOT;
 const SHOT_DIR = process.env.FAV_SHOT_DIR || join(PRIMARY, '.stand', 'tmp', 'canvas-favorites', 'evidence', 'screenshots');
 // 手机断言一律限定在工作台收藏块内：桌面侧栏的收藏区同在 DOM（隐藏），不限定会重复命中。
-const HUB = '.mobile-page[data-page="workbench"] .mf-hub-fav';
+const HUB = '#canvas-fav-page';   // r2：收藏页（overlay）即条目容器；入口 = 工作台「收藏」栏
 const BOOT = { config: { llm: { providers: {} }, features: {} }, sessionId: 'fav-root', messages: [] };
 
 /** 服务端状态装桩：missing→404（真实判据），forbidden→403，flaky→500（均不得置灰）。 */
@@ -42,7 +42,7 @@ const results = [];
 const textOf = (page, sel) => page.evaluate((q) => document.querySelector(q)?.textContent || '', sel);
 /** 点击条目；被遮挡时记录命中元素（elementFromPoint），把遮挡源直接写进失败明细。 */
 async function clickRow(page, path, label, { force = false } = {}) {
-  const sel = `${HUB} .canvas-fav-row[data-fav-path="${path}"]`;
+  const sel = `${HUB} .cfp-row[data-fav-path="${path}"]`;
   try {
     // aria-disabled 行对 Playwright 视为不可操作：失效行用 force 投递点击（命中测已由 elementFromPoint 复核）。
     await page.click(sel, { timeout: 8000, force });
@@ -162,19 +162,21 @@ async function mobileCase(browser, failures) {
     m.toggleFavoritePath({ path: '/w/flaky.md', title: '抖动文档' });
     (await import('/js/mobile/navController.js')).dockTo('workbench');
   });
-  await s.page.waitForSelector('.mobile-page[data-page="workbench"].live .mf-hub-fav .canvas-fav-row', { timeout: 15000 });
+  await s.page.waitForSelector('.mobile-page[data-page="workbench"].live .mf-hub-row[data-hub-page="favorites"]', { timeout: 15000 });
+  await s.page.click('.mobile-page[data-page="workbench"].live .mf-hub-row[data-hub-page="favorites"]');
+  await s.page.waitForSelector('#canvas-fav-page.is-open .cfp-row', { timeout: 15000 });
   // 失效判定是异步的（ticket 铸造 + 1 字节 Range 请求）：给足窗口，超时则记为失败而非静默。
-  const invalidWait = await s.page.waitForSelector(HUB + ' .canvas-fav-row[data-fav-path="/w/gone.md"].is-invalid', { timeout: 20000 }).then(() => true, () => false);
+  const invalidWait = await s.page.waitForSelector(HUB + ' .cfp-row[data-fav-path="/w/gone.md"].is-invalid', { timeout: 20000 }).then(() => true, () => false);
   check('mobile: 404 条目在限期内完成失效判定', invalidWait);
   await settle(s.page, 300);
 
-  const gone = s.page.locator(HUB + ' .canvas-fav-row[data-fav-path="/w/gone.md"]');
+  const gone = s.page.locator(HUB + ' .cfp-row[data-fav-path="/w/gone.md"]');
   check('mobile: 404 条目置灰（is-invalid + aria-disabled）', (await gone.getAttribute('aria-disabled')) === 'true');
-  check('mobile: 失效标签文案', ((await textOf(s.page, HUB + ' .canvas-fav-row[data-fav-path="/w/gone.md"]')) || '').includes('已失效'));
-  check('mobile: 有效条目不置灰', (await s.page.locator(HUB + ' .canvas-fav-row[data-fav-path="/w/a.md"]').getAttribute('class')).indexOf('is-invalid') < 0);
-  check('mobile: 403 不置灰（非 404/410 不判失效）', (await s.page.locator(HUB + ' .canvas-fav-row[data-fav-path="/w/forbidden.md"]').getAttribute('class')).indexOf('is-invalid') < 0);
-  check('mobile: 500 不置灰（非 404/410 不判失效）', (await s.page.locator(HUB + ' .canvas-fav-row[data-fav-path="/w/flaky.md"]').getAttribute('class')).indexOf('is-invalid') < 0);
-  await shot(s.page, '.mobile-page[data-page="workbench"] .mf-hub-fav', 'mobile-hub-favorites.png', 'mobile hub favorites');
+  check('mobile: 失效标签文案', ((await textOf(s.page, HUB + ' .cfp-row[data-fav-path="/w/gone.md"]')) || '').includes('已失效'));
+  check('mobile: 有效条目不置灰', (await s.page.locator(HUB + ' .cfp-row[data-fav-path="/w/a.md"]').getAttribute('class')).indexOf('is-invalid') < 0);
+  check('mobile: 403 不置灰（非 404/410 不判失效）', (await s.page.locator(HUB + ' .cfp-row[data-fav-path="/w/forbidden.md"]').getAttribute('class')).indexOf('is-invalid') < 0);
+  check('mobile: 500 不置灰（非 404/410 不判失效）', (await s.page.locator(HUB + ' .cfp-row[data-fav-path="/w/flaky.md"]').getAttribute('class')).indexOf('is-invalid') < 0);
+  await shot(s.page, '#canvas-fav-page', 'mobile-favorites-page.png', 'mobile favorites page');
 
   // 点失效条目：toast 可读提示，不开 canvas。
   await s.page.evaluate(() => {
@@ -191,6 +193,8 @@ async function mobileCase(browser, failures) {
 
   // 点有效条目：打开并切到 canvas 页。
   await clickRow(s.page, '/w/a.md', 'mobile: 有效条目可点击（未被遮挡）');
+  const closed = await s.page.waitForSelector('#canvas-fav-page', { state: 'detached', timeout: 15000 }).then(() => true, () => false);
+  check('mobile: 点有效条目后收藏页关闭', closed);
   const opened = await s.page.waitForSelector('.mobile-page[data-page="canvas"].live', { timeout: 15000 }).then(() => true, () => false);
   check('mobile: 点有效条目切到 canvas 页', opened);
   await s.close();
