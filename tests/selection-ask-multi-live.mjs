@@ -206,13 +206,22 @@ try {
     await page.screenshot({ path: `${artifacts}/${label}-multi-onSelect.png` });
     await page.locator('.selection-ask-btn').click({ timeout: 4000 }).catch(() => {});
     try { await page.locator('.ask-dock.selection-dock').waitFor({ timeout: 4000 }); } catch {}
-    // M6'（新契约）：解释面板原文片段 = 词条 chip；点击 chip ⇒ 展开解释（小模型返回的 ANSWER）。
+    // M6'（point 3 契约）：原始气泡里的选中文字 = 绿色下划线词条 chip（不在面板里）；
+    // 点击 chip ⇒ canvas 词条同族弹窗 .selection-explain-tip 展示解释（小模型返回的 ANSWER）。
     let answerText = null, chipCount = 0, expanded = false;
-    try { await page.waitForFunction(() => document.querySelectorAll('.selection-explain-chip').length > 0, null, { timeout: 6000 }); } catch {}
-    chipCount = await page.locator('.selection-explain-chip').count();
-    if (chipCount) await page.locator('.selection-explain-chip').first().click({ timeout: 4000 }).catch(() => {});
-    try { await page.waitForFunction((a) => { const x = document.querySelector('.selection-explain-answer'); return !!x && !x.hidden && x.textContent.includes(a); }, ANSWER, { timeout: 20000 }); expanded = true; } catch (e) { console.log(`[${label}] explain wait failed: ${String(e).slice(0, 160)}`); }
-    answerText = await page.locator('.selection-explain-answer').allTextContents();
+    try { await page.waitForFunction(() => document.querySelectorAll('.bubble a.nf-term.selection-explain-chip').length > 0, null, { timeout: 6000 }); } catch {}
+    chipCount = await page.locator('.bubble a.nf-term.selection-explain-chip').count();
+    // 原始气泡 chip 可能仍在 nf-pop 入场动效（opacity 0）：等可见再点。
+    try { await page.waitForFunction(() => { const c = document.querySelector('.bubble a.nf-term.selection-explain-chip'); if (!c) return false; const r = c.getBoundingClientRect(); return r.width > 0 && getComputedStyle(c).opacity !== '0'; }, null, { timeout: 6000 }); } catch {}
+    if (chipCount) console.log(`[${label}] chipGeom ${JSON.stringify(await page.evaluate(() => { const c = document.querySelector('.bubble a.nf-term.selection-explain-chip'); if (!c) return null; c.scrollIntoView({ block: 'center' }); const r = c.getBoundingClientRect(); let a = c, hid = []; while (a && a.nodeType === 1) { const cs = getComputedStyle(a); if (cs.display === 'none' || cs.visibility === 'hidden') hid.push(a.className.toString().slice(0, 40) || a.tagName); a = a.parentElement; } const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return { r: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)], top: top ? (top.className || top.tagName).toString().slice(0, 80) : null, inChat: !!top && !!top.closest('#chat'), hidden: hid.slice(0, 4), connected: c.isConnected, text: c.textContent.slice(0, 20) }; }))}`);
+    // 只点**可见**的原文 chip（同一 DOM 里可能残留不可见的旧 chip）。
+    const visIdx = await page.evaluate(() => { const all = [...document.querySelectorAll('.bubble a.nf-term.selection-explain-chip')]; all.forEach(c => c.removeAttribute('data-probe-chip')); const v = all.find(c => { const r = c.getBoundingClientRect(); return r.width > 0 && getComputedStyle(c).opacity !== '0'; }); if (v) v.setAttribute('data-probe-chip', '1'); return !!v; });
+    const clickErr = chipCount && visIdx ? await page.locator('.bubble a.nf-term.selection-explain-chip[data-probe-chip="1"]').first().click({ timeout: 4000 }).then(() => null, (e) => String(e).slice(0, 200)) : 'no-chip';
+    if (clickErr) console.log(`[${label}] chip click: ${clickErr}`);
+    try { await page.waitForFunction((a) => { const x = document.querySelector('.selection-explain-tip'); return !!x && x.style.display !== 'none' && x.textContent.includes(a); }, ANSWER, { timeout: 20000 }); expanded = true; } catch (e) { console.log(`[${label}] explain wait failed: ${String(e).slice(0, 160)}`); }
+    answerText = await page.locator('.selection-explain-tip .td').allTextContents();
+    const tipState = await page.evaluate(() => { const t = document.querySelector('.selection-explain-tip'); return { display: t ? t.style.display : 'absent', td: t ? t.querySelector('.td')?.textContent.slice(0, 60) : null, aiEl: document.querySelector('.selection-explain-answer')?.textContent.slice(0, 60) || null, chips: document.querySelectorAll('.bubble a.nf-term.selection-explain-chip').length }; });
+    console.log(`[${label}] tipState ${JSON.stringify(tipState)}`);
     // M4'（新契约）：发送的是 selectionExplain 帧（小模型路由），不得有 ask 帧。
     const frames = await page.evaluate(() => window.__sent.filter(f => f.type === 'selectionExplain').map(f => String(f.question || '')));
     const q = frames[0] || '';

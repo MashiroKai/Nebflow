@@ -64,14 +64,29 @@ const READ = () => {
   const bubbles = ['x-user-1', 'x-user-2'].map(id => document.querySelector(`#chat .row[data-msg-id="${id}"] .bubble`)?.getBoundingClientRect()).filter(Boolean);
   const overlap = !!ar && bubbles.some(br => !(ar.right <= br.left || ar.left >= br.right || ar.bottom <= br.top || ar.top >= br.bottom));
   const dock = document.querySelector('.ask-dock.selection-dock');
-  const chips = Array.from(document.querySelectorAll('.selection-explain-chip'));
+  // point 3：词条 chip 在**原始气泡**里（不在面板里）；绿色 + 下划线取计算样式。
+  const chips = Array.from(document.querySelectorAll('.bubble a.nf-term.selection-explain-chip'));
+  const inPanel = Array.from(document.querySelectorAll('.selection-dock a.selection-explain-chip')).length;
+  const cs = chips[0] ? getComputedStyle(chips[0]) : null;
+  const tip = document.querySelector('.selection-explain-tip');
+  const tipShown = !!tip && tip.style.display !== 'none' && tip.getBoundingClientRect().width > 0;
   const ans = document.querySelector('.selection-explain-answer');
+  const sr = btn ? btn.getBoundingClientRect() : null;
+  // 居中参照 = 选中文字所在的第一条气泡文本块（选区在 step1 时已存在；chip 在 step2 才出）。
+  const selRect = window.getSelection && window.getSelection().rangeCount
+    ? window.getSelection().getRangeAt(0).getBoundingClientRect() : null;
+  const spanR = chips.length ? chips[0].getBoundingClientRect() : (selRect && selRect.height ? selRect : null);
   return {
     anchorVisible: !!ar, anchorPos: btn ? btn.dataset.askPos || null : null, anchorOverlapsBubble: overlap,
+    anchorIconIsChat: !!btn && !!btn.querySelector('svg.ask-fab-ic-chat'),
+    anchorCenterDy: sr && spanR ? Math.round((sr.top + sr.height / 2) - (spanR.top + spanR.height / 2)) : null,
     dialogOpen: !!dock && !dock.classList.contains('closed'),
     dialogInputHidden: !!dock && getComputedStyle(dock.querySelector('.ask-input') || document.body).display === 'none',
-    chipCount: chips.length, chipTexts: chips.map(c => c.textContent.slice(0, 20)),
+    chipCount: chips.length, chipInPanelCount: inPanel, chipTexts: chips.map(c => c.textContent.slice(0, 20)),
     chipIsTerm: chips.length > 0 && chips.every(c => c.classList.contains('nf-term')),
+    chipColor: cs ? cs.color : null,
+    chipUnderline: cs ? cs.textDecorationLine : null,
+    tipShown, tipText: tip ? tip.querySelector('.td')?.textContent.slice(0, 40) : null,
     answerHiddenBeforeClick: ans ? ans.hidden : null,
     answerVisibleAfterClick: ans ? !ans.hidden : null,
     answerText: ans ? ans.textContent.slice(0, 40) : null,
@@ -139,7 +154,7 @@ try {
     // ② 点锚 → 面板
     await page.locator('.selection-ask-btn').click({ timeout: 4000 }).catch(() => {});
     try { await page.locator('.ask-dock.selection-dock').waitFor({ timeout: 4000 }); } catch {}
-    try { await page.waitForFunction(() => !!document.querySelector('.selection-explain-chip'), null, { timeout: 4000 }); } catch {}
+    try { await page.waitForFunction(() => !!document.querySelector('.bubble a.nf-term.selection-explain-chip'), null, { timeout: 4000 }); } catch {}
     const step2 = await page.evaluate(`(${READ.toString()})()`);
     await page.screenshot({ path: `${artifacts}/${vp.label}-2-dialog.png` });
     // ③ 解释帧来自 selectionExplain（非 ask）
@@ -147,20 +162,25 @@ try {
     const sent = await page.evaluate(() => window.__sent.map(f => f.type));
     const frameType = await page.evaluate(() => (window.__frames.find(f => f.type === 'selectionExplain') || {}).type || null);
     // ④ 点词条 → 展开解释
-    await page.locator('.selection-explain-chip').first().click({ timeout: 4000 }).catch(() => {});
-    try { await page.waitForFunction(() => { const a = document.querySelector('.selection-explain-answer'); return !!a && !a.hidden && a.textContent.includes('模拟解释'); }, null, { timeout: 6000 }); } catch {}
+    await page.locator('.bubble a.nf-term.selection-explain-chip').first().click({ timeout: 4000 }).catch(() => {});
+    try { await page.waitForFunction(() => { const t = document.querySelector('.selection-explain-tip'); return !!t && t.style.display !== 'none' && t.textContent.includes('模拟解释'); }, null, { timeout: 6000 }); } catch {}
     const step4 = await page.evaluate(`(${READ.toString()})()`);
     await page.screenshot({ path: `${artifacts}/${vp.label}-4-chip-expanded.png` });
     const line = { viewport: vp.label, sel: step1, dialog: step2, sentTypes: sent, selectionExplainFrame: frameType, afterChipClick: step4,
       askFrameSent: sent.includes('ask'), A_anchorNoOverlap: !step1.anchorOverlapsBubble && step1.anchorVisible,
       B_dialogOpen: step2.dialogOpen, C_smallModelFrame: frameType === 'selectionExplain' && !sent.includes('ask'),
-      D_chipsAreTerms: step2.chipCount >= 1 && step2.chipIsTerm, E_chipExpands: step4.answerVisibleAfterClick === true && step2.answerHiddenBeforeClick === true };
+      // D（point 3）：原始气泡里的选中文字 = 绿色 + 下划线 词条；面板里没有 chip。
+      D_chipsAreTerms: step2.chipCount >= 1 && step2.chipIsTerm && step2.chipInPanelCount === 0 && step2.chipUnderline === 'underline',
+      // E（point 3）：点词条 → canvas 词条同族弹窗 .selection-explain-tip 展示解释。
+      E_chipExpands: step4.tipShown === true && (step4.tipText || '').length > 0,
+      // F（point 1/2）：锚点与选中首段垂直居中（±6px）；图标 = canvas Ask 同款 chat。
+      F_anchorCentredIconChat: step2.anchorIconIsChat === true && step1.anchorCenterDy !== null && Math.abs(step1.anchorCenterDy) <= 6 };
     report.push(line);
-    console.log(`[${vp.label}] ${JSON.stringify({ A: line.A_anchorNoOverlap, B: line.B_dialogOpen, C: line.C_smallModelFrame, D: line.D_chipsAreTerms, E: line.E_chipExpands, pos: step1.anchorPos, chips: step2.chipCount, sent: sent })}`);
+    console.log(`[${vp.label}] ${JSON.stringify({ A: line.A_anchorNoOverlap, B: line.B_dialogOpen, C: line.C_smallModelFrame, D: line.D_chipsAreTerms, E: line.E_chipExpands, F: line.F_anchorCentredIconChat, color: step2.chipColor, pos: step1.anchorPos, chips: step2.chipCount, sent: sent })}`);
     await context.close();
   }
   writeFileSync(`${artifacts}/selection-explain-e2e.json`, JSON.stringify({ repo, report, mockHits: hits }, null, 2));
-  const ok = report.every(l => l.A_anchorNoOverlap && l.B_dialogOpen && l.C_smallModelFrame && l.D_chipsAreTerms && l.E_chipExpands && !l.askFrameSent);
+  const ok = report.every(l => l.A_anchorNoOverlap && l.B_dialogOpen && l.C_smallModelFrame && l.D_chipsAreTerms && l.E_chipExpands && l.F_anchorCentredIconChat && !l.askFrameSent);
   console.log(`VERDICT=${ok ? 'PASS' : 'FAIL'} report=${artifacts}/selection-explain-e2e.json mockHits=${hits}`);
   if (!ok) process.exitCode = 1;
 } finally {

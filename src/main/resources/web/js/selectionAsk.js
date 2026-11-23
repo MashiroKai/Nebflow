@@ -420,7 +420,7 @@ function onAnchorClick() {
   const snapshot = mergedSelectionSnapshot(cur);
   // 空选（只有空白）与「跨气泡但一段正文都没取到」都不发问。
   if (!snapshot || !String(snapshot.selected || '').trim()) { hideAnchor(); return; }
-  openSelectionExplain(snapshot, anchorEl);
+  openSelectionExplain(snapshot, anchorEl, cur);
 }
 
 // ── 选区解释（r2 批 2026-11-23；作者四点 2–4）────────────────────────────────
@@ -433,46 +433,120 @@ let explainSeq = 0;
 /** @type {{requestId: string, aiEl: HTMLElement}|null} */
 let explainPending = null;
 
-/** 选中原文 → 词条 chip（点击 = 展开本面板的解释气泡）。 */
-function explainChip(text, onPick) {
-  const a = document.createElement('a');
-  a.className = 'nf-term selection-explain-chip';
-  a.href = '#';
-  a.textContent = text;
-  a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); onPick(a); });
-  return a;
+/** 原始气泡里被包成词条的文字（下次选区前撤回，保证气泡结构回到原样）。 */
+let explainWrapped = [];
+/** 解释弹窗（canvas 词条弹窗同族 `.nf-term-tip`；正文 = 本段解释）。 */
+let explainTip = null;
+let explainPickEl = null;
+/** 弹窗正文的实时源（回包到达后弹窗随之更新）。 */
+let explainTipBody = null;
+
+function unwrapExplainChips() {
+  for (const a of explainWrapped) {
+    if (!a.isConnected) continue;
+    const parent = a.parentNode;
+    while (a.firstChild) parent.insertBefore(a.firstChild, a);
+    parent.removeChild(a);
+    parent.normalize();
+  }
+  explainWrapped = [];
+}
+
+/** 把 range 覆盖的文字在各气泡内包成 `a.nf-term`（canvas 词条族；绿色下划线由 `a.nf-term` 承担）。 */
+function wrapSelectedText(rows, range, onPick) {
+  const sc = range.startContainer, so = range.startOffset;
+  const ec = range.endContainer, eo = range.endOffset;
+  const out = [];
+  for (const row of rows) {
+    const bubble = row.querySelector('.bubble');
+    if (!bubble) continue;
+    const w = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    let n;
+    while ((n = w.nextNode())) { if (n.textContent.trim() && range.intersectsNode(n)) nodes.push(n); }
+    for (const t of nodes) {
+      const len = t.textContent.length;
+      const s = t === sc ? so : 0;
+      const e = t === ec ? eo : len;
+      if (e <= s) continue;
+      let mid = t;
+      if (e < len) t.splitText(e);
+      if (s > 0) mid = t.splitText(s);
+      const a = document.createElement('a');
+      a.className = 'nf-term selection-explain-chip';
+      a.href = '#';
+      a.textContent = mid.textContent;
+      mid.parentNode.replaceChild(a, mid);
+      a.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); onPick(a); });
+      out.push(a);
+    }
+  }
+  return out;
+}
+
+/** 解释弹窗：canvas 词条弹窗同族（`.nf-term-tip` + `.tt`/`.td`），定位贴词条下方。 */
+function explainTipShow(anchorEl, title, body) {
+  if (!explainTip) {
+    explainTip = document.createElement('div');
+    explainTip.className = 'nf-term-tip selection-explain-tip';
+    const tt = document.createElement('div');
+    tt.className = 'tt';
+    const td = document.createElement('div');
+    td.className = 'td';
+    explainTip.append(tt, td);
+    explainTip.style.display = 'none';
+    explainTip.addEventListener('click', (e) => e.stopPropagation());
+    document.body.appendChild(explainTip);
+    document.addEventListener('pointerdown', (e) => {
+      if (explainTip.style.display === 'none') return;
+      const t = e.target;
+      if (t instanceof Node && explainTip.contains(t)) return;
+      if (t instanceof Element && t.closest('.selection-explain-chip')) return;
+      explainTip.style.display = 'none';
+    }, true);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && explainTip.style.display !== 'none') explainTip.style.display = 'none';
+    });
+  }
+  explainTip.querySelector('.tt').textContent = title;
+  explainTip.querySelector('.td').textContent = body;
+  explainTip.style.display = 'block';
+  const r = anchorEl.getBoundingClientRect();
+  const w = explainTip.offsetWidth || 280;
+  explainTip.style.left = Math.round(Math.min(Math.max(r.left, 8), window.innerWidth - w - 8)) + 'px';
+  explainTip.style.top = Math.round(r.bottom + 6) + 'px';
 }
 
 /** 打开选区解释面板：原文片段 = 词条；解释由小模型异步返回（requestId 配对）。 */
-export function openSelectionExplain(snapshot, anchor) {
+export function openSelectionExplain(snapshot, anchor, span) {
   const d = ensureDialog();
   placeholderPosition(d, anchor);
   face.open();
   hideAnchor();
   d.inputRow.style.display = 'none';
   d.col.replaceChildren();
-  const segs = Array.isArray(snapshot.segments) && snapshot.segments.length
-    ? snapshot.segments
-    : [{ text: snapshot.selected }];
+  // 上一次的原文词条先撤回（气泡结构回到原样），再包这一次。
+  unwrapExplainChips();
+  if (explainTip) explainTip.style.display = 'none';
   const requestId = 'sx' + (++explainSeq) + '-' + Date.now().toString(36);
   const aiEl = document.createElement('div');
   aiEl.className = 'ask-bub nf-glass ai selection-explain-answer';
   aiEl.textContent = tt('解释中…', 'Explaining…');
-  aiEl.hidden = true;
+  // 面板里：提问 = 选中原文（纯文本）；解释 = ai 气泡。词条交互的主载体是原始气泡里的绿字。
   const quote = document.createElement('div');
   quote.className = 'ask-bub nf-glass user selection-explain-quote';
-  const chipEls = [];
-  segs.forEach((s, i) => {
-    if (i) quote.appendChild(document.createTextNode(' '));
-    const chip = explainChip(String(s.text || '').trim(), (a) => {
-      chipEls.forEach((c) => c.classList.toggle('active', c === a));
-      aiEl.hidden = false;
-    });
-    chipEls.push(chip);
-    quote.appendChild(chip);
-  });
+  quote.textContent = String(snapshot.selected || '').trim();
   d.col.appendChild(quote);
   d.col.appendChild(aiEl);
+  if (span && span.range) {
+    const rows = span.multi ? coveredRows(span.chat, span.startRow, span.endRow) : [span.startRow];
+    explainWrapped = wrapSelectedText(rows, span.range, (a) => {
+      explainPickEl = a;
+      // 正文取点击时的解释气泡（回包可能晚于选中；不做快照）。
+      explainTipShow(a, tt('解释', 'Explanation'), aiEl.textContent);
+      explainTipBody = () => aiEl.textContent;
+    });
+  }
   explainPending = { requestId, aiEl };
   const ok = sendWs({ type: 'selectionExplain', requestId, question: buildMergedQuestion(snapshot) });
   if (!ok) {
@@ -490,6 +564,10 @@ export function selectionExplainFrame(type, msg) {
   p.aiEl.textContent = type === 'selectionExplain'
     ? String(msg.text || '')
     : tt('解释失败：', 'Explain failed: ') + String(msg.message || '');
+  // 弹窗开着 ⇒ 同步到最新解释（回包晚于点击时）。
+  if (explainTip && explainTip.style.display !== 'none' && explainTipBody) {
+    explainTip.querySelector('.td').textContent = explainTipBody();
+  }
   return true;
 }
 
