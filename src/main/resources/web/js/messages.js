@@ -2288,6 +2288,9 @@ function buildMediaStackGroup(entrys) {
     onOpen: (item, index) => {
       const e = entrys[index];
       if (!e) return;
+      // 被点那一件的水合 <img>（手机图片预览修复：原图腿败时复用它的字节，见 previewAttachmentOf）。
+      const clickedFaceEls = (area.popFaces && area.popFaces[index] && area.popFaces[index].els) || [];
+      const clickedImg = clickedFaceEls.filter(el => el.tagName === 'IMG')[0] || area;
       // mobile-image-lightbox 批（2026-11-17）：手机层叠卡图组 = 整组进画廊（字节 =
       // 各层已水合的同一枚 URL，零第二条取字节路）；视频张/未水合层不入组，组尽空
       // 或点的张不在组内 ⇒ 落回下方单卡既有腿。
@@ -2306,7 +2309,7 @@ function buildMediaStackGroup(entrys) {
           group.push({ kind: 'image', name: String(en.name || (en.att && en.att.name) || ''), src: url });
         });
         if (group.length && gi >= 0) {
-          const single = () => Promise.resolve(previewAttachmentOf(e.att, area, e.kind, e.src))
+          const single = () => Promise.resolve(previewAttachmentOf(e.att, clickedImg, e.kind, e.src))
             .then(need => { if (need) modalToast(t('messages.attachPreviewFailed')); })
             .catch(() => modalToast(t('messages.attachPreviewFailed')));
           import('./lightbox.js')
@@ -2315,7 +2318,7 @@ function buildMediaStackGroup(entrys) {
           return;
         }
       }
-      Promise.resolve(previewAttachmentOf(e.att, area, e.kind, e.src))
+      Promise.resolve(previewAttachmentOf(e.att, clickedImg, e.kind, e.src))
         .then(need => { if (need) modalToast(t('messages.attachPreviewFailed')); })
         .catch(() => modalToast(t('messages.attachPreviewFailed')));
     },
@@ -2455,20 +2458,36 @@ async function previewMediaDirectOf(att, kind, src) {
  *  画廊（lightbox.openImageGallery），字节 = 卡面已水合的同一枚 URL（渲染时已走
  *  账本/鉴权路由取数腿，零第二条取字节路）；判型 = isImageAttachmentName 单点
  *  （PDF 等其他可预览件照旧直开系统查看器）。面未水合/失败 ⇒ 落回既有直开腿。 */
-function previewAttachmentOf(att, card, kind, src) {
+export function previewAttachmentOf(att, card, kind, src) {
   const name = String((att && att.name) || '');
   const media = /\.(png|jpe?g|gif|webp|bmp|svg|avif|mp4|webm|mov|ogv|m4v|mp3|wav|ogg|m4a|aac|flac|opus)$/i.test(name);
   if (media) {
+    // 手机图片预览失败修复（2026-11-23 作者报障 IMG_2039「缩略图正常、点开大图弹
+    // 预览失败」）：缩略已在卡面水合的字节 = 第二条可用源。修前本分支对图片名先
+    // 命中（media 正则覆盖全部图片扩展名），原图腿（`friends/attachments` 全量
+    // 取）一败即整件 toast，卡面上已经显示好的同一件字节被丢弃——「缩略通、原图
+    // 败」的分叉即此。修后：原图腿优先；原图腿败且卡面字节在场 ⇒ 用卡面字节开
+    // 灯箱（不 toast）；两腿皆无才 toast。
+    const thumb = card && card.tagName === 'IMG' ? card
+      : (card && card.querySelector ? card.querySelector('img') : null);
+    const thumbUrl = thumb && thumb.dataset.nfMediaFailed !== '1'
+      ? (thumb.currentSrc || thumb.src || '') : '';
     void (async () => {
       const mr = await import('./mediaOpenRoute.js');
       const mediaType = mr.mediaKind({ name });
       const source = src || {};
+      const lb = await import('./lightbox.js');
       let item = { kind: mediaType, name };
       if (kind === 'device' && source.kind === 'blob' && source.file) item.blob = source.file;
       else if (kind === 'device' && source.kind === 'path' && source.path) item.path = source.path;
-      else if (att && att.id) item.blob = (await api.downloadAttachment(att.id)).blob;
-      const lb = await import('./lightbox.js');
-      if (!lb.openImageGallery([item], 0)) throw new Error('No media source');
+      else if (att && att.id) {
+        try { item.blob = (await api.downloadAttachment(att.id)).blob; }
+        catch (err) { if (!thumbUrl) throw err; item = { kind: mediaType, name, src: thumbUrl }; }
+      }
+      if (!lb.openImageGallery([item], 0)) {
+        if (!thumbUrl) throw new Error('No media source');
+        lb.openImageGallery([{ kind: mediaType, name, src: thumbUrl }], 0);
+      }
     })().catch(() => window.__showToast?.(t('messages.attachPreviewFailed'), 'error'));
     return false;
   }

@@ -1,0 +1,93 @@
+#!/usr/bin/env node
+// mobile-composer-occlusion.spec.mjs — 手机消息流末条被输入框遮挡闸（作者截图 IMG_2036 · 2026-11-23，
+// 作者令「我发送的消息无法完全显示，会被输入框挡住一半 · 说了很多次了」）。
+//
+// 为何新增：既有 mobile-overlap-sweep 的 P3/D2 以 #send-btn（发送钮）为控件矩形；而被遮挡的是
+// 整个 #input-area 输入框（固定底栏，顶缘 = 输入卡上缘）。发送钮位于输入框底部，末条消息落在
+// 输入框顶与发送钮之间时闸照样绿 —— 闸失明。本闸以 #input-area 整框为控件矩形。
+//
+// 场景（真实形，非空会话）：390×844 手机视口，灌 20 条长消息（多行、含长段落），滚到底。
+// 断言：
+//   O1 末条消息 .row 的 bottom ≤ #input-area 的 top（末条完整位于输入框上方，不被遮）。
+//   O2 滚到底后 #chat 可滚距离内，末条也不被遮（同 O1，已滚底）。
+// 负对照：还原修前形态（#chat padding-bottom 归 8px，inline important）⇒ O1 必红，否则闸空转。
+//
+// 用法：node tests/mobile-composer-occlusion.spec.mjs
+// Exit：0 = 正对照绿且负对照红；1 = 违例或负对照未红；2 = 环境缺失。
+
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { ROOT, loadPlaywright, launchBrowser, createSession, settle, setWebRoot } from '../scripts/lib/visual-harness.mjs';
+
+setWebRoot(join(ROOT, 'src/main/resources/web'));
+const OUT = join(ROOT, 'tmp', 'mobile-composer-occlusion');
+mkdirSync(OUT, { recursive: true });
+
+const CLOCK = 1793940000000;
+const VIEW = { width: 390, height: 844 };
+const LONG = '这是一段较长的测试消息，用来把消息流撑出滚动并量末条的几何位置。'.repeat(3);
+const HISTORY = Array.from({ length: 20 }, (_, i) => ({
+  type: i % 2 ? 'ai' : 'user',
+  text: `第 ${i + 1} 条：${LONG}`,
+  timestamp: CLOCK - 3600000 + i * 60000,
+}));
+
+const MEASURE = () => {
+  const R = (el) => el.getBoundingClientRect();
+  const chat = document.getElementById('chat');
+  const ia = document.getElementById('input-area');
+  const rows = [...chat.querySelectorAll('.row')].filter((e) => e.getClientRects().length);
+  chat.style.scrollBehavior = 'auto';
+  chat.scrollTop = chat.scrollHeight;
+  const last = rows[rows.length - 1];
+  const out = { rows: rows.length, scrollable: chat.scrollHeight > chat.clientHeight, violations: [] };
+  if (!last || !ia) { out.violations.push({ rule: 'O0', what: 'row or input-area missing (vacuous)' }); return out; }
+  const lr = R(last), ir = R(ia);
+  out.lastBottom = +lr.bottom.toFixed(1);
+  out.inputTop = +ir.top.toFixed(1);
+  out.overlapPx = +(lr.bottom - ir.top).toFixed(1);
+  if (lr.bottom > ir.top + 0.5) out.violations.push({ rule: 'O1', what: 'last message under composer', overlapPx: out.overlapPx });
+  return out;
+};
+
+async function runOnce(browser, negative) {
+  const s = await createSession(browser, {
+    width: VIEW.width, height: VIEW.height, colorScheme: 'light', clock: CLOCK,
+  });
+  s.page.on('pageerror', (e) => { throw new Error('pageerror ' + e.message); });
+  await s.boot({ config: { llm: { providers: {} }, features: {} }, sessionId: 'occlusion-root', messages: HISTORY });
+  await settle(s.page, 400);
+  if (negative) {
+    // 修前形态：#chat 底垫归 8px（main.js 的 inline important 由同级后写覆盖）。
+    await s.page.evaluate(() => document.getElementById('chat').style.setProperty('padding-bottom', '8px', 'important'));
+  }
+  await settle(s.page, 150);
+  const res = await s.page.evaluate(MEASURE);
+  await s.page.screenshot({ path: join(OUT, `composer-occlusion${negative ? '-negative' : ''}.png`), animations: 'disabled', scale: 'css' });
+  await s.close();
+  return res;
+}
+
+async function main() {
+  const pwRes = loadPlaywright();
+  const pw = pwRes.mod.playwright || pwRes.mod;
+  const { browser, label } = await launchBrowser(pw);
+  console.log(`[mobile-composer-occlusion] browser=${label} view=${VIEW.width}x${VIEW.height}`);
+  let failed = 0;
+  const pos = await runOnce(browser, false);
+  if (pos.rows < 10) { failed++; console.error(`FAIL vacuous: only ${pos.rows} rows`); }
+  if (!pos.scrollable) { failed++; console.error('FAIL vacuous: stream not scrollable'); }
+  if (pos.violations.length) { failed++; console.error('FAIL positive:', JSON.stringify(pos)); }
+  else console.log(`PASS positive: rows=${pos.rows} lastBottom=${pos.lastBottom} inputTop=${pos.inputTop}`);
+  const neg = await runOnce(browser, true);
+  if (neg.violations.length) console.log(`PASS negative-control (red as expected: ${neg.violations.map((v) => v.rule).join(',')})`);
+  else { failed++; console.error('FAIL negative-control: gate blind (no overlap on pre-fix form)', JSON.stringify(neg)); }
+  await browser.close();
+  if (failed) { console.error(`mobile-composer-occlusion: ${failed} failure(s)`); process.exit(1); }
+  console.log('mobile-composer-occlusion: green');
+}
+
+main().catch((e) => {
+  console.error(`mobile-composer-occlusion: ${e && e.message ? e.message.split('\n')[0] : e}`);
+  process.exit(e && /playwright|browser|Executable/i.test(String(e.message)) ? 2 : 1);
+});

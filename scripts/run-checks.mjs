@@ -50,6 +50,13 @@ export const CHECKS = [
   // ⇒ FAIL）。判据 O0–O4 与修前同尺，不因面板增多而放宽。
   { name: 'mobile-overlap-sweep', profiles: ['frontend'], timeoutMs: 240_000,
     argv: [process.execPath, 'tests/mobile-overlap-sweep.spec.mjs'] },
+  // 手机图片「点开大图预览失败」闸（2026-11-23 · IMG_2039）：原图腿败 + 卡面缩略在场 ⇒ 仍开灯箱
+  // 不 toast；原图腿通 ⇒ 灯箱图解码；负对照无缩略 ⇒ toast 必现（路径活着）。
+  { name: 'mobile-image-preview-fallback', profiles: ['frontend'], timeoutMs: 120_000,
+    argv: [process.execPath, 'tests/mobile-image-preview-fallback.spec.mjs'] },
+  // 手机消息流末条被输入框遮挡闸（2026-11-23 · IMG_2036）：#input-area 整框为控件矩形。
+  { name: 'mobile-composer-occlusion', profiles: ['frontend'], timeoutMs: 120_000,
+    argv: [process.execPath, 'tests/mobile-composer-occlusion.spec.mjs'] },
   nodeCheck('design-tokens', 'check-design-tokens'),
   // 文档收藏纯逻辑闸（2026-11-23 前端功能批）：收藏切换 / 同文档去重=置顶 / 归一化 / 上限。
   // 主会话多选合并 Ask 现场探针（loopback mock LLM + 隔离网关；CI 安全）。
