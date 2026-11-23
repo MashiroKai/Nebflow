@@ -4201,24 +4201,6 @@
       "owner": "noclip-unified-fix (作者排期)"
     },
     {
-      "key": "mobile-todo-decision-card::.ta-decision-detail::viewport-top-clip",
-      "scenario": "mobile-todo-decision-card",
-      "selector": ".ta-decision-detail",
-      "rule": "viewport-top-clip",
-      "severity": "P1",
-      "reason": "决策/浮层卡高于可视区时顶部被裁（非浮层、无自滚）：应改为悬浮 + 内部可滚（铁律 9·①②③）",
-      "owner": "noclip-unified-fix (作者排期)"
-    },
-    {
-      "key": "mobile-todo-decision-card::.ta-decision-detail::ancestor-overflow-top",
-      "scenario": "mobile-todo-decision-card",
-      "selector": ".ta-decision-detail",
-      "rule": "ancestor-overflow-top",
-      "severity": "P1",
-      "reason": "决策/浮层卡高于可视区时顶部被裁（非浮层、无自滚）：应改为悬浮 + 内部可滚（铁律 9·①②③）",
-      "owner": "noclip-unified-fix (作者排期)"
-    },
-    {
       "key": "desktop-chat-ask-card::.option-box::viewport-top-clip",
       "scenario": "desktop-chat-ask-card",
       "selector": ".option-box",

@@ -2558,6 +2558,13 @@ body:not(.mobile-layer) #profile-face-overlay {
 .fm-pick-modal .fm-pick-body {
   padding-bottom: calc(var(--ask-fab-bottom, 24px) + var(--cv-size-circle, 40px) + var(--ds-space-3));
 }
+/* 顶部让位（截断巡检批 2026-11-24，作者截图「首行顶到标题栏下、首行被裁一半」）：
+   窗头 `.fm-modal-header` 是 position:absolute 悬浮条（同会话窗的悬浮头约定），
+   滚动主体必须让出窗头足迹，否则首行落在窗头之下。与会话窗 `.fm-flow` 同源：
+   取窗头派生量 `--fm-head-clear`（= 窗头高 + 净空），禁写第二份字面量。 */
+.fm-pick-modal .fm-pick-body {
+  padding-top: var(--fm-head-clear);
+}
 
 /* 群邀请区（联系人面板；行结构复用 fm-req-row，标题复用 fm-req-group） */
 .fm-group-invites { animation: fm-rise-in 200ms ease-out both; }

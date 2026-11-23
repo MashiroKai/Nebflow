@@ -43,6 +43,13 @@ export const CHECKS = [
   nodeCheck('noclip-floating', 'check-noclip-floating'),
   { name: 'noclip-floating-geometry', profiles: ['frontend'], timeoutMs: 240_000,
     argv: [process.execPath, 'tests/noclip-floating-geometry.spec.mjs'] },
+  // 截断/重叠巡检闸（作者令 2026-11-24 09:54 + 继续令「一次建全」2026-11-25）：
+  // 真 Chromium 390×844 量全面板清册——发起群聊 / 后台 agent 弹窗 / 主会话消息流 /
+  // 联系人 / 设置 / 待办列表 / 看板文档阅读面 / AskUser 决策卡（P1–P8），另加桌面
+  // 1280×800 同面板族抽检（D1–D2）；每面配负对照（还原修前形态必须红，否则闸失明
+  // ⇒ FAIL）。判据 O0–O4 与修前同尺，不因面板增多而放宽。
+  { name: 'mobile-overlap-sweep', profiles: ['frontend'], timeoutMs: 240_000,
+    argv: [process.execPath, 'tests/mobile-overlap-sweep.spec.mjs'] },
   nodeCheck('design-tokens', 'check-design-tokens'),
   // 按钮样式统一闸（button-style-unify-canvas-ref 批 2026-11-22）：全站实底静止按钮面
   // 消费统一阴影令牌 var(--btn-shadow)（canvas 基准）；裸写投影/字面量圆角即红。
