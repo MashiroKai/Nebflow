@@ -108,7 +108,8 @@ class CubuVerbBaselineSpec extends CatsEffectSuite:
       _ <- run("browser_download", "download-fixture-link", bjs("ref" -> str(linkRef), "timeout_ms" -> 30000.asJson))
       _ <- run("browser_close", "close-session", bjs())
       // ── 浏览器负向守卫 ──
-      _ <- run("browser_fill", "neg-secret-syntax", bjs("ref" -> str("e1"), "text" -> str("secret:github-pat")))
+      // 名称确定不存在：负向用例不依赖用户 secrets 库内容（库内若有同名项则会解析通过，见 batch-3 发现）。
+      _ <- run("browser_fill", "neg-secret-missing", bjs("ref" -> str("e1"), "text" -> str("secret:cubu-no-such-secret-xyz")))
       _ <- run("browser_snapshot", "neg-anonymous", bjs(), anon)
       _ <- run("browser_state", "neg-invalid-session", js("session" -> str("../x")))
 
