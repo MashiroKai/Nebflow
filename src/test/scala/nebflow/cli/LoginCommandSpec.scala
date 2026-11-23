@@ -186,6 +186,44 @@ class LoginCommandSpec extends FunSuite:
     assertEquals(LoginFlow.failureOfMessage(None, SignInFailure.LoginFailed), SignInFailure.NetworkError)
   }
 
+  test("withServerDetail（#924 CLI 错误透传）：step/error 进 reason 尾；无细节原样；非 JSON 截断 200 字；码位不变") {
+    val body = """{"error":"HTTP 200 without Location","code":"protocol_error","step":"redirect"}"""
+    val f = LoginFlow.withServerDetail(SignInFailure.ProtocolError, Some(body))
+    assertEquals(f.code, "protocol_error")
+    assertEquals(
+      f.reason,
+      "the sign-in service answered unexpectedly; server: at step redirect: HTTP 200 without Location"
+    )
+    assertEquals(LoginFlow.withServerDetail(SignInFailure.ProtocolError, None), SignInFailure.ProtocolError)
+    assertEquals(
+      LoginFlow.withServerDetail(SignInFailure.LoginFailed, Some("plain text " * 40)).reason.length,
+      SignInFailure.LoginFailed.reason.length + "; server: ".length + 200
+    )
+  }
+
+  test("signInWith：网关 protocol_error（502 包装）→ 码位 protocol_error + 服务端 step/error；文案零密码回显") {
+    val pw = "pw-probe-not-in-output"
+    val err = GatewayClient.requestError(
+      502,
+      """{"error":"HTTP 200 without Location","code":"protocol_error","step":"redirect"}"""
+    )
+    val fake = PostFake { case _ => Left(new RuntimeException(err)) }
+    LoginFlow
+      .signInWith(
+        CliContext.offline(),
+        fake.post,
+        IO.pure(Some("kai@example.com")),
+        IO.pure(Some(pw)),
+        loginGate = _ => IO.pure(Right(()))
+      )
+      .unsafeRunSync() match
+      case CliResult.Error(msg, 1) =>
+        assertEquals(msg.split("\\(code: protocol_error\\)", -1).length - 1, 1, msg) // 码后缀只出现一次
+        assert(msg.contains("server: HTTP 200 without Location (step: redirect)"), msg)
+        assert(!msg.contains(pw), msg)
+      case other => fail(s"expected protocol_error Error, got $other")
+  }
+
   // ── G. 状态面：解析 + 账号标签降级链 ───────────────────────────────────────
 
   private val statusJson =

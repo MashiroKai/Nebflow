@@ -448,4 +448,76 @@ class LogtoPasswordFlowSpec extends CatsEffectSuite:
       case other => fail(s"expected Transport failure, got $other")
   }
 
+  // ── E. consent 腿（#924）：resume 落 /consent ⇒ POST /api/interaction/consent ⇒ 再 resume ──
+
+  /** mode: "ok" = consent 204 后取码；"rejected" = consent 400；"loop" = resume 总落 /consent。 */
+  private def consentScript(mode: String): (LogtoPasswordFlow.Send, ListBuffer[String]) =
+    val seen = ListBuffer.empty[String]
+    val resumes = new java.util.concurrent.atomic.AtomicInteger(0)
+    val state = new StringBuilder
+    val send: LogtoPasswordFlow.Send = (req, jar) =>
+      IO.delay {
+        seen += s"${req.method} ${req.url.stripPrefix(endpoint).takeWhile(_ != '?')}"
+        if req.url.contains("/oidc/auth?client_id=") then
+          state.clear(); state.append(req.url.split("state=")(1).takeWhile(_ != '&'))
+          LogtoPasswordFlow.Resp(303, List("_interaction=I1"), Some("/sign-in"), "")
+        else if req.url.endsWith("/api/experience") then LogtoPasswordFlow.Resp(204, Nil, None, "")
+        else if req.url.endsWith("/verification/password") then
+          LogtoPasswordFlow.Resp(200, Nil, None, """{"verificationId":"v-c"}""")
+        else if req.url.endsWith("/api/experience/identification") then LogtoPasswordFlow.Resp(200, Nil, None, "")
+        else if req.url.endsWith("/api/experience/submit") then
+          LogtoPasswordFlow.Resp(200, Nil, None, s"""{"redirectTo":"$endpoint/oidc/auth/resume?x=1"}""")
+        else if req.url.contains("/oidc/auth/resume") then
+          val n = resumes.incrementAndGet()
+          if mode == "loop" || n == 1 then LogtoPasswordFlow.Resp(302, Nil, Some("/consent?i=I1"), "")
+          else
+            assertEquals(jar, "_interaction=I1; _consent=K1")
+            LogtoPasswordFlow.Resp(303, Nil, Some(s"$redirectUri?code=cc&state=$state"), "")
+        else if req.url == s"$endpoint/api/interaction/consent" then
+          assertEquals(req.method, "POST")
+          assertEquals(req.body, "{}")
+          assertEquals(jar, "_interaction=I1")
+          if mode == "rejected" then
+            LogtoPasswordFlow.Resp(400, Nil, None, """{"code":"session.not_found","message":"Session not found."}""")
+          else LogtoPasswordFlow.Resp(204, List("_consent=K1; Path=/"), None, "")
+        else if req.url == s"$endpoint/oidc/token" then
+          LogtoPasswordFlow.Resp(200, Nil, None, """{"access_token":"at-consent","token_type":"Bearer"}""")
+        else LogtoPasswordFlow.Resp(500, Nil, None, "unexpected")
+      }
+    (send, seen)
+
+  test("signIn consent leg: resume 落 /consent ⇒ consent 一次（jar 携带）⇒ 再 resume 取码 ⇒ 换票") {
+    val (send, seen) = consentScript("ok")
+    LogtoPasswordFlow.signIn(send)(endpoint, clientId, redirectUri, "email", account, password).unsafeRunSync() match
+      case Right(tokens) => assertEquals(tokens.accessToken, "at-consent")
+      case other => fail(s"expected consent success, got $other")
+    assertEquals(seen.count(_ == "POST /api/interaction/consent"), 1)
+    assert(!seen.mkString.contains(password))
+  }
+
+  test("signIn consent leg: consent 被拒 ⇒ Protocol(consent)，不再 resume、不换票") {
+    val (send, seen) = consentScript("rejected")
+    LogtoPasswordFlow.signIn(send)(endpoint, clientId, redirectUri, "email", account, password).unsafeRunSync() match
+      case Left(LogtoPasswordFlow.Failure.Protocol("consent", "session.not_found", _)) => ()
+      case other => fail(s"expected consent Protocol failure, got $other")
+    assertEquals(seen.count(_.contains("/oidc/auth/resume")), 1)
+    assertEquals(seen.count(_.endsWith("/oidc/token")), 0)
+  }
+
+  test("signIn consent leg: 二次 /consent 不循环 ⇒ redirect Protocol（仅一次 consent）") {
+    val (send, seen) = consentScript("loop")
+    LogtoPasswordFlow.signIn(send)(endpoint, clientId, redirectUri, "email", account, password).unsafeRunSync() match
+      case Left(LogtoPasswordFlow.Failure.Protocol("redirect", _, _)) => ()
+      case other => fail(s"expected redirect Protocol failure, got $other")
+    assertEquals(seen.count(_ == "POST /api/interaction/consent"), 1)
+  }
+
+  test("isConsentLocation：/consent 绝对/相对/带 query 均命中；loopback 回调与 /sign-in 不命中") {
+    assert(LogtoPasswordFlow.isConsentLocation("/consent"))
+    assert(LogtoPasswordFlow.isConsentLocation("/consent?i=1"))
+    assert(LogtoPasswordFlow.isConsentLocation("https://auth.example/consent"))
+    assert(!LogtoPasswordFlow.isConsentLocation(s"$redirectUri?code=c&state=s"))
+    assert(!LogtoPasswordFlow.isConsentLocation("/sign-in?app_id=x"))
+  }
+
 end LogtoPasswordFlowSpec

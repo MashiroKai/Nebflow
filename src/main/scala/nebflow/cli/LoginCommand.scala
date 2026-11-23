@@ -4,7 +4,7 @@ import nebflow.neblink.identity.*
 
 import cats.effect.IO
 import cats.syntax.all.*
-import io.circe.Json
+import io.circe.{Json, parser}
 import io.circe.syntax.*
 
 import nebflow.core.root.{LoginGuard, Refusal}
@@ -301,6 +301,30 @@ private[cli] object LoginFlow:
       case Some(detail) => failureOfDetail(detail, contextFallback)
       case None => SignInFailure.NetworkError
 
+  /**
+   * 服务端细节透传（#924 CLI 错误透传）：网关 `{error, code, step}` 的 `step`/`error`
+   * 拼进 reason 尾（`; server: at step redirect: HTTP 200 without Location`），不再
+   * 折叠成闭集短码的固定句。细节缺失 ⇒ 原样返回 `f`。
+   */
+  def withServerDetail(f: SignInFailure.Failure, detail: Option[String]): SignInFailure.Failure =
+    detail.flatMap(serverDetailText) match
+      case Some(t) => f.copy(reason = s"${f.reason}; server: $t")
+      case None => f
+
+  /** 网关 detail → 可读短句（JSON 取 step/error；非 JSON 取原文前 200 字）。 */
+  def serverDetailText(detail: String): Option[String] =
+    parser.parse(detail).toOption match
+      case Some(json) =>
+        val c = json.hcursor
+        val parts = List(
+          c.downField("step").as[String].toOption.filter(_.nonEmpty).map(s => s"at step $s"),
+          c.downField("error").as[String].toOption.filter(_.nonEmpty)
+        ).flatten
+        Option.when(parts.nonEmpty)(parts.mkString(": "))
+      case None =>
+        // 包装尾的 `(code: …)` 已由 H3 行的 `(code: …)` 承载 ⇒ 去重，不在细节里重复。
+        Option(detail.trim.replaceAll("""\s*\(code: [^)]*\)$""", "")).filter(_.nonEmpty).map(_.take(200))
+
   // ── IO 面：输入提示（可注入） ────────────────────────────────────────────
 
   /**
@@ -393,9 +417,15 @@ private[cli] object LoginFlow:
                     // 2xx 但带 error 字段 = 防御性出口（旧 pollStep 同口径）。
                     val detail =
                       json.hcursor.downField("error").as[String].toOption.getOrElse("unexpected success-shape error")
-                    IO.pure(signInFailure(ctx, failureOfDetail(detail)))
+                    IO.pure(signInFailure(ctx, withServerDetail(failureOfDetail(detail), Some(detail))))
                   case Left(e) =>
-                    IO.pure(signInFailure(ctx, failureOfMessage(Option(e.getMessage), SignInFailure.LoginFailed)))
+                    val raw = Option(e.getMessage)
+                    IO.pure(
+                      signInFailure(
+                        ctx,
+                        withServerDetail(failureOfMessage(raw, SignInFailure.LoginFailed), raw.flatMap(gatewayDetail))
+                      )
+                    )
                 }
             }
         }

@@ -1857,7 +1857,7 @@ private[gateway] object NeblinkRoutes:
                 case Left(LogtoPasswordFlow.Failure.Protocol(step, code, m)) =>
                   loginRateGuard.recordFailure(remoteKey) *>
                     logger
-                      .warn(s"headless login protocol failure at $step (code=$code)")
+                      .warn(s"headless login protocol failure at $step (code=$code): $m")
                       .as(
                         Response[IO](Status.BadGateway).withEntity(
                           Json.obj("error" -> m.asJson, "code" -> "protocol_error".asJson, "step" -> step.asJson)

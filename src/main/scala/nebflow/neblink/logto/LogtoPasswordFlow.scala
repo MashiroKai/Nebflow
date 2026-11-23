@@ -240,6 +240,19 @@ object LogtoPasswordFlow:
       body = "{}"
     )
 
+  /**
+   * The consent grant on the interaction API (#924 consent leg). The route is present
+   * on the deployed tenant (probe 2026-11-23: `/api/interaction/consent` answers
+   * `session.not_found` without a session; `/api/experience/consent` is 404). Body is
+   * the empty grant — the requested scopes are granted as-is.
+   */
+  def consentRequest(endpoint: String): Request =
+    Request(
+      url = s"${endpoint.stripSuffix("/")}/api/interaction/consent",
+      contentType = "application/json",
+      body = "{}"
+    )
+
   /** Token exchange — same builder as the browser path (pure, no cookies). */
   def tokenRequest(endpoint: String, clientId: String, redirectUri: String, code: String, verifier: String): Request =
     LogtoAuthCode.tokenRequest(endpoint, clientId, redirectUri, code, verifier)
@@ -382,31 +395,8 @@ object LogtoPasswordFlow:
                                 case Right(redirectTo) =>
                                   // Submit can rotate the session; resume must use the updated cookies.
                                   val jar5 = mergeCookies(jar4, r5.setCookies)
-                                  // ── leg 6: follow redirectTo, take code+state ──
-                                  send(
-                                    Request(
-                                      redirectTo,
-                                      contentType = "application/x-www-form-urlencoded",
-                                      body = "",
-                                      method = "GET"
-                                    ),
-                                    jar5
-                                  ).flatMap { r6 =>
-                                    r6.location match
-                                      case None =>
-                                        IO.pure(
-                                          Left(Failure.Protocol("redirect", "", s"HTTP ${r6.status} without Location"))
-                                        )
-                                      case Some(loc) =>
-                                        parseRedirectQuery(loc) match
-                                          case Left(m) => IO.pure(Left(Failure.Protocol("redirect", "", m)))
-                                          case Right((code, st)) if st == in.state =>
-                                            exchangeToken(send)(in.base, in.clientId, in.redirectUri, code, in.verifier)
-                                          case Right(_) =>
-                                            IO.pure(
-                                              Left(Failure.Protocol("redirect", "", "state mismatch (possible CSRF)"))
-                                            )
-                                  }
+                                  // ── leg 6: follow redirectTo, take code+state (consent-aware) ──
+                                  resumeLeg(send, in, redirectTo, jar5, consentRound = true)
                           }
                       }
             }
@@ -414,6 +404,61 @@ object LogtoPasswordFlow:
       end if
     }
   end dance
+
+  /**
+   * Leg 6 — resume: GET `redirectTo` with the jar (303 NOT followed); the loopback
+   * `Location` carries code+state. #924 consent leg: when the resume answer routes to
+   * the hosted consent page (`Location` path `/consent`), grant consent once through the
+   * interaction API and resume again. A second consent route is NOT retried — it falls
+   * through to the ordinary redirect Protocol failure (no loop).
+   */
+  private def resumeLeg(
+    send: Send,
+    in: DanceInput,
+    redirectTo: String,
+    jar: String,
+    consentRound: Boolean
+  ): IO[Either[Failure, LogtoAuthCode.TokenResult]] =
+    send(
+      Request(redirectTo, contentType = "application/x-www-form-urlencoded", body = "", method = "GET"),
+      jar
+    ).flatMap { r =>
+      r.location match
+        case None => IO.pure(Left(Failure.Protocol("redirect", "", s"HTTP ${r.status} without Location")))
+        case Some(loc) if consentRound && isConsentLocation(loc) =>
+          consentLeg(send, in, redirectTo, jar)
+        case Some(loc) =>
+          parseRedirectQuery(loc) match
+            case Left(m) => IO.pure(Left(Failure.Protocol("redirect", "", m)))
+            case Right((code, st)) if st == in.state =>
+              exchangeToken(send)(in.base, in.clientId, in.redirectUri, code, in.verifier)
+            case Right(_) =>
+              IO.pure(Left(Failure.Protocol("redirect", "", "state mismatch (possible CSRF)")))
+    }
+
+  /** Consent: POST the interaction consent (cookies threaded), then resume once more. */
+  private def consentLeg(
+    send: Send,
+    in: DanceInput,
+    redirectTo: String,
+    jar: String
+  ): IO[Either[Failure, LogtoAuthCode.TokenResult]] =
+    send(consentRequest(in.base), jar).flatMap { rc =>
+      if rc.status == 0 then IO.pure(Left(Failure.Transport(rc.body)))
+      else if rc.status / 100 != 2 then
+        // 不复用 classifyFailure：其 `not_found ⇒ InvalidCredentials` 映射是 verification 腿的语义，
+        // 在 consent 腿会把会话失效误报成密码错。consent 失败一律落 Protocol(consent, …)。
+        val parsed = parser.parse(rc.body).toOption
+        val code = parsed.flatMap(_.hcursor.downField("code").as[String].toOption).getOrElse("")
+        val message = parsed.flatMap(_.hcursor.downField("message").as[String].toOption).getOrElse(s"HTTP ${rc.status}")
+        IO.pure(Left(Failure.Protocol("consent", code, message)))
+      else resumeLeg(send, in, redirectTo, mergeCookies(jar, rc.setCookies), consentRound = false)
+    }
+
+  /** A resume `Location` whose path is the hosted consent page (`/consent`, absolute or relative). */
+  def isConsentLocation(loc: String): Boolean =
+    val path = loc.takeWhile(c => c != '?' && c != '#')
+    path == "/consent" || path.endsWith("/consent")
 
   /** Token exchange on the shared pure parser (no cookies on this leg). */
   private def exchangeToken(send: Send)(
