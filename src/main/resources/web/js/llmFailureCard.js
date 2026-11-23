@@ -155,7 +155,7 @@ export function renderLlmFailureCard(msg, deps) {
 
   // 正文区点按 ⇒ 消失；控件区（按钮/下拉/关闭钮/动作行）点击不触发。
   box.addEventListener('click', (e) => {
-    if (isLlmFailureControlTarget(e.target)) return;
+    if (isLlmFailureControlTarget(/** @type {Element} */ (e.target))) return;
     dismiss();
   });
 
