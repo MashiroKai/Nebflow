@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.effect.Ref
 import munit.CatsEffectSuite
 import nebflow.llm.SendMessageParams
-import nebflow.shared.StreamChunk
+import nebflow.shared.{Message, MessageRole, StreamChunk}
 import scala.jdk.CollectionConverters.*
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.{GenericRequest, Response, StreamBackend}
@@ -75,7 +75,7 @@ class AnthropicEmptyEventWarnSpec extends CatsEffectSuite:
     new AnthropicAdapter("https://api.example.com", "k", new CannedSseBackend(body))
 
   private val params =
-    SendMessageParams(Nil, "GLM-5.3", sessionId = Some("sess-256"), agentId = Some("ag-256"))
+    SendMessageParams(List(Message(MessageRole.User, Left("hello"))), "GLM-5.3", sessionId = Some("sess-256"), agentId = Some("ag-256"))
 
   /** Marker proving the payload text never reaches the log line. */
   private val marker = "SECRET_WIRE_MARKER_256"

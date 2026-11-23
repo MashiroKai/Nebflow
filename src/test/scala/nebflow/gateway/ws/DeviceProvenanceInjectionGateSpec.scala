@@ -48,7 +48,7 @@ class DeviceProvenanceInjectionGateSpec extends FunSuite:
 
   /**
    * 显示面裸正文行的**形状锚**：只钉两个契约实参（正文实参 = 裸 `content`、附件实参
-   * = `Nil`），不钉整行的可选键尾。
+   * = `attachments`），不钉整行的可选键尾。
    *
    * 形状沿革（本门唯一被钉的字面量，两次成因都记在此处）：
    *   - device-provenance 批 aefea8f77（2026-10-23）原形状：
@@ -64,7 +64,7 @@ class DeviceProvenanceInjectionGateSpec extends FunSuite:
    * 个数/字面，后续再加参不再误伤本门」。
    */
   private val BareUiRow =
-    "List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()"
+    "List(UiMessage.User(content, attachments, timestamp = System.currentTimeMillis()"
 
   test("①a dispatchUserText: the UiMessage display row stays BARE content (marker can never leak to the chat stream)") {
     // 判据收在 dispatchUserText **体内**（不是全文件任意一处同名行）：裸正文行的
@@ -76,7 +76,7 @@ class DeviceProvenanceInjectionGateSpec extends FunSuite:
     val body = if nextDef > start then wsRoutesCode.substring(start, nextDef) else wsRoutesCode.substring(start)
     assert(
       body.contains(BareUiRow),
-      s"显示面必须保持裸正文行 $BareUiRow （正文实参 content 裸、附件 Nil；标记只进模型面）"
+      s"显示面必须保持裸正文行 $BareUiRow （正文实参 content 裸、附件 attachments；标记只进模型面）"
     )
   }
 

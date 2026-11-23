@@ -301,10 +301,11 @@ class DispatcherWakeWatchdogSpec extends CatsEffectSuite:
           case _                              => false
         })
       )
-      // cancelled 腿：cancelNodeById → cancelled 终态 + notifyTerminal(Cancelled)
-      // （flag-free）→ DispatchNotify 5s 批窗 → DelegateNotify.inject。
+      // This synthetic running row has no execution fiber; reap the stale row rather
+      // than signalling a live fiber that the fixture never started.
       _ <- seedNode(h, "n-g2c", NodeLifecycle.Running, List(OutEdge.root), 60_000L)
-      _ <- h.engine.cancelNodeById("n-g2c")
+      reaped <- h.engine.reapStaleRunning("n-g2c")
+      _ <- IO(assert(reaped.isRight, s"stale cancellation failed: $reaped"))
       _ <- waitUntil(30.seconds)(
         recorded.get.map(_.exists {
           case m: AgentCommand.ImmediateInput => m.text.contains("cancelled") && m.text.contains("node-n-g2c")
