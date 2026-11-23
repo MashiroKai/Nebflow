@@ -24,7 +24,19 @@ const STORAGE_KEY = key('canvas_favorites_v1');
 // （CanvasFavoritesRoutes.scala）为真源；内存缓存为运行期视图；localStorage 仅作离线镜像。
 /** 引擎真源的内存缓存（null = 尚未与引擎同步，读回落本地镜像）。 */
 let cache = null;
-/** 一次性同步的 promise（mount 多处调用，只发一次 GET）。 */
+/** 缓存所对应的 localStorage 原始串。外部写入 storage（另一标签页 / 迁移 / 测试注入）
+ *  使其与此不等 ⇒ 缓存失效、重读归一化（修 dedupe：缓存旁路会吞掉外部变更）。 */
+let cacheRaw = null;
+
+function readRaw() {
+  try { return localStorage.getItem(STORAGE_KEY); } catch (_) { return null; }
+}
+
+/** 记住一份视图：缓存 + 其对应的 storage 原始串（写镜像之后调用）。 */
+function remember(list) {
+  cache = list;
+  cacheRaw = readRaw();
+}/** 一次性同步的 promise（mount 多处调用，只发一次 GET）。 */
 let syncPromise = null;
 
 function favoritesAuthHeaders() {
@@ -34,21 +46,24 @@ function favoritesAuthHeaders() {
 
 /** @returns {FavoriteEntry[]} */
 export function loadFavorites() {
-  if (cache) return cache;
+  const raw = readRaw();
+  if (cache && raw === cacheRaw) return cache;   // 缓存与 storage 一致 ⇒ 直接用
   try {
-    return normalizeList(JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'));
+    const list = normalizeList(JSON.parse(raw || '[]'));
+    if (raw !== null) { cache = list; cacheRaw = raw; }   // storage 为真镜像：外部变更生效
+    return list;
   } catch (_) {
-    return [];
+    return cache || [];
   }
 }
 
 /** 写回：缓存 + 本地镜像 + 引擎（best-effort；引擎不可达时本地仍生效，下次同步再推）。
  *  @param {FavoriteEntry[]} list */
 function saveFavorites(list) {
-  cache = list;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
   } catch (_) { /* 配额/隐私模式：镜像失效不影响引擎真源 */ }
+  remember(list);
   window.dispatchEvent(new CustomEvent(FAVORITES_CHANGE_EVENT));
   void fetch('/api/canvas-favorites', {
     method: 'PUT',
@@ -73,7 +88,7 @@ export function syncFavoritesFromEngine() {
       const local = loadFavorites();
       if (!remote.length && local.length) {
         // 迁移：旧 localStorage 收藏 → 引擎（仅一次；此后引擎为空也不再回填本地）。
-        cache = local;
+        remember(local);
         await fetch('/api/canvas-favorites', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json', ...favoritesAuthHeaders() },
@@ -81,8 +96,8 @@ export function syncFavoritesFromEngine() {
         });
         return;
       }
-      cache = remote;
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(remote)); } catch (_) { /* 镜像可失效 */ }
+      remember(remote);
       window.dispatchEvent(new CustomEvent(FAVORITES_CHANGE_EVENT));
     } catch (_) {
       // 引擎不可达：沿用本地镜像视图（离线可读）。

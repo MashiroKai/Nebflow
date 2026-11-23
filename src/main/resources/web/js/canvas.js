@@ -2977,7 +2977,18 @@ function cardPopIcon(cls, kids) {
  *  胶囊左座（.canvas-header 首子元素，先于 #canvas-title）。仅对带 absPath 的文件
  *  页签可见（URL 页/临时页无收藏语义 ⇒ 隐藏）。已收藏 = is-on（实心），未收藏 = 描边。
  *  写入唯一入口 = canvasFavorites.toggleFavoritePath（去重/置顶在 core 层）。 */
+/** 星标同步广播：桌面胶囊星标与手机 canvas 工具条星标共用同一份激活态（事件派发在前，
+ *  监听方读 activeFavoriteTarget() 自取当前激活页签）。 */
+export const FAV_SYNC_EVENT = 'nebflow-canvas-fav-sync';
+
+/** 当前激活页签的收藏目标（无 absPath = null；URL/临时页不可收藏）。 */
+export function activeFavoriteTarget() {
+  const entry = activeCanvasEntry();
+  return entry && entry.absPath ? { path: entry.absPath, title: entry.title } : null;
+}
+
 function syncFavoriteButton() {
+  window.dispatchEvent(new Event(FAV_SYNC_EVENT));
   const hdr = document.querySelector('#canvas-panel .canvas-header');
   if (!hdr) return;
   let btn = /** @type {HTMLButtonElement|null} */ (document.getElementById('canvas-fav-btn'));

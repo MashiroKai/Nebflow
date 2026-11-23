@@ -51,7 +51,9 @@ import {
   // 源解析/克隆腿**单源复用**桌面 canvas.js 的同一内核（不另造第二套截图方案），
   // 手机层只负责缓存与挂载。
   canvasSnapshotFor, canvasSnapshotStamp,
+  activeFavoriteTarget, FAV_SYNC_EVENT,
 } from '../canvas.js';
+import { toggleFavoritePath, isFavoritePath, onFavoritesChange } from '../canvasFavorites.js';
 import { hasBackHandler } from '../gesture/backSwipe.js';
 import { key } from '../branding.js';
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from '../sidebar.js';
@@ -1849,7 +1851,37 @@ function buildCanvasPage(body) {
   stack.setAttribute('aria-label', tt('堆叠卡视图', 'Stacked cards'));
   stack.innerHTML = '<i data-lucide="layers"></i>';
   stack.addEventListener('click', () => { logEvent('canvas-stack-toggle'); toggleDeck(); });
-  toolbar.append(close, count, stack);
+  // 文档星标（r2 · 作者令「电脑和手机端星标都要」）：手机端桌面胶囊被隐藏（mobileLayer.css），
+  // 星标落在工具条内，与桌面同一写入口 toggleFavoritePath；激活态经 FAV_SYNC_EVENT / 收藏变更重绘。
+  const star = document.createElement('button');
+  star.type = 'button';
+  star.className = 'mf-cv-star g2-fab canvas-button canvas-fav-btn';
+  star.innerHTML = '<i data-lucide="star" class="canvas-fav-ic"></i>';
+  const paintStar = () => {
+    const tgt = activeFavoriteTarget();
+    star.hidden = !tgt;
+    if (!tgt) return;
+    const on = isFavoritePath(tgt.path);
+    star.classList.toggle('is-on', on);
+    star.setAttribute('aria-pressed', on ? 'true' : 'false');
+    const label = tt(on ? '取消收藏' : '收藏文档', on ? 'Remove from favorites' : 'Favorite document');
+    star.title = label;
+    star.setAttribute('aria-label', label);
+  };
+  star.addEventListener('click', () => {
+    const tgt = activeFavoriteTarget();
+    if (!tgt) return;
+    const nowOn = toggleFavoritePath(tgt);
+    paintStar();
+    star.classList.remove('is-pop');
+    void star.offsetWidth;
+    if (nowOn) star.classList.add('is-pop');
+    window.__showToast?.(tt(nowOn ? '已收藏' : '已取消收藏', nowOn ? 'Added to favorites' : 'Removed from favorites'), 'success');
+  });
+  window.addEventListener(FAV_SYNC_EVENT, paintStar);
+  onFavoritesChange(paintStar);
+  toolbar.append(close, count, stack, star);
+  paintStar();
 
   const host = document.createElement('div');
   host.className = 'mf-cv-host';
