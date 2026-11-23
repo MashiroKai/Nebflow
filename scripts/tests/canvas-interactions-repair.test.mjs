@@ -49,7 +49,7 @@ test('FCI-SCN-003 matching diff close is isolated', async () => {
   const start = code.indexOf("document.addEventListener('canvas-tab-closed'");
   const end = code.indexOf("  import('./activityBar.js')", start);
   let handler; let release; let collapsed = 0;
-  const ctx = { currentBatchKey: 'A', currentPayload: {}, batchGeneration: 1, PANEL_ELEM_ID: 'panel-filechanges', syncChipActive() {}, document: { addEventListener: (_n, fn) => { handler = fn; }, getElementById: () => ({classList: {contains: () => true}}) }, loadBar: () => new Promise(r => { release = r; }) };
+  const ctx = { currentBatchKey: 'A', currentPayload: {}, batchGeneration: 1, PANEL_ELEM_ID: 'panel-filechanges', syncChipActive() {}, clearBatch() {}, document: { addEventListener: (_n, fn) => { handler = fn; }, getElementById: () => ({classList: {contains: () => true}}) }, loadBar: () => new Promise(r => { release = r; }) };
   vm.runInNewContext(code.slice(start, end).replace("import('./activityBar.js')", 'loadBar()'), ctx);
   await handler({detail: {id: 'filechanges:B'}});
   assert.equal(ctx.currentBatchKey, 'A');
