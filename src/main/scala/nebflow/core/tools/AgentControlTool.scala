@@ -879,17 +879,21 @@ When to use:
         if sessionId.startsWith(nebflow.core.executor.ExternalSessionRunner.SessionPrefix) then
           externalStatusBody(sessionId)
         else
-          resources.subAgentTaskStore.findByTaskId(sessionId).map {
+          resources.subAgentTaskStore.findByTaskId(sessionId).flatMap {
             case Some(t) if t.status == "running" || t.status == "restarting" =>
-              Right(
-                s"Orphan task: no live actor for '$sessionId' but the task file still says status=${t.status} " +
-                  s"(agent=${t.agentName}, parent=${t.parentSessionId}). The actor died without a terminal event " +
-                  "(e.g. gateway restart). It can be ignored — startup recovery / pruning will clean it — or the " +
-                  "task can be re-delegated."
+              IO.pure(
+                Right(
+                  s"Orphan task: no live actor for '$sessionId' but the task file still says status=${t.status} " +
+                    s"(agent=${t.agentName}, parent=${t.parentSessionId}). The actor died without a terminal event " +
+                    "(e.g. gateway restart). It can be ignored — startup recovery / pruning will clean it — or the " +
+                    "task can be re-delegated."
+                )
               )
             case Some(t) =>
-              Right(
-                s"Session '$sessionId' is no longer live. Task record: status=${t.status}, retries=${t.retryCount}, lastError=${t.lastError.getOrElse("-")}."
+              IO.pure(
+                Right(
+                  s"Session '$sessionId' is no longer live. Task record: status=${t.status}, retries=${t.retryCount}, lastError=${t.lastError.getOrElse("-")}."
+                )
               )
             case None =>
               // 手抄 ID 容错（送达链路修复批 2026-11-23 P1⑥）：诊断实证 23c610c6
