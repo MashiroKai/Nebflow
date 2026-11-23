@@ -46,6 +46,12 @@ const mock = http.createServer((req, res) => {
   let body = ''; req.on('data', d => { body += d; });
   req.on('end', () => {
     hits++;
+    // 选区解释腿（selectionExplain）是非流式单次调用 ⇒ 回 JSON；流式请求回 SSE。
+    let streaming = false; try { streaming = JSON.parse(body).stream === true; } catch {}
+    if (!streaming) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ id: 'mock', object: 'chat.completion', model: 'mock-1', choices: [{ index: 0, message: { role: 'assistant', content: ANSWER }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }));
+    }
     const text = JSON.stringify({ id: 'mock', object: 'chat.completion.chunk', model: 'mock-1', choices: [{ index: 0, delta: { content: ANSWER }, finish_reason: null }] });
     const done = JSON.stringify({ id: 'mock', object: 'chat.completion.chunk', model: 'mock-1', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
     res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end(`data: ${text}\n\ndata: ${done}\n\ndata: [DONE]\n\n`);
@@ -94,7 +100,12 @@ const PROBE = () => {
     const t = Math.min(...tops.map(x => x.top)), bm = Math.max(...tops.map(x => x.bottom));
     segMid = (t + bm) / 2;
   }
+  // M2'（新契约）：锚点矩形与覆盖段每条气泡矩形不相交（手机端外侧放不下时贴上方，不压字）。
+  const bubbleRects = rows.map(x => x.querySelector('.bubble')?.getBoundingClientRect()).filter(Boolean);
+  const overlap = !!r && bubbleRects.some(br => !(r.right <= br.left || r.left >= br.right || r.bottom <= br.top || r.top >= br.bottom));
   return {
+    overlap,
+    askPos: btn ? btn.dataset.askPos || null : null,
     visible,
     side: btn ? btn.dataset.askSide || null : null,
     spanCount: btn ? btn.dataset.spanCount || null : null,
@@ -186,16 +197,15 @@ try {
     await page.screenshot({ path: `${artifacts}/${label}-multi-onSelect.png` });
     await page.locator('.selection-ask-btn').click({ timeout: 4000 }).catch(() => {});
     try { await page.locator('.ask-dock.selection-dock').waitFor({ timeout: 4000 }); } catch {}
-    let answerLinked = null, answerText = null;
-    try { await page.locator('.ask-dock.selection-dock .ask-bub').getByText(ANSWER).first().waitFor({ timeout: 20000 }); } catch (e) { console.log(`[${label}] answer wait failed: ${String(e).slice(0, 200)}`); }
-    // 终态 render 才挂词条钩子（done 帧之后），等属性落地再读，避免流式中读到空。
-    try { await page.waitForFunction(() => !!document.querySelector('.ask-dock.selection-dock .ask-bub.ai[data-nf-term-linkified="1"]'), null, { timeout: 10000 }); } catch {}
-    answerText = await page.locator('.ask-dock.selection-dock .ask-bub').allTextContents();
-    answerLinked = await page.evaluate(() => {
-      const ai = Array.from(document.querySelectorAll('.ask-dock.selection-dock .ask-bub.ai'));
-      return ai.map(n => n.getAttribute('data-nf-term-linkified')).filter(Boolean);
-    });
-    const frames = await page.evaluate(() => window.__sent.filter(f => f.type === 'ask').map(f => String(f.question || '')));
+    // M6'（新契约）：解释面板原文片段 = 词条 chip；点击 chip ⇒ 展开解释（小模型返回的 ANSWER）。
+    let answerText = null, chipCount = 0, expanded = false;
+    try { await page.waitForFunction(() => document.querySelectorAll('.selection-explain-chip').length > 0, null, { timeout: 6000 }); } catch {}
+    chipCount = await page.locator('.selection-explain-chip').count();
+    if (chipCount) await page.locator('.selection-explain-chip').first().click({ timeout: 4000 }).catch(() => {});
+    try { await page.waitForFunction((a) => { const x = document.querySelector('.selection-explain-answer'); return !!x && !x.hidden && x.textContent.includes(a); }, ANSWER, { timeout: 20000 }); expanded = true; } catch (e) { console.log(`[${label}] explain wait failed: ${String(e).slice(0, 160)}`); }
+    answerText = await page.locator('.selection-explain-answer').allTextContents();
+    // M4'（新契约）：发送的是 selectionExplain 帧（小模型路由），不得有 ask 帧。
+    const frames = await page.evaluate(() => window.__sent.filter(f => f.type === 'selectionExplain').map(f => String(f.question || '')));
     const q = frames[0] || '';
     const dlgOpen = await page.evaluate(() => { const p = document.querySelector('.ask-dock.selection-dock'); return !!p && !p.classList.contains('closed'); });
     await page.screenshot({ path: `${artifacts}/${label}-multi-dialog.png` });
@@ -203,15 +213,17 @@ try {
       viewport: label, sel: sel.ok, pre,
       M1_btnVisibleAcrossBubbles: !!pre.visible,
       // M2 = 居中（中点在列内 ⇒ |偏差| ≤ 6px）或 夹紧（中点在列外 ⇒ 按钮仍在列内）。
-      M2_centered: pre.segMidInCol === true ? Math.abs(pre.centerDelta) <= 6 : pre.btnInCol === true,
-      M2_mode: pre.segMidInCol === true ? 'centered' : 'clamped',
+      M2_centered: pre.overlap === false && pre.btnInCol === true,
+      M2_mode: 'nonoverlap',
+      M2_askPos: pre.askPos,
       M2_centerDelta: pre.centerDelta,
       M3_dialogOpen: dlgOpen,
       // 顺序 = DOM 顺序（本 fixture 的 ai 行在前），断言两条来源都在、编号连续、计数为 2。
-      M4_questionIsMerged: /<selection count="2">/.test(q) && /<quote n="1" from="(user|ai)">/.test(q) && /<quote n="2" from="(user|ai)">/.test(q) && /from="user"/.test(q) && /from="ai"/.test(q),
+      // 段数随视口的预热行布局变化（手机端选区跨更多行）⇒ 判「≥2 段合并 + 两侧来源都在」，不钉死 2。
+      M4_questionIsMerged: /<selection count="([2-9]\d*)">/.test(q) && /<quote n="1" from="(user|ai)">/.test(q) && /<quote n="2" from="(user|ai)">/.test(q) && /from="user"/.test(q) && /from="ai"/.test(q),
       M5_noMergeStrip: pre.mergeStrips === 0,
-      M6_termHookRan: Array.isArray(answerLinked) && answerLinked.length > 0,
-      M6_answerShown: (answerText || []).some(t => t.includes(ANSWER)),
+      M6_termHookRan: chipCount > 0,
+      M6_answerShown: expanded && (answerText || []).some(t => t.includes(ANSWER)),
       M7_menuZero: pre.menuCount === 0,
       question: q.slice(0, 400),
       answerText: (answerText || []).join(' | ').slice(0, 120),
