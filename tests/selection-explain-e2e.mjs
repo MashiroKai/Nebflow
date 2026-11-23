@@ -68,7 +68,7 @@ const READ = () => {
   const chips = Array.from(document.querySelectorAll('.bubble a.nf-term.selection-explain-chip'));
   const inPanel = Array.from(document.querySelectorAll('.selection-dock a.selection-explain-chip')).length;
   const cs = chips[0] ? getComputedStyle(chips[0]) : null;
-  const tip = document.querySelector('.selection-explain-tip');
+  const tip = document.querySelector('.nf-term-tip');
   const tipShown = !!tip && tip.style.display !== 'none' && tip.getBoundingClientRect().width > 0;
   const ans = document.querySelector('.selection-explain-answer');
   const sr = btn ? btn.getBoundingClientRect() : null;
@@ -86,7 +86,7 @@ const READ = () => {
     chipIsTerm: chips.length > 0 && chips.every(c => c.classList.contains('nf-term')),
     chipColor: cs ? cs.color : null,
     chipUnderline: cs ? cs.textDecorationLine : null,
-    tipShown, tipText: tip ? tip.querySelector('.td')?.textContent.slice(0, 40) : null,
+    tipShown, tipText: tip ? tip.querySelector('.ts')?.textContent.slice(0, 40) : null,
     answerHiddenBeforeClick: ans ? ans.hidden : null,
     answerVisibleAfterClick: ans ? !ans.hidden : null,
     answerText: ans ? ans.textContent.slice(0, 40) : null,
@@ -163,15 +163,17 @@ try {
     const frameType = await page.evaluate(() => (window.__frames.find(f => f.type === 'selectionExplain') || {}).type || null);
     // ④ 点词条 → 展开解释
     await page.locator('.bubble a.nf-term.selection-explain-chip').first().click({ timeout: 4000 }).catch(() => {});
-    try { await page.waitForFunction(() => { const t = document.querySelector('.selection-explain-tip'); return !!t && t.style.display !== 'none' && t.textContent.includes('模拟解释'); }, null, { timeout: 6000 }); } catch {}
+    try { await page.waitForFunction(() => { const t = document.querySelector('.nf-term-tip'); return !!t && t.style.display !== 'none' && t.textContent.includes('模拟解释'); }, null, { timeout: 6000 }); } catch {}
     const step4 = await page.evaluate(`(${READ.toString()})()`);
     await page.screenshot({ path: `${artifacts}/${vp.label}-4-chip-expanded.png` });
-    const line = { viewport: vp.label, sel: step1, dialog: step2, sentTypes: sent, selectionExplainFrame: frameType, afterChipClick: step4,
+    await page.keyboard.press('Escape');
+    const cleanup = await page.evaluate(() => ({ chips: document.querySelectorAll('#chat .selection-explain-chip').length, tipVisible: !!document.querySelector('.nf-term-tip') && getComputedStyle(document.querySelector('.nf-term-tip')).display !== 'none' }));
+    const line = { viewport: vp.label, sel: step1, dialog: step2, sentTypes: sent, selectionExplainFrame: frameType, afterChipClick: step4, cleanup, G_closeCleanup: cleanup.chips === 0 && !cleanup.tipVisible,
       askFrameSent: sent.includes('ask'), A_anchorNoOverlap: !step1.anchorOverlapsBubble && step1.anchorVisible,
       B_dialogOpen: step2.dialogOpen, C_smallModelFrame: frameType === 'selectionExplain' && !sent.includes('ask'),
       // D（point 3）：原始气泡里的选中文字 = 绿色 + 下划线 词条；面板里没有 chip。
       D_chipsAreTerms: step2.chipCount >= 1 && step2.chipIsTerm && step2.chipInPanelCount === 0 && step2.chipUnderline === 'underline',
-      // E（point 3）：点词条 → canvas 词条同族弹窗 .selection-explain-tip 展示解释。
+      // E（point 3）：点词条 → canvas 词条同族弹窗 .nf-term-tip 展示解释。
       E_chipExpands: step4.tipShown === true && (step4.tipText || '').length > 0,
       // F（point 1/2）：锚点与选中首段垂直居中（±6px）；图标 = canvas Ask 同款 chat。
       F_anchorCentredIconChat: step2.anchorIconIsChat === true && step1.anchorCenterDy !== null && Math.abs(step1.anchorCenterDy) <= 6 };
@@ -180,7 +182,7 @@ try {
     await context.close();
   }
   writeFileSync(`${artifacts}/selection-explain-e2e.json`, JSON.stringify({ repo, report, mockHits: hits }, null, 2));
-  const ok = report.every(l => l.A_anchorNoOverlap && l.B_dialogOpen && l.C_smallModelFrame && l.D_chipsAreTerms && l.E_chipExpands && l.F_anchorCentredIconChat && !l.askFrameSent);
+  const ok = report.every(l => l.A_anchorNoOverlap && l.B_dialogOpen && l.C_smallModelFrame && l.D_chipsAreTerms && l.E_chipExpands && l.F_anchorCentredIconChat && l.G_closeCleanup && !l.askFrameSent);
   console.log(`VERDICT=${ok ? 'PASS' : 'FAIL'} report=${artifacts}/selection-explain-e2e.json mockHits=${hits}`);
   if (!ok) process.exitCode = 1;
 } finally {

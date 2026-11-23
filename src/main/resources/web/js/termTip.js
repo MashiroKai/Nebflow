@@ -145,6 +145,29 @@ function requestTermTip(a, host, delay) {
   }, delay);
 }
 
+/** 自定义内容形态（additive；选区解释等非词条来源复用同一弹窗本体）。
+ *  不走词条名解析：直接展示 {title, content}；定位/收泡/样式与词条弹窗同一套。 */
+export function showTermTipCustom(a, data) {
+  hideTermTip();
+  const el = ensureTermTipEl();
+  termTipLink = a;
+  termTipHost = null;
+  el.querySelector('.tt').textContent = (data && data.title) || '';
+  el.querySelector('.ts').textContent = (data && data.content) || '';
+  el.querySelector('.td').textContent = '';
+  el.style.display = 'block';
+  const r = a.getBoundingClientRect();
+  const vw = document.documentElement.clientWidth || window.innerWidth;
+  const vh = document.documentElement.clientHeight || window.innerHeight;
+  const bw = el.offsetWidth;
+  const bh = el.offsetHeight;
+  const x = Math.min(Math.max(8, r.left + r.width / 2 - bw / 2), Math.max(8, vw - bw - 8));
+  let y = r.top - bh - 8;
+  if (y < 8) y = Math.min(r.bottom + 8, Math.max(8, vh - bh - 8));
+  el.style.left = Math.round(x) + 'px';
+  el.style.top = Math.round(y) + 'px';
+}
+
 /** Click toggles the preview on both desktop and touch, without navigation. */
 export function termTapExpand(a, host) {
   const kind = a.dataset.wikiTermKind;

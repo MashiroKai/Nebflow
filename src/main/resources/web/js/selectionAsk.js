@@ -38,6 +38,8 @@ import {
 import { linkifyAskAnswer } from './askTermLinks.js';
 // 锚点图标 = canvas Ask 同款 svg 构形器（askDialog.js 单点）。
 import { svgNode } from './askDialog.js';
+// 解释弹窗 = canvas 词条弹窗本体（自定义内容形态；见 termTip.js showTermTipCustom）。
+import { showTermTipCustom, hideTermTip } from './termTip.js';
 
 /** @type {Map<string, {at: number}>} sid → 在飞提问（无请求号 ⇒ 每会话至多一个）。 */
 const pending = new Map();
@@ -81,7 +83,7 @@ function selectionFrameKind(msg) {
 
 function ensureDialog() {
   if (dlg) return dlg;
-  face = createAskPanel({ host: document.body, dialog: {
+  face = createAskPanel({ host: document.body, onClose: () => { unwrapExplainChips(); hideTermTip(); }, dialog: {
     tt,
     panelClass: 'ask-dock selection-dock',
     placeholder: tt('针对选中的文字提问…', 'Ask about the selection…'),
@@ -436,7 +438,6 @@ let explainPending = null;
 /** 原始气泡里被包成词条的文字（下次选区前撤回，保证气泡结构回到原样）。 */
 let explainWrapped = [];
 /** 解释弹窗（canvas 词条弹窗同族 `.nf-term-tip`；正文 = 本段解释）。 */
-let explainTip = null;
 let explainPickEl = null;
 /** 弹窗正文的实时源（回包到达后弹窗随之更新）。 */
 let explainTipBody = null;
@@ -484,37 +485,9 @@ function wrapSelectedText(rows, range, onPick) {
   return out;
 }
 
-/** 解释弹窗：canvas 词条弹窗同族（`.nf-term-tip` + `.tt`/`.td`），定位贴词条下方。 */
+/** 解释弹窗：canvas 词条弹窗本体（termTip.js 自定义内容形态）。 */
 function explainTipShow(anchorEl, title, body) {
-  if (!explainTip) {
-    explainTip = document.createElement('div');
-    explainTip.className = 'nf-term-tip selection-explain-tip';
-    const tt = document.createElement('div');
-    tt.className = 'tt';
-    const td = document.createElement('div');
-    td.className = 'td';
-    explainTip.append(tt, td);
-    explainTip.style.display = 'none';
-    explainTip.addEventListener('click', (e) => e.stopPropagation());
-    document.body.appendChild(explainTip);
-    document.addEventListener('pointerdown', (e) => {
-      if (explainTip.style.display === 'none') return;
-      const t = e.target;
-      if (t instanceof Node && explainTip.contains(t)) return;
-      if (t instanceof Element && t.closest('.selection-explain-chip')) return;
-      explainTip.style.display = 'none';
-    }, true);
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && explainTip.style.display !== 'none') explainTip.style.display = 'none';
-    });
-  }
-  explainTip.querySelector('.tt').textContent = title;
-  explainTip.querySelector('.td').textContent = body;
-  explainTip.style.display = 'block';
-  const r = anchorEl.getBoundingClientRect();
-  const w = explainTip.offsetWidth || 280;
-  explainTip.style.left = Math.round(Math.min(Math.max(r.left, 8), window.innerWidth - w - 8)) + 'px';
-  explainTip.style.top = Math.round(r.bottom + 6) + 'px';
+  showTermTipCustom(anchorEl, { title, content: body });
 }
 
 /** 打开选区解释面板：原文片段 = 词条；解释由小模型异步返回（requestId 配对）。 */
@@ -527,7 +500,7 @@ export function openSelectionExplain(snapshot, anchor, span) {
   d.col.replaceChildren();
   // 上一次的原文词条先撤回（气泡结构回到原样），再包这一次。
   unwrapExplainChips();
-  if (explainTip) explainTip.style.display = 'none';
+  hideTermTip();
   const requestId = 'sx' + (++explainSeq) + '-' + Date.now().toString(36);
   const aiEl = document.createElement('div');
   aiEl.className = 'ask-bub nf-glass ai selection-explain-answer';
@@ -565,8 +538,9 @@ export function selectionExplainFrame(type, msg) {
     ? String(msg.text || '')
     : tt('解释失败：', 'Explain failed: ') + String(msg.message || '');
   // 弹窗开着 ⇒ 同步到最新解释（回包晚于点击时）。
-  if (explainTip && explainTip.style.display !== 'none' && explainTipBody) {
-    explainTip.querySelector('.td').textContent = explainTipBody();
+  const tipEl = document.querySelector('.nf-term-tip.interactive, .nf-term-tip');
+  if (explainPickEl && explainPickEl.isConnected && explainTipBody && tipEl && tipEl.style.display !== 'none') {
+    tipEl.querySelector('.ts').textContent = explainTipBody();
   }
   return true;
 }
@@ -613,6 +587,7 @@ export function initSelectionAsk() {
     const t = e.target;
     if (!isSelectionAskOpen()) return;
     if (dlg && t instanceof Node && dlg.panel.contains(t)) return;
+    if (t instanceof Element && t.closest('.selection-explain-chip, .nf-term-tip')) return;
     if (anchorEl && t instanceof Node && anchorEl.contains(t)) return;
     closeSelectionAsk();
   }, true);
