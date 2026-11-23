@@ -87,3 +87,26 @@ class ModelRuleApplySpec extends FunSuite:
     assertEquals(refs(out), List("a/m1", "b/m1"))
   }
 
+
+  test("P6 三态门：仅 rules 态暴露脚本；缺失/非法模式回落 follow") {
+    val root = os.temp.dir(prefix = "mr-gate-")
+    val l = loadedOf("rule 冻结 { when time 09:00..18:00 freeze model a/* }")
+    assertEquals(ModelRuleStore.effective(root, l), ModelRuleStore.EmptyLoaded)
+    ModelRuleStore.setMode(root, "slots")
+    assertEquals(ModelRuleStore.effective(root, l), ModelRuleStore.EmptyLoaded)
+    ModelRuleStore.setMode(root, "rules")
+    assertEquals(ModelRuleStore.effective(root, l), l)
+    os.write.over(ModelRuleStore.modeOf(root), "bogus")
+    assertEquals(ModelRuleStore.mode(root), "follow")
+    assert(ModelRuleStore.setMode(root, "bogus").isLeft)
+  }
+
+  test("P6 保存期校验：不合格脚本返回行号错误且不落盘") {
+    val root = os.temp.dir(prefix = "mr-save-")
+    val cat = ModelRuleDsl.Catalog(Map("a" -> Set("m1")))
+    val r = ModelRuleStore.save(root, "rule r { model nope/x }", cat)
+    assert(r.isLeft, clue(r))
+    assert(!os.exists(ModelRuleStore.scriptOf(root)))
+    assert(ModelRuleStore.save(root, "rule r { model a/m1 }", cat).isRight)
+    assert(os.exists(ModelRuleStore.scriptOf(root)))
+  }

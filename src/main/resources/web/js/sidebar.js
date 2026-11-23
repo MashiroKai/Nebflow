@@ -73,6 +73,7 @@ import { bindProviderPanel, PROVIDER_PANEL_HOST_ID } from './sidebar/providerPan
 // 同批②：设置页「模型回退链」节——/model 面板的回退链编辑器原样再放一份，
 // 内容面/状态/保存通道与面板同源（modelPanel.js 单点实现）。
 import { mountModelChainSection } from './modelPanel.js';
+import { mountModelRulesSection } from './sidebar/modelRulesPanel.js';
 // 连接性测试钮已随 settings-panel-fourfix 批 ②件（2026-10-29 作者令「连接性
 // 测试按钮应放到 LLM provider 配置页面里」）迁入 provider 编辑弹窗——设置页
 // provider 卡模型行不再携带测试钮；模块 = sidebar/modelTestButton.js（弹窗面
@@ -496,6 +497,7 @@ let ttlAdvanceExpanded = false;
 /** 模型回退链节上一任卸载函数（配置面风格统一批②：renderSettings 重渲前
  *  先卸上一任 mountModelChainSection 的监听，不叠订阅）。 */
 let modelChainUnmount = /** @type {(() => void)|null} */ (null);
+let modelRulesUnmount = /** @type {(() => void)|null} */ (null);
 
 /** Backend defaults — mirrors ToolResultTtlConfig.parseStrict bounds. Used
  *  both for rendering before the first echo and for local pre-validation. */
@@ -922,6 +924,9 @@ export function renderSettings() {
         <div class="set-row-hint" id="model-chain-hint">${t('settings.modelChainSectionHint')}</div>
         <div id="model-chain-section-body"></div>
       </div>` })}
+    ${setCard({ title: t('settings.modelRulesTitle'), id: 'model-rules-section', body: `
+      <div class="set-row-hint">${t('settings.modelRulesHint')}</div>
+      <div id="model-rules-section-body"></div>` })}
       <!-- 🔴 provider-add-tabs 批（2026-11-06 作者令）：原 Jev 卡（setNavRow
            #jev-advance-toggle + #jev-advance-body）与生图卡（#imagegen-advance-toggle
            + #imagegen-section-wrap）两节随三入口统一整件退役——生图收进上方唯一
@@ -1013,6 +1018,9 @@ export function renderSettings() {
   modelChainUnmount = settingsDisclosure.models
     ? mountModelChainSection(document.getElementById('model-chain-section-body'))
     : () => {};
+  // 模型规则节（P5）：先卸后挂，重渲不叠监听。
+  modelRulesUnmount?.();
+  modelRulesUnmount = mountModelRulesSection(document.getElementById('model-rules-section-body'));
   // 设置页 apikey 明文回读预取（作者令 2026-10-27「设置里配置的 apikey 直接
   // 显示」）：进页即拉已存 provider key 真值（owner 鉴权单点
   // GET /api/config/provider-keys；providersUi 模块内 60s 缓存 + 单飞），编辑
