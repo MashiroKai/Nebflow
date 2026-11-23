@@ -68,8 +68,8 @@ const RULES = [
     why: '旧类名若仍带一份规则，就等于同值双写。',
   },
   {
-    id: 'A1/A2 气泡方向尾角 4px（②A1）',
-    literal: 'border-bottom-right-radius: 4px',
+    id: 'A1/A2 气泡方向尾角 4px（②A1，令牌化 83d2210b0 起 = --ds-radius-badge，值 4px）',
+    literal: 'border-bottom-right-radius: var(--ds-radius-badge)',
     expectIn: { [SHARED]: 1 },
     allowOther: ['chat.css'],
     why: '尾角值是共享层单源；chat.css 是主对话框自己的形态定义（基准面，不在本层消费）。',
