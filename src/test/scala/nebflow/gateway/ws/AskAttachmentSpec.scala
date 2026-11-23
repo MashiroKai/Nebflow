@@ -171,6 +171,20 @@ class AskAttachmentSpec extends FunSuite:
     assertEquals(rows.head.hcursor.downField("text").as[String], Right("hi"))
   }
 
+  test("replay: user/ai rows carry timestamp only when > 0; merged ai segments keep the first segment's time") {
+    val rows = WsAskHandlers.encodeTranscript(List(
+      UiMessage.User(text = "问", timestamp = 1793678548660L),
+      UiMessage.Ai(text = "段一", timestamp = 1793678550000L),
+      UiMessage.Ai(text = "段二", timestamp = 1793678560000L),
+      UiMessage.User(text = "无时间", timestamp = 0L),
+    ))
+    assertEquals(rows.size, 3)
+    assertEquals(rows(0).hcursor.downField("timestamp").as[Long], Right(1793678548660L))
+    assertEquals(rows(1).hcursor.downField("text").as[String], Right("段一段二"))
+    assertEquals(rows(1).hcursor.downField("timestamp").as[Long], Right(1793678550000L))
+    assert(rows(2).hcursor.downField("timestamp").focus.isEmpty, "timestamp 0 must not be emitted")
+  }
+
   test("replay: an attachment-only row with a null path still decodes (path-less rows are filtered client-side)") {
     val att = Json.obj("name" -> "x.png".asJson, "type" -> "image".asJson, "path" -> Json.Null)
     val rows = WsAskHandlers.encodeTranscript(List(UiMessage.User(text = "", attachments = List(att), timestamp = 1L)))
