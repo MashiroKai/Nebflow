@@ -2,6 +2,9 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "browser-use",
   "version": "2.0.0",
-  "description": "网页交互、持久登录会话与论文下载包——节点获得用真实有头浏览器（本机 Chrome+持久用户配置文件）登录网站、人工配合过验证码、识别反爬拦截、拟人化操作、按 DOI/URL 列表逐篇下载论文并校验 PDF、点击填表截图取证与 GUI 黑盒验收的能力。适用于：需登录态/SSO 的平台（校园网订阅）、验证码/2FA 人工配合、批量论文 PDF 下载、反爬拦截如实识别、网页交互测试、截图取证、UI 验收。内含 skills：browser-session（持久会话与人在环登录）、paper-download（论文下载工作流：串行下载、PDF 定位校验、逐篇状态）、control-browser（浏览器交互纪律）、web-gui-tester（GUI 黑盒验收）。不适用于纯关键词检索与只读取正文（另配 web-search-toolkit）。组件面：无 mcp.json、无工具扩展。",
-  "author": {"name": "Stand"}
+  "description": "网页交互、持久登录会话与论文下载包——节点获得用真实有头浏览器（本机 Chrome+持久用户配置文件）登录网站、人工配合过验证码、识别反爬拦截、拟人化操作、按 DOI/URL 列表逐篇下载论文并校验 PDF、点击填表截图取证与 GUI 黑盒验收的能力。适用于：需登录态/SSO 的平台（校园网订阅）、验证码/2FA 人工配合、批量论文 PDF 下载、反爬拦截如实识别、网页交互测试、截图取证、UI 验收。内含 skills：browser-session（持久会话与人在环登录）、paper-download（论文下载工作流：串行下载、PDF 定位校验、逐篇状态）、control-browser（浏览器交互纪律）、web-gui-tester（GUI 黑盒验收）。不适用于纯关键词检索与只读取正文（另配 web-search-toolkit）。工具面（browser-verbs-p0 插件分发裁定，作者 2026-11-22）：经 extensions["org.nebflow/engine-tools"] 声明引擎侧浏览器九动词（browser_open/snapshot/click/fill/wait/screenshot/download/state/close，常驻会话由引擎 BrowserSessions 承载）；挂载本插件即授权，不进 agent 默认工具面。无 mcp.json。",
+  "author": {"name": "Stand"},
+  "extensions": {
+    "org.nebflow/engine-tools": ["browser_open", "browser_snapshot", "browser_click", "browser_fill", "browser_wait", "browser_screenshot", "browser_download", "browser_state", "browser_close"]
+  }
 }

@@ -3031,7 +3031,13 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // Strip only the two Ask-exclusive message/history tools from other roles.
     // Shared lookup tools and Bash retain their existing role permissions.
     // B3：`SubTask` 工具名已退役（不在注册表）⇒ 剥离集不再需要它。
-    withDelegateMail -- nebflow.core.ask.AskSessions.AskExclusiveTools
+    // browser-verbs-p0 插件分发裁定（作者 2026-11-22）：引擎工具面（浏览器九动词）经**挂载的插件**
+    // 授予——plugin 声明 `org.nebflow/engine-tools`，PluginMcpManager.acquire 产出前缀来源
+    // `plugin_<p>_engine`（无子进程）。本腿仅认挂载态：agentDef.pluginMcpServers 含该前缀 ⇒ 并入
+    // EngineToolWhitelist（现即九动词；挂载判据是插件有 engine-tools 声明，粒度为白名单整集——
+    // 按插件逐名授予需 AgentDef 新增字段，留作后续）；无挂载 ⇒ 空集（默认工具面无名字）。不看身份名单。
+    val pluginEngineGrant = nebflow.core.plugin.PluginRegistry.engineGrantFor(agentDef.pluginMcpServers)
+    (withDelegateMail ++ pluginEngineGrant) -- nebflow.core.ask.AskSessions.AskExclusiveTools
 
   end buildAllowedToolSet
 
