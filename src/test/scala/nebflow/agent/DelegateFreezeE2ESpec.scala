@@ -341,12 +341,15 @@ class DelegateFreezeE2ESpec extends CatsEffectSuite:
         assert(frozenRecord.frozenSince.isDefined, "frozenSince persisted on the registry record")
         assertEquals(
           frozenRecord.frozenReason,
-          Some(DelegateFreeze.wireValue(DelegateFreeze.Reason.LlmFailure)),
-          "the reason code is written into the state (llm-failure)"
+          // reason 对齐 base 现行 ProviderFault 分类：401 invalid_api_key 属「配置失效族」
+          // ⇒ model-unavailable（旧断言 llm-failure 为 archive 支过时口径，见 2026-11-23 裁定 1）。
+          Some(DelegateFreeze.wireValue(DelegateFreeze.Reason.ModelUnavailable)),
+          "the reason code is written into the state (model-unavailable, aligned to ProviderFault)"
         )
         assert(
-          frozenRecord.frozenDetail.exists(_.contains("401")),
-          s"the provider error context is kept: ${frozenRecord.frozenDetail}"
+          // base 现行口径：冻结 detail 不再内联原始错误（原始错误转入卡片，不进上级上下文）。
+          frozenRecord.frozenDetail.exists(d => d.contains("原始错误已转入卡片") && !d.contains("401")),
+          s"the detail points to the card and does not leak the raw error: ${frozenRecord.frozenDetail}"
         )
         assertEquals(
           frozenRow.map(_.status),
