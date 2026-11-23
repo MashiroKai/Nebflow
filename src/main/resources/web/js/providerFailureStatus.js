@@ -15,6 +15,20 @@ const surfaces = new WeakMap();
  * 群组清空 = 收卡（引擎恢复 ⇒ digest 空 ⇒ aside 摘除——与 llmFailureRecovered 同语义）。
  */
 
+/**
+ * 服务商名解析（2026-11-23 ④）：后端 `providerGroups[].provider` 为 `unknown` 时，
+ * 正文（reason）若携带 `provider/model` 形状，按与后端 ProviderFailureGroups.ProviderRef
+ * 同一判据（[tried]/[skipped]/受限：/failed: 前置）读回 provider 段；全未命中维持 unknown。
+ * 只读展示，不改后端分组键。
+ */
+const PROVIDER_REF = /(?:\[(?:tried|skipped)\]\s*|受限：|failed:\s*)([A-Za-z0-9_.-]+)\/[A-Za-z0-9_.-]+/;
+export function resolveProviderLabel(group) {
+  const raw = String(group?.provider || '');
+  if (raw && raw !== 'unknown') return raw;
+  const m = PROVIDER_REF.exec(String(group?.reason || ''));
+  return m ? m[1] : (raw || 'unknown');
+}
+
 /** presentation → 标题 i18n 键（与后端 ProviderFailureGroups.presentation 同枚举）。 */
 function titleKey(presentation) {
   return presentation === 'shape'
@@ -31,7 +45,7 @@ function groupCard(group, items, openTask) {
   // 标题（大字）：N 个任务 · 服务商 不可用/待处理/格式不合规。
   const title = h('div', { class: 'option-q llm-failure-title' }, [
     h('i', { 'data-lucide': 'triangle-alert', class: 'llm-failure-ico llm-failure-ico-title', 'aria-hidden': 'true' }),
-    h('span', { text: t(titleKey(group.presentation), { count, provider: group.provider }) }),
+    h('span', { text: t(titleKey(group.presentation), { count, provider: resolveProviderLabel(group) }) }),
   ]);
   // 元信息行：呈现分组徽标（availability=窗口受限/恢复预期行；shape/config 只给分类）。
   const reason = h('div', { class: 'perm-reason llm-failure-reason' }, [
@@ -44,9 +58,12 @@ function groupCard(group, items, openTask) {
     cardBody.push(h('div', { class: 'llm-failure-summary', text: t('subagents.providerFailureRecovering') }));
   }
   for (const id of group.sessionIds) {
+    // 会话标题回填（2026-11-23）：点开时把批次名（digest 条目 title）一并交给弹窗；
+    // 只传 id 时弹窗头退到 agentStart 的 def 名（「subagent」）。
+    const title = items.find((i) => i.sessionId === id)?.title || '';
     cardBody.push(h('button', {
-      type: 'button', class: 'option-cancel', 'on:click': () => openTask(id),
-    }, items.find((i) => i.sessionId === id)?.title || id));
+      type: 'button', class: 'option-cancel', 'on:click': () => openTask(id, title),
+    }, title || id));
   }
   card.append(...cardBody);
   return card;

@@ -63,12 +63,14 @@ export function initBgMergedPanel() {
   // 野节点归置批（2026-11-05 腿③）：签数改数**行**（.bg-task-row），不数列表子元素
   // ——野节点分组的组头是标签不是行（data-bg-orphan-group），数子元素会把标签算成
   // 一行，签与行集当场打架。口径与 data-bg-row-total / 头部计数同源：一行一个数。
+  // 计数对账修复（2026-11-23 作者报障「面板计数与实际可见行对不上」）：签数必须 =
+  // 实际可见行数（与头部计数 / data-bg-row-total 同口径）；此前误读 active 计数
+  // （data-bg-active-count，徽标语义）⇒ 3 行可见却签「· 2」。活跃数只归徽标。
   const sync = () => {
     if (!grpLabel || !grpList) return;
     const rows = grpList.querySelectorAll('.bg-task-row').length;
-    const n = Number(grpList.getAttribute('data-bg-active-count') || 0);
     grpLabel.hidden = rows === 0;
-    grpLabel.textContent = t('bg.sectionAgents') + ' · ' + n;
+    grpLabel.textContent = t('bg.sectionAgents') + ' · ' + rows;
   };
   grpMo = new MutationObserver(sync);
   grpMo.observe(gList, { childList: true });

@@ -2774,8 +2774,8 @@ onMessage('delegateFreezeDigest', (msg) => {
     });
   }
   for (const view of Object.values(chatViews)) {
-    renderProviderFailureStatus(view, state.freezeDigest, (id) =>
-      import('./bgAgentPopup.js').then(m => m.openStepPopup(id)));
+    renderProviderFailureStatus(view, state.freezeDigest, (id, title) =>
+      import('./bgAgentPopup.js').then(m => m.openStepPopup(id, '', title)));
   }
   renderBgAgentDropdown && renderBgAgentDropdown();
 });

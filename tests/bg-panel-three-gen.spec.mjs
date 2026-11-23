@@ -531,7 +531,7 @@ test('G5 折叠 dispatcher → node 子树整棵隐藏、展开恢复、刷新�
   expect(folded.rows.find((r) => r.sid === DISP_SID).caretCollapsed).toBe(true);
   expect(folded.anchor).toBeTruthy();
   // 折叠不改计数（行集合/计数不受影响——既有口径）。
-  expect(folded.rowTotal).toBe('2');
+  expect(folded.rowTotal).toBe(String(folded.rows.length)); // 计数对账 2026-11-23：折叠后头计数 = 可见行
 
   // 展开恢复。
   await page.click(`[data-bg-caret="${DISP_SID}"]`);
@@ -571,7 +571,7 @@ test('G5 折叠 dispatcher → node 子树整棵隐藏、展开恢复、刷新�
   expect(anchorFolded.rows).toHaveLength(0);
   expect(anchorFolded.anchor).toBeTruthy();
   expect(anchorFolded.anchor.collapsed).toBe('true');
-  expect(anchorFolded.rowTotal).toBe('2');
+  expect(anchorFolded.rowTotal).toBe('0'); // 计数对账 2026-11-23：根锚收起后无可见行（锚是标签面，不计）
   // 展开锚 → 子树恢复（dispatcher 行保持自己的折叠偏好：仍收起）。
   await page.click(`[data-bg-caret="${ROOT_SID}"]`);
   await page.waitForTimeout(150);

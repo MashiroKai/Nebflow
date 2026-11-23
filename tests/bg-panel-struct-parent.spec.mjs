@@ -255,7 +255,7 @@ test('①②⑦ 活跃后代 ⇒ 结构父显示（注册行身份/零计数）�
   //    The badge counts ACTIVE rows only: LIVE + WILD = 2. The completed store child and the terminal
   //    claimer stay visible without being counted, and the structural labels never count.
   expect(dump.rows).toHaveLength(3);
-  expect(dump.listTotal).toBe('4');
+  expect(dump.listTotal).toBe(String(dump.rows.length)); // 计数对账 2026-11-23：头计数 = 可见行
   expect(String(counts.badge).trim()).toBe('2');
   expect(String(counts.section)).toContain('· 3'); // section label counts rendered rows
   expect(errors).toEqual([]);
@@ -296,7 +296,7 @@ test('⑤ 同一会话双通路（live + store）⇒ 收敛一行', async ({ pag
   const dup = dump.rows.filter((r) => r.sid === DONE_CHILD);
   console.log('[⑤] rows=' + JSON.stringify(dump.rows.map((r) => r.sid)) + ' total=' + dump.listTotal);
   expect(dup).toHaveLength(1);
-  expect(dump.listTotal).toBe('4');
+  expect(dump.listTotal).toBe(String(dump.rows.length)); // 计数对账 2026-11-23：头计数 = 可见行
   expect(errors).toEqual([]);
 });
 
@@ -307,7 +307,7 @@ test('⑥ 镜像更新（delegate-chain-mirror-updated）⇒ 新 store 子行上
   await bootApp(page, 'zh-CN');
   await seedBase(page);
   await openPanel(page);
-  expect((await dumpRows(page)).listTotal).toBe('4'); // LIVE + DONE + DONE_LIVE + WILD
+  expect((await dumpRows(page)).listTotal).toBe('3'); // 可见行口径（计数对账 2026-11-23）· LIVE + DONE + DONE_LIVE + WILD
 
   // Mirror gains another completed child of PARENT.
   await setFixture(page, {
@@ -327,7 +327,7 @@ test('⑥ 镜像更新（delegate-chain-mirror-updated）⇒ 新 store 子行上
   const dump = await dumpRows(page);
   console.log('[⑥] rows=' + JSON.stringify(dump.rows.map((r) => r.sid)) + ' total=' + dump.listTotal);
   expect(dump.rows.filter((r) => r.sid === 'subagent-55556666')).toHaveLength(1);
-  expect(dump.listTotal).toBe('5');
+  expect(dump.listTotal).toBe(String(dump.rows.length)); // 计数对账 2026-11-23：头计数 = 可见行
   expect(errors).toEqual([]);
 });
 

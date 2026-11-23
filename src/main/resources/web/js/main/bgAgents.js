@@ -19,6 +19,7 @@ import { findViewBySessionId, activeView, setActiveView, chatViews } from '../ch
 import { fmtUptime, isFailedSnapshotStatus } from '../managePanel.js';
 import { openStepPopup as openFlowStepPopup } from '../flowAgentPopup.js';
 import { openStepPopup as openBgAgentPopup } from '../bgAgentPopup.js';
+import { resolveProviderLabel } from '../providerFailureStatus.js';
 // 两级面板数据侧 stub 读取口（delegate-ui 批：rows/children/chain——provider 镜像；
 // liveSource 挂载在 delegateChainProvider.js，由 main.js 侧 import 触发）。
 import { listDelegateRows, listDelegateChildren, getChainByTask } from '../delegateChainStub.js';
@@ -2657,6 +2658,30 @@ function countPendingRecovery(model) {
   return n;
 }
 
+/**
+ * 可见行数（计数对账修复 2026-11-23 · 作者令「计数要和我实际能看的一致」）：与渲染循环
+ * 的折叠剪枝同判据——祖先收起的子树不出镜，不计入头部计数 / data-bg-row-total。
+ * model.total（行集口径）保留给徽标存在性判断；展示计数只认可见行。root 锚与结构父是
+ * 标签面，本就不计。
+ */
+function bgVisibleRowTotal(model) {
+  const tree = (model && model.tree) || null;
+  if (!tree) return model ? model.total : 0;
+  const hidden = new Set();
+  let n = 0;
+  for (const row of tree.order) {
+    const parentRow = tree.parentOf.get(row) || null;
+    if (parentRow && hidden.has(parentRow)) { hidden.add(row); continue; }
+    const childCount = (tree.kids.get(row) || []).length;
+    const pref = childCount > 0 ? bgCollapseGet(bgRowSessionKey(row)) : undefined;
+    const collapsed = childCount > 0 && (pref !== undefined ? pref : bgRowCollapseDefault(row));
+    if (collapsed) hidden.add(row);
+    if (row.level === 'root' || row.level === 'struct') continue;
+    n += 1;
+  }
+  return n;
+}
+
 export function renderBgAgentDropdown() {
   if (!activeView) return;
   const dropdownEl = activeView.dom.bgagentDropdownEl;
@@ -2668,6 +2693,8 @@ export function renderBgAgentDropdown() {
   // （bgPanelModel 单点 = 主桶可见行 ∪ 作用域桶链行 ∪ 延续态组头）——计数签与
   // 列表永不打架的口径随模型单点延续。
   const model = bgPanelModel(sid);
+  // 计数对账（2026-11-23）：展示计数 = 本帧可见行（折叠剪枝后），与 DOM 行数严格相等。
+  const visibleTotal = bgVisibleRowTotal(model);
   const bgAgents = model.bgAgents;
   // Author ruling 2026-09-14 16:30: an idle dispatcher row is neither listed nor
   // counted (it survives in the keep-alive window and the snapshot reports it —
@@ -2700,7 +2727,7 @@ export function renderBgAgentDropdown() {
     // 恢复 chip 在 bgStoreChildHtml；两档共用同一 REST 缝（delegateApi.restore*）。
     // DOM 构建器写法（component-contract R5：不裸写 innerHTML——文本全 textContent）。
     const pendingCount = countPendingRecovery(model);
-    headerEl.textContent = t('subagents.header', { count: model.total }) + digestText;
+    headerEl.textContent = t('subagents.header', { count: visibleTotal }) + digestText;
     for (const group of digest?.providerGroups || []) {
       const line = document.createElement('div');
       // 族区分呈现（2026-11-21 作者裁定）：presentation 由后端唯一给出，前端不猜族。
@@ -2712,7 +2739,7 @@ export function renderBgAgentDropdown() {
           ? 'subagents.providerFailureGroupConfig'
           : 'subagents.providerFailureGroup';
       line.textContent = t(key, {
-        provider: group.provider, count: group.count,
+        provider: resolveProviderLabel(group), count: group.count,
       });
       line.title = group.reason || '';
       headerEl.appendChild(line);
@@ -2874,7 +2901,7 @@ export function renderBgAgentDropdown() {
   listEl.innerHTML = htmlParts.join('');
   // 行集收敛批（2026-11-02 第二律）：模型单点把「本帧渲染的本地行数」写进列表
   // 属性（data-bg-row-total），与头部计数同源同值——回归可机械核对「签 vs 行集」。
-  listEl.setAttribute('data-bg-row-total', String(model.total));
+  listEl.setAttribute('data-bg-row-total', String(visibleTotal));
   listEl.setAttribute('data-bg-active-count', String(model.activeCount));
   // ui-status-redesign：statusIcon() 兜底占位（<i data-lucide>）在此升级为真图标
   // （vendor lib 已就绪时上面已是内联 SVG，此调用零替换、幂等）。
