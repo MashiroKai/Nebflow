@@ -898,6 +898,7 @@
   color: var(--color-text); opacity: 0.6;
   transition: all 0.2s ease;
   padding: 0;
+  box-shadow: var(--btn-shadow);
 }
 .fm-fab svg { width: 18px; height: 18px; display: block; }
 @media (hover: hover) {
@@ -913,6 +914,7 @@
   border-color: rgb(var(--sapphire) / 0.35);
   background: rgb(var(--sapphire) / 0.12);
   transform: none;
+  box-shadow: var(--btn-shadow);
 }
 .fm-fab:focus-visible {
   outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);

@@ -368,6 +368,7 @@
   color: var(--color-text);
   transition: all 0.2s ease;
   opacity: 0.6;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .proj-create-fab:hover {
@@ -407,6 +408,7 @@
   transition: all 0.2s ease;
   opacity: 0.6;
   padding: 0;
+  box-shadow: var(--btn-shadow);
 }
 .proj-flowmap-fab svg { width: 17px; height: 17px; }
 @media (hover: hover) {
@@ -625,6 +627,7 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .delegate-chain-v
   font: 500 var(--ds-fs-btn) -apple-system, BlinkMacSystemFont, sans-serif;
   cursor: pointer;
   transition: background 0.12s;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .dev-btn:hover { background: var(--glass-control-bg-hover); }

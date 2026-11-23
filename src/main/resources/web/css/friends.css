@@ -315,6 +315,7 @@ button.fm-search-btn {
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease,
               color 0.15s ease;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   button.fm-search-btn:hover {
@@ -458,6 +459,7 @@ button.fm-verify-cancel {
   border: 1px solid var(--glass-send-border);
   transition: background 0.15s ease, border-color 0.15s ease,
               color 0.15s ease;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   
@@ -553,6 +555,7 @@ button.fm-req-accept {
   border: 1px solid var(--glass-send-border);
   cursor: pointer;
   transition: border-color 0.15s ease, color 0.15s ease;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   button.fm-req-accept:hover { border-color: var(--glass-send-border-hover); }
@@ -583,6 +586,7 @@ button.fm-req-decline {
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease,
               color 0.15s ease;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   button.fm-req-decline:hover {
@@ -2599,6 +2603,7 @@ body:not(.mobile-layer) #profile-face-overlay {
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
   color: var(--color-frame-text);
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .fm-device-fleet-bar .fleet-btn:hover { background: var(--glass-control-bg-hover); }
@@ -2676,6 +2681,7 @@ body:not(.mobile-layer) #profile-face-overlay {
   color: var(--color-text-muted);
   cursor: pointer;
   line-height: 1.4;
+  box-shadow: var(--btn-shadow);
 }
 /* 🔴 devrow（作者 2026-09-16 07:53）：小键进窗头行 ⇒ 与名块同一 flex 行、键在名右侧、
    垂直居中。三点都是本行的硬要求：

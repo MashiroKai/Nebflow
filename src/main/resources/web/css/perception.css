@@ -126,6 +126,7 @@ html[data-theme="dark"] #perception-panel {
   font: inherit; font-size: var(--st-fs-btn); font-weight: 500;
   border-radius: var(--st-radius-btn); padding: var(--st-btn-pad); cursor: pointer; transition: all .15s;
   border: 1px solid var(--st-control-border); background: var(--st-control-bg); color: var(--st-frame-text);
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .pp-btn:hover { background: var(--st-control-bg-hover); }
@@ -134,7 +135,8 @@ html[data-theme="dark"] #perception-panel {
 /* 主操作 = 墨族单源（2026-10-30 按钮体系批：connect/send/reconnect 等批准腿从
    --st-primary 绿迁入 --btn-primary-*，随面板主题 ink-swap；--st-primary 绿
    降级身份/状态）。 */
-.pp-btn.primary { background: var(--btn-primary-bg); border-color: var(--btn-primary-bg); color: var(--btn-primary-ink); font-weight: 500; }
+.pp-btn.primary { background: var(--btn-primary-bg); border-color: var(--btn-primary-bg); color: var(--btn-primary-ink); font-weight: 500;
+  box-shadow: var(--btn-shadow); }
 @media (hover: hover) {
   .pp-btn.primary:hover { background: var(--btn-primary-bg-hover); border-color: var(--btn-primary-bg-hover); }
 }
@@ -326,7 +328,8 @@ html[data-theme="dark"] #perception-panel {
   .mt-btn:hover { background: var(--st-control-bg-hover); color: var(--st-text); }
 }
 
-.mt-btn.on { background: rgb(var(--st-sapphire) / .12); color: rgb(var(--st-sapphire)); }
+.mt-btn.on { background: rgb(var(--st-sapphire) / .12); color: rgb(var(--st-sapphire));
+  box-shadow: var(--btn-shadow); }
 .mt-btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .mt-btn .bi { font-weight: 700; font-style: italic; }
 .mt-sep { width: 1px; height: 14px; background: var(--st-etched-border); margin: 0 var(--ds-space-1); }

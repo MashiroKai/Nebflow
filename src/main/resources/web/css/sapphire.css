@@ -456,6 +456,11 @@
   border-color: transparent;
   transition: background-color 0.15s ease, color 0.15s, border-color 0.15s, opacity 0.15s;
 }
+.config-actions button,
+#memory-modal-actions button,
+#rules-modal-actions button {
+  box-shadow: var(--btn-shadow);
+}
 @media (hover: hover) {
   /* Pattern B — hover（中性 hover 档；picked/copied 态除外：accent 由各自更高
      特异档承担） */
@@ -732,6 +737,7 @@ button.glass-control.fm-login-btn {
      第二选择器 = 到达面加固（特异度载体，(0,2,1) > 铺开批的 `button.glass-control`
      (0,1,1)），机制见新头注「🔴 到达面加固」；🔴 两选择器共用**同一条声明**，零复制。 */
   color: var(--btn-primary-ink);
+  box-shadow: var(--btn-shadow);
 }
 :is(.fm-login-btn, .login-modal-btn),
 button.glass-control.fm-login-btn {
@@ -751,6 +757,7 @@ button.glass-control.fm-login-btn {
   opacity: 1; /* 挡住 .cfg-btn-primary:hover/:disabled 的透明度反馈（本族用色表达） */
   transition: background 0.15s ease, border-color 0.15s ease,
               box-shadow 0.15s ease, opacity 0.15s ease;
+  box-shadow: var(--btn-shadow);
 }
 :is(.fm-login-btn, .login-modal-btn):hover,
 button.glass-control.fm-login-btn:hover {
@@ -782,6 +789,7 @@ button.glass-control.fm-login-btn:disabled {
   background: var(--glass-control-bg);
   border-color: var(--glass-control-border);
   color: var(--color-text);
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .login-modal-btn.login-modal-btn-secondary:hover { background: var(--glass-control-bg-hover); }
@@ -1166,6 +1174,7 @@ button.glass-control.fm-login-btn:disabled {
   border-color: transparent;
   color: var(--btn-ghost-ink);
   cursor: pointer;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   /* 同幽灵族口径（扁平化批 2026-11-05）：hover/active 双主题同构，不再按主题分叉。 */
@@ -1198,6 +1207,7 @@ button.glass-control,
   border-color: var(--btn-secondary-stroke);
   color: var(--btn-secondary-ink);
   cursor: pointer;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   button.glass-control:hover,
@@ -1249,6 +1259,7 @@ button.fm-req-decline {
   border-color: var(--btn-danger-stroke);
   color: var(--btn-danger-ink);
   cursor: pointer;
+  box-shadow: var(--btn-shadow);
 }
 .fm-context-menu button.danger,
 .explorer-context-menu button.danger,
@@ -1258,6 +1269,7 @@ button.fm-req-decline {
   outline: 1px solid var(--btn-danger-stroke);
   outline-offset: calc(-1 * 1px);
   cursor: pointer;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   button.glass-control.fm-gs-kick:hover,
@@ -1305,6 +1317,7 @@ button.glass-control.fm-req-accept {
   color: var(--btn-primary-ink);
   cursor: pointer;
   opacity: 1;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   #dropbox-send-btn:hover,

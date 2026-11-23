@@ -294,6 +294,7 @@ body.sidebar-collapsed #activity-bar {
 .activity-btn.active {
   color: var(--color-frame-text-bright);
   background: var(--color-frame-active);
+  box-shadow: var(--btn-shadow);
 }
 .activity-btn svg {
   width: 19px;

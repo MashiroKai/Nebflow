@@ -645,6 +645,7 @@ span.nf-rcpt-note { cursor: default; }
   transition: background var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
               border-color var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
               opacity var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease);
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .nf-ar-btn:hover { background: rgb(var(--sapphire) / 0.22); }
@@ -835,6 +836,9 @@ span.nf-rcpt-note { cursor: default; }
   cursor: pointer;
   transition: background var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
               transform var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease);
+}
+.nf-dv .cm-deletedChunk .cm-chunkButtons button {
+  box-shadow: var(--btn-shadow);
 }
 .nf-dv .nf-dv-chunkbtn-reject {
   color: var(--nf-dv-reject-fg);

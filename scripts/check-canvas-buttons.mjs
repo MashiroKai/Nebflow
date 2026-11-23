@@ -109,7 +109,8 @@ for (const r of rules) {
   }
   if (!CANVAS_SINGLE.test(r.selector)) continue;
   if (value === 'none') continue;
-  if (value === 'var(--ds-shadow-float)' && isSharedFaceRule(r.file, r.selector)) continue;
+  // 2026-11-22 统一批：共享面投影 = 全站按钮阴影单源令牌 var(--btn-shadow)（design-system.css）。
+  if (value === 'var(--btn-shadow)' && isSharedFaceRule(r.file, r.selector)) continue;
   failures.push(`G-CB3c private shadow in ${r.file}: ${r.selector} = ${value}`);
 }
 // G-CB3d：canvas-button 是身份钩子而非面 ⇒ 每个挂它的发射点必须同时挂一个已登记

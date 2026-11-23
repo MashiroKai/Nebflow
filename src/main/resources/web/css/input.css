@@ -810,6 +810,7 @@
   background: #07c160;
   color: #fff;
   animation: voicePulse 1.2s ease infinite;
+  box-shadow: var(--btn-shadow);
 }
 .icon-btn svg { width: 20px; height: 20px; stroke-width: 2; }
 @keyframes voicePulse {
@@ -1491,6 +1492,7 @@ html.no-backdrop #mention-dropdown {
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.15s ease;
+  box-shadow: var(--btn-shadow);
 }
 .queue-item-btn.immediate {
   color: var(--color-primary);
@@ -1599,7 +1601,8 @@ html.no-backdrop #mention-dropdown {
   #input::placeholder { color: #555860; }
   .icon-btn { color: #7b7e88; }
   .icon-btn:active { background: rgba(255,255,255,0.10); transform: scale(0.96); }
-  .icon-btn.recording { background: #07c160; }
+  .icon-btn.recording { background: #07c160;
+  box-shadow: var(--btn-shadow); }
 
   #queue-bar.visible {
     box-shadow:

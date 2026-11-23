@@ -2037,7 +2037,9 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   #deck-layer,
   #deck-fab,
   .canvas-title .t-inner,
-  .cr-capsule { transition-duration: 0.01s !important; }
+  .cr-capsule { transition-duration: 0.01s !important;}
+#deck-fab {
+}
 }
 
 /* 精修③补：OS 文件拖到居中标题条 = 开新签（标签条退役后的替代落区，v1 备忘） */
@@ -2468,6 +2470,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   font-size: var(--ds-fs-btn);
   cursor: pointer;
   transition: background 0.15s;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .epub-menu-btn:hover { background: var(--glass-control-bg-hover); }
@@ -2476,6 +2479,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 .epub-menu-btn.on {
   border-color: rgb(var(--brand-green) / 0.5);
   background: rgb(var(--brand-green) / 0.14);
+  box-shadow: var(--btn-shadow);
 }
 .epub-menu-close {
   display: block;
@@ -2515,6 +2519,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   transition: background 0.15s, color 0.15s;
   user-select: none;
   padding: 0;
+  box-shadow: var(--btn-shadow);
 }
 .epub-nav-btn[hidden] { display: none; }
 @media (hover: hover) {
@@ -3342,6 +3347,7 @@ body.mobile-layer .cvv-time {
 .canvas-zoom-btn.canvas-pan-toggle.is-on {
   background: rgb(var(--sapphire) / 0.14);
   color: rgb(var(--sapphire));
+  box-shadow: var(--btn-shadow);
 }
 .canvas-zoom-btn svg { width: var(--cv-icon); height: var(--cv-icon); }
 .canvas-zoom-pct {
@@ -4265,6 +4271,7 @@ a.nf-term:hover { border-bottom-color: currentColor; }
   text-overflow: ellipsis;
   cursor: pointer;
   transition: filter 0.12s ease;
+  box-shadow: var(--btn-shadow);
 }
 @media (hover: hover) {
   .canvas-refback-btn:hover { filter: brightness(1.06); }

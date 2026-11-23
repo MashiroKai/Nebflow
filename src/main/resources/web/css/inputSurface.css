@@ -136,6 +136,9 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes,
   background-size: var(--nf-field-caret-size);
   background-repeat: no-repeat;
 }
+.bgagent-model-switch {
+  box-shadow: var(--btn-shadow);
+}
 
 /* ── 指针/常态焦点：中性，零环 ─────────────────────────────────────────────
    鼠标点进输入框只发生一件事：那根灰线压深一档（14% → 26% 正文色混色），
