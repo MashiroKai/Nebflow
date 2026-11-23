@@ -261,7 +261,7 @@ object SessionMailbox:
           val takenAtRequested = takenHitOf(identity)
           val tombAtRequested = tombHitOf(identity)
           // 指纹冲突判定：taken 副本优先（有完整载荷可比），其次墓碑台账指纹。
-          val takenPrints = takenAtRequested.map(payloadFingerprint(_))
+          val takenPrints = takenAtRequested.map(e => payloadFingerprint(e.event))
           val tombPrints = tombAtRequested.toList.flatMap(id => deliveredPrintSync(recipientSid, id))
           val conflicting =
             deduplicateReceipts &&
