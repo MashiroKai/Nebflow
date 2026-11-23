@@ -7,6 +7,9 @@ import { messageFooter } from '../chatItem.js';
 // 块判据复用 outputTag.hasOutputBlock（围栏感知，与渠道侧/气泡零块面同一实现，
 // 不许第二套判据）；依赖方向单向（outputTag 只 import utils/dom，无环）。
 import { hasOutputBlock } from '../outputTag.js';
+// badge-tip-mix 机制回插（Reapply e818dc14e，2026-11-23 作者令「保留机制，文案后续再补」）：
+// 每 6 次徽章出现 1 条「提示：」使用提示，与浪漫池物理分离（badgeTips.js）。
+import { defaultBadgeTipMixer, composeTipPhrase } from './badgeTips.js';
 
 /**
  * Format milliseconds into a human-readable duration string.
@@ -64,11 +67,20 @@ function pickFromPool(prefix, count, durationMs, seed) {
 /**
  * Pick a cosmology-themed thinking phrase with duration embedded.
  * e.g. "Counted some stars for 12s"
+ * 每次调用 = 一次徽章出现：混入器（badgeTips.js，每 6 次出现 1 条使用提示，绝不连出两条）
+ * 命中时以「提示：」标注的提示文案代替浪漫文案（composeTipPhrase），时长仍保留；其余走浪漫池（无标注）。
  * @param {number} durationMs
  * @param {number} [seed]
+ * @param {{next: () => (string|null)}} [tipMixer] 可注入（测试用），默认模块级混入器
  * @returns {string} The full phrase text with duration.
  */
-export function pickThinkingPhrase(durationMs, seed) {
+export function pickThinkingPhrase(durationMs, seed, tipMixer = defaultBadgeTipMixer) {
+  // badge-tip-mix 机制（Reapply e818dc14e）：混入器命中 ⇒ 「提示：」tip 短语；
+  // miss ⇒ 浪漫池（ack-badge-pool 批的 pickFromPool 轮换原形，seed 语义不变）。
+  // ack 池（pickAckPhrase）不接入混入器——与作者令「机制原样回插」一致，扩展待后续批。
+  const tip = tipMixer.next();
+  const d = formatDuration(durationMs);
+  if (tip) return composeTipPhrase(tip, d);
   return pickFromPool('think.', THINKING_COUNT, durationMs, seed);
 }
 
