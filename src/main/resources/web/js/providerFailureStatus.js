@@ -96,7 +96,7 @@ function groupCard(group, items, openTask, isExpired) {
     h('span', { class: 'perm-risk-badge lv-1', text: 'L1' }),
     h('span', { class: 'perm-reason-label', text: group.reason }),
   ]);
-  const cardBody = [title, reason];
+  const cardBody = /** @type {HTMLElement[]} */ ([title, reason]);
   if (group.presentation === 'availability' && !allExpired) {
     // 服务商不可用族：恢复预期（引擎退避重试/探测恢复，不是任务失败）。全组过期后撤掉。
     cardBody.push(h('div', { class: 'llm-failure-summary', text: t('subagents.providerFailureRecovering') }));
@@ -117,7 +117,7 @@ function groupCard(group, items, openTask, isExpired) {
 }
 
 /** One replaceable status surface per conversation; never append notification bubbles. */
-export function renderProviderFailureStatus(view, digest, openTask, isExpired = () => false) {
+export function renderProviderFailureStatus(view, digest, openTask, isExpired = (_id) => false) {
   const root = view?.dom?.chat;
   if (!root) return;
   let surface = surfaces.get(root);
