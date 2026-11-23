@@ -1855,6 +1855,7 @@ function buildCanvasPage(body) {
   // 星标落在工具条内，与桌面同一写入口 toggleFavoritePath；激活态经 FAV_SYNC_EVENT / 收藏变更重绘。
   const star = document.createElement('button');
   star.type = 'button';
+  // Author-approved r2 mobile favorite star: same g2-fab + canvas-button family as mf-cv-stack.
   star.className = 'mf-cv-star g2-fab canvas-button';
   star.innerHTML = '<i data-lucide="star" class="canvas-fav-ic"></i>';
   const paintStar = () => {

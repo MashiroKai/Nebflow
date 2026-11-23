@@ -88,6 +88,12 @@ def main():
                 row = next((line for line in rows if line.startswith(f'| {rel} | ')), '')
                 parts = [x.strip() for x in row.strip('|').split('|')]
                 mtime = dt.datetime.fromtimestamp(item.stat().st_mtime).isoformat(timespec='seconds')
+                # stand-wt audit also emits a SHA-256 inventory column; verify it
+                # before accepting that five-column form alongside the older form.
+                if len(parts) == 5:
+                    if parts[3] != hashlib.sha256(item.read_bytes()).hexdigest():
+                        raise ValueError(f'manifest digest mismatch: {rel}')
+                    parts.pop(3)
                 if len(parts) != 4 or parts[1] != str(item.stat().st_size) or parts[2] != mtime or not re.fullmatch(r'未入库|入库 \d{4}-\d\d-\d\d \d\d:\d\d [0-9a-f]{40,64}', parts[3]):
                     raise ValueError(f'missing or malformed manifest row: {rel}')
                 if parts[3] == '未入库':
