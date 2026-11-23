@@ -382,6 +382,7 @@
     "scala/nebflow/social/outbound/RichDegradeProbe.scala:environment:6a64145c0fd6235a226381bcb1606598816d0a10a0a8ae679cddf00e9cd749c5",
     "scala/nebflow/social/outbound/RichRenderProbe.scala:environment:a4d8fafafade061a2888ba0cf809c7d227cbcc36190d61d539ee859c16a6fbae",
     "scala/nebflow/social/outbound/RichRenderProbe.scala:environment:844a034ea869b7de15c588b8c147ecf256f073d9a70a6edefbb2242c776291ee",
-    "scala/nebflow/social/outbound/RichRenderProbe.scala:sleep:19218fce40559df5ee9b0162792da6c31eb5ed0ca46fd6fd20b6e6df22ea9c62"
+    "scala/nebflow/social/outbound/RichRenderProbe.scala:sleep:19218fce40559df5ee9b0162792da6c31eb5ed0ca46fd6fd20b6e6df22ea9c62",
+    "scala/nebflow/core/browser/BrowserVerbsSpec.scala:environment:b99a2aaf8f11a4cd49027446cb6f0dcd3d0762365d39ece8bfa3f6445bdf2598"
   ]
 }
