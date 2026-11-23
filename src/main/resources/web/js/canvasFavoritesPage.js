@@ -110,7 +110,7 @@ function buildPage(onClose, onOpened) {
   search.className = 'cfp-search';
   const input = document.createElement('input');
   input.type = 'search';
-  input.className = 'cfp-search-input';
+  input.className = 'cfp-search-input nf-field';
   input.placeholder = t('canvas.favPage.search');
   input.setAttribute('aria-label', t('canvas.favPage.search'));
   search.appendChild(input);
