@@ -81,6 +81,12 @@ async function starRoundTrip(page, tag, openPage) {
   const offClass = await star.getAttribute('class');
   check(`${tag}: 星标初始描边态`, offClass.indexOf('is-on') < 0);
   if (tag === 'mobile') {
+    const geometry = await page.evaluate(() => {
+      const rect = sel => document.querySelector(sel).getBoundingClientRect();
+      const close = rect('.mf-cv-close'), star = rect('.mf-cv-star'), chip = rect('.mf-strip-chip.on');
+      return { closeRight: close.right, starLeft: star.left, starRight: star.right, chipLeft: chip.left };
+    });
+    check('mobile: close, star and chip do not overlap', geometry.closeRight < geometry.starLeft && geometry.starRight <= geometry.chipLeft, JSON.stringify(geometry));
     await shot(page, 'mobile-star-off.png', 'mobile star off and chip');
     await shot(page, 'mobile-star-off-close.png', 'mobile star off close-up', starSel);
   }
