@@ -27,7 +27,15 @@ const CSS_DIR = join(ROOT, 'src/main/resources/web/css');
 
 /** 卡族根类登记（R2）。新增主会话交互卡 = 在此登记。 */
 // `.nfc` = NebulaInteractionCard（接管卡）根类；登记于 2026-11-21 作者裁定（新卡面须过规范闸）。
-export const FAMILY_CLASSES = ['option-box', 'llm-failure-card', 'nfc'];
+// 2026-11-22 todo-mobile-round2 批：待办移动端详情面/决策卡标准化把四处**卡面**改成
+// 站内纸面卡族（`--ask-card-*` 同一份令牌）。新卡面即须登记，否则「下一个作者又写回
+// 字面量」这条回归路径对着它们不设防：
+//   `.ta-newrow`    待办详情页标题卡（标题域 + (i)）
+//   `.ta-notes`     待办详情页正文卡（编辑域）
+//   `.ta-notes-md`  待办详情页正文卡（只读渲染面，与编辑域同盒）
+//   `.ta-qd-opt`    决策卡选项行（askuser `.option-btn` 同族的行面）
+export const FAMILY_CLASSES = ['option-box', 'llm-failure-card', 'nfc',
+  'ta-newrow', 'ta-notes', 'ta-notes-md', 'ta-qd-opt'];
 
 /** 卡面表面属性（R1）。 */
 const SURFACE_PROPS = new Set([

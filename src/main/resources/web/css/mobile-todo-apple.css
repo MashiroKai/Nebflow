@@ -949,10 +949,14 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-reply-error {
   color: var(--color-error);
 }
 /* Save = rightmost blue circular check in the top bar (g2-fab base: 48 +
-   sapphire fill + always-white ink) */
-body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-save {
-  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
-  border-radius: var(--ds-radius-chip);
+   sapphire fill + always-white ink)
+   作者令 2026-11-22 10:48「完全采用 右上角的打勾按钮」：本规则的作用域扩到决策卡
+   页 —— 两页是**同一条规则、同一颗键**（不改值、不复制第二套），差别只在该页自己
+   的胶囊让位（见 E6 的 `.ta-pill` 位移）。 */
+body.mobile-layer .mobile-page:is([data-page="todo-apple-item"], [data-page="todo-quick-decision"]) .ta-save {
+  /* 圆钮 = g2-fab 族圆（50%，glass.css 单源），与左上返回钮同形（2026-11-23 作者令「按钮统一是圆的」，
+     修正 f62594fc7 沿用的 --ds-radius-chip 6px 方角）。 */
+  border-radius: 50%;
   position: absolute;
   top: 0;
   right: 0;
@@ -965,13 +969,12 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-save {
   border-color: transparent;
   color: var(--ctl-send-ink);
 }
-body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-save:hover {
-  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
-  border-radius: var(--ds-radius-chip);
+body.mobile-layer .mobile-page:is([data-page="todo-apple-item"], [data-page="todo-quick-decision"]) .ta-save:hover {
+  border-radius: 50%;
   background: rgb(var(--sapphire));
   transform: none;
 }
-body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-save svg {
+body.mobile-layer .mobile-page:is([data-page="todo-apple-item"], [data-page="todo-quick-decision"]) .ta-save svg {
   width: var(--band-icon, 22px);
   height: var(--band-icon, 22px);
   stroke-width: 2.4;
@@ -980,7 +983,20 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-save svg {
    bottom takes the larger of "keyboard height --ta-kb (written by
    visualViewport)" and the dock clearance. Legacy WebViews without
    visualViewport keep --ta-kb at 0, so the bar rests on the dock's top edge
-   (resting position). */
+   (resting position).
+   作者令 2026-11-22 10:48「输入框下方的控制按钮」：这条带现在是**两页共用**的
+   件 —— 带体形态（高 / 圆角 / 键距 / 键造型）一条规则两页吃，只有落位分腿：
+   详情页 fixed 贴键盘/dock（下面第二条），决策卡页是流内末件（E6 里的
+   `position: static` 那条）。改前决策卡用的是自造的 `.ta-qd-acts` 四键胶囊带。 */
+body.mobile-layer .mobile-page:is([data-page="todo-apple-item"], [data-page="todo-quick-decision"]) .ta-tool {
+  height: var(--ta-band-h, var(--bottom-band-d, 44px));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--ds-space-2);
+  box-sizing: border-box;
+  border-radius: var(--mcap-radius);
+}
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool {
   position: fixed;
   left: var(--mpad-x);
@@ -990,21 +1006,14 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool {
      落队注：本条替代 2026-11-17 的 `--bottom-band-d` 那版自算式（同一规则的后一
      迭代，作者线上更晚）。 */
   bottom: calc(var(--ta-band-bottom) + var(--ds-space-2));
-  height: var(--ta-band-h);
-  display: flex;
-  align-items: center;
-  justify-content: space-around;
-  padding: 0 8px;
-  box-sizing: border-box;
-  border-radius: var(--mcap-radius);
   z-index: 8;
 }
-body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool-btn {
+body.mobile-layer .mobile-page:is([data-page="todo-apple-item"], [data-page="todo-quick-decision"]) .ta-tool-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-2);
   min-height: var(--bottom-band-d, 44px);
-  padding: 0 12px;
+  padding: 0 var(--ds-space-3);
   border: none;
   border-radius: var(--ds-radius-pill);
   background: transparent;
@@ -1015,13 +1024,13 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool-btn {
   touch-action: manipulation;
   max-width: 40%;
 }
-body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool-btn svg {
+body.mobile-layer .mobile-page:is([data-page="todo-apple-item"], [data-page="todo-quick-decision"]) .ta-tool-btn svg {
   width: var(--bottom-band-icon, 20px);
   height: var(--bottom-band-icon, 20px);
   display: block;
   flex: none;
 }
-body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool-label {
+body.mobile-layer .mobile-page:is([data-page="todo-apple-item"], [data-page="todo-quick-decision"]) .ta-tool-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1137,6 +1146,9 @@ body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-root {
 body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-cluster {
   position: absolute;
   top: calc(var(--mchrome-top) + env(safe-area-inset-top, 0px));
+  /* 簇撑满页面内边距盒（左右各让 --mpad-x）：胶囊要以**屏幕中线**为基准居中，
+     簇宽须等于内容宽；右端 ✓ 仍贴 right:0 = 原落点不变。 */
+  left: var(--mpad-x);
   right: var(--mpad-x);
   pointer-events: none;
   z-index: 6;
@@ -1399,9 +1411,12 @@ body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt {
   background: var(--nf-glass-input-bg);
   cursor: pointer;
 }
-/* Selected option = the shared sapphire selection step (same family as the
-   station's pressed/selected档); state comes from the native control, so the
-   row needs no class bookkeeping in JS. */
+/* Selected option = D2 时代的蓝（作者令 2026-11-22 10:48 逐字「选项配色走之前的
+   蓝色」）：sapphire 洗面 14% + 描边 35%，行墨保持正文档 —— 上一轮的「主色绿实底 +
+   恒白墨」退役（白压绿实测 2.38:1）。色源全是仓内既有令牌（`rgb(var(--sapphire))`
+   与 `color-mix`），亮/暗两档随主题变量自动跟随；实测对比见
+   delivery/todo-mobile-round2-20261122/readings.md。
+   注：选中态本文件只此一条规则（E6 段不再另写第二套值）。 */
 body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt:has(.ta-qd-opt-input:checked) {
   border-color: rgb(var(--sapphire) / 0.35);
   background: color-mix(in srgb, rgb(var(--sapphire)) 14%, transparent);
@@ -1500,61 +1515,12 @@ body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-answer-er
   to { opacity: 1; transform: none; }
 }
 
-/* ── 操作条四键（作者追加令 2026-11-21 ①–④：卡片视角要能**直接处理任务**）──
-   落位 = 悬浮控件带的最上排（本带是页面级流内页脚 ⇒ 常驻、不被卡片裁切），
-   因此「完成」在左端、「回复」= 下排输入件的发送圆钮在右端 —— 核心两键分别落在
-   左右拇指的自然落点，中间三枚次要键（旗标 / 日期 / 列表）紧凑排。
-   形态 = 站内既有一档：`.ta-tool-btn` 那套「胶囊 + 图标 + 冷字」在本页的词表里
-   （本页无键盘工具条），几何按 44 触控档（--mtap），选中/在场态 = sapphire 族
-   （与顶带胶囊键 `.on`、过滤 chip `.is-on` 同一条色彩单源）。 */
-body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-acts {
-  display: flex;
-  align-items: center;
-  gap: var(--ds-space-1);
-  flex: none;
-}
-body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-act {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--ds-space-1);
-  min-width: var(--mtap);
-  min-height: var(--mtap);
-  padding: 0 var(--ds-space-2);
-  box-sizing: border-box;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--ds-radius-chip);
-  background: var(--nf-glass-input-bg);
-  color: var(--color-text);
-  font: inherit;
-  cursor: pointer;
-  touch-action: manipulation;
-  transition: background-color var(--ds-dur-hover) var(--ds-ease-std),
-    border-color var(--ds-dur-hover) var(--ds-ease-std),
-    color var(--ds-dur-hover) var(--ds-ease-std);
-}
-body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-act svg {
-  width: var(--ds-turn-btn-icon, 18px);
-  height: var(--ds-turn-btn-icon, 18px);
-  display: block;
-  stroke-width: 2.2;
-}
-body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-act:hover { background: var(--nf-glass-input-bg-hover, var(--nf-glass-input-bg)); }
-/* 核心键「完成」= 全带唯一实底键（作者令：核心两键最顺手的位置 + 一眼可辨）。 */
-body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-act-done {
-  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
-  border-radius: var(--ds-radius-chip);
-  border-color: transparent;
-  background: rgb(var(--sapphire));
-  color: var(--ta-ink); /* 白墨单源（= var(--ctl-send-ink, #fff)，本文件 40 行出生） */
-}
-body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-act-done svg { stroke-width: 2.6; }
-body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-act.on {
-  border-color: rgb(var(--sapphire) / 0.35);
-  background: color-mix(in srgb, rgb(var(--sapphire)) 14%, transparent);
-  color: rgb(var(--sapphire));
-}
+/* ── 操作条（2026-11-21 的四键胶囊带已于 2026-11-22 10:48 退役）──────────────
+   作者判「决策卡页的按钮功能布局和条目详情页的按钮功能高度重合 就应该用条目详情页
+   的设计」⇒ 完成键上移顶带簇右上角（`.ta-save`，与详情页同一条规则），旗标/日期/
+   项目三键改挂详情页那条 `.ta-tool` 控制带（流内变体见 E6）。本页自造的第二套
+   键外形（`.ta-qd-act*`）整块删除 —— 不保留死规则。 */
+
 /* ── 完成动效（作者追加令 2026-11-21「优化关键操作动画」）──────────────────
    一条键帧两段（token 时长 = --ds-dur-hover / 曲线 --ds-ease-std，与卡片划卡的
    exit 腿同一档，不引入新的时长梯子）：
@@ -1661,7 +1627,6 @@ body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-empty {
   body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill-btn,
   body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill-btn,
   body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-pill-btn,
-  body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-act,
   body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-flt-chip {
     transition-duration: 0.01ms;
   }
@@ -1678,4 +1643,269 @@ body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-empty {
   body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-item[data-ta-new="in"] {
     animation-duration: 0.01ms;
   }
+}
+
+/* ═══ E · Round-2 标准化（待办详情面 + 决策卡；作者令 2026-11-22 08:13）════════
+   作者逐字：「这种图的设计还有问题 我们这个面页不是已经是标准设计了吗 怎么还能这么丑」。
+   实锤两张（真机 IMG_2004 / 决策卡快拍 D2）读数与定性（改前像素见
+   .stand/tmp/todo-mobile-round2/evidence/before）：
+     · 详情页：标题 17px 与正文同档 ⇒ **零层级**；正文 15px/1.5 全幅密排、无卡面、
+       无段落节奏 ⇒ 读作一整块墙；chips 24px 灰片三态同色（日期/重要度/标签）；
+       回复带与工具带各自孤悬，页面没有任何分组 ⇒ 「不像标准设计语言出品」。
+     · 决策卡：单选选项行只有一条近透明 1px 描边（`--glass-border`）落在透明底上
+       （`--nf-glass-input-bg` = α 0.16，白纸上近乎不可见）⇒ 选项裸排；
+       问题与选项、选项与正文之间无分组。
+
+   本段纪律（三条硬边界）：
+     ① **只做视觉/层次标准化**：零信息架构改动、零交互逻辑改动、零新文案、零 DOM 改动
+        （选择器全部落在既有类上，JS 一字未改）。
+     ② 卡面 = 站内**唯一纸上浮层卡族**（chat.css `--ask-card-*` 配方，与 `.option-box`
+        / askuser 卡同一份令牌，暗亮双档由该族自带的 `:root` / data-theme / 媒体块
+        给出 ⇒ 本文件零第二套卡面值）。
+     ③ 字号/间距/圆角/触控全部取令牌账本（--ds-* / --mfs-* / --mtap / --dur-2），
+        零造型字面量（check-design-tokens 只减不增）。
+
+   层次方案（分组 = 卡片，不是加框线）：
+     标题卡（可编辑域 + (i)）→ 正文卡（渲染面/编辑域同盒，切换不跳）→ chips 行
+     （中性胶囊 + 语义点，与 todo-face.css 的 `.tfl-chip` 同一套「色在点上」语言）→
+     回复带（输入面单源，未动造型）→ 日期/旗标/项目行（图标冷色 + 读数主色）。
+     决策卡：问题块（题面 + 选项组）→ 选项行 = askuser `.option-btn` 同族
+     （细描边 + 4% 面 + 悬停/选中/焦点三态），正文块，操作条。 */
+
+/* ── E1 · 详情页：分组节奏（卡与卡之间只隔一档呼吸缝）────────────────────── */
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-edit {
+  gap: var(--ds-space-3);
+  padding: 0 var(--mpad-x) var(--ds-space-4);
+}
+
+/* ── E2 · 标题卡（标题区）：纸面卡族 + 页面级标题字档 ─────────────────────
+   字档 = `--ds-fs-display`（20px/600/-0.01em = 令牌账本「页面级大标题」槽，
+   与站内面板大标题同档）。改前 17px/400 与正文同档 ⇒ 层级靠字号建立，不靠加粗堆砌。 */
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-newrow {
+  align-items: flex-start;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-3) var(--ds-space-2) var(--ds-space-3) var(--ds-space-4);
+  border: 1px solid var(--ask-card-bd);
+  border-radius: var(--ds-radius-card-lg);
+  background: linear-gradient(180deg, var(--ask-card-top), var(--ask-card-bot));
+  box-shadow: var(--ask-card-shadow), var(--ask-card-highlight);
+}
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-title-input {
+  font-size: var(--ds-fs-display);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  padding: var(--ds-space-1) 0;
+}
+
+/* ── E3 · 正文卡（长文场景）：同一纸面卡族 + 阅读节奏 ─────────────────────
+   字号取手机档正文 `--mfs-callout`（16 = iOS 不缩放硬下限），行高 1.65
+   （账本正文档上缘，给长中文段落留呼吸）；段落/标题/列表/引用的节奏一律按
+   `--ds-space-*` 阶，逐级递减（段 12 / 标题上 16 下 8 / 列表项 4）。
+   编辑域（textarea）与渲染面（div）**同盒同位**：切换呈现态不跳位、不跳字。 */
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes,
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes-md {
+  padding: var(--ds-space-4);
+  border: 1px solid var(--ask-card-bd);
+  border-radius: var(--ds-radius-card-lg);
+  background: linear-gradient(180deg, var(--ask-card-top), var(--ask-card-bot));
+  box-shadow: var(--ask-card-shadow), var(--ask-card-highlight);
+  color: var(--color-text);
+  font-size: var(--mfs-callout);
+  line-height: 1.65;
+}
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes { min-height: 88px; }
+/* 段落节奏：首段贴顶、末段贴底（卡内不留死白），中间段一档呼吸缝。 */
+body.mobile-layer .ta-notes-md-body.is-md p { margin: 0 0 var(--ds-space-3); }
+body.mobile-layer .ta-notes-md-body.is-md p:first-child { margin-top: 0; }
+body.mobile-layer .ta-notes-md-body.is-md p:last-child { margin-bottom: 0; }
+body.mobile-layer .ta-notes-md-body.is-md h1,
+body.mobile-layer .ta-notes-md-body.is-md h2,
+body.mobile-layer .ta-notes-md-body.is-md h3,
+body.mobile-layer .ta-notes-md-body.is-md h4 {
+  margin: var(--ds-space-4) 0 var(--ds-space-2);
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--color-text);
+}
+body.mobile-layer .ta-notes-md-body.is-md h1 { font-size: var(--mfs-title); }
+body.mobile-layer .ta-notes-md-body.is-md h2 { font-size: var(--ds-fs-display); }
+body.mobile-layer .ta-notes-md-body.is-md h3 { font-size: var(--mfs-body); }
+body.mobile-layer .ta-notes-md-body.is-md h4 { font-size: var(--mfs-callout); }
+body.mobile-layer .ta-notes-md-body.is-md h1:first-child,
+body.mobile-layer .ta-notes-md-body.is-md h2:first-child,
+body.mobile-layer .ta-notes-md-body.is-md h3:first-child,
+body.mobile-layer .ta-notes-md-body.is-md h4:first-child { margin-top: 0; }
+body.mobile-layer .ta-notes-md-body.is-md li { margin: var(--ds-space-1) 0; }
+body.mobile-layer .ta-notes-md-body.is-md hr {
+  margin: var(--ds-space-4) 0;
+  border: 0;
+  border-top: 1px solid var(--glass-border);
+}
+body.mobile-layer .ta-notes-md-body.is-md table { border-collapse: collapse; width: 100%; }
+body.mobile-layer .ta-notes-md-body.is-md th,
+body.mobile-layer .ta-notes-md-body.is-md td {
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  border: 1px solid var(--glass-border);
+  text-align: left;
+}
+
+/* ── E4 · chips（日期 / 重要度 / 标签）：中性胶囊 + 语义点（色只在点上）──────
+   与 todo-face.css `.tfl-chip` / `.tfl-chip-tag .tfl-chip-dot` 同一套语言：
+   胶囊面是中性一档（`--color-text` 5%），语义色由 JS 写在 `.ta-prio` / `.ta-dot`
+   的行内背景上（`priorityColor()` / `tg.color` 单源）——CSS 不复制第二份颜色。
+   几何：28 高、999 圆角、12 字档（原 32 高 13 字、无描边、三态同色）。 */
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-meta {
+  gap: var(--ds-space-2);
+  margin-top: 0;
+}
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-chip {
+  height: 28px;
+  padding: 0 var(--ds-space-3);
+  gap: var(--ds-space-1h);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--ds-radius-pill);
+  background: color-mix(in srgb, var(--color-text) 5%, transparent);
+  color: var(--color-text);
+  font-size: var(--mfs-min);
+}
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-chip .ta-dot {
+  width: 8px;
+  height: 8px;
+}
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-chip .ta-prio {
+  width: 3px;
+  height: 12px;
+}
+
+/* ── E5 · 日期 / 旗标 / 项目行（工具带）：图标冷档 + 读数为唯一亮档 ──────────
+   行内三段同宽（space-between + 每段自带横内距），图标降到 muted 让读数成为
+   唯一视觉重音；带高与落位零改动（`--ta-band-*` 单源，浮条座位表不动）。
+   作用域随 2026-11-22 10:48 作者令扩到决策卡页（同一条控制带、同一套键墨）。 */
+body.mobile-layer .mobile-page:is([data-page="todo-apple-item"], [data-page="todo-quick-decision"]) .ta-tool-btn {
+  color: var(--color-text);
+}
+body.mobile-layer .mobile-page:is([data-page="todo-apple-item"], [data-page="todo-quick-decision"]) .ta-tool-btn svg {
+  color: var(--color-text-muted);
+  opacity: 1;
+}
+body.mobile-layer .mobile-page:is([data-page="todo-apple-item"], [data-page="todo-quick-decision"]) .ta-tool-btn:active svg {
+  color: var(--color-text);
+}
+body.mobile-layer .mobile-page:is([data-page="todo-apple-item"], [data-page="todo-quick-decision"]) .ta-tool-label {
+  color: var(--color-text);
+  font-size: var(--mfs-min);
+}
+
+/* ═══ E6 · 决策卡（todo-quick-decision）═══════════════════════════════════════
+   选项组 = askuser `.option-box` 卡族的选项行写法（同一组造型值语义：
+   1px 细描边 + 4% 面 + 14px 卡内圆角 + 悬停 8%/45% + 选中 Sapphire 洗面（D2 蓝）+ 禁用 0.5），
+   色源取站内令牌（`rgb(var(--sapphire) / α)`；作者令 2026-11-22 10:48 后选中态不再用
+   主色绿实底），
+   不复制 chat.css 的裸 rgba —— 两档主题自动跟随。
+   DOM 零改动：行仍是 `label.ta-qd-opt > input.ta-qd-opt-input + span.ta-qd-opt-body`。 */
+
+/* 选项组：行距一档；题面与标题之间两档（分组靠节奏，不靠加框线）。 */
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-q {
+  margin: var(--ds-space-4) 0 0;
+  letter-spacing: -0.01em;
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opts {
+  gap: var(--ds-space-2);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt {
+  align-items: flex-start;
+  gap: var(--ds-space-3);
+  min-height: var(--mtap);
+  padding: var(--ds-space-3) var(--ds-space-4);
+  border: 1px solid rgb(var(--sapphire) / 0.25);
+  border-radius: var(--ds-radius-card-md);
+  background: rgb(var(--sapphire) / 0.04);
+  transition: background-color var(--dur-2) ease, border-color var(--dur-2) ease,
+    color var(--dur-2) ease;
+}
+@media (hover: hover) {
+  body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt:hover {
+    border-color: rgb(var(--sapphire) / 0.45);
+    background: rgb(var(--sapphire) / 0.08);
+  }
+  body.mobile-layer .mobile-page[data-page="todo-quick-decision"]
+    .ta-qd-opt:not(:has(.ta-qd-opt-input:checked)):hover .ta-qd-opt-label {
+    color: rgb(var(--sapphire));
+  }
+}
+/* 选中态的**值**不在这里写第二套：本文件只有 §D 那一条（D2 原值 = sapphire 洗面
+   14% + 描边 35%，行墨正文档），E6 只调行造型（圆角 / 内距 / 悬停），不碰选中色。
+   行墨不动的理由：sapphire 本色（91 127 191）当正文墨只有 ~3.1:1，标题必须留正
+   文档墨（洗面上 ≈ 13:1）—— 蓝语义落在**面 + 描边 + 已选控件**三件上。 */
+/* 焦点态：环只由站内唯一一条环规则给出（单色 + 内缩 2px + 禁光晕，
+   focus-ring-spec §2.2）；行是 label，环落在行上（input 是 20px 的裸控件）。 */
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt:has(.ta-qd-opt-input:focus-visible) {
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt-input {
+  margin-top: var(--ds-space-half);
+  accent-color: rgb(var(--sapphire));
+}
+/* 选项说明（detail 段）：次级色 + 与标题同列（不是独立一行）。 */
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt-detail {
+  margin-top: 0;
+  line-height: 1.5;
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt-label {
+  line-height: 1.45;
+}
+
+/* chips（标签 / 重要度）：与详情页同一套「中性胶囊 + 语义点」。 */
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-chip {
+  height: 28px;
+  padding: 0 var(--ds-space-3);
+  gap: var(--ds-space-1h);
+  border: 1px solid var(--glass-border);
+  background: color-mix(in srgb, var(--color-text) 5%, transparent);
+  color: var(--color-text);
+  font-size: var(--mfs-min);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-dot {
+  width: 8px;
+  height: 8px;
+}
+
+/* 正文块（卡片内）：与详情页正文同一节奏（字号/行高/段距），只是不再套第二层卡面
+   （卡片本身已是浮层卡，卡中卡会多一道边框）。 */
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-content {
+  font-size: var(--mfs-callout);
+  line-height: 1.65;
+}
+body.mobile-layer .ta-qd-content.is-md p { margin: 0 0 var(--ds-space-3); }
+body.mobile-layer .ta-qd-content.is-md p:first-child { margin-top: 0; }
+body.mobile-layer .ta-qd-content.is-md p:last-child { margin-bottom: 0; }
+
+/* 控制带（作者令 2026-11-22 10:48「输入框下方的控制按钮」）：与详情页 `.ta-tool`
+   同一条带体/键造型规则（上面 §C 那条两页共用的），本页只补**落位**——
+   详情页那条是 `position: fixed`（贴键盘），本页是流内末件：`.ta-qd-float` 是
+   页面流内页脚，输入件在前、本带在后 ⇒ 视觉落点与详情页一致（输入框之下、
+   dock 之上），且不需要第二件 fixed 浮件（浮件座位表零增量）。
+   键的读数（日期落点 / 旗标档 / 项目名）由 render 写进 `.ta-tool-label`，
+   与详情页同一条读数语义 —— 在场语义就是**读数本身**，键上不叠第二层「在场」色
+   （`.on` 类保留为机读态标记，不参与配色）。 */
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-tool {
+  position: static;
+  width: 100%;
+  flex: none;
+}
+/* 右上角 ✓（完成键）的胶囊让位：与详情页同一条三件同轴几何（胶囊左让
+   48 + gap，键本体由 §C 的 `.ta-save` 规则钉 right:0）。 */
+/* 分页胶囊（「第 n / m 条」+ 过滤钮）水平居中（作者裁定 2026-11-22 14:40：
+   「把中间那个第几页的胶囊居中」）：以簇（= 页面内容宽）中线定位，不再贴右让位。
+   与左端返回钮（16–64）、右端 ✓（326–374）互不重叠。 */
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-pill {
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+}
+/* 0 张卡时 ✓ 置灰（不移除、位次恒定，与详情页 save 的禁用档同一条不透明度语义）。 */
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-save:disabled {
+  opacity: var(--btn-disabled-opacity);
 }

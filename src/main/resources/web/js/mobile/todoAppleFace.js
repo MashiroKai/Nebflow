@@ -1446,6 +1446,12 @@ function buildQuick(root, section) {
   const filterBtn = iconBtn('ta-pill-btn ta-qd-filter-btn', 'list-filter', t('todoapple.filter'));
   filterBtn.dataset.todoQuickFilter = '';
   pill.appendChild(filterBtn);
+  // 右上角打勾（作者令 2026-11-22 10:48 逐字「完全采用 右上角的打勾按钮」）：
+  // 与条目详情页顶部那颗**同款同位** —— 同为 `.ta-save g2-fab`（48 直径 + sapphire
+  // 实底 + 恒白墨 `--ctl-send-ink`）、同在簇内 `top:0 right:0`、同一「完成」动作
+  // （completeItem + 同一 CSS 离场键帧）。改前「完成」挤在页底操作条四键的第 1 位。
+  const saveDone = iconBtn('ta-save g2-fab', 'check', t('todoapple.markComplete'));
+  cluster.appendChild(saveDone);
 
   // ── 过滤面板（轻量档 = chips，作者令五选一中的 chips 档）───────────────
   // 两行 chips：标签（全部 + 各标签）/ 重要度（全部 / 高 / 中 / 低）。单行横滚、
@@ -1485,19 +1491,18 @@ function buildQuick(root, section) {
   // ds-turn-btn 发送圆钮），本页不再自造 textarea + 文字发送键（作者令 ① 统一）。
   // 发送出口 = js/input.js 的唯一待办回传台 `sendTodoReply`（见 submitAnswer）。
   //
-  // ── 操作条（作者追加令 2026-11-21 ④：操作集中在卡片底部悬浮操作条）─────────
-  // 本带 = 页面级流内页脚，因此它同时是**操作条**：上排四键（核心两键之一「完成」
-  // 在最左、回复 = 下排输入件的发送圆钮在最右 —— 两端都是拇指最容易够到的位置），
-  // 次要三键（旗标 / 日期 / 列表）居中紧凑排。操作集与详情页逐条对齐（同一批
-  // 写点：completeItem / updateItem(priority|due|tagId)），本页零第二套写口。
+  // ── 页内页脚（作者令 2026-11-22 10:48：完成键上顶带、控制键落输入框下方）────
+  // 本带 = 页面级流内页脚，落位与详情页逐件对齐（作者令 2026-11-22 10:48 逐字
+  // 「完全采用 右上角的打勾按钮 输入框下方的控制按钮」）：
+  //   上排 = 回复输入件（与详情页回复带同一模板 `secondaryComposer`）；
+  //   下排 = **控制带**（日期 / 旗标 / 项目），与详情页 `.ta-tool` 同一条词表
+  //          （`.ta-tool-btn` + `.ta-tool-label`，图标 + 读数；本页是流内末件，
+  //          详情页那条是 fixed —— 两页视觉同位：都在输入框之下、dock 之上）；
+  //   完成 = 顶带簇右上角 ✓（见上，不再占本带）。
+  // 改前这里是「操作条四键」胶囊带（完成/旗标/日期/项目），与详情页功能重合却
+  // 形态/位次都不同 —— 作者判「按钮功能高度重合 就应该用条目详情页的设计」。
   const floatBand = elIn(wrap, 'div', 'ta-qd-float');
   floatBand.dataset.todoQuickFloat = '';
-  const acts = elIn(floatBand, 'div', 'ta-qd-acts');
-  const actDone = iconBtn('ta-qd-act ta-qd-act-done', 'circle-check', t('todoapple.markComplete'));
-  const actFlag = iconBtn('ta-qd-act', 'flag', t('todoapple.toPriority'));
-  const actDue = iconBtn('ta-qd-act', 'calendar', t('todoapple.toDue'));
-  const actTag = iconBtn('ta-qd-act', 'hash', t('todoapple.toTag'));
-  acts.append(actDone, actFlag, actDue, actTag);
   const composer = createSecondaryComposer({
     class: 'ta-qd-answer-input nf-glass',
     placeholder: t('todoface.replyPh'),
@@ -1514,6 +1519,26 @@ function buildQuick(root, section) {
   const autosizeAnswer = composer.autosize;
   const answerError = elIn(floatBand, 'div', 'ta-qd-answer-error');
   answerError.setAttribute('role', 'alert');
+  /** 控制带（详情页 `.ta-tool` 同族：图标 + 读数两件，同一几何令牌）。 */
+  const tool = elIn(floatBand, 'div', 'ta-tool ta-qd-tool nf-glass');
+  /**
+   * @param {string} icon
+   * @param {string} label
+   * @returns {{ el: HTMLButtonElement, label: HTMLElement }}
+   */
+  const toolBtn = (icon, label) => {
+    const b = btnEl('ta-tool-btn');
+    b.type = 'button';
+    b.append(icoEl(icon), el('span', 'ta-tool-label'));
+    const lab = /** @type {HTMLElement} */ (b.querySelector('.ta-tool-label'));
+    lab.textContent = label;
+    b.setAttribute('aria-label', label);
+    tool.appendChild(b);
+    return { el: b, label: lab };
+  };
+  const toolFlag = toolBtn('flag', t('todoapple.toPriority'));
+  const toolDue = toolBtn('calendar', t('todoapple.toDue'));
+  const toolTag = toolBtn('hash', t('todoapple.toTag'));
 
   const cancelSettle = () => { if (qdTimer) { clearTimeout(qdTimer); qdTimer = null; } };
   const reduceMotion = () => {
@@ -1636,14 +1661,14 @@ function buildQuick(root, section) {
    *  动效：卡片带 `data-qd-done="exit"`（CSS 打勾 + 卡片右移淡出，token 时长），
    *  落定才写 store（读作「划卡离场后销账」，不是瞬时消失）。 */
   let doneBusy = false;
-  /** 划卡离场 + 销账（完成按钮与「作答即完成」共用同一条离场链）。 */
+  /** 划卡离场 + 销账（顶带簇右上角打勾键 saveDone 与「作答即完成」共用同一条离场链）。 */
   const exitAndComplete = (item) => {
     if (doneBusy) return;
     doneBusy = true;
-    actDone.disabled = true;
+    saveDone.disabled = true;
     const finish = () => {
       doneBusy = false;
-      actDone.disabled = false;
+      saveDone.disabled = false;
       delete card.dataset.qdDone;
       pose(0);   // 离场键帧的起点归零（防上一拍手势 residual --qd-dx 带进下一张）
       todoStore.completeItem(item.id);
@@ -1653,7 +1678,7 @@ function buildQuick(root, section) {
     card.dataset.qdDone = 'exit';
     qdTimer = setTimeout(() => { qdTimer = null; finish(); }, QUICK_DECISION_MOTION.exitMs);
   };
-  actDone.addEventListener('click', () => {
+  saveDone.addEventListener('click', () => {
     const item = cardItem();
     if (!item || doneBusy) return;
     // 期 0 止血：决策待办未作答不允许完成——引导先作答（后端完成门控同口径）。
@@ -1665,35 +1690,35 @@ function buildQuick(root, section) {
   });
 
   /** ② 旗标循环（0→1→2→3→0，与详情页旗标键同一语义）。 */
-  actFlag.addEventListener('click', () => {
+  toolFlag.el.addEventListener('click', () => {
     const item = cardItem();
     if (!item) return;
     todoStore.updateItem(item.id, { priority: (item.priority + 1) % 4 });
   });
   /** ③ 日期 = 统一定时器（落点串由行值驱动；确认后写 updateItem({due})）。 */
-  actDue.setAttribute('aria-haspopup', 'dialog');
-  actDue.setAttribute('aria-expanded', 'false');
-  actDue.addEventListener('click', () => {
+  toolDue.el.setAttribute('aria-haspopup', 'dialog');
+  toolDue.el.setAttribute('aria-expanded', 'false');
+  toolDue.el.addEventListener('click', () => {
     const item = cardItem();
     if (!item) return;
     const p = pointOf(item.due);
-    if (p) { actDue.dataset.date = p.date; actDue.dataset.time = p.time; }
-    else { delete actDue.dataset.date; delete actDue.dataset.time; }
-    openPoint(actDue, {
+    if (p) { toolDue.el.dataset.date = p.date; toolDue.el.dataset.time = p.time; }
+    else { delete toolDue.el.dataset.date; delete toolDue.el.dataset.time; }
+    openPoint(toolDue.el, {
       onConfirm: (v) => {
         const ms = msOfPoint(v);
         if (ms == null) return;
-        actDue.dataset.date = v.date;
-        actDue.dataset.time = v.time;
+        toolDue.el.dataset.date = v.date;
+        toolDue.el.dataset.time = v.time;
         todoStore.updateItem(item.id, { due: ms });
       },
     });
   });
   /** ④ 标签 = 站内列表菜单（同一选择器单源）。 */
-  actTag.addEventListener('click', () => {
+  toolTag.el.addEventListener('click', () => {
     const item = cardItem();
     if (!item) return;
-    openTagPicker(actTag, () => item.tagId, (next) => { todoStore.updateItem(item.id, { tagId: next }); });
+    openTagPicker(toolTag.el, () => item.tagId, (next) => { todoStore.updateItem(item.id, { tagId: next }); });
   });
 
   /** Release without a switch (under threshold, or head/tail): stop + spring back. */
@@ -1897,6 +1922,8 @@ function buildQuick(root, section) {
     card.setAttribute('aria-label', reading || t('todoapple.emptyDone'));
     // 浮带只在有卡片时出场（0 张 = 无作答对象，输入框没有承载语义）。
     floatBand.hidden = items.length === 0;
+    // 右上角 ✓ 同档：0 张 = 无「完成」对象 ⇒ 置灰不可点（不移除，位次恒定）。
+    saveDone.disabled = items.length === 0;
 
     // 右上角过滤钮：`on` 态 + 机读读数（闸按它断言过滤是否启用）。
     filterBtn.classList.toggle('on', qdFilterActive() || qdFilterOpen);
@@ -1986,18 +2013,21 @@ function buildQuick(root, section) {
     answerInput.value = qdDrafts.get(item.id) || '';
     answerError.textContent = '';
     autosizeAnswer();
-    // 操作条读数（作者追加令 ③「操作集对齐」）：三枚次要键的态跟着当前卡的行值
-    // 走（旗标 on = 有旗标；日期/列表键读出当前落点串）。无行值即无态。
+    // 控制带读数（详情页 `.ta-tool` 同一条读数语义）：三键的标签 = 当前卡的行值
+    // （日期落点串 / 旗标档 / 项目名），`on` 态跟行值走；无行值即回落到键名。
     const actTagNow = item.tagId ? todoStore.tagById(item.tagId) : null;
-    actFlag.classList.toggle('on', item.priority > 0);
-    actDue.classList.toggle('on', item.due != null);
-    actTag.classList.toggle('on', !!actTagNow);
-    if (actTagNow) actTag.dataset.tagName = actTagNow.name; else delete actTag.dataset.tagName;
+    toolFlag.el.classList.toggle('on', item.priority > 0);
+    toolFlag.label.textContent = item.priority > 0 ? priorityLabel(item.priority) : t('todoapple.toPriority');
+    toolDue.el.classList.toggle('on', item.due != null);
+    toolDue.label.textContent = item.due != null ? dueText(item.due) : t('todoapple.toDue');
+    toolTag.el.classList.toggle('on', !!actTagNow);
+    toolTag.label.textContent = actTagNow ? actTagNow.name : t('todoapple.toTag');
+    if (actTagNow) toolTag.el.dataset.tagName = actTagNow.name; else delete toolTag.el.dataset.tagName;
     // 切卡 / 换过滤后卡片重建、滚动位归零 ⇒ 抬升态跟着复位。
     delete floatBand.dataset.qdRaised;
     if (typeof lucide !== 'undefined') {
       createIconsIn(card); createIconsIn(pill); createIconsIn(filters);
-      createIconsIn(floatBand); createIconsIn(acts);
+      createIconsIn(saveDone); createIconsIn(floatBand); createIconsIn(tool);
     }
   }
 

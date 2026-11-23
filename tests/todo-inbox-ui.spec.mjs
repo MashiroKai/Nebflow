@@ -534,7 +534,9 @@ const deckBefore = await page.evaluate(`(async () => {
   return { open: store.todoStore.openItems().length, itemId: card.dataset.itemId,
     count: document.querySelector('${QP} .ta-qd-count').textContent };
 })()`);
-await page.locator(`${QP} .ta-qd-act-done`).click();
+// 2026-11-22 10:48 作者令：完成键从页底操作条搬到顶带簇右上角（与详情页同一颗
+// 蓝圆 ✓）；本判据的链路断言不变，只是落点选择器换到 `.ta-save`。
+await page.locator(`${QP} .ta-save`).click();
 await page.waitForTimeout(560);
 const deckAfter = await page.evaluate(`(async () => {
   const store = await import('/js/todoStore.js');
@@ -936,7 +938,7 @@ const gifFrames4 = await recordGif(async () => {
   }
   await page.mouse.up();
   await page.waitForTimeout(520);
-  await page.locator(`${QP} .ta-qd-act-done`).click();
+  await page.locator(`${QP} .ta-save`).click();
   await page.waitForTimeout(700);
 }, { preMs: 300, postMs: 620 });
 const deckAtEnd = await page.evaluate(`(async () => {

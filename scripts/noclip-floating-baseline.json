@@ -1853,11 +1853,11 @@
       "owner": "—"
     },
     {
-      "key": "src/main/resources/web/css/mobile-todo-apple.css::text-truncation::body.mobile-layer .mobile-page[data-page=\"todo-apple-item\"] .ta-tool-label",
+      "key": "src/main/resources/web/css/mobile-todo-apple.css::text-truncation::body.mobile-layer .mobile-page:is([data-page=\"todo-apple-item\"], [data-page=\"todo-quick-decision\"]) .ta-tool-label",
       "file": "src/main/resources/web/css/mobile-todo-apple.css",
       "line": 786,
       "rule": "text-truncation",
-      "selector": "body.mobile-layer .mobile-page[data-page=\"todo-apple-item\"] .ta-tool-label",
+      "selector": "body.mobile-layer .mobile-page:is([data-page=\"todo-apple-item\"], [data-page=\"todo-quick-decision\"]) .ta-tool-label",
       "severity": "P2",
       "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
       "owner": "noclip-unified-fix (作者排期)"
