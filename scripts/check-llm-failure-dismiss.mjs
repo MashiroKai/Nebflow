@@ -20,7 +20,9 @@ const MAIN = read('src/main/resources/web/js/main.js');
 const CSS = read('src/main/resources/web/css/llmFailureCard.css');
 
 const checks = [
-  ['正文点按消失（控件区除外）', /box\.addEventListener\('click'[\s\S]*isLlmFailureControlTarget\(e\.target\)[\s\S]*dismiss\(\)/.test(CARD)],
+  // 2026-11-23：事件回调用仓内惯例 @type {Element} 标注（js-types），正则放宽为
+  // isLlmFailureControlTarget( …e.target… )。
+  ['正文点按消失（控件区除外）', /box\.addEventListener\('click'[\s\S]*isLlmFailureControlTarget\([^)]*e\.target\)[\s\S]*dismiss\(\)/.test(CARD)],
   ['控件区判定覆盖动作行/关闭钮/按钮/下拉', /\.llm-failure-actions, \.llm-failure-close, button, select, option/.test(CARD)],
   ['标题行关闭钮（显式兜底）', /className = 'llm-failure-close'[\s\S]*bClose\.onclick/.test(CARD)],
   ['换模型成功后自动淡出', /is-switched[\s\S]*setTimeout\(fadeOut, SWITCH_FADE_MS\)/.test(CARD)],

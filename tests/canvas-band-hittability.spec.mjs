@@ -205,10 +205,13 @@ const { browser, label } = await launchBrowser(mod);
 const readings = [];
 try {
   // ── B0 静态单源：修复规则 + 族清单注释在源码里（真源缺席 ⇒ 后续腿无从谈起）──
+  // 判据 = margin-bottom 消费共享尺 `--mf-row-bottom`（裸 var 或 calc 内均可；
+  // 2026-11-23：mobile-diff-ux-fix 4cee1af6a 按作者截图在共享尺上加 48 圆钮+8 呼吸，
+  // calc(var(--mf-row-bottom) + …) 仍是同一把尺的消费者）。
   const cssSrc = readFileSync(join(webRoot(), 'css', 'mobileLayer.css'), 'utf8');
-  const hasRule = /body\.mobile-layer #mobile-pages \.mf-cv-host > \.canvas-tab-pane \.nf-dv-allbar\s*\{[^}]*margin-bottom:\s*var\(--mf-row-bottom/.test(cssSrc);
+  const hasRule = /body\.mobile-layer #mobile-pages \.mf-cv-host > \.canvas-tab-pane \.nf-dv-allbar\s*\{[^}]*margin-bottom:[^;]*var\(--mf-row-bottom/.test(cssSrc);
   const hasFamilyDoc = cssSrc.includes('底部控件带') && cssSrc.includes('进带判据');
-  record('B0', '静态单源：`.nf-dv-allbar` 进带规则（`margin-bottom: var(--mf-row-bottom)`）+ 族清单注释在场',
+  record('B0', '静态单源：`.nf-dv-allbar` 进带规则（margin-bottom 消费 `--mf-row-bottom`，calc 内亦可）+ 族清单注释在场',
     hasRule && hasFamilyDoc, `rule=${hasRule} familyDoc=${hasFamilyDoc} css=${join(webRoot(), 'css', 'mobileLayer.css')}`);
 
   // ── B1/B2/B3/B4/B5/B6：正腿（真前端源码树，亮 + 暗）─────────────────────
