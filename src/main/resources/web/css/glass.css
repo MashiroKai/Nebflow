@@ -119,6 +119,9 @@
 
 /* 桌面面级成员（85 条独立选择器；permission-landing 批摘除 .global-perm-toast） */
 .ask-dock .ds-turn-btn,
+/* ask-status-glass 批（2026-11-22）：canvas ask 状态小字胶囊入册——它浮在 canvas 正文
+   之上，无底时正文穿透、文字对比度不达 4.5:1。配方仍是唯一材质，几何在 ask.css。 */
+.ask-dock .ask-state-line,
 .bypass-toggle:hover,
 .header-dropdown-menu,
 /* 顶部悬浮头两面成对入册（contact-panel-unify 收编批 2026-11-06）：材质在本文件
@@ -597,6 +600,15 @@ html[data-theme="light"] {
   -webkit-backdrop-filter: var(--nf-glass-input-filter);
   backdrop-filter: var(--nf-glass-input-filter);
   border: var(--ds-border-width) solid var(--cv-border, var(--glass-border));
+  box-shadow: var(--cv-shadow);
+}
+/* canvas ask 状态小字胶囊（ask-status-glass 批）：材质 = 唯一配方同档（底 / 模糊 / 细边 /
+   浮影 与 .ask-input 逐项相同）；成员登记见上方成员表 `.ask-dock .ask-state-line`。 */
+.ask-dock .ask-state-line {
+  background: var(--nf-glass-input-bg);
+  -webkit-backdrop-filter: var(--nf-glass-input-filter);
+  backdrop-filter: var(--nf-glass-input-filter);
+  border: 1px solid var(--glass-border);
   box-shadow: var(--cv-shadow);
 }
 /* 用户气泡与助手气泡共用玻璃底；注入通知的语义底不用于玻璃面。 */

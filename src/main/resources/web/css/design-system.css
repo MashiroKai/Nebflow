@@ -69,6 +69,7 @@
   --ds-link-term: var(--status-success-icon);
   --ds-danger-icon: var(--status-error-icon);
   --ds-warn-icon: var(--status-warn-icon);
+  --ds-warn-ink: var(--status-warn-ink);   /* 文字档 warn（小字 4.5:1）；图标档仍用 --ds-warn-icon */
   --ds-success-icon: var(--status-success-icon);
   --ds-status-word: var(--status-word);         /* 状态词永远中性字 */
   --ds-control-bg: var(--glass-control-bg);
