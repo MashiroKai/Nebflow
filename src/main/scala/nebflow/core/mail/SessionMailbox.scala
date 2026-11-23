@@ -94,6 +94,24 @@ object SessionMailbox:
       .filter(_ > 0)
       .getOrElse(DefaultMaxPending)
 
+  /**
+   * 载荷指纹（墓碑语义硬化批 2026-11-23 P0②）：终态事件的「内容身份」。
+   *
+   * 入队幂等键（identity）只防**同一事件**写重；2026-11-23 诊断实证的丢件形态
+   * 是「同 identity、不同内容」——续轮终态退化裸 sessionId 撞上第一轮墓碑。
+   * 墓碑闸必须以载荷指纹判定「是不是同一封信」：指纹相同才允许静默，指纹不同
+   * 即**新内容撞旧墓碑**，强制换身份入箱（宁一重复不丢一件）。
+   */
+  private[mail] def payloadFingerprint(e: AgentCommand.ExternalEvent): String =
+    val canon =
+      s"${e.source}\u0000${e.eventType}\u0000${e.correlationId.getOrElse("")}\u0000${e.payload}"
+    java.security.MessageDigest
+      .getInstance("SHA-256")
+      .digest(canon.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+      .take(8)
+      .map(b => f"${b & 0xff}%02x")
+      .mkString
+
   /** 邮箱条目（信封 + 载荷）。`identity` = 入队幂等键（防写重，非判重键）。 */
   final case class Entry(
     seq: Long,
@@ -223,21 +241,55 @@ object SessionMailbox:
           // 是不同的物理事实，不得统一谎称「盘上只有一份」。同 identity 重入被抑制
           // ≠ 内容不该投：跨 Mail 续轮的新完成必须携带**新 generation 身份**
           // （`taskId#gen`）才能再次入箱。
-          val alreadyTaken = scanDir(recipientSid, takenDir(recipientSid)).exists(_._1.identity == identity)
-          val tombstoned = deliveredContainsSync(recipientSid, Set(identity))
+          //
+          // ═══ 墓碑语义硬化（送达链路修复批 2026-11-23 P0②）════════════════════
+          // 2026-11-23 诊断实证：续轮终态退化裸 sessionId 撞上一轮墓碑 ⇒ 静默
+          // AlreadyPresent ⇒ 约 36 份续轮终报丢失。本闸改为**载荷指纹判定**：
+          //   - 命中 taken/墓碑且指纹**相同** ⇒ 真重复（崩溃重放/生产者重试）⇒
+          //     静默 AlreadyPresent（ERROR 留痕，观测面必须响亮）；
+          //   - 命中墓碑且指纹**不同**（或墓碑为 v1 旧账无指纹、taken 副本指纹
+          //     不同）⇒ 新内容撞旧墓碑 ⇒ **强制换身份入箱**（`identity#f<指纹>`，
+          //     重放幂等）；「宁一重复不丢一件」红线优先。
+          // 另：2026-11-22 全天 session-mailbox logger 0 条（观测异常 A2）的根因
+          // = 本块原用 IO 化 logger（`logger.info(...)` 构造即弃，永不执行）——
+          // 全部改 *Sync 变体。
+          val payloadPrint = payloadFingerprint(event)
+          def takenHitOf(id: String): List[Entry] =
+            scanDir(recipientSid, takenDir(recipientSid)).collect { case (e, _) if e.identity == id => e }
+          def tombHitOf(id: String): Set[String] = deliveredContainsSync(recipientSid, Set(id))
           val askHostReceipt = kind == "askhost-request" && os.exists(askHostReceiptFile(recipientSid, identity))
-          if deduplicateReceipts && (alreadyTaken || tombstoned.nonEmpty || askHostReceipt) then
-            val surface = if alreadyTaken then "taken" else "delivered-tombstone"
-            logger.info(
-              s"SessionMailbox: duplicate enqueue suppressed for '$recipientSid' identity '$identity' ($surface) — " +
+          val takenAtRequested = takenHitOf(identity)
+          val tombAtRequested = tombHitOf(identity)
+          // 指纹冲突判定：taken 副本优先（有完整载荷可比），其次墓碑台账指纹。
+          val takenPrints = takenAtRequested.map(payloadFingerprint(_))
+          val tombPrints = tombAtRequested.toList.flatMap(id => deliveredPrintSync(recipientSid, id))
+          val conflicting =
+            deduplicateReceipts &&
+              ((takenPrints.nonEmpty && !takenPrints.contains(payloadPrint)) ||
+                (takenPrints.isEmpty && tombPrints.nonEmpty && !tombPrints.contains(payloadPrint)))
+          val effectiveIdentity = if conflicting then s"$identity#f$payloadPrint" else identity
+          if conflicting then
+            logger.errorSync(
+              s"SessionMailbox: identity '$identity' for '$recipientSid' is already consumed/taken with a DIFFERENT " +
+                s"payload fingerprint (incoming=$payloadPrint${if tombPrints.nonEmpty then s", tombstone=${tombPrints.head}" else ""}" +
+                s"${if takenPrints.nonEmpty then s", taken=${takenPrints.mkString(",")}" else ""}) — forcing enqueue as " +
+                s"'$effectiveIdentity' (new content must never be swallowed by an old tombstone)"
+            )
+          val takenEff = if conflicting then takenHitOf(effectiveIdentity) else takenAtRequested
+          val tombEff = if conflicting then tombHitOf(effectiveIdentity) else tombAtRequested
+          if deduplicateReceipts && (takenEff.nonEmpty || tombEff.nonEmpty || askHostReceipt) then
+            val surface = if takenEff.nonEmpty then "taken" else "delivered-tombstone"
+            logger.errorSync(
+              s"SessionMailbox: duplicate enqueue suppressed for '$recipientSid' identity '$effectiveIdentity' ($surface, " +
+                s"payloadFingerprint=$payloadPrint matches the earlier copy) — " +
                 "the earlier copy was already delivered/consumed; a new round must carry a NEW generation identity, not reuse this one"
             )
             MailResult.AlreadyPresent
           else
-            existingPending(recipientSid, identity) match
+            existingPending(recipientSid, effectiveIdentity) match
               case Some(e) if !coalesce =>
-                logger.info(
-                  s"SessionMailbox: duplicate enqueue suppressed for '$recipientSid' identity '$identity' (pending) — " +
+                logger.infoSync(
+                  s"SessionMailbox: duplicate enqueue suppressed for '$recipientSid' identity '$effectiveIdentity' (pending) — " +
                     "an unconsumed copy of this identity is already in the box"
                 )
                 MailResult.AlreadyPresent
@@ -266,15 +318,15 @@ object SessionMailbox:
                 // **闸不误伤**：满箱时合条仍照常合条（合条不增条目 = 不增爆炸压力）。
                 // 接缝（P3 批合入时）：保留本闸，只读 depth、不参与投递消费语义。
                 if pendingDepthSync(recipientSid) >= maxPending then
-                  logger.warn(
+                  logger.warnSync(
                     s"SessionMailbox: pending depth reached explosion guard for '$recipientSid' " +
-                      s"(limit=$maxPending) — entry '$identity' REJECTED as mailbox-full " +
+                      s"(limit=$maxPending) — entry '$effectiveIdentity' REJECTED as mailbox-full " +
                       "(not queued; producer must handle the explicit failure; no TTL, no silent drop)"
                   )
                   MailResult.Failed("mailbox-full")
                 else
                   val seq = nextSeq(recipientSid)
-                  val e = Entry(seq, identity, kind, coalesce, now, producer, 0, event)
+                  val e = Entry(seq, effectiveIdentity, kind, coalesce, now, producer, 0, event)
                   os.makeDir.all(pendingDir(recipientSid))
                   AtomicJson.writeSync(pendingFileOf(recipientSid, e), e.asJson.noSpaces)
                   MailResult.Enqueued(e)
@@ -312,7 +364,7 @@ object SessionMailbox:
     IO.blocking {
       val (entries, quarantined) = scanDirWithQuarantine(sid, pendingDir(sid))
       quarantined.foreach(name =>
-        logger.warn(s"SessionMailbox: malformed pending entry quarantined (does not block FIFO): $name")
+        logger.warnSync(s"SessionMailbox: malformed pending entry quarantined (does not block FIFO): $name")
       )
       entries
     }.handleErrorWith(e =>
@@ -339,7 +391,7 @@ object SessionMailbox:
   def scanTaken(sid: String): IO[List[Entry]] =
     IO.blocking {
       val (entries, quarantined) = scanDirWithQuarantine(sid, takenDir(sid))
-      quarantined.foreach(name => logger.warn(s"SessionMailbox: malformed taken entry quarantined: $name"))
+      quarantined.foreach(name => logger.warnSync(s"SessionMailbox: malformed taken entry quarantined: $name"))
       entries
     }.handleErrorWith(e =>
       logger.warn(s"SessionMailbox: taken scan failed for '$sid' (${e.getMessage}) — treated as empty").as(Nil)
@@ -422,7 +474,14 @@ object SessionMailbox:
               os.makeDir.all(receipt / os.up)
               AtomicJson.writeSync(receipt, Json.obj("identity" -> e.identity.asJson).noSpaces)
           }
-          markDeliveredSync(sid, clean.toList)
+          // 墓碑随载荷指纹落盘（送达链路修复批 P0②）：taken 里找得到的条目用其
+          // 真实载荷算指纹；找不到（已被并发清走）落空指纹 = 未知。
+          markDeliveredSync(
+            sid,
+            clean.toList.map(id =>
+              id -> taken.collectFirst { case (e, _) if e.identity == id => payloadFingerprint(e.event) }.getOrElse("")
+            )
+          )
           taken.foreach { (e, path) =>
             if clean.contains(e.identity) && os.exists(path) then os.remove(path)
           }
@@ -437,14 +496,33 @@ object SessionMailbox:
   /** 墓碑容量（drop-oldest）：只服务「对账不重合成」，老条目出窗后的残余风险见 MailboxBootSweep 头注。 */
   val MaxDeliveredEntries: Int = 1024
 
-  final case class Delivered(v: Int = 1, ids: List[String] = Nil)
+  /**
+   * 消费墓碑（v2 = 2026-11-23 送达链路修复批 P0② 语义硬化）：
+   * `ids` 保留旧形（对账前缀匹配零改动）；`prints` 为 id → 载荷指纹（v1 旧账
+   * 缺项 = 指纹未知 ⇒ 抑制路径按「视为同件」处理并在 ERROR 行明示，绝不因
+   * 升级本身突然重投历史终报）。解码向后兼容（v1 文件照读，prints 空）。
+   */
+  final case class Delivered(
+    v: Int = 2,
+    ids: List[String] = Nil,
+    prints: Map[String, String] = Map.empty
+  )
 
   object Delivered:
-    given Encoder[Delivered] = Encoder.instance(d => Json.obj("v" -> d.v.asJson, "ids" -> d.ids.asJson))
+    given Encoder[Delivered] = Encoder.instance(d =>
+      Json.obj(
+        "v" -> d.v.asJson,
+        "ids" -> d.ids.asJson,
+        "prints" -> d.prints.asJson
+      )
+    )
 
     given Decoder[Delivered] = Decoder.instance { c =>
-      for v <- c.get[Option[Int]]("v"); ids <- c.get[Option[List[String]]]("ids")
-      yield Delivered(v.getOrElse(1), ids.getOrElse(Nil))
+      for
+        v <- c.get[Option[Int]]("v")
+        ids <- c.get[Option[List[String]]]("ids")
+        prints <- c.get[Option[Map[String, String]]]("prints")
+      yield Delivered(v.getOrElse(1), ids.getOrElse(Nil), prints.getOrElse(Map.empty))
     }
   end Delivered
 
@@ -458,19 +536,29 @@ object SessionMailbox:
 
   private def deliveredFile(sid: String): os.Path = boxDir(sid) / "delivered.json"
 
-  /** 消费墓碑落账（unlinkTaken 消费点同事务邻域；幂等追加 drop-oldest）。 */
-  private def markDeliveredSync(sid: String, ids: List[String]): Unit =
-    val clean = ids.filter(_.nonEmpty).distinct
+  /**
+   * 消费墓碑落账（unlinkTaken 消费点同事务邻域；幂等追加 drop-oldest）。
+   * 入参 = (identity, 载荷指纹)：指纹随墓碑落盘，供 mailOnce 的墓碑语义硬化
+   * （同 identity 不同载荷 ⇒ 强制入箱，见 [[payloadFingerprint]]）。空指纹
+   * （调用方无载荷可比）只落 id，判读侧按「未知」处理。
+   */
+  private def markDeliveredSync(sid: String, delivered: List[(String, String)]): Unit =
+    val clean = delivered.map((id, print) => id -> print.trim).filter(_._1.nonEmpty)
     if clean.nonEmpty then
       val f = deliveredFile(sid)
       val existing =
         if !os.exists(f) then Delivered()
         else decode[Delivered](os.read(f)).getOrElse(Delivered())
-      val merged = existing.ids.filterNot(clean.contains) ::: clean
+      val incomingIds = clean.map(_._1)
+      val merged = existing.ids.filterNot(incomingIds.contains) ::: incomingIds
       val capped = merged.takeRight(MaxDeliveredEntries)
-      if capped != existing.ids then
+      val kept = capped.toSet
+      val nextPrints =
+        existing.prints.filter((id, _) => kept.contains(id)) ++
+          clean.collect { case (id, print) if print.nonEmpty && kept.contains(id) => id -> print }
+      if capped != existing.ids || nextPrints != existing.prints then
         os.makeDir.all(boxDir(sid))
-        AtomicJson.writeSync(f, Delivered(existing.v, capped).asJson.noSpaces)
+        AtomicJson.writeSync(f, Delivered(2, capped, nextPrints).asJson.noSpaces)
 
   /** 墓碑查询（boot 对账面；坏形文件 = 空集）。 */
   def deliveredContains(sid: String, identities: Set[String]): IO[Set[String]] =
@@ -484,6 +572,16 @@ object SessionMailbox:
       decode[Delivered](os.read(f)) match
         case Right(d) => d.ids.toSet.intersect(identities)
         case Left(_) => Set.empty[String]
+
+  /** 墓碑载荷指纹读面（v1 旧账/无指纹条目 ⇒ None = 未知，调用方按「视为同件」处置）。 */
+  private def deliveredPrintSync(sid: String, identity: String): Option[String] =
+    val f = deliveredFile(sid)
+    if !os.exists(f) then None
+    else
+      decode[Delivered](os.read(f)).toOption
+        .flatMap(_.prints.get(identity))
+        .map(_.trim)
+        .filter(_.nonEmpty)
 
   /**
    * 墓碑前缀查询（#2178 generation 身份面）：真实终态入箱身份为 `taskId#gen`，
