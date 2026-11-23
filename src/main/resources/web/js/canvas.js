@@ -25,6 +25,8 @@ import { setSideBarCollapsed, isMobileViewport } from './activityBar.js';
 // 胶囊标签截断（作者令 2026-11-05 12:10 第④条「可辨识前缀 + 关键尾部」）：
 // 切法单源在 capsuleLabel.js（桌面/触屏腿与手机层腿共用一份），本模块只消费。
 import { splitCapsuleLabel, createTextMeasurer, capsuleTextAvail, CAPSULE_ELLIPSIS } from './capsuleLabel.js';
+// 文档收藏（2026-11-23 前端功能批）：胶囊左座收藏钮 + 侧边栏收藏区；存储与渲染单源在 canvasFavorites.js。
+import { toggleFavoritePath, isFavoritePath, mountSidebarFavorites, onFavoritesChange } from './canvasFavorites.js';
 // keyboard-first 三期：叠卡/胶囊环/卡窗的键位搬进规则表（keyRules.js），本模块
 // 提供三件事——① 状态 → 上下文键（派生，无推送）② 动作函数（deckKeyAction 等）
 // ③ 不再持有任何 document 级 keydown 监听。
@@ -2928,6 +2930,7 @@ function renderCanvasHeader() {
   deckTitleEl.classList.toggle('is-dirty', !!(entry && isTabDirty(entry)));
   syncHeaderActions();
   syncRefBackButton();   // F5 返回原文档：随激活页签重sync可见性/座位
+  syncFavoriteButton();  // 收藏钮：随激活页签刷新已收藏态（胶囊左座）
   // 触屏常驻横向档同步（作者令 2026-11-05 12:10）：本函数是「页签集 / 激活签 /
   // 脏标记」三处变化的公共出口 ⇒ 横排胶囊环在这里对齐新状态（桌面腿 no-op）。
   if (ringSyncFn) ringSyncFn();
@@ -2970,6 +2973,44 @@ function cardPopIcon(cls, kids) {
   }
   return svg;
 }
+/* ── 文档收藏钮（2026-11-23 前端功能批 · 作者令「按钮放在顶部胶囊左侧」）──
+ *  胶囊左座（.canvas-header 首子元素，先于 #canvas-title）。仅对带 absPath 的文件
+ *  页签可见（URL 页/临时页无收藏语义 ⇒ 隐藏）。已收藏 = is-on（实心），未收藏 = 描边。
+ *  写入唯一入口 = canvasFavorites.toggleFavoritePath（去重/置顶在 core 层）。 */
+function syncFavoriteButton() {
+  const hdr = document.querySelector('#canvas-panel .canvas-header');
+  if (!hdr) return;
+  let btn = /** @type {HTMLButtonElement|null} */ (document.getElementById('canvas-fav-btn'));
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.id = 'canvas-fav-btn';
+    btn.type = 'button';
+    btn.className = 'canvas-fav-btn';
+    // 星形图标走 namespace SVG 构建（零裸 innerHTML，同 cardPopIcon 口径）；已收藏态 CSS 填充。
+    btn.appendChild(cardPopIcon('canvas-fav-ic', [
+      ['path', { d: 'M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6-4.9-4.6 6.6-.8z' }],
+    ]));
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const entry = activeCanvasEntry();
+      if (!entry || !entry.absPath) return;
+      toggleFavoritePath({ path: entry.absPath, title: entry.title });
+      syncFavoriteButton();
+    });
+    hdr.insertBefore(btn, hdr.firstChild);
+  }
+  const entry = activeCanvasEntry();
+  const hasPath = !!(entry && entry.absPath);
+  btn.hidden = !hasPath;
+  if (!hasPath) return;
+  const on = isFavoritePath(entry.absPath);
+  btn.classList.toggle('is-on', on);
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  const label = t(on ? 'canvas.fav.remove' : 'canvas.fav.add');
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
+}
+
 function syncHeaderActions() {
   const hdr = document.querySelector('#canvas-panel .canvas-header');
   if (!hdr) return;
@@ -5435,6 +5476,9 @@ export function quoteActiveCardRef() {
 
 /** Initialize canvas event listeners. Call on DOM ready. */
 export function initCanvas() {
+  // 文档收藏（2026-11-23）：侧边栏收藏区挂载（幂等）+ 收藏变化回写胶囊钮态。
+  mountSidebarFavorites();
+  onFavoritesChange(() => syncFavoriteButton());
   writerChanged('reader');
   canvasWriter.refresh();
   // UI 批⑧：独立卡窗模式引导（?card-window=1）—— 必须先于 restoreTabs（main.js

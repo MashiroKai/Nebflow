@@ -2247,6 +2247,12 @@ export default {
   'canvas.imgFailUnreachable': '读不到这张图（路径无效或无权限）',
   'canvas.imgFailUnknown': '读取失败（HTTP {status}）',
   'canvas.closeTab': '关闭标签页',
+  'canvas.fav.add': '收藏文档',
+  'canvas.fav.remove': '取消收藏',
+  'canvas.fav.sectionTitle': '收藏',
+  'canvas.fav.empty': '还没有收藏的文档。在 canvas 顶部点收藏钮即可加入。',
+  'canvas.fav.invalid': '已失效',
+  'canvas.fav.missing': '「{title}」已不存在（文档可能被移除），无法打开。',
   'canvas.stackToggle': '叠卡切换（滚轮 / 上下拖动换卡 · 前景轮换 · 点击前景卡换入 · 横向划走关闭）',
   'canvas.noRef': '该标签页暂不支持引用',
   // canvas-reveal-in-finder 批（2026-11-19，作者令「在访达/文件浏览器打开」）：
