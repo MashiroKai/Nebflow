@@ -1022,6 +1022,8 @@ export default {
   'subagents.frozenAutoResumes': 'auto-resumed {n} time(s)',
   'subagents.frozenAutoResumesSpent': 'auto-resume budget spent — needs you: top up / switch model / cancel',
   'subagents.providerFailureGroup': '{count} background tasks: provider unavailable · {provider}',
+  // Item 3 (2026-11-23): once the recovery signal arrives the failure card greys out and is marked expired.
+  'subagents.providerFailureExpired': '{provider} recovered · failure state of {count} task(s) expired',
   // Card-family consolidation batch (2026-11-23): recovery-expectation line on the
   // failure-group card face (llm-failure-card family).
   'subagents.providerFailureRecovering': 'Waiting to recover: the engine keeps retrying with backoff and probes provider recovery, then resumes the same session — not a task failure, nothing for you to do.',

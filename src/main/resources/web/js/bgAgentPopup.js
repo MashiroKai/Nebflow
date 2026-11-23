@@ -1,4 +1,4 @@
-import { renderProviderFailureStatus } from './providerFailureStatus.js';
+import { renderProviderFailureStatus, isSessionFrozenExpired } from './providerFailureStatus.js';
 // bgAgentPopup.js — Live message viewer for background sub-agents.
 //
 // When an agent uses the Delegate/SubTask tool, sub-agent events arrive with
@@ -437,7 +437,8 @@ function ensureStepView(sessionId) {
   const view = new ChatView('bgagent-' + sessionId, fakeDom);
   view.mounted = true;
   view.sessionId = sessionId;
-  renderProviderFailureStatus(view, state.freezeDigest, (id, title) => openStepPopup(id, '', title));
+  renderProviderFailureStatus(view, state.freezeDigest, (id, title) => openStepPopup(id, '', title),
+    (id) => isSessionFrozenExpired(state.sessionBgAgents, id));
   // （c）面（作者 2026-10-08 裁定 · 定向重开）：subagent 弹窗的**在飞过程行**走
   // 9.19 裸行形态——turn-line 剧场（workline 单行呈现 + 过程卡预 tucked，10-03
   // stream-ux）只属主窗。弹窗在飞 = thinking 气泡裸流（§③ 5 行窗上限照钉）+

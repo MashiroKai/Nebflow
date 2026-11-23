@@ -47,10 +47,15 @@ const MEASURE = () => {
   out.inputTop = +ir.top.toFixed(1);
   out.overlapPx = +(lr.bottom - ir.top).toFixed(1);
   if (lr.bottom > ir.top + 0.5) out.violations.push({ rule: 'O1', what: 'last message under composer', overlapPx: out.overlapPx });
+  // O2（项 2 数值闸）：真实 reserve（#chat inline padding-bottom）必须 ≥ 输入框实际高度，
+  // 否则末条按构造即被遮。reserve 与输入框高度的差值逐态记录，不靠推断。
+  out.reserve = parseFloat(chat.style.paddingBottom) || 0;
+  out.inputH = +ir.height.toFixed(1);
+  if (out.reserve + 0.5 < out.inputH) out.violations.push({ rule: 'O2', what: 'reserve < input height', reserve: out.reserve, inputH: out.inputH });
   return out;
 };
 
-async function runOnce(browser, negative) {
+async function runOnce(browser, negative, draftLines = 0) {
   const s = await createSession(browser, {
     width: VIEW.width, height: VIEW.height, colorScheme: 'light', clock: CLOCK,
   });
@@ -58,12 +63,24 @@ async function runOnce(browser, negative) {
   await s.boot({ config: { llm: { providers: {} }, features: {} }, sessionId: 'occlusion-root', messages: HISTORY });
   await settle(s.page, 400);
   if (negative) {
-    // 修前形态：#chat 底垫归 8px（main.js 的 inline important 由同级后写覆盖）。
-    await s.page.evaluate(() => document.getElementById('chat').style.setProperty('padding-bottom', '8px', 'important'));
+    // 陈旧 reserve 负对照：输入框被外部上移 60px（键盘/dock 位移）且**不发任何 resize 事件**，
+    // 尺寸不变 ⇒ RO 不触发、reserve 停在 132。末条必被挡（O1 必红），闸据此证明非空转。
+    // （早先的 inline 8px 负对照会被 #chat 的 RO 立即重算覆盖，已弃用。）
+    await s.page.evaluate(() => { document.getElementById('input-area').style.bottom = '60px'; });
+  }
+  if (draftLines) {
+    // 多行草稿态：输入框变高 → reserve 必须随之实时跟进（RO 观察输入框）。
+    await s.page.evaluate((n) => {
+      const t = document.getElementById('input');
+      t.value = Array(n).fill('草稿行一段文字').join('\n');
+      t.dispatchEvent(new Event('input', { bubbles: true }));
+    }, draftLines);
+    await settle(s.page, 400);
   }
   await settle(s.page, 150);
   const res = await s.page.evaluate(MEASURE);
-  await s.page.screenshot({ path: join(OUT, `composer-occlusion${negative ? '-negative' : ''}.png`), animations: 'disabled', scale: 'css' });
+  const tag = `${negative ? '-negative' : ''}${draftLines ? `-draft${draftLines}` : ''}`;
+  await s.page.screenshot({ path: join(OUT, `composer-occlusion${tag}.png`), animations: 'disabled', scale: 'css' });
   await s.close();
   return res;
 }
@@ -78,7 +95,11 @@ async function main() {
   if (pos.rows < 10) { failed++; console.error(`FAIL vacuous: only ${pos.rows} rows`); }
   if (!pos.scrollable) { failed++; console.error('FAIL vacuous: stream not scrollable'); }
   if (pos.violations.length) { failed++; console.error('FAIL positive:', JSON.stringify(pos)); }
-  else console.log(`PASS positive: rows=${pos.rows} lastBottom=${pos.lastBottom} inputTop=${pos.inputTop}`);
+  else console.log(`PASS positive: rows=${pos.rows} lastBottom=${pos.lastBottom} inputTop=${pos.inputTop} reserve=${pos.reserve} inputH=${pos.inputH}`);
+  // 多行草稿（8 行）：输入框变高后 reserve 须实时跟进到 ≥ 输入框高度（O2），末条不被遮（O1）。
+  const draft = await runOnce(browser, false, 8);
+  if (draft.violations.length) { failed++; console.error('FAIL draft8:', JSON.stringify(draft)); }
+  else console.log(`PASS draft8: lastBottom=${draft.lastBottom} inputTop=${draft.inputTop} reserve=${draft.reserve} inputH=${draft.inputH}`);
   const neg = await runOnce(browser, true);
   if (neg.violations.length) console.log(`PASS negative-control (red as expected: ${neg.violations.map((v) => v.rule).join(',')})`);
   else { failed++; console.error('FAIL negative-control: gate blind (no overlap on pre-fix form)', JSON.stringify(neg)); }

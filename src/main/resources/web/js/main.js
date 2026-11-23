@@ -2,7 +2,7 @@
 // chatMount.js 里工厂装配 —— 必须是**首位 import**：#input-bar / #search-overlay
 // 的静态壳要在任何应用模块求值取节点之前填充完成（时序契约见 chatMount.js 头注）。
 import './chatMount.js';
-import { renderProviderFailureStatus } from './providerFailureStatus.js';
+import { renderProviderFailureStatus, isSessionFrozenExpired } from './providerFailureStatus.js';
 import { renderLlmFailureCard, findLlmFailureCard, llmFailureKey, createLlmDismissStore } from './llmFailureCard.js';
 import { saveSlotPreferredModel, getAllModelRefs } from './modelPanel.js';
 import { key } from './branding.js'; // MUST be first: storage-key migration runs at module init, before state.js/i18n.js read localStorage.
@@ -2632,6 +2632,7 @@ function applyDelegateFrozen(rootSid, sid, patch) {
   }
   const view = rootSid ? findViewBySessionId(rootSid) : null;
   if (view) renderBgAgentDropdown && renderBgAgentDropdown();
+  if (touched) refreshFreezeSurfaces();
   return touched;
 }
 
@@ -2701,10 +2702,12 @@ onMessage('delegateWoken', (msg) => {
       }
       if (msg.status) info.status = msg.status;
       info.waiting = undefined;
+      // 项 3：恢复信号显式标记（供失败卡判过期；不能用 frozen===false，普通行默认即 false）。
+      info.freezeRecovered = true;
       touched = true;
     }
   }
-  if (touched) renderBgAgentDropdown && renderBgAgentDropdown();
+  if (touched) { renderBgAgentDropdown && renderBgAgentDropdown(); refreshFreezeSurfaces(); }
 });
 
 // 面板「唤醒」动作回执（delegateWakeResult）：成功 ⇒ 撤掉冻结标记（同一会话续跑，
@@ -2733,13 +2736,14 @@ onMessage('delegateWakeResult', (msg) => {
     }
     if (!touched) {
       // 行不在本地面板（另一台设备/已刷新）也要落地：交给扁平通道兜底。
-      applyDelegateFrozen(null, sid, ok ? { frozen: false, frozenSince: null, frozenReason: '' } : {});
+      applyDelegateFrozen(null, sid, ok ? { frozen: false, frozenSince: null, frozenReason: '', freezeRecovered: true } : {});
     }
   } else {
     applyDelegateFrozen(null, sid, ok
       ? {
         frozen: false, frozenSince: null, frozenReason: '', frozenDetail: '', dormantHours: 0,
         freezeKind: '', needsHuman: false, freezeReasonWire: '', freezeReason: null, freezeResumeAt: null,
+        freezeRecovered: true,
       }
       : {});
   }
@@ -2773,12 +2777,22 @@ onMessage('delegateFreezeDigest', (msg) => {
       autoResumesExhausted: !!it.autoResumesExhausted,
     });
   }
-  for (const view of Object.values(chatViews)) {
-    renderProviderFailureStatus(view, state.freezeDigest, (id, title) =>
-      import('./bgAgentPopup.js').then(m => m.openStepPopup(id, '', title)));
-  }
+  refreshFreezeSurfaces();
   renderBgAgentDropdown && renderBgAgentDropdown();
 });
+
+/**
+ * 冻结失败卡面的单一重绘口（项 3 · 2026-11-23）：digest 帧、恢复帧（delegateWoken）、
+ * 冻结标记变更（applyDelegateFrozen）、唤醒回执都走这里。过期判据读行表的显式
+ * `frozen === false`，见 providerFailureStatus.isSessionFrozenExpired。
+ */
+function refreshFreezeSurfaces() {
+  for (const view of Object.values(chatViews)) {
+    renderProviderFailureStatus(view, state.freezeDigest,
+      (id, title) => import('./bgAgentPopup.js').then(m => m.openStepPopup(id, '', title)),
+      (id) => isSessionFrozenExpired(state.sessionBgAgents, id));
+  }
+}
 
 onMessage('agentDone', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
@@ -4604,6 +4618,10 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
   };
   const ro = new ResizeObserver(updateChatPadding);
   ro.observe(inputArea);
+  // 项 2（2026-11-23 作者令「消息被输入框挡一半」）：reserve 公式 = #chat 底边 − 输入框顶边，
+  // 两端任一移动都会改变 reserve。只观察输入框时，#chat 底边单独移动（安全区/dock/地址栏
+  // 变化）不会重算 ⇒ reserve 陈旧、末条被挡。把 #chat 自身也纳入观察。
+  ro.observe(chat);
   // A virtual keyboard / browser chrome can move the composer without changing
   // its own size, so ResizeObserver alone will not refresh the scroll reserve.
   // visualViewport also reports keyboard-driven viewport changes on mobile.

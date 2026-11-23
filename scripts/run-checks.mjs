@@ -54,9 +54,16 @@ export const CHECKS = [
   // 不 toast；原图腿通 ⇒ 灯箱图解码；负对照无缩略 ⇒ toast 必现（路径活着）。
   { name: 'mobile-image-preview-fallback', profiles: ['frontend'], timeoutMs: 120_000,
     argv: [process.execPath, 'tests/mobile-image-preview-fallback.spec.mjs'] },
-  // 手机消息流末条被输入框遮挡闸（2026-11-23 · IMG_2036）：#input-area 整框为控件矩形。
+  // 手机消息流末条被输入框遮挡闸（2026-11-23 · IMG_2036）：#input-area 整框为控件矩形；
+  // O2 断言真实 reserve ≥ 输入框高度（静止 / 8 行草稿两态），负对照 = 陈旧 reserve。
   { name: 'mobile-composer-occlusion', profiles: ['frontend'], timeoutMs: 120_000,
     argv: [process.execPath, 'tests/mobile-composer-occlusion.spec.mjs'] },
+  // 失败卡「恢复即过期」（项 3 · 2026-11-23）：真实 WS 桩驱动 digest + delegateWoken，断言转灰/计数/负对照。
+  { name: 'provider-failure-expired', profiles: ['frontend'], timeoutMs: 180_000,
+    argv: ['npm', 'exec', '--no', '--', 'playwright', 'test', 'tests/provider-failure-expired.spec.mjs', '--workers=1'] },
+  // 后台面板历史卡堆叠折叠（项 1 · 2026-11-23）：H1–H6。
+  { name: 'bg-panel-history-fold', profiles: ['frontend'], timeoutMs: 180_000,
+    argv: ['npm', 'exec', '--no', '--', 'playwright', 'test', 'tests/bg-panel-history-fold.spec.mjs', '--workers=1'] },
   nodeCheck('design-tokens', 'check-design-tokens'),
   // 全面板圆角令牌覆盖（2026-11-23 作者第三次点名「按钮是方的」）：全局扫描，任何未接令牌的
   // 方角 / 字面量圆角命中即红，除非登记放行理由（ALLOW 表）。

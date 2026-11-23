@@ -84,6 +84,9 @@
 .llm-failure-card .llm-failure-actions,
 .llm-failure-card .llm-failure-close { cursor: default; }
 .llm-failure-card.is-fading { opacity: 0; }
+/* 项 3（2026-11-23）：恢复信号到达 ⇒ 过期卡转灰（失败状态已不成立，保留以告知结果）。 */
+.llm-failure-card--expired { opacity: 0.6; filter: grayscale(1); }
+.llm-failure-card .option-cancel.is-expired { opacity: 0.55; text-decoration: line-through; pointer-events: none; }
 /* 标题行右侧关闭钮（显式兜底）。 */
 .llm-failure-close {
   margin-left: auto;
