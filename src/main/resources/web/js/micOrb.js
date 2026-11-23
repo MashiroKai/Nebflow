@@ -1128,10 +1128,19 @@ class MicOrb {
       // the same rawVoice value.
       if (voiceEngineMod) voiceEngineMod.dispatchMicVolume(v);
     });
-    /** @type {{ wrap: HTMLElement, canvas: HTMLCanvasElement,
-        cssOrb: HTMLElement|null, renderer: OrbRenderer, webglOk: boolean,
-        lostHandler: EventListener|null } | null} */
-    this.mirror = null;
+    /* social-chat-input-unify 批（2026-11-21）: mirror → **surface 注册表**。
+       改动前只有 `this.mirror` 一个额外渲染面（全双工 overlay 专用），第二面
+       （消息窗 composer 的语音光球）无处可挂 —— 要么另建一条渲染管线（= 第二
+       套光球），要么不显示。现在同一份管线按 wrap 注册表 fan-out：每个 surface
+       自带 canvas/renderer/状态类，`apply()` / `applyTheme()` / a11y 逐面重放。
+       `owned` = 该面**自带状态源**（消息窗听写态机），不跟随主条 dims。 */
+    /** @type {Map<HTMLElement, { wrap: HTMLElement, canvas: HTMLCanvasElement,
+        cssOrb: HTMLElement|null, renderer: OrbRenderer|null, webglOk: boolean,
+        lostHandler: EventListener|null, state: string, owned: boolean,
+        rendered: boolean }>} */
+    this.surfaces = new Map();
+    /** @type {HTMLElement|null} 最近一次 registerMirror 绑定的 wrap（兼容旧 API） */
+    this.mirrorWrap = null;
     /* v8.3.0: persisted appearance selection (基调/状态映射/自定义) — resolved
        into renderer boards by applyTheme; reloaded on CHANGE_EVENT. */
     this.orbSel = orbPresets.loadSaved();
@@ -1173,73 +1182,146 @@ class MicOrb {
          setStateCfg, so a theme switch never re-triggers the pulse (F5). */
       this.renderer.setPalette(orbPresets.boardForState(this.state, this.orbSel, isLight));
     }
-    /* Theme switch fans out to the mirror too — uniform-only, same F5 rule
-       (no setStateCfg here: that would re-trigger the mirror's pulse). */
-    const m = this.mirror;
-    if (m && m.webglOk && m.renderer) {
-      m.renderer.setTheme(isLight);
-      m.renderer.setPalette(orbPresets.boardForState(this.state, this.orbSel, isLight));
+    /* Theme switch fans out to every extra surface — uniform-only, same F5
+       rule (no setStateCfg here: that would re-trigger a surface's pulse). */
+    for (const s of this.surfaces.values()) {
+      if (!s.webglOk || !s.renderer) continue;
+      s.renderer.setTheme(isLight);
+      s.renderer.setPalette(orbPresets.boardForState(s.state, this.orbSel, isLight));
     }
   }
 
   /* ======================================================================
-     Voice-mode mirror orb (voice-mode batch): a second render surface for
-     the centered overlay bubble. The BAR orb stays the single source of
-     truth — the mirror only replays whatever apply()/applyTheme() decide.
+     Extra orb surfaces (voice-mode batch → social-chat-input-unify batch).
+     A "surface" = any orb wrap that replays this orb's render pipeline.
+       · 全双工 overlay 气泡（voice-mode 批，`registerMirror` 旧 API）= 跟随主条
+       · 消息窗 composer 语音光球（social-chat-input-unify 批）= **自带状态源**
+         （`owned:true`，由 fm composer 的听写态机写入），不跟主条 dims —— 主条
+         的 frozen/busy/offline 是**回合面**语义，消息窗不是回合面。
+     The BAR orb stays the render single source: one ShaderMaterial recipe, one
+     preset table, one state table — a second surface never gets its own copy.
      ====================================================================== */
 
   /**
-   * Bind the overlay's orb wrap as a mirror of this orb. Call again to
-   * rebind; pair with unregisterMirror() when the overlay closes.
+   * Bind an extra orb wrap. Call again with the same wrap to rebind; pair with
+   * unregisterSurface() when the surface closes.
    * @param {HTMLElement} wrap element carrying .mic-orb-wrap state classes
+   * @param {{ size?: number, owned?: boolean }} [opts] canvas render size (the
+   *   bar orb is 64; the overlay mirror is 132) + whether the surface carries
+   *   its own state source instead of replaying the bar orb's.
    */
-  registerMirror(wrap) {
-    this.unregisterMirror();
+  registerSurface(wrap, opts = {}) {
+    if (!wrap) return;
+    this.unregisterSurface(wrap);
     const canvas = /** @type {HTMLCanvasElement|null} */ (wrap.querySelector('.orb-canvas'));
     if (!canvas) return;
     const cssOrb = /** @type {HTMLElement|null} */ (wrap.querySelector('.css-orb'));
-    const renderer = new OrbRenderer(canvas, { size: 132, reducedMotion: this.reduced });
-    const m = { wrap, canvas, cssOrb, renderer, webglOk: !renderer.failed, lostHandler: null };
-    // Context loss on the mirror degrades it to the CSS fallback, exactly
-    // like the bar orb — state colors stay correct either way.
-    m.lostHandler = (e) => {
-      e.preventDefault();
-      m.webglOk = false;
-      if (m.renderer) m.renderer.pause();
-      this.applyMirror(this.state);
+    const renderer = new OrbRenderer(canvas, { size: opts.size || 64, reducedMotion: this.reduced });
+    const s = {
+      wrap, canvas, cssOrb, renderer, webglOk: !renderer.failed,
+      lostHandler: null, state: 'idle', owned: opts.owned === true, rendered: false,
     };
-    canvas.addEventListener('webglcontextlost', m.lostHandler);
-    this.mirror = m;
-    this.applyMirror(this.state);
+    // Context loss on any surface degrades it to the CSS fallback, exactly
+    // like the bar orb — state colors stay correct either way.
+    s.lostHandler = (e) => {
+      e.preventDefault();
+      s.webglOk = false;
+      if (s.renderer) s.renderer.pause();
+      this.renderSurface(s);
+    };
+    canvas.addEventListener('webglcontextlost', s.lostHandler);
+    this.surfaces.set(wrap, s);
+    this.renderSurface(s);
+  }
+
+  /** @param {HTMLElement} wrap */
+  unregisterSurface(wrap) {
+    const s = this.surfaces.get(wrap);
+    if (!s) return;
+    this.surfaces.delete(wrap);
+    if (s.lostHandler) s.canvas.removeEventListener('webglcontextlost', s.lostHandler);
+    if (s.renderer) s.renderer.pause();
+  }
+
+  /** Forget every extra surface (close = no cross-window leak). */
+  unregisterAllSurfaces() {
+    for (const wrap of [...this.surfaces.keys()]) this.unregisterSurface(wrap);
+  }
+
+  /**
+   * Drive one **owned** surface's state (message-window dictation state machine).
+   * No-op for unknown wraps / non-owned surfaces. First transition renders
+   * with the given key; later ones replay it with the pulse path.
+   * @param {HTMLElement} wrap
+   * @param {string} key one of STATES[].k
+   */
+  setSurfaceState(wrap, key) {
+    const s = this.surfaces.get(wrap);
+    if (!s || !s.owned) return;
+    const next = (STATE_BY_KEY[key] || STATE_BY_KEY.idle).k;
+    if (s.state === next && s.rendered) return;
+    s.state = next;
+    this.renderSurface(s);
+  }
+
+  /**
+   * Paint one surface at its own state (single implementation for the initial
+   * bind, context loss and state changes; owned surfaces never read dims).
+   * @param {NonNullable<ReturnType<MicOrb['surfaceFor']>>} s
+   */
+  renderSurface(s) {
+    const key = s.owned ? s.state : this.state;
+    const st = STATE_BY_KEY[key] || STATE_BY_KEY.idle;
+    s.state = st.k;
+    s.rendered = true;
+    const useCss = !s.webglOk;
+    if (s.cssOrb) {
+      s.cssOrb.className = 'css-orb orb ' + st.cls;
+      s.cssOrb.style.display = useCss ? 'block' : 'none';
+    }
+    if (s.canvas) s.canvas.style.display = useCss ? 'none' : 'block';
+    if (!useCss && s.renderer) {
+      s.renderer.setStateCfg(st);
+      const isLight = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+      s.renderer.setTheme(isLight);
+      s.renderer.setPalette(orbPresets.boardForState(st.k, this.orbSel, isLight));
+    }
+    for (const x of STATES) s.wrap.classList.remove(x.cls);
+    s.wrap.classList.add(st.cls);
+    // a11y: owned surfaces announce their own state (the bar label is the
+    // bar's; a second surface reading a stale label would lie).
+    if (s.owned) {
+      const label = t(st.i18n, { agent: rootDisplayName() });
+      const btn = /** @type {HTMLElement|null} */ (s.wrap.querySelector('.micbubble'));
+      if (btn) btn.setAttribute('aria-label', label);
+      if (s.cssOrb) s.cssOrb.setAttribute('aria-label', label);
+    }
+  }
+
+  /** @param {HTMLElement} wrap */
+  surfaceFor(wrap) { return this.surfaces.get(wrap) || null; }
+
+  /* ── 兼容别名（voice-mode 批的旧 API；语义 = 单个 132 尺寸 mirror）──────── */
+  /** @param {HTMLElement} wrap */
+  registerMirror(wrap) {
+    this.unregisterMirror();
+    this.mirrorWrap = wrap || null;
+    this.registerSurface(wrap, { size: 132 });
   }
 
   unregisterMirror() {
-    const m = this.mirror;
-    if (!m) return;
-    this.mirror = null;
-    if (m.lostHandler) m.canvas.removeEventListener('webglcontextlost', m.lostHandler);
-    if (m.renderer) m.renderer.pause();
+    if (this.mirrorWrap) this.unregisterSurface(this.mirrorWrap);
+    this.mirrorWrap = null;
   }
 
-  /** Replay one state onto the mirror (full path — state changes MAY pulse). */
+  /** Replay one state onto the legacy mirror surface (kept for the voice-mode
+   *  overlay leg; delegates to renderSurface — one paint implementation). */
   applyMirror(key) {
-    const m = this.mirror;
+    const m = this.mirrorWrap ? this.surfaces.get(this.mirrorWrap) : null;
     if (!m) return;
-    const s = STATE_BY_KEY[key] || STATE_BY_KEY.idle;
-    const useCss = !m.webglOk;
-    if (m.cssOrb) {
-      m.cssOrb.className = 'css-orb orb ' + s.cls;
-      m.cssOrb.style.display = useCss ? 'block' : 'none';
-    }
-    if (m.canvas) m.canvas.style.display = useCss ? 'none' : 'block';
-    if (!useCss && m.renderer) {
-      m.renderer.setStateCfg(s);
-      const isLight = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
-      m.renderer.setTheme(isLight);
-      m.renderer.setPalette(orbPresets.boardForState(s.k, this.orbSel, isLight));
-    }
-    for (const st of STATES) m.wrap.classList.remove(st.cls);
-    m.wrap.classList.add(s.cls);
+    m.owned = false;
+    m.state = (STATE_BY_KEY[key] || STATE_BY_KEY.idle).k;
+    this.renderSurface(m);
   }
 
   /**
@@ -1297,7 +1379,12 @@ class MicOrb {
         wrap.classList.add(s.cls);
       }
     }
-    this.applyMirror(s.k);
+    /* Fan out to every **following** surface (owned surfaces carry their own
+       state source — the message-window orb must not inherit round-surface
+       dims such as frozen/busy/offline). */
+    for (const surf of this.surfaces.values()) {
+      if (!surf.owned) this.renderSurface(surf);
+    }
     this.updateA11y();
   }
 

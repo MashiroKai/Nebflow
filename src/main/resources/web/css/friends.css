@@ -2086,12 +2086,15 @@ body:not(.mobile-layer) #profile-face-overlay {
 
 .fm-input { flex: 1; min-width: 0; }
 .fm-input:disabled { opacity: 0.5; cursor: not-allowed; }
-/* voicefix 批 腿 B（作者 2026-09-21 14:0x ③）：好友/群聊输入条最左的**简单麦克风**。
-   控件本体 = 主窗既有 `.icon-btn` 族（几何/玻璃 hover 零新增）；录音中反馈 =
-   主窗既有 `.icon-btn.recording`（微信绿 + voicePulse，input.css，零新值）；
-   本段只补布局对位与转写中态（sapphire = 既有 token，与主窗退役前同族语义）。 */
-.fm-mic-btn { flex-shrink: 0; align-self: center; }
-.fm-mic-btn.processing { color: rgb(var(--sapphire)); }
+/* voicefix 批 腿 B（作者 2026-09-21 14:0x ③）→ social-chat-input-unify 批
+   （2026-11-21，作者令「社交对话窗口的输入框完全与主会话输入框保持一致——包括
+   语音气泡、发送按钮」）：好友/群聊输入条最左的语音入口不再是「简单麦克风图标
+   键」，而是**主会话同一枚液态光球**（`.mic-orb-wrap > button.micbubble`，
+   形态/几何/渲染全在 css/input.css + js/micOrb.js 单点）。本段只留壳的容器
+   对位（`flex-shrink:0`，与 `.mic-orb-wrap` 基类同值 ⇒ 零新增几何），
+   `recording`/`processing` 两枚既有宿主钩子类仍由 fmComposer 写入（QA 寻址面
+   与 stt-disabled 判据按它工作），视觉反馈改由光球状态类 `s-*` 承载。 */
+.fm-mic-btn { flex-shrink: 0; }
 .fm-send-btn { flex-shrink: 0; }
 /* Disabled material now lives in sapphire.css's neutral-gray send ramp
    (--glass-send-*), so only the cursor stays here. Dropping the old

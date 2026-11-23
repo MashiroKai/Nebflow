@@ -2847,9 +2847,12 @@
 .cfg-model-test-result .st-ic { width: 11px; height: 11px; flex-shrink: 0; }
 
 /* ② STT 停用态（D 件）：入口全收——主窗 mic 气泡与好友消息 mic 藏匿
-   （voiceEngine.sttEnabled 引擎闸是纵深第二层）。 */
-body.stt-disabled #mic-orb-wrap { display: none !important; }
-body.stt-disabled .fm-mic-btn { display: none !important; }
+   （voiceEngine.sttEnabled 引擎闸是纵深第二层）。
+   social-chat-input-unify 批（2026-11-21）：消息面语音入口已是主会话同一枚
+   **液态光球**（`.mic-orb-wrap` 壳），只藏内层键会留一个 64px 空气球
+   ⇒ 与主窗同一条规则按**壳**收，两个宿主一份声明。 */
+body.stt-disabled #mic-orb-wrap,
+body.stt-disabled .fm-input-bar .mic-orb-wrap { display: none !important; }
 
 /* ③ 生图设置节（②③件；fourfix 批 ③件 2026-10-29 重做——「普通 LLM 配置过程」：
    控件族照旧 cfg-form-group 纵排，key 行 = 掩码输入 + 状态徽标同排）。 */
