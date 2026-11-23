@@ -70,6 +70,7 @@
   content: '';
   position: absolute;
   top: 0;
+  border-radius: var(--ds-radius-thin);
   left: calc(var(--set-row-pad-x) + var(--set-icon-box) + var(--set-row-gap));
   right: var(--set-row-pad-x);
   height: 1px;

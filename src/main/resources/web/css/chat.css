@@ -9,7 +9,7 @@
 .ask-merge-row > .nf-select > .nf-select-trigger { width: 100%; }
 .ask-merge-row .option-btn { width: auto; margin: 0; }
 .ask-merge-list { display: grid; gap: 8px; }
-.ask-merge-item { display: grid; gap: 8px; border: 1px solid var(--st-border); border-radius: 10px; padding: 10px; }
+.ask-merge-item { display: grid; gap: 8px; border: 1px solid var(--st-border); border-radius: var(--ds-radius-button); padding: 10px; }
 .ask-merge-item.dragging { opacity: .45; }
 /* 行首勾选面（role="checkbox" 按钮，形态 = 多选卡 `.option-check` 同族；不新画开关，
    toggle-unify 门禁止「checkbox 冒充开关」）。勾态 = picked 同款绿底 + 白勾。 */
@@ -21,6 +21,8 @@
   place-items: center;
 }
 .ask-merge-check[aria-checked="true"] {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   border-color: var(--ask-green);
   background: var(--ask-green);
 }
@@ -403,6 +405,8 @@
    「缩进 + 引导竖线 + 小一号主名」既有档；DOM 机器可读锚 = data-bg-row-level
    （head/child/top，bgAgents.js 写点）。 */
 .bg-task-row-head {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   border-top: 1px solid var(--glass-control-border);
   box-shadow: inset 3px 0 0 rgb(var(--accent-agent-light) / 0.35);
 }
@@ -1085,9 +1089,15 @@
   flex-shrink: 0;
   display: inline-block;
 }
-.bg-health-healthy { background: var(--status-success-icon); }
-.bg-health-suspect { background: var(--status-warn-icon); }
-.bg-health-escalated { background: var(--status-error-icon); }
+.bg-health-healthy {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--status-success-icon); }
+.bg-health-suspect {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--status-warn-icon); }
+.bg-health-escalated {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--status-error-icon); }
 /* #753 同族聚合行（waiter 族）：组头行 — 收起态默认（计数一目了然）；成员行
    缩进一格（与 subagent 面板 bg-task-row-child 同款缩进语义）；carets 中性。 */
 .bg-task-row-family { border-top: 1px solid var(--color-frame-border); }
@@ -1104,7 +1114,9 @@
    token), back to the sapphire triplet in dark. Mirrors #bgagent-indicator. */
 @media (prefers-color-scheme: dark) {
   .bg-task-state.bg-state-frozen { color: rgb(var(--sapphire)); }
-  .bg-task-status.bg-status-frozen { background: rgb(var(--sapphire)); box-shadow: 0 0 4px rgb(var(--sapphire) / 0.4); }
+  .bg-task-status.bg-status-frozen {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: rgb(var(--sapphire)); box-shadow: 0 0 4px rgb(var(--sapphire) / 0.4); }
 }
 @media (prefers-reduced-motion: reduce) {
   .bg-task-status { animation: none !important; }
@@ -1517,6 +1529,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   vertical-align: 1px;
 }
 .delivery-queue {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: var(--color-text-muted);
   background: rgba(128, 128, 128, 0.14);
 }
@@ -1923,10 +1937,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   font-size: var(--ds-fs-hint);
 }
 .bubble.ai th, .bubble.ai td, .bubble.injected th, .bubble.injected td, .ask-bub.ai th, .ask-bub.ai td {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   border: 1px solid var(--color-border);
   padding: var(--ds-space-1) var(--ds-space-2);
 }
-.bubble.ai th, .bubble.injected th, .ask-bub.ai th { background: #f5f5f5; }
+.bubble.ai th, .bubble.injected th, .ask-bub.ai th {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: #f5f5f5; }
 /* 2026-10-30 按钮量产批登记收敛项：chat 链接全面蓝化 —— 设计系统蓝
    rgb(var(--sapphire))（#5b7fbf 单源 triplet，亮暗同值可读），原
    var(--color-primary) 品牌绿退役为链接色（绿保留给主操作/通知点族）。
@@ -1979,6 +1997,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   width: fit-content;
 }
 .duration-badge-divider {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-thin);
   width: 1px;
   height: 10px;
   background: currentColor;
@@ -2051,6 +2071,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 /* Pop tool — rainbow filename inline + clickable card（.tool-card.pop-tool-card
    的 cursor 钩子随族化退役：.ds-tool-card 本体即 cursor:pointer） */
 .pop-rainbow-name {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   font: 600 var(--ds-fs-hint) ui-monospace, SFMono-Regular, monospace;
   background: linear-gradient(90deg, #e84855, #f68bd0, #9b5de5, #4cc9f0, #06d6a0, #ffd166, #e84855);
   background-size: 300% 100%;
@@ -2087,6 +2109,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   font-family: inherit;
 }
 .tool-stream-body pre.tool-body-pre .cursor {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-thin);
   display: inline-block;
   width: 5px;
   height: 14px;
@@ -2132,6 +2156,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 
 .notice-info {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: rgba(91,141,217,0.1);
   color: #5b8dd9;
 }
@@ -2183,7 +2209,9 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
       inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
   }
 
-  .notice-info { background: rgba(91,141,217,0.12); }
+  .notice-info {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: rgba(91,141,217,0.12); }
 
   .bubble.ai {
     border-color: rgba(255, 255, 255, 0.04);
@@ -2207,7 +2235,9 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   .bubble.ai pre::-webkit-scrollbar-thumb, .bubble.injected pre::-webkit-scrollbar-thumb, .ask-bub.ai pre::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); }
   .bubble.ai pre::-webkit-scrollbar-thumb:hover, .bubble.injected pre::-webkit-scrollbar-thumb:hover, .ask-bub.ai pre::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
   .bubble.ai code, .bubble.injected code, .ask-bub.ai code { background: rgba(255,255,255,0.08); }
-  .bubble.ai th, .bubble.injected th, .ask-bub.ai th { background: #22252e; }
+  .bubble.ai th, .bubble.injected th, .ask-bub.ai th {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: #22252e; }
   /* dark-border-weight 批 2026-11-18：本条 `border-top-color: #2a2d35` 已随上面
      基规则改走 --color-border 而**逐值冗余** —— 该令牌在本块同一个
      prefers-color-scheme: dark 条件下也解析成 #2a2d35，同特异度、更靠后本是它
@@ -2219,7 +2249,9 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 
   .tool-stream-body { background: rgba(255,255,255,0.04); }
   .tool-stream-body pre.tool-body-pre { color: #b0b3ba; }
-  .tool-stream-body pre.tool-body-pre .cursor { background: #7b7e88; }
+  .tool-stream-body pre.tool-body-pre .cursor {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: #7b7e88; }
   .tool-stream-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: var(--ds-radius-thin); }
 
   /* 思考窗硬上限暗档：同一窗口长度（max-height 是长度非颜色，双主题同值），
@@ -2968,6 +3000,8 @@ body:not(.mobile-layer) .option-preview-media {
   margin-top: var(--ds-space-1);
 }
 .ob-cursor {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-thin);
   display: inline-block;
   width: 1px;
   height: 1em;
@@ -3935,6 +3969,8 @@ body:not(.mobile-layer) .option-preview-media {
 
 /* Streaming cursor */
 .cursor {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-thin);
   display: inline-block;
   width: 2px;
   height: 1em;
@@ -4186,6 +4222,8 @@ body:not(.mobile-layer) .option-preview-media {
    frame takes the remaining height. A long list scrolls inside the strip
    instead of eating the document. */
 .canvas-tab-pane > .html-card-warning {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   flex: none;
   max-height: 40%;
   overflow-y: auto;
@@ -4468,6 +4506,8 @@ body:not(.mobile-layer) .option-preview-media {
 }
 @media (hover: hover) {
   .error-restart-btn:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
     background: rgb(var(--amber) / 0.12);
   }
 }
@@ -4489,6 +4529,8 @@ body:not(.mobile-layer) .option-preview-media {
 }
 @media (hover: hover) {
   .error-wait-btn:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
     background: var(--color-frame-hover, rgba(128, 128, 128, 0.12));
     color: var(--color-text);
   }
@@ -4621,7 +4663,9 @@ body:not(.mobile-layer) .option-preview-media {
   transition: background 0.1s;
 }
 .wsp-row:last-child { border-bottom: none; }
-.wsp-row.wsp-dir:hover { background: var(--color-frame-hover); }
+.wsp-row.wsp-dir:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--color-frame-hover); }
 .wsp-row-icon { color: var(--color-frame-text-muted); flex-shrink: 0; width: 16px; text-align: center; display: inline-flex; justify-content: center; }
 .wsp-row-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wsp-row.wsp-empty {
@@ -4858,6 +4902,8 @@ body:not(.mobile-layer) .option-preview-media {
    destructive buttons in modal.css. ui-status-redesign（S10 / 盘点 #47）：常显
    「清空」键字转常规色，行首 trash-2 红图标承载；hover 转红（铁律三）。 */
 .wsp-clear {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   display: inline-flex;
   align-items: center;
   gap: var(--ds-space-1);
@@ -4867,6 +4913,8 @@ body:not(.mobile-layer) .option-preview-media {
 }
 .wsp-clear .st-ic { color: var(--status-error-icon); }
 .wsp-clear:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: rgba(220, 60, 60, 0.08) !important;
   border-color: rgba(220, 60, 60, 0.5) !important;
   box-shadow:
@@ -5459,6 +5507,8 @@ body:not(.mobile-layer) .option-preview-media {
   background: color-mix(in srgb, var(--color-text-muted) 10%, var(--color-bubble-user));
 }
 .fm-msg.in .fm-att-media .pop-media:has(.pop-img) {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: color-mix(in srgb, var(--color-text-muted) 10%, var(--color-bubble-ai));
 }
 .fm-att-media .pop-media.is-loading:has(.pop-img)::before {
@@ -5494,8 +5544,12 @@ body:not(.mobile-layer) .option-preview-media {
   font-weight: 600;
   pointer-events: none;
 }
-.fm-att-media .pop-media:has(.pop-img.nf-img-failed) { background: color-mix(in srgb, var(--color-text-muted) 14%, var(--color-bubble-user)); }
-.fm-msg.in .fm-att-media .pop-media:has(.pop-img.nf-img-failed) { background: color-mix(in srgb, var(--color-text-muted) 14%, var(--color-bubble-ai)); }
+.fm-att-media .pop-media:has(.pop-img.nf-img-failed) {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: color-mix(in srgb, var(--color-text-muted) 14%, var(--color-bubble-user)); }
+.fm-msg.in .fm-att-media .pop-media:has(.pop-img.nf-img-failed) {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: color-mix(in srgb, var(--color-text-muted) 14%, var(--color-bubble-ai)); }
 .fm-image-retry {
   position: absolute;
   z-index: 2;
@@ -5555,7 +5609,9 @@ body:not(.mobile-layer) .option-preview-media {
    the WHOLE frame is visible at its own ratio, and the box keeps whatever
    aspect ratio the renderer derived from the front media
    (`.pop-expand-view .media-layer` above). */
-.pop-img, .pop-video { width: 100%; height: 100%; display: block; object-fit: contain; background: #17191f; }
+.pop-img, .pop-video {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); width: 100%; height: 100%; display: block; object-fit: contain; background: #17191f; }
 /* 缺陷 D fix (2026-10-03 UI-E/UI-F): the failed-media placeholder used to be
    reachable ONLY for `.bubble.ai img` (see the 2026-09-15 rule at the top of
    this file) — a Pop artifact face lives in `.row.pop-artifact`, so a broken
@@ -5613,6 +5669,8 @@ body:not(.mobile-layer) .option-preview-media {
   pointer-events: none; font-variant-numeric: tabular-nums;
 }
 .vd-progress {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-thin);
   position: absolute; left: 0; bottom: 0; height: 3px; width: 0%;
   background: var(--color-primary); pointer-events: none;
 }
@@ -5795,6 +5853,8 @@ body:not(.mobile-layer) .option-preview-media {
    `.on` 显隐）同名撞车的机制根因（后载者 display:none 压过本块 display:flex ⇒
    实测「点卡片放大毫无反应」）。两灯箱同一套开合词法（`.on` = 可视态），形各自一档。 */
 .nf-lightbox.nf-lightbox--media {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: fixed; inset: 0; z-index: 3200; /* above search-overlay (310), below the modal family (11000) */
   display: flex; align-items: center; justify-content: center;
   background: rgba(0, 0, 0, 0.78);
@@ -5977,9 +6037,13 @@ body:not(.mobile-layer) .option-preview-media {
 /* Give user inline media and social attachments a white mat without painting
    the agent Pop card (whose dark backing is an existing contract). */
 .row.user-media .pop-media:has(> .pop-img),
-.fm-msg .fm-att-list .pop-media:has(> .pop-img) { background: #fff; }
+.fm-msg .fm-att-list .pop-media:has(> .pop-img) {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: #fff; }
 /* Agent Pop media cards have a dark base; place their mat only under images. */
-.pop-artifact:not(.user) .pop-img { background: #fff; }
+.pop-artifact:not(.user) .pop-img {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: #fff; }
 /* The user message's inline attachment image also composites against its bubble. */
 .bubble.user.att-bubble .att-img { background: #fff; }
 @media (prefers-color-scheme: dark) {
@@ -6091,6 +6155,8 @@ body:not(.mobile-layer) .option-preview-media {
 }
 .search-media-card:hover { border-color: rgba(64, 132, 240, 0.55); transform: translateY(-1px); }
 .search-media-thumb {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   width: 100%; aspect-ratio: 4 / 3; object-fit: cover;
   display: block; background: #17191f;
 }

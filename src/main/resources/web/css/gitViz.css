@@ -126,7 +126,9 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
               color var(--ds-dur-hover) var(--ds-ease-std);
 }
 .gitviz-seg-btn + .gitviz-seg-btn { border-left: 1px solid var(--color-border); }
-.gitviz-seg-btn.is-on { background: rgb(var(--sapphire) / 0.2); color: var(--color-text);
+.gitviz-seg-btn.is-on {
+  /* 全面圆角批 2026-11-22（规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: rgb(var(--sapphire) / 0.2); color: var(--color-text);
   box-shadow: var(--btn-shadow); }
 .gitviz-heat-svg { display: block; }
 /* 热力强度 0..4 的**唯一颜色源**（档位判定在 gitVizView.js heatLevel：数值一侧单源）。
@@ -194,6 +196,8 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
    它不是一个新浮层——仍是流内 flex 子件，只是 `position: sticky; left: 0`
    （sticky 不是浮层：不脱流、不产生覆盖命中面，只改滚动跟随）。 */
 .gitviz-lane-labels {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: sticky;
   left: 0;
   z-index: 1;
@@ -445,7 +449,9 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
               transform var(--ds-dur-hover) var(--ds-ease-std);
 }
 .gitviz-corner:active { transform: scale(var(--cv-active-scale, 0.96)); }
-.gitviz-corner[aria-pressed='true'] { color: var(--color-primary); border-color: rgb(var(--sapphire) / 0.55); }
+.gitviz-corner[aria-pressed='true'] {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); color: var(--color-primary); border-color: rgb(var(--sapphire) / 0.55); }
 .gitviz-corner svg { width: var(--cv-icon, 18px); height: var(--cv-icon, 18px); pointer-events: none; }
 /* 落位：每条规则都把**对边**显式置 auto —— 角钮同时挂 `.g2-fab`（glass.css 基准类，
    手机层对它有落位档），若只写单边，另一条继承来的 `left/right` 会让盒子落错角
@@ -545,6 +551,8 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
 /* ── 泳道分组（手机列表形态）── */
 .gitviz-lane-group { display: flex; flex-direction: column; }
 .gitviz-lane-head {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   display: flex;
   align-items: center;
   gap: var(--ds-space-1h);

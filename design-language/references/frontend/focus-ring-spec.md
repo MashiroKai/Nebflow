@@ -2,21 +2,22 @@
 type: design-spec
 status: approved
 date: 2026-11-22
-title: 焦点高亮框规范（单规则 · 单色源 · 内缩 · 禁光晕 · 圆角标准 · 框完整显示）
-branch: feat/focus-ring-impl → feat/focus-ring-round2（round2 2026-11-22：圆角落标准、方角登记废除、框完整显示）
+title: 焦点高亮框规范（单规则 · 单色源 · 内缩 · 禁光晕 · 全面圆角标准 · 框完整显示）
+branch: feat/focus-ring-impl → feat/focus-ring-round2（round2 2026-11-22：圆角落标准、方角登记废除、框完整显示）→ feat/round-corner-sweep（round3 2026-11-22：全面圆角、全树画框面清扫、新闸 G1–G4 + P-6）
 supersedes: [[focus-ring-unify-design__20261121_185700]] 的实现细则部分（设计件保留为决策记录）
 related: ["[[keyboard-support-audit__20261121_185700]]", "[[input-focus-ring__20261105_213238]]", "[[design-language-recon__20261102_234917__dlc-frontend]]"]
-evidence: 见 §7（round1 对照板 + 运行时读数）与 §8（round2 整框对照板 + 真实实例读数；vault assets/20261122_focus-ring-round2/）
+evidence: 见 §7（round1 对照板 + 运行时读数）、§8（round2 整框对照板 + 真实实例读数）与 §9（round3 全树圆角 改前/改后对照板 + 逐格读数；vault assets/20261122_round-corner-sweep/）
 ---
 
 # 焦点高亮框规范
 
 **结论先行：全站键盘焦点指示器只有一种 —— `:focus-visible` 下 `outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring)`、`outline-offset: calc(var(--nf-focus-ring-w) * -1)`（内缩 2px），颜色只有一个源 `--nf-focus-ring: #9ca3af`（灰系，亮暗同值，作者 2026-11-21 批 B 案）。禁止焦点 `box-shadow` 光晕、禁止字面量焦点色、禁止无配对环的 `outline: none`。**
 
-本文是**判据正文**，两份机器面跟着它走：
-- 静态闸 `scripts/check-focus-ring.mjs`（F1–F6，读 `src/main/resources/web/css/**`）；
-- 运行时闸 `scripts/check-focus-ring-runtime.mjs`（P-1–P-4，真 Chromium 差分像素）；
-- 豁免与方角登记台账 `scripts/focus-ring-exemptions.json`（脚本内零硬编码豁免）。
+本文是**判据正文**，三份机器面跟着它走：
+- 静态闸 `scripts/check-focus-ring.mjs`（F1–F8，读 `src/main/resources/web/css/**`）；
+- 运行时闸 `scripts/check-focus-ring-runtime.mjs`（P-1–P-6，真 Chromium 差分像素 + 计算样式普查）；
+- **全面圆角静态闸 `scripts/check-round-corners.mjs`（G1–G4，全树画框面）**；
+- 豁免台账 `scripts/focus-ring-exemptions.json`（只承载「无环」豁免；脚本内零硬编码豁免）。
 
 ## 1. 本批之前（问题面）
 
@@ -103,12 +104,69 @@ evidence: 见 §7（round1 对照板 + 运行时读数）与 §8（round2 整框
 - 例外：聚焦会改变自身布局的件（浮动待办岛在聚焦时扩张）上，「越界像素」无法与「整体
   位移」区分 ⇒ P-3 弃判并在读数里具名（本批 2 件），不硬判成红也不静默当绿。
 
-### 2.6 圆角规则（round2 改写：圆角是标准，不再登记方角）
+### 2.6 全面圆角标准（round3 升格：全树画框面，不只是环基座）
 
-**作者令 2026-11-22 08:03（逐字）：「我说了要圆角的框」「而且像主会话这种框目前还无法
-完全显示 我要能完全显示」「并且把这个落为标准」。** round1 的「方角造型件登记豁免」因此
-废除 —— 登记把「可交互件必须圆角」变成「谁登记谁方角」，于是登记之外又被实测抓到方角件
-（`.set-disclosure`，见 §7）。现在的判据是**几何**，不是台账：
+**作者令（逐字，按时间）——**
+- 2026-11-22 08:03：「我说了要圆角的框」「而且像主会话这种框目前还无法完全显示 我要能
+  完全显示」「并且把这个落为标准」；
+- 2026-11-22 10:17：「对 但是我看到还是存在部分不是圆角的 **得全面圆角** 而且**成为规范
+  和自动化/lint检查**」。
+
+round2 把「登记制」换成了几何判据，但判定面只到**焦点环基座**（可交互件）。作者的复查意见
+指出了这个缺口：屏幕上画方角的并不都参与 Tab 序 —— 徽章、chip、统计卡、提示条、分隔面、
+媒体占位、状态点都在画盒子，F7/P-5 一个也看不见。round3 因此把标准**升格为「全树画框面」**：
+
+> **凡在本树里画出一个可见盒子（背景 / ≥2 条可见边 / 投影）的规则，必须给出圆角档位；
+> 没有「这件可以方」的登记出口，唯一的结构性例外是「贴边满幅」（§2.6.3）。**
+
+#### 2.6.1 档位表（不改：令牌族是唯一阶梯）
+
+| 件类型 | 圆角 |
+|---|---|
+| 画框面（按钮 / 行 / 格 / 卡片 / 徽章 / chip / 提示条 / 媒体占位 / 分隔面 / 输入面） | **6–10px**（`--ds-radius-chip` 6 / `--ds-radius-input` 8 / `--ds-radius-button` 10 / 卡档 `--ds-radius-card-*`） |
+| 胶囊 / 圆形造型件（既有形态档） | `--ds-radius-pill`（999px）/ `50%`，不受 6–10px 约束 |
+| 微格（短边 ≤12px：热力格、状态点、光标块） | `--ds-radius-thin`（2px）—— 6px 在 11px 盒上被浏览器钳到 50%，格子变圆点，热力图从「密度」读成「珠串」；这是**几何事实**，不是豁免 |
+| 标记类（自身无几何、圆角跟随宿主） | `border-radius: inherit`（伪元素覆盖层 / 裸输入内芯 / 卡内文标） |
+
+三条硬纪律（round2 保留，仍然生效）：
+1. **环半径 = 组件半径**：焦点环由 `outline` 画，`outline` 自动跟随 `border-radius`；
+   **焦点规则里禁止写 `border-radius`**（R-7/F8）—— 实测反例：`#deck-fab:focus-visible
+   {border-radius:6px}` 让圆形钮在键盘聚焦时变成圆角方钮。
+2. **不写方角字面量**：`border-radius: 0` = 红（G2）。症状性写法只有一个出口：`inherit`。
+3. **圆角只能来自令牌族**：字面量 `6px`/`8px`/`999px` = 红（G3）—— 与 F1/F2 的「单源」
+   口径一致，第二套阶梯一旦存在，下一个人就会再写第三套。
+4. 组内部件圆角后，行间分隔线必须是**内缩**线（`::before`/`::after` 定位线，左右让出内距），
+   不能留整宽 `border-bottom` —— 圆角行上的整宽线会在行角处转弯，读作弧线。
+
+#### 2.6.2 判定面与判据（全树）
+
+| 判定面 | 判据 | 机器面 |
+|---|---|---|
+| 静态：任何「画框」规则（背景非透明 / ≥2 条可见边 / 有投影） | 必须有圆角声明或可继承上下文（同基座/同类族前缀） | `check-round-corners.mjs` G1 |
+| 静态：写成方角（0 / 0px） | 红（无登记出口） | G2 |
+| 静态：圆角写成字面量 | 红（必须走令牌族；`inherit` / `50%` 放行） | G3 |
+| 运行时：页面上**每个**画得出盒子的元素（含非交互面） | 计算样式圆角 ≥6px，或胶囊/圆形，或微格（短边 ≤12px）的 2px 档 | `check-focus-ring-runtime.mjs` P-6 |
+| 运行时：贴边满幅面 | 按其几何豁免（§2.6.3），并在读数里**逐条具名** | P-6 的 `structural` 段 |
+
+判定面里被明确排除的（不是豁免，是「没有盒形可圆」）：`@keyframes` 步进选择器、
+`::selection` / `::placeholder` / `::marker` / `::backdrop` 这类文本级伪元素、焦点规则
+（圆角归基座，见纪律 1）。清单写在静态闸的 `NOT_A_BOX` 里，逐条带理由。
+
+#### 2.6.3 结构豁免 = 几何判据（贴边满幅）
+
+唯一的结构性例外是**盒边与视口边重合**的面：它的圆角会被视口裁掉，画了也看不见。
+判据是几何的，不是「谁登记谁方角」：
+
+- 运行时：`rect.left ≤1 && rect.right ≥ vw-1`（左右贴边）或 `top ≤1 && bottom ≥ vh-1`
+  （上下贴边），且计算圆角为 0 —— 这类件进 P-6 的 `structural` 段，逐条带 `why` 具名。
+- 静态：`html` / `body` / `#app` / `.app-shell` / `.flowmap-card`（`flex:1` 填满标签页）/
+  `body.mobile-layer .fm-context-menu`（`position:fixed; top/left/right:0` 全屏动作表）——
+  每条在 `STRUCTURAL_FULLBLEED` 里写明「哪条边就是视口边（或面板内壁）」。
+- 该清单是**结构类别**，不是 round1 那种 per-item 方角登记：新增条目的门槛是「这个盒子的
+  边就是视口边」，不是「这一件看起来方一点更好看」。
+
+> 为什么登记制必须死：round1 的六条方角登记里，`.set-disclosure` 这种**登记机制之外**的方角
+> 件照样被实测抓到（0px）。任何「人来登记才被豁免」的机制都必然漏，几何判据不会。
 
 | 件类型 | 圆角 |
 |---|---|
@@ -117,19 +175,10 @@ evidence: 见 §7（round1 对照板 + 运行时读数）与 §8（round2 整框
 | 微格（短边 < 12px：热力格、徽标点） | `--ds-radius-thin`（2px）—— 6px 在 11px 格上被浏览器钳到 50%，格子变圆点，热力图从「密度」读成「珠串」；这是**几何事实**，不是豁免 |
 | 标记类（自身无几何、圆角跟随宿主） | `border-radius: inherit` |
 
-三条硬纪律：
-1. **环半径 = 组件半径**：焦点环由 `outline` 画，`outline` 自动跟随 `border-radius`；
-   组件圆角改到位，环就是圆的。**焦点规则里禁止写 `border-radius`**（R-7/F8）——
-   写了就是「聚焦瞬间改组件形状」，实测反例：`#deck-fab:focus-visible{border-radius:6px}`
-   让圆形钮在键盘聚焦时变成圆角方钮（round2 首跑 P-3 越界 4 像素就是它）。
-2. **可交互件不写方角**：<6px 的显式声明 = 红（F7），**没有任何登记出口**。
-3. 组内部件（`.set-nav` 之类）圆角后，行间分隔线必须是**内缩**线（`::before` / `::after`
-   定位线，左右让出内距），不能留整宽 `border-bottom` —— 圆角行上的整宽线会在行角处
-   转弯，读作弧线。
-
-> 为什么不再是「登记 + 核对」：静态闸不做级联，但**运行时闸可以做**——P-5 直接量
-> 计算样式（真像素上的 `getComputedStyle(el).borderRadius`），这是「元素到底是不是
-> 方角」的权威读数。登记机制因此没有必要存在。
+> 为什么登记制必须死、几何判据才可执行：静态闸不做级联，但**运行时闸可以做** —— P-5/P-6
+> 直接量计算样式（真像素上的 `getComputedStyle(el).borderRadius`），这是「元素到底是不是
+> 方角」的权威读数；静态闸只用「同基座/同类族前缀」做近似，负责在**写代码的当下**拦住
+> 新方角。两道闸的分工是「写的时候拦住、跑起来还能查」。
 
 ### 2.7 框必须完整显示（round2 新增：作者令「像主会话这种框……我要能完全显示」）
 
@@ -166,6 +215,21 @@ F7 的**已知边界**（不是豁免，是判据的观测面）：裸元素基�
 （`#send-btn` —— 它的形状来自元素上的类）静态不可判，跳过；它们由 P-5 在运行时按计算样式判
 （见 §6 盲点①）。
 
+### 3.2 全面圆角静态闸（`scripts/check-round-corners.mjs`，G1–G4）
+
+| 判据 | 规则 | 通过条件 |
+|---|---|---|
+| G1 画框必圆 | 任何画框规则（背景非透明 / ≥2 条可见边 / 有投影 / 可见 outline） | 必须有 `border-radius` 声明，或查得到「同基座 / 同类族前缀（BEM 修饰、复合类）」已声明的圆角上下文 |
+| G2 禁方角字面量 | 画框规则的 `border-radius` | 不得为 `0` / `0px`（round1 的方角登记已废除，无任何出口） |
+| G3 档位单源 | 画框规则的圆角值 | 必须来自 `--ds-radius-*` 族（`inherit` / `50%` 放行）；字面量 px = 红 |
+| G4 结构豁免具名 | 判定面之外的结构面 | 只有「贴边满幅」类别（`html` / `body` / `#app` / `.app-shell` / `.flowmap-card` / 移动端全屏动作表），每条带几何理由；该清单是**结构类别**而非 per-item 登记 |
+
+用法：`node scripts/check-round-corners.mjs`（门禁）、`--json`、`--inventory`（全部画框规则 +
+圆角来源盘点）、`--root=<dir>`。它已注册进 `scripts/run-checks.mjs` 的 `static`/`frontend` 两档。
+
+判定面（`NOT_A_BOX`，逐条带理由）：`@keyframes` 步进选择器、文本级伪元素
+（`::selection` / `::placeholder` / `::marker` / `::backdrop` / `::cue`）、焦点规则（圆角归基座）。
+
 ## 4. 运行时判据（`scripts/check-focus-ring-runtime.mjs`）
 
 测量方法是**同一像素有/无指示器差分**（WCAG「焦点外观」口径）：同一裁剪区先失焦拍一帧、
@@ -179,9 +243,10 @@ F7 的**已知边界**（不是豁免，是判据的观测面）：裸元素基�
 | P-3 不裁切 | 差分像素包围盒 | 完全落在组件 border-box 内（1px 抗锯齿容差）；`outline-offset` 必须 ≤ −环宽 |
 | P-4 玻璃 | 具名 `backdrop-filter` 面内控件 | 与 P-1/P-3 同口径且差分 > 0（叠加层没把它吃掉） |
 | P-5 圆角件 | 每个被判件的**计算样式** `border-radius` | ≥6px；胶囊/圆形（50% / ≥999px）放行；短边 <12px 的微格允许 ≤4px；方角 = 红（round2 新增；这是「登记机制废除」的执行面） |
+| P-6 全面圆角 | 页面上**每个画得出盒子的元素**（含非交互面：徽章 / chip / 统计卡 / 提示条 / 分隔面 / 媒体占位）的计算样式 | ≥6px，或胶囊/圆形，或微格（短边 ≤12px）的 2px 档；方角 = 红；**贴边满幅**（盒边 = 视口边）按几何豁免并逐条具名进读数 `structural` 段（round3 新增；与 G1–G4 成对） |
 
 用法：`node scripts/check-focus-ring-runtime.mjs`（门禁）、`--json`、`--out=<dir>`（落读数 +
-逐件前后帧）。零端口：走 `scripts/lib/visual-harness.mjs` 的 `page.route` 打桩，碰不到宿主实例。
+逐件前后帧 + `round-corners-runtime-readout.json` 普查读数）。零端口：走 `scripts/lib/visual-harness.mjs` 的 `page.route` 打桩，碰不到宿主实例。
 
 ## 5. 例外清单（机器源 = `scripts/focus-ring-exemptions.json`）
 
@@ -212,6 +277,20 @@ F7 的**已知边界**（不是豁免，是判据的观测面）：裸元素基�
    **没有**逐像素证据。
 7. 对照板只证明「改前/改后的真实像素」，不证明「作者在人手实例里看到的那一刻」：
    round2 的主会话框完整性另有**真实产品实例**读数（§7.3），两者不可互替。
+
+round3 追加的盲点（全面圆角批）：
+
+8. **G1 的「可继承上下文」是选择器字符串近似**：本闸用「同基座 + 类族前缀（BEM 修饰 /
+   复合类）」近似真实级联，不计算特异性。它只会**放过**（族里有人圆了就放），不会误杀；
+   代价是「族根圆了、变体其实该更圆」这种情况静态看不出 —— 那由 P-6（计算样式）兜。
+9. **P-6 只普查上屏元素**：零端口装置只有主面 / 设置弹层两个场景；画布、媒体灯箱、
+   移动端页面等面的画框件没有 P-6 样本，只由 G1–G4 静态覆盖。不拿「没采到」当绿。
+10. **微格是按实测短边判的**：短边 ≤12px 放行 2px 档，因此一个「本该 6px 的小卡」若其
+   上屏短边恰好 ≤12px，会被放行 —— 这是有意的口径（物理钳制优先于审美），读数里
+   `p6MicroAccepted` 逐件计数，不静默。
+11. **贴边满幅的结构豁免除运行时具名外，还有静态清单**（`STRUCTURAL_FULLBLEED`）；
+   静态清单是「结构类别」的代理，无法自己量视口 —— 若某条清单项被改成非满幅，
+   运行时 P-6 会把它当普通画框面真判（那时它会因圆角 0 变红）。两个方向都在记账。
 
 ## 7. 本批读数与证据（2026-11-22 实施批）
 
@@ -294,3 +373,28 @@ canonical 环 113 处、`outline:none` 焦点规则 15 → 5（4 豁免 + 1 配�
 - `focus-readout.json` —— 逐格读数，含 `frameComplete` / `frameRadius` / `frameOverflow`。
 
 完整过程证据在 worktree 侧 `.stand/tmp/focus-ring-round2/evidence/`（TTL 7 天，不入库）。
+
+## 9. round3 读数与证据（2026-11-22 · 支 `feat/round-corner-sweep` · 作者令 10:17）
+
+**作者令（逐字）**：「对 但是我看到还是存在部分不是圆角的 得全面圆角 而且成为规范和自动化/lint检查」。
+
+| 闸 | 读数 |
+|---|---|
+| `check-round-corners.mjs`（新，静态 G1–G4） | **OK** —— 画框规则 **1535** 个全部有圆角（全树 6979 条规则 / 50 个 CSS 文件）；结构全幅豁免命中 3 条，清单 6 项 |
+| `check-focus-ring-runtime.mjs`（P-6 新增） | **OK** —— P-1 0 / P-2 0 / P-3 0 / P-4 104 样本 0 失败 / P-5 104 样本 0 失败 / **P-6 普查 130 件，方角失败 0**（微格 2px 档放行 2 件，结构满幅 0 件） |
+| `check-focus-ring.mjs` | **OK** —— 豁免 4/4，F7 覆盖 141 个环基座，F8 0 处，别名 0 处 |
+| `check-theme-token-mirror.mjs` | PASS |
+| `check-noclip-floating.mjs` | PASS —— 416 条全在台账，**未新增** |
+| `check-css-structure` / `check-flat-buttons` / `check-input-surface` | PASS / 718 块 0 违规 / OK（豁免 2 条） |
+| `keyboard-check.mjs` | 102 passed / 7 failed —— 失败项与 round2 基线**逐字相同**（非本批引入） |
+| `run-checks --profile static` | 88/93 —— 红项 test-hermetic / border-weight / js-types / takeover-identify / worktree-manifest，与 round2 基线同源 |
+
+**①–⑤ 落点**：① 全树改圆 = 34 文件 +253 条、literal→token 12 处；② 新闸 = `scripts/check-round-corners.mjs` + P-6（`scripts/check-focus-ring-runtime.mjs` 的 `SURVEY`），登记 `scripts/run-checks.mjs`；③ 结构豁免 = `STRUCTURAL_FULLBLEED`（几何判据，按清单具名）；④ 本节 + §2.6 升格 + §3.2 G1–G4 + §4 P-6 + §6 盲点 8–11；⑤ 对照板 84/84 整框。
+
+**结构满幅豁免清单（贴边满幅，6 项，双向记账）**：`html`、`body`、`#app`、`.app-shell`、`.flowmap-card`、`body.mobile-layer .fm-context-menu`。新增满幅件必须入清单并写理由，否则 G4 红。
+
+**A/B 裁定（`#settings-modal-close`）**：改前 `shrunk` 显示 999px→6px 语义下降（圆钮变方钮）。已由既有修正闭环：glass.css 材质共享块不再统一写档位、sapphire.css 把 `.panel-btn` 共享块与 `.g2-fab` 几何拆开；复测计算值 **50%**（40px 圆，与原 999px 视觉等价），P-6 0 失败。不再加冗余规则。
+
+**开放项**：`.ud-cell` 2px 微格（几何档，回作者裁）；composer `#input` 出环与否（回作者裁，沿用 2026-11-03 无环豁免）；活动栏容器 `#activity-bar` 不进对照板（874px 高于视口，由 P-6 覆盖）。
+
+**对照板**：`<dataRoot>/projects/stand/.stand/docs/assets/20261122_round-corner-sweep/focus-contact-sheet.png`（2694×3833，21 行 × 4 列，84/84 `frameComplete=true`）+ `focus-readout.json`（逐格读数，beforeRef=b05156183，zoom=3）。

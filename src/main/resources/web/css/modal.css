@@ -56,6 +56,8 @@
 #onboarding-panel::before,
 .model-panel::before,
 .wsp-panel::before {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: inherit;
   content: '';
   position: absolute;
   top: 0;
@@ -1221,6 +1223,8 @@ body.canvas-open .nebflow-toast {
 /* Overlay stays transparent (no dimming per design ruling) — it only blocks
    clicks; the panel itself joins the shared glass-card group above. */
 .onboarding-overlay {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
   background: var(--overlay-bg);
@@ -1425,7 +1429,9 @@ body.canvas-open .nebflow-toast {
   cursor: pointer;
   user-select: none;
 }
-.mp-role-head-toggle:hover { background: var(--color-frame-hover); }
+.mp-role-head-toggle:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--color-frame-hover); }
 .mp-role-name {
   font: 600 var(--ds-fs-body) -apple-system, sans-serif;
   color: var(--color-text);
@@ -1458,6 +1464,8 @@ body.canvas-open .nebflow-toast {
   color: var(--color-text);
 }
 .mp-status-fork {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: rgb(var(--sapphire));
   background: rgb(var(--sapphire) / 0.1);
   border: 1px solid rgb(var(--sapphire) / 0.22);
@@ -1551,7 +1559,9 @@ body.canvas-open .nebflow-toast {
 .mp-inline-err .st-ic { width: 12px; height: 12px; margin-right: var(--ds-space-1); vertical-align: -2px; }
 .mp-inline-err.on { display: block; }
 @media (prefers-color-scheme: dark) {
-  .mp-add-select { background: rgba(255, 255, 255, 0.03); }
+  .mp-add-select {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: rgba(255, 255, 255, 0.03); }
 }
 @media (prefers-reduced-motion: reduce) {
   .mp-chev { transition: none; }
@@ -1574,7 +1584,7 @@ body.canvas-open .nebflow-toast {
   gap: 6px;
   padding: 8px 10px;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: var(--color-frame-input-bg);
 }
 .mp-group-head {

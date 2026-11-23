@@ -912,6 +912,8 @@
    线糊成「叠起来的正方形」，本批整族退役（规则与 DOM 节点同时摘除）：
    「只要一个小边框就行」。 */
 .ds-resize-handle::before {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: inherit;
   content: '';
   position: absolute;
   /* 臂原点 = 面板左上角在把手盒内的坐标（桌面把手外挂 14px ⇒ 臂落 14/14；
@@ -946,7 +948,9 @@
 }
 .ds-row:last-child { border-bottom: none; }
 .ds-row--link { cursor: pointer; width: 100%; text-align: left; background: none; border-left: 0; border-right: 0; border-top: 0; font-family: inherit; }
-.ds-row--link:hover { background: var(--color-frame-hover); }
+.ds-row--link:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--color-frame-hover); }
 .ds-row__label { font-size: var(--ds-fs-body); color: var(--ds-text); }
 .ds-row__value { font-size: var(--ds-fs-hint); color: var(--ds-text-muted); font-variant-numeric: tabular-nums; }
 
@@ -1062,6 +1066,8 @@
 .ds-tool-card .label .tool-detail { color: var(--ds-text-dim); font-size: var(--ds-fs-meta); }
 /* 设备角标：旧「金属渐变字」收编语义档（muted→dim→muted），三色随主题。 */
 .ds-tool-card .label .tool-device-tag {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   display: inline-block;
   font-size: var(--ds-fs-meta);
   font-weight: var(--ds-fw-btn);
@@ -1163,10 +1169,16 @@
   background: color-mix(in srgb, var(--ds-text) 25%, transparent);
 }
 .ds-tool-card .diff-line { display: flex; gap: var(--ds-space-1); }
-.ds-tool-card .diff-line:hover { background: var(--ds-veil-focus); }
+.ds-tool-card .diff-line:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--ds-veil-focus); }
 .ds-tool-card .diff-lineno { color: var(--ds-text-dim); min-width: 28px; text-align: right; user-select: none; }
-.ds-tool-card .diff-add { color: var(--ds-success-icon); background: color-mix(in srgb, var(--ds-success-icon) 12%, transparent); }
-.ds-tool-card .diff-del { color: var(--ds-danger-icon); background: color-mix(in srgb, var(--ds-danger-icon) 12%, transparent); }
+.ds-tool-card .diff-add {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); color: var(--ds-success-icon); background: color-mix(in srgb, var(--ds-success-icon) 12%, transparent); }
+.ds-tool-card .diff-del {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); color: var(--ds-danger-icon); background: color-mix(in srgb, var(--ds-danger-icon) 12%, transparent); }
 .ds-tool-card .diff-content { flex: 1; }
 .ds-tool-card .detail-cmd {
   color: var(--ds-text-muted);
@@ -1524,6 +1536,8 @@
    六处外部消费方按名字引用它；键帧全局解析、与加载序无关 ⇒ 迁址零破面，
    单点在此）。 */
 .ds-overlay {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: fixed;
   inset: 0;
   align-items: center;
@@ -1621,6 +1635,8 @@ body:not(.mobile-layer) .sp-panel-header > .g2-fab svg {
    本类**不定高**（消费面自行声明，现盘 = 聊天根 `--ds-fade-height` 88px）、
    **不定 z 序**、**不定左右缩进** —— 由消费面声明。 */
 .ds-edge-fade {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute;
   top: 0;
   left: 0;

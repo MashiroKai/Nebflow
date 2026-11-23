@@ -873,6 +873,8 @@ body.mobile-layer #mobile-pages {
    （「#mobile-pages 容器含伪元素零背景」是硬判据，不是豁免位）；闸 =
    `scripts/check-mobile-dock-float.mjs` F3。 */
 body.mobile-layer .mobile-page {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute;
   top: 0;
   bottom: 0;
@@ -1291,10 +1293,16 @@ body.mobile-layer .mh-tpanel .tp-glyph {
   border-radius: 50%;
   flex: none;
 }
-body.mobile-layer .mh-tpanel .tp-g-run { background: rgb(var(--brand-green)); }
-body.mobile-layer .mh-tpanel .tp-g-queue { background: var(--ds-dot-idle); }
+body.mobile-layer .mh-tpanel .tp-g-run {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: rgb(var(--brand-green)); }
+body.mobile-layer .mh-tpanel .tp-g-queue {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--ds-dot-idle); }
 /* 重启对账批 2026-10-22：已中断灰点（灰态语言——禁借 done 勾绿）。 */
-body.mobile-layer .mh-tpanel .tp-g-stop { background: var(--ds-dot-idle); opacity: 0.55; }
+body.mobile-layer .mh-tpanel .tp-g-stop {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--ds-dot-idle); opacity: 0.55; }
 body.mobile-layer .mh-tpanel .tp-ttl {
   flex: 1;
   min-width: 0;
@@ -2464,6 +2472,8 @@ body.mobile-layer .mf-swipe-ring.right { right: -20px; }
    旧「纵向卡叠」（一叠向下、错位 12px）整条退役：形态差在**方向**（纵 →
    横）与**露法**（叠边 → 左右裁切邻卡）—— 这正是作者附图与旧形态的实质差。 */
 body.mobile-layer .mf-stack-view {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute;
   inset: 0;
   z-index: 40;
@@ -2484,6 +2494,8 @@ body.mobile-layer .mf-stack-view[hidden] { display: none; }
    用一层独立元素承载「重度模糊 + 压暗」，不吃浮面自身的 backdrop-filter
    配平问题 —— 两者相加只会更糊，不会互相抵消。 */
 body.mobile-layer .mf-stack-view::before {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: inherit;
   content: '';
   position: absolute;
   inset: 0;
@@ -2612,6 +2624,8 @@ body.mobile-layer .mf-deck-x:active { background: var(--ds-wash-16); }
    .deck-card 作用域，这里补一份同几何手机档 —— 令牌同样 --bar-1/2/3/--th-border
    单源，深浅双主题自动）。 */
 body.mobile-layer .mf-deck-thumb {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: relative;
   flex: 1;
   min-height: 0;
@@ -2625,6 +2639,8 @@ body.mobile-layer .mf-deck-thumb .ln.w55 { width: 55%; } body.mobile-layer .mf-d
 body.mobile-layer .mf-deck-thumb .ln.w85 { width: 85%; } body.mobile-layer .mf-deck-thumb .ln.w100 { width: 100%; }
 body.mobile-layer .mf-deck-thumb .thumb-pad { position: absolute; inset: 14px 16px; }
 body.mobile-layer .mf-deck-thumb .thumb-grid {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute;
   inset: 0;
   background:
@@ -2632,11 +2648,15 @@ body.mobile-layer .mf-deck-thumb .thumb-grid {
     repeating-linear-gradient(90deg, var(--bar-3) 0 1px, transparent 1px 38px);
 }
 body.mobile-layer .mf-deck-thumb .thumb-grid .ghead {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute; top: 0; left: 0; right: 0; height: 24px;
   background: rgb(var(--sapphire, 96 165 250) / 0.10);
   border-bottom: 1px solid rgb(var(--sapphire, 96 165 250) / 0.18);
 }
 body.mobile-layer .mf-deck-thumb .thumb-img {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute;
   inset: 0;
   background: linear-gradient(135deg, rgb(var(--sapphire, 96 165 250) / 0.38), rgb(var(--sapphire, 96 165 250) / 0.10) 60%, rgb(var(--sapphire, 96 165 250) / 0.22));
@@ -2671,6 +2691,8 @@ body.mobile-layer .mf-deck-thumb .thumb-browser .blk.b2 { width: 64%; }
    只读）。.mf-deck-snap = 裁切框；.mf-deck-snap-inner = 原尺寸面 + scale。
    快照子树 pointer-events 全关（纯展示，手势归舞台/卡面）。 */
 body.mobile-layer .mf-deck-snap {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute;
   inset: 0;
   overflow: hidden;
@@ -2759,11 +2781,15 @@ body.mobile-layer .mf-cv-empty-sub { font-size: var(--mfs-min); opacity: 0.8; }
 
 /* ── 设置/用量 = 页面体收编（r3 p4fix 沿袭；overlay 原地保留为状态载体）─ */
 body.mobile-layer #settings-overlay {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   z-index: 155;
   background: var(--color-bg);
   padding: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px);
 }
 body.mobile-layer #usage-overlay {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   z-index: 155;
   align-items: stretch;
   background: var(--color-bg);
@@ -2838,6 +2864,8 @@ body.mobile-layer .mf-hub-row {
 /* 行间 hairline：左缩进对齐文案列（行内距 16 + 图标 18 + 间隙 12 = 46），
    右收进行内距（16）；首末行不留线（末行 = :last-child 零线）。 */
 body.mobile-layer .mf-hub-row:not(:last-child)::after {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: inherit;
   content: '';
   position: absolute;
   left: 46px;
@@ -2847,6 +2875,8 @@ body.mobile-layer .mf-hub-row:not(:last-child)::after {
   background: var(--color-frame-border-light);
 }
 body.mobile-layer .mf-hub-row:active {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: color-mix(in srgb, var(--color-text) 6%, transparent);
 }
 body.mobile-layer .mf-hub-row > i svg { width: 18px; height: 18px; }
@@ -3043,6 +3073,8 @@ body.mobile-layer .mf-me-field {
   color: var(--color-text);
 }
 body.mobile-layer .mf-me-field:not(:last-child)::after {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: inherit;
   content: '';
   position: absolute;
   left: 16px;
@@ -3961,6 +3993,8 @@ body.mobile-layer #modal-overlay:not(.takeover-live),
 body.mobile-layer #rules-overlay,
 body.mobile-layer .cfg-modal-overlay,
 body.mobile-layer .flow-agent-overlay.fullscreen {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: var(--color-bg);
   padding: 0;
   align-items: stretch;
@@ -5821,6 +5855,8 @@ body.mobile-layer #reminder-panel .reminder-fab-add {
   background: transparent;
 }
 .mf-drawer-box {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: relative;
   display: flex;
   flex-direction: column;
@@ -6379,7 +6415,7 @@ body.mobile-layer .bgagent-overlay .bgagent-status-pill {
   align-items: center;
   gap: 5px;
   padding: 0 12px;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   background: var(--cv-bg, var(--glass-bg));
   border: 1px solid var(--cv-border, var(--glass-border));
   font-size: var(--ds-fs-hint);

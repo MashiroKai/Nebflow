@@ -274,9 +274,13 @@ html[data-theme="light"] {
 
   /* Dark mode scrollbar */
   ::-webkit-scrollbar-thumb {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
     background: rgba(255,255,255,0.08);
   }
   ::-webkit-scrollbar-thumb:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
     background: rgba(255,255,255,0.14);
   }
 }
@@ -371,6 +375,8 @@ body.sidebar-collapsed #sidebar {
   border-radius: var(--ds-radius-badge);
 }
 ::-webkit-scrollbar-thumb:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: rgba(0,0,0,0.25);
 }
 

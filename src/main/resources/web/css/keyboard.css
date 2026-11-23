@@ -175,6 +175,8 @@ outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
 /* 选中行 = 改造前 .nf-palette-row[aria-selected=true] 的同一套（蓝族淡填充 + 内描边）。
    注：行高 22px（虚拟列表口径），内描边用 outline 不占盒。 */
 #nf-quickinput-host .quick-input-list .monaco-list-row.focused {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: var(--nf-chip-bg-on);
   outline: 1px solid var(--nf-chip-border-on);
   outline-offset: -1px;

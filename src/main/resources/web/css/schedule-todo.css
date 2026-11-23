@@ -4,7 +4,7 @@
 .reminder-decision-q { font-weight: 600; }
 .reminder-decision-opts { display: flex; flex-direction: column; gap: 4px; }
 .reminder-decision-opt { display: flex; align-items: center; gap: 6px; cursor: pointer; }
-.reminder-decision-key { font-size: 11px; opacity: 0.6; border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; }
+.reminder-decision-key { font-size: 11px; opacity: 0.6; border: 1px solid currentColor; border-radius: var(--ds-radius-badge); padding: 0 4px; }
 .reminder-decision-err { color: var(--color-danger); font-size: 12px; min-height: 0; }
 .reminder-decision-err:empty { display: none; }
 .reminder-decision-submit { align-self: flex-end; }
@@ -284,6 +284,8 @@
   transform: translate(-50%, -50%);
 }
 .reminder-form-btn-primary {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   color: var(--color-primary);
   font-weight: 600;
   background: color-mix(in srgb, var(--color-primary) 10%, transparent);
@@ -297,6 +299,8 @@ body.mobile-layer .reminder-form-actions { display: none; }
 @media (hover: hover) {
   .reminder-form-btn:hover { color: color-mix(in srgb, var(--color-text) 80%, transparent); }
   .reminder-form-btn-primary:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
     color: var(--color-primary);
     background: color-mix(in srgb, var(--color-primary) 16%, transparent);
   }

@@ -1291,7 +1291,9 @@ button.fm-req-decline:focus-visible {
 .fm-upload-sent .fm-upload-note { color: var(--color-frame-text-muted, var(--color-text-muted, #888)); }
 .fm-upload-cancelled,
 .fm-upload-skipped { opacity: 0.72; }
-.fm-upload-failed { border-color: var(--status-error-icon); }
+.fm-upload-failed {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); border-color: var(--status-error-icon); }
 /* ui-status-redesign（盘点 #42 同族 / S5）：失败注记词转中性字 + 词前图标。 */
 .fm-upload-failed .fm-upload-note { color: var(--status-word); }
 .fm-upload-failed .fm-upload-note .st-ic { width: 11px; height: 11px; margin-right: var(--ds-space-1); vertical-align: -1px; }
@@ -1303,6 +1305,8 @@ button.fm-req-decline:focus-visible {
   overflow: hidden;
 }
 .fm-upload-progress-bar {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   height: 100%;
   background: rgb(var(--sapphire));
   transition: width 0.2s ease-out;
@@ -1505,12 +1509,16 @@ button.fm-req-decline:focus-visible {
   mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent 100%);
 }
 .fm-msg-md th, .fm-msg-md td {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   border: 1px solid var(--color-border);
   padding: var(--ds-space-1) var(--ds-space-2);
   white-space: nowrap;
   text-align: left;
 }
-.fm-msg-md th { background: var(--color-frame-hover); font-weight: 600; }
+.fm-msg-md th {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--color-frame-hover); font-weight: 600; }
 
 /* 数学（KaTeX 产物）与 mermaid 占位：超宽同样横向滚动而不是撑破气泡。 */
 .fm-msg-md .katex-display { overflow-x: auto; overflow-y: hidden; }
@@ -2253,6 +2261,8 @@ body:not(.mobile-layer) #profile-face-overlay {
    旧形态是右下角绝对定位角标（12 人档重叠 98.26px²）⇒ 已退役。
    本类与 `.fm-avgrid-cell` 同特异度、源码序在后 ⇒ 只覆写底色/字色/字号。 */
 .fm-avgrid-more {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: var(--color-text-dim);
   color: var(--color-surface);
   font-weight: 600;
@@ -2624,7 +2634,9 @@ body:not(.mobile-layer) #profile-face-overlay {
    本处只做**槽位**（右贴边、不参与行内文本压缩）。 */
 .fm-device-presence { flex-shrink: 0; margin-left: auto; display: inline-flex; align-items: center; }
 /* 设备会话行 chip（与群 chip 同形，换语义色不改几何） */
-.fm-device-tag { background: rgb(var(--sapphire) / 0.18); }
+.fm-device-tag {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: rgb(var(--sapphire) / 0.18); }
 
 /* 设备文件卡状态位（卡 D4 语义保留；fm-att-card-unify 批：宿主 = 主会话卡面 ——
    文件卡/媒体卡都是 flex 容器，整行挂件用 `flex-basis:100%` 通吃两种宿主；
@@ -2646,6 +2658,8 @@ body:not(.mobile-layer) #profile-face-overlay {
   overflow: hidden;
 }
 .fm-att-device-progress-bar {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   height: 100%;
   background: rgb(var(--sapphire));
   transition: width 0.2s ease-out;

@@ -25,6 +25,8 @@
 /* ⑧ Orchestrator separator — 1px hairline below Nebula in the nav agent list
  * (entity-icons-visual-spec §3.3). Reuses --glass-border-dark token. */
 .nav-agent-separator {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-thin);
   width: 24px;
   height: 1px;
   background: var(--glass-border-dark);

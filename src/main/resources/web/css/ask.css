@@ -675,6 +675,7 @@ body.mobile-layer .note-dock .ds-resize-handle {
   content: "";
   flex: 1 1 auto;
   height: 1px;
+  border-radius: var(--ds-radius-thin);
   background: currentColor;
   opacity: 0.15;
 }
@@ -1029,7 +1030,7 @@ body.mobile-layer .ask-user-source { flex-wrap: wrap; white-space: normal; max-w
 }
 .ask-media-chip { position: relative; width: 44px; height: 44px; border-radius: 8px; overflow: visible; }
 .ask-media-thumb {
-  width: 100%; height: 100%; object-fit: cover; border-radius: 8px; display: block;
+  width: 100%; height: 100%; object-fit: cover; border-radius: var(--ds-radius-input); display: block;
   border: 1px solid var(--color-border, rgba(128,128,128,0.35));
 }
 .ask-media-rm {
@@ -1040,6 +1041,6 @@ body.mobile-layer .ask-user-source { flex-wrap: wrap; white-space: normal; max-w
 }
 .ask-msg-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .ask-msg-img {
-  max-width: 220px; width: auto; height: auto; border-radius: 10px; display: block;
+  max-width: 220px; width: auto; height: auto; border-radius: var(--ds-radius-button); display: block;
   border: 1px solid var(--color-border, rgba(128,128,128,0.35));
 }

@@ -152,10 +152,18 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-card {
   transition: transform var(--dur-1) var(--ease-std);
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-card:active { transform: scale(0.97); }
-body.mobile-layer .mobile-page[data-page="tasks"] .ta-card-today { background: var(--ta-c-today); }
-body.mobile-layer .mobile-page[data-page="tasks"] .ta-card-overdue { background: var(--ta-c-overdue); }
-body.mobile-layer .mobile-page[data-page="tasks"] .ta-card-all { background: var(--ta-c-all); }
-body.mobile-layer .mobile-page[data-page="tasks"] .ta-card-completed { background: var(--ta-c-done); }
+body.mobile-layer .mobile-page[data-page="tasks"] .ta-card-today {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--ta-c-today); }
+body.mobile-layer .mobile-page[data-page="tasks"] .ta-card-overdue {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--ta-c-overdue); }
+body.mobile-layer .mobile-page[data-page="tasks"] .ta-card-all {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--ta-c-all); }
+body.mobile-layer .mobile-page[data-page="tasks"] .ta-card-completed {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: var(--ta-c-done); }
 /* White outline icon top-left / large white count top-right / white label
    bottom-left (three absolutely positioned pieces forming a triangle) */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-card-ico {
@@ -254,6 +262,8 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-row {
 /* Inset hairline separator (color = border token; left inset 16 + 24 + 12 = 52
    aligns with the text start line) */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-row::after {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: inherit;
   content: '';
   position: absolute;
   left: 52px;
@@ -263,7 +273,9 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-row::after {
   background: var(--color-border);
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-row:last-child::after { display: none; }
-body.mobile-layer .mobile-page[data-page="tasks"] .ta-row:active { background: color-mix(in srgb, var(--color-text) 6%, transparent); }
+body.mobile-layer .mobile-page[data-page="tasks"] .ta-row:active {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip); background: color-mix(in srgb, var(--color-text) 6%, transparent); }
 /* In-row colored round icon (tag.color data color) */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-dot {
   flex: none;
@@ -274,6 +286,8 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-dot {
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-dot-all,
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-dot-new {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: transparent;
   border: 1.5px solid var(--color-text-muted);
 }
@@ -394,7 +408,7 @@ body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-pill-btn {
   justify-content: center;
   padding: 0;
   border: none;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   background: transparent;
   color: var(--color-frame-text-bright, var(--color-frame-text));
   cursor: pointer;
@@ -414,6 +428,8 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill-btn.on,
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill-btn.on,
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill-btn.on,
 body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-pill-btn.on {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: rgb(var(--sapphire) / 0.14);
   color: rgb(var(--sapphire));
   box-shadow: var(--btn-shadow);
@@ -449,7 +465,7 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu-row {
   padding: 0 12px;
   box-sizing: border-box;
   border: none;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   background: transparent;
   color: var(--color-text);
   font-family: inherit;
@@ -458,6 +474,8 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu-row {
   cursor: pointer;
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu-row:active {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: color-mix(in srgb, var(--color-text) 8%, transparent);
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu-l { flex: 1 1 auto; }
@@ -497,6 +515,8 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab-wrap {
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab-wrap > .g2-fab { pointer-events: auto; }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   width: var(--band-d, 48px);
   height: var(--band-d, 48px);
   background: rgb(var(--sapphire));
@@ -505,6 +525,8 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab {
   box-shadow: none;
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: rgb(var(--sapphire));
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab svg {
@@ -527,6 +549,8 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab svg {
        亮度权重带 / 单源零字面量) hold by construction; measured composite
        readings live in the batch report (probe-readings.json + color-math). */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-quick-fab {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: relative;
   width: var(--band-d, 48px);
   height: var(--band-d, 48px);
@@ -857,7 +881,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-chip {
   gap: 6px;
   height: 32px;
   padding: 0 12px;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   background: color-mix(in srgb, var(--color-text) 8%, transparent);
   color: var(--color-text);
   font-size: var(--mfs-min);
@@ -927,6 +951,8 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-reply-error {
 /* Save = rightmost blue circular check in the top bar (g2-fab base: 48 +
    sapphire fill + always-white ink) */
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-save {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   position: absolute;
   top: 0;
   right: 0;
@@ -940,6 +966,8 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-save {
   color: var(--ctl-send-ink);
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-save:hover {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   background: rgb(var(--sapphire));
   transform: none;
 }
@@ -978,7 +1006,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool-btn {
   min-height: var(--bottom-band-d, 44px);
   padding: 0 12px;
   border: none;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   background: transparent;
   color: var(--color-frame-text-bright, var(--color-frame-text));
   font-family: inherit;
@@ -1515,6 +1543,8 @@ body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-act svg {
 body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-act:hover { background: var(--nf-glass-input-bg-hover, var(--nf-glass-input-bg)); }
 /* 核心键「完成」= 全带唯一实底键（作者令：核心两键最顺手的位置 + 一眼可辨）。 */
 body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-act-done {
+  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
+  border-radius: var(--ds-radius-chip);
   border-color: transparent;
   background: rgb(var(--sapphire));
   color: var(--ta-ink); /* 白墨单源（= var(--ctl-send-ink, #fff)，本文件 40 行出生） */

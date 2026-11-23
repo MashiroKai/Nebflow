@@ -130,7 +130,7 @@
   flex: none;
   height: 26px;
   padding: 0 10px; /* 4px 栅格外半步档（spacing 不入圆角/字号门禁面） */
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
   color: var(--color-frame-text);

@@ -54,6 +54,11 @@ for (const f of readdirSync(join(beforeRoot, 'css'))) {
 // 只能裁到一条没有框的文字带（round1 对照板第 5 行的实况）；作者令 2026-11-22 08:03
 // 「像主会话这种框目前还无法完全显示 我要能完全显示」—— 取框本体，整框进格。
 // ② 圆角标准批（规范 §2.6）落地的 6 个行族/格 + 运行时实测发现的方角披露行进表。
+// ③ round3 全面圆角批（作者令 2026-11-22 10:17「得全面圆角」）：判定面从「环基座」扩到
+//    「全树画框面」—— 第 16–19 行是**非交互画框面**（不在 Tab 序里，F7/P-5 看不见）。
+//    改前列 = `--before-ref`（本批之前）的字节，改后列 = 工作树；新闸（G1–G4/P-6）只判
+//    改后态，改前列保留作对照用途。活动栏容器不进表：874px 高于视口，整框进不了格
+//    （它的形状由 P-6 读数覆盖，不拿半截图充数）。
 const ROWS = [
   { key: 'activity', label: '活动栏图标钮', scene: 'main', sel: '#settings-btn' },
   { key: 'search', label: '搜索按钮', scene: 'main', sel: '#search-btn' },
@@ -71,7 +76,13 @@ const ROWS = [
   { key: 'setInput', label: '设置选择件', scene: 'settings', sel: '.nf-select-trigger' },
   { key: 'setBtn', label: '设置主按钮', scene: 'settings', sel: '#btn-toggle-json' },
   { key: 'providers', label: 'providers 配置入口', scene: 'settings', sel: '.set-disclosure' },
+  { key: 'setContent', label: '设置内容面（滚动容器）', scene: 'settings', sel: '#settings-content' },
+  { key: 'setShell', label: '弹窗外壳（20px 档）', scene: 'settings', sel: '#settings-modal' },
+  { key: 'setClose', label: '弹层关闭钮（圆形档）', scene: 'settings', sel: '#settings-modal-close' },
+  { key: 'provSection', label: 'providers 配置卡', scene: 'settings', sel: '#provider-section' },
   { key: 'perm', label: '权限卡按钮', scene: 'perm', sel: '.option-box button' },
+  { key: 'sideBar', label: '侧栏容器', scene: 'main', sel: '#sidebar' },
+  { key: 'canvasPanel', label: '画布面板容器', scene: 'main', sel: '#canvas-panel' },
 ];
 
 const pw = loadPlaywright();

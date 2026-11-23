@@ -104,7 +104,9 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes,
 .bgagent-model-switch {
   background: var(--nf-field-bare-bg);
   border: none;
-  border-radius: 0;
+  /* 全面圆角批 2026-11-22（§2.6 标记类）：裸件不持有几何 —— 圆角跟随宿主外壳
+     （`.nf-glass` 输入条 / 卡片成形面），自己不写 0 也不写档位。 */
+  border-radius: inherit;
   box-shadow: none;
   /* 刻意**不写** outline: none —— 裸件同样要被键盘看见。焦点态归下面两条
      焦点规则（指针压回中性 / 键盘给内缩环），此处写 none 会把它们一起盖掉。 */
@@ -137,6 +139,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes,
   background-repeat: no-repeat;
 }
 .bgagent-model-switch {
+  border-radius: var(--ds-radius-input);
   box-shadow: var(--btn-shadow);
 }
 
