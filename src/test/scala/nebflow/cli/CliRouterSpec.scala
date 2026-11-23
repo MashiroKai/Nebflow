@@ -515,24 +515,24 @@ class CliRouterSpec extends FunSuite:
     assert(CliRouter.isOffline("restart", "run"))
   }
 
-  test("stop digests --json/--quiet through the router and exits 0 when not running") {
+  test("stop digests --json/--quiet through the router and exits 3 (not running, unified) when not running") {
     withTempDataRoot {
       // exit codes only: renderResult prints via Predef.println from a compute
       // thread, which the thread-local Console capture cannot see — the load-
-      // bearing router contract here is the flag partition + zero exit.
+      // bearing router contract here is the flag partition + exit 3.
       val (_, code) = runCaptured("stop", "--json")
-      assertEquals(code, 0)
+      assertEquals(code, 3)
       val (_, quietCode) = runCaptured("stop", "--quiet")
-      assertEquals(quietCode, 0)
+      assertEquals(quietCode, 3)
     }
   }
 
-  test("stop outcome mapping: NotRunning exits 0 with the plain text face") {
+  test("stop outcome mapping: NotRunning exits 3 (unified with status) with the plain text face") {
     withTempRoot {
       val res = StopCommand.runStop(ProcessManager.StopOptions()).unsafeRunSync()
       res match
         case CliResult.Exit(code, output) =>
-          assertEquals(code, 0)
+          assertEquals(code, 3)
           assertEquals(output, s"${nebflow.shared.Branding.productName} is not running")
         case other => fail(s"expected Exit, got $other")
     }

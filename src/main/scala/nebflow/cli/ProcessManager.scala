@@ -60,8 +60,36 @@ object ProcessManager:
      * `-Duser.home`、命令行里出现本根路径、本根 `.pid` 记账。spec 注入即零真实信号。
      */
     homeProof: (Long, Option[String]) => InstanceScope.HomeProof = (pid, cmd) =>
-      InstanceScope.proveHome(cmd, pid, PathUtil.dataRoot.toString, ProcessManager.readPid())
+      InstanceScope.proveHome(cmd, pid, PathUtil.dataRoot.toString, ProcessManager.readPid()),
+    /**
+     * 停后残留扫描（cli-lifecycle round2）：返回仍在跑、且归属本 home 的 stand jar
+     * 进程 pid。默认走 [[sweepHomeJars]]；spec 注入即零真实进程依赖。
+     */
+    homeSweep: () => List[Long] = () => ProcessManager.sweepHomeJars(),
+    /** 残留扫描的等待预算（进程退出可能滞后于 pid 死亡）。 */
+    sweepWaitMs: Long = 5_000L
   )
+
+  /**
+   * 同 home 的 stand jar 进程（不含本 CLI 进程）。判据与 stop 的身份门同源：
+   * 命令行含 nebflow 标记 + home 归属证明为 Same。读不到命令行的进程不计入
+   * （无法证明归属 ⇒ 不报残留，也不杀）——残留清单只列能证明归属的进程。
+   */
+  def sweepHomeJars(): List[Long] =
+    try
+      import scala.jdk.CollectionConverters.*
+      val self = ProcessHandle.current().pid()
+      val root = PathUtil.dataRoot.toString
+      val recorded = readPid()
+      ProcessHandle.allProcesses().iterator().asScala.map(_.pid()).filter { pid =>
+        pid != self && (StaleProcessGuard.readCommandLine(pid) match
+          case Some(cmd) if StaleProcessGuard.isNebflowCommandLine(cmd) =>
+            InstanceScope.proveHome(Some(cmd), pid, root, recorded) match
+              case InstanceScope.HomeProof.Same(_, _) => true
+              case _ => false
+          case _ => false)
+      }.toList
+    catch case _: Exception => Nil
 
   sealed trait StopOutcome
 
@@ -409,6 +437,16 @@ object ProcessManager:
             busy = remaining.filter(deps.listenerAlive)
           if busy.nonEmpty then return StopOutcome.Failed(s"ports still served after stop: ${busy.mkString(", ")}")
 
+        // Post-stop sweep (cli-lifecycle round2): the pid file names ONE process;
+        // a same-home stand jar that is still alive keeps its jar locked and is
+        // a residue, not a successful stop. Residue ⇒ Failed with the PIDs listed.
+        val residue = waitSweep(deps)
+        if residue.nonEmpty then
+          return StopOutcome.Failed(
+            s"stopped pid $pid, but same-home ${nebflow.shared.Branding.productName} process(es) still running: " +
+              s"pids ${residue.mkString(", ")} (their jars stay locked; stop them and re-run)"
+          )
+
         removePid()
         val base = declaration.getOrElse(s"${nebflow.shared.Branding.productName} stopped (pid $pid)")
         StopOutcome.Stopped(degradedVia.fold(base)(via => s"$base — identity via degraded chain: $via"))
@@ -416,6 +454,16 @@ object ProcessManager:
     end match
 
   end stopVerified
+
+  /** Residue pids after the stop, polled up to `sweepWaitMs`; the CLI's own pid is never residue. */
+  private def waitSweep(deps: StopDeps): List[Long] =
+    val self = ProcessHandle.current().pid()
+    val deadline = System.currentTimeMillis() + deps.sweepWaitMs
+    var res = deps.homeSweep().filterNot(_ == self)
+    while res.nonEmpty && System.currentTimeMillis() < deadline do
+      if deps.pollMs > 0 then Thread.sleep(deps.pollMs)
+      res = deps.homeSweep().filterNot(_ == self)
+    res
 
   private def waitUntil(deps: StopDeps, pid: Long, timeoutMs: Long): Boolean =
     val deadline = System.currentTimeMillis() + timeoutMs

@@ -1725,14 +1725,21 @@ WRAPPER
     # name by design (historical fact, same rule as rebrand.sh) - NOT
     # brand-derived, so it stays stable across future renames. Also replaces
     # any pre-rename real "nebflow" binary in INSTALL_DIR (overwrite > shadow).
+    # Written ON DEMAND only: a fresh install gets no shim. It is written when an
+    # old nebflow trace exists (an existing nebflow file in INSTALL_DIR, or a
+    # nebflow command on PATH), so an upgrade of an install that had it keeps it.
     local shim="${INSTALL_DIR}/nebflow"
-    cat > "${shim}" << SHIM
+    if [ -e "${shim}" ] || command -v nebflow >/dev/null 2>&1; then
+        cat > "${shim}" << SHIM
 #!/bin/bash
 echo "WARN: 'nebflow' is deprecated - the command is now '${WRAPPER_NAME}'. Forwarding..." >&2
 exec "${INSTALL_DIR}/${WRAPPER_NAME}" "\$@"
 SHIM
-    chmod +x "${shim}"
-    log_ok "Legacy shim created: ${shim} (deprecation notice, forwards to ${WRAPPER_NAME})"
+        chmod +x "${shim}"
+        log_ok "Legacy shim created: ${shim} (deprecation notice, forwards to ${WRAPPER_NAME})"
+    else
+        log_v "No legacy nebflow trace - shim not written"
+    fi
 }
 
 # Add install dir to PATH in shell profile
