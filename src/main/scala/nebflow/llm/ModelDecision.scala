@@ -25,24 +25,24 @@ object ModelDecision:
 
   /**
    * 请求上下文。`source` = 显式来源枚举（K7：必需语义、由 [[ctxOf]] 推导填充，调用方不自选）；
-   * `isAskSession` / `callType` 进统一层，供小模型分流 [[smallLlmRoute]] 区分调用点。
+   * `isAskSession` / `callPoint`（N1 调用点，值域见设计件 §8 N1）进统一层，供小模型分流 [[smallLlmRoute]]。
    */
   final case class RequestCtx(
     sessionId: Option[String],
     delegateMode: Option[String] = None,
     isAskSession: Boolean = false,
-    callType: Option[String] = None,
+    callPoint: Option[String] = None,
     pinnedChain: Option[PinnedChain] = None,
     source: Option[LlmKernel.CandidateSource] = None
   )
 
   /**
    * 由显式来源推导请求上下文（§2.2 步骤 3：枚举退化为 RequestCtx 字段，由 resolve 内部推导）。
-   * SmallLlmModel ⇒ callType=small-llm（小模型分流点）；其余来源无额外上下文。
+   * SmallLlmModel ⇒ callPoint=small-llm（小模型分流点）；其余来源无额外上下文。
    */
   def ctxOf(source: LlmKernel.CandidateSource): RequestCtx = source match
     case LlmKernel.CandidateSource.SmallLlmModel =>
-      RequestCtx(None, callType = Some("small-llm"), source = Some(source))
+      RequestCtx(None, callPoint = Some("small-llm"), source = Some(source))
     case other => RequestCtx(None, source = Some(other))
 
   /**
@@ -97,12 +97,12 @@ object ModelDecision:
     registry.getCandidatesForAgent(agentModel)
 
   /**
-   * 小模型分流（N1 第 4 步）：统一层按 `isAskSession` / `callType` 区分调用点。
+   * 小模型分流（N1 第 4 步）：统一层按 `isAskSession` / `callPoint` 区分调用点。
    * 小模型 = `SchemePolicy.smallLlmModel()`（既有选择，不改）；ask 会话与 `small-llm` 调用
    * 走同一小模型链。非小模型（主 / 槽 / 决策）返回 None，由调用方走组合链。
    */
   def smallLlmRoute(ctx: RequestCtx): Option[AgentModelConfig] =
-    if ctx.isAskSession || ctx.callType.contains("small-llm") then
+    if ctx.isAskSession || ctx.callPoint.contains("small-llm") then
       Some(nebflow.core.SchemePolicy.smallLlmModel())
     else None
 

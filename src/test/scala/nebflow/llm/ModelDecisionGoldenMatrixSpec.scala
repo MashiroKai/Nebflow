@@ -105,7 +105,7 @@ class ModelDecisionGoldenMatrixSpec extends CatsEffectSuite:
         assertEquals(keys(viaUnified), keys(legacy))
         val askCtx = ModelDecision.RequestCtx(Some("ask-x"), isAskSession = true)
         assertEquals(ModelDecision.smallLlmRoute(askCtx), Some(nebflow.core.SchemePolicy.smallLlmModel()))
-        assertEquals(ModelDecision.smallLlmRoute(ModelDecision.RequestCtx(None, callType = Some("small-llm"))),
+        assertEquals(ModelDecision.smallLlmRoute(ModelDecision.RequestCtx(None, callPoint = Some("small-llm"))),
           Some(nebflow.core.SchemePolicy.smallLlmModel()))
         assertEquals(ModelDecision.smallLlmRoute(ModelDecision.RequestCtx(None)), None)
     }
@@ -125,9 +125,9 @@ class ModelDecisionGoldenMatrixSpec extends CatsEffectSuite:
   test("G-ctx 来源→RequestCtx 推导（§2.2 步骤3）：SmallLlmModel 推导出 small-llm 分流点，其余无额外上下文") {
     import LlmKernel.CandidateSource as S
     val small = ModelDecision.ctxOf(S.SmallLlmModel)
-    assertEquals(small.callType, Some("small-llm"))
+    assertEquals(small.callPoint, Some("small-llm"))
     assertEquals(small.source, Some(S.SmallLlmModel))
-    assertEquals(ModelDecision.ctxOf(S.NebulaChain).callType, None)
+    assertEquals(ModelDecision.ctxOf(S.NebulaChain).callPoint, None)
     assertEquals(ModelDecision.ctxOf(S.NebulaChain).source, Some(S.NebulaChain))
     assertEquals(ModelDecision.smallLlmRoute(small), Some(nebflow.core.SchemePolicy.smallLlmModel()))
     IO.unit
