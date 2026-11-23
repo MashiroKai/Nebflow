@@ -330,6 +330,24 @@ const PANELS = [
     // 修前形态同 P3：流底让位归零（inline 同级后写压过 main.js 的 important）。
     negative: async (page) => page.evaluate(() => document.getElementById('chat').style.setProperty('padding-bottom', '8px', 'important')),
   },
+  {
+    // 文档收藏块（2026-11-23 补齐验收面）：工作台根页「收藏」分组，长标题 + 失效行。
+    // 行 = 块内 .canvas-fav-row；bubbleSel 取行本体，使 O4 遍历行内文字子元素（标题/元信息）。
+    name: 'P9-workbench-favorites',
+    setup: async (page) => {
+      await page.evaluate(async () => {
+        const m = await import('/js/canvasFavorites.js');
+        m.toggleFavoritePath({ path: '/w/sweep-long.md', title: 'A-very-long-document-title-that-must-wrap-without-truncation-in-the-workbench-favorites-block.md' });
+        m.toggleFavoritePath({ path: '/w/sweep-short.md', title: 'short.md' });
+        (await import('/js/mobile/navController.js')).dockTo('workbench');
+      });
+      await page.waitForSelector('.mobile-page[data-page="workbench"].live .mf-hub-fav .canvas-fav-row', { timeout: 15000 });
+      await new Promise((r) => setTimeout(r, 400));
+    },
+    cfg: { scrollSel: '.mobile-page[data-page="workbench"] .mobile-page-body', headerSel: null, fabSels: [], rowSel: '.mf-hub-fav .canvas-fav-row', bubbleSel: '.mf-hub-fav .canvas-fav-row' },
+    // 修前形态：标题改为不换行且裁切（pre + overflow），须被 O4 判红（假省略/溢出被裁）。
+    negative: '.mf-hub-fav .canvas-fav-title { width: 40px !important; white-space: pre !important; overflow: hidden !important; text-overflow: ellipsis !important; }',
+  },
 ];
 
 async function main() {

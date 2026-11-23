@@ -54,6 +54,9 @@ export const CHECKS = [
   // 文档收藏纯逻辑闸（2026-11-23 前端功能批）：收藏切换 / 同文档去重=置顶 / 归一化 / 上限。
   { name: 'canvas-favorites-core', profiles: ['static'], timeoutMs: 60_000,
     argv: [process.execPath, '--test', 'tests/canvas-favorites-core.test.mjs'] },
+  // 文档收藏渲染级闸（真 Chromium，三端）：需浏览器 ⇒ frontend 腿（与其它 spec 同档）。
+  { name: 'canvas-favorites-render', profiles: ['frontend'], timeoutMs: 240_000,
+    argv: [process.execPath, 'tests/canvas-favorites-render.spec.mjs'] },
   // 按钮样式统一闸（button-style-unify-canvas-ref 批 2026-11-22）：全站实底静止按钮面
   // 消费统一阴影令牌 var(--btn-shadow)（canvas 基准）；裸写投影/字面量圆角即红。
   nodeCheck('button-style-unify', 'check-button-style-unify'),

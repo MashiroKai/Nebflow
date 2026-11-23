@@ -164,8 +164,10 @@ export function buildFavoritesHubBlock(opts) {
 /** 侧边栏收藏区：挂在会话列表（#session-list）之前，标题 + 列表。幂等。 */
 export function mountSidebarFavorites() {
   if (document.getElementById('canvas-fav-section')) return;
-  const sessionList = document.getElementById('session-list');
-  if (!sessionList || !sessionList.parentElement) return;
+  // 锚点：桌面侧栏真实容器 #panel-sessions 内、#explorer-section 之前（index.html）。
+  // 旧锚点 #session-list 在当前 DOM 中不存在（挂载曾是静默 no-op，2026-11-23 实测）。
+  const anchor = document.getElementById('explorer-section') || document.getElementById('session-list');
+  if (!anchor || !anchor.parentElement) return;
   const section = document.createElement('section');
   section.id = 'canvas-fav-section';
   section.className = 'canvas-fav-section';
@@ -174,7 +176,7 @@ export function mountSidebarFavorites() {
   head.textContent = t('canvas.fav.sectionTitle');
   const body = document.createElement('div');
   section.append(head, body);
-  sessionList.parentElement.insertBefore(section, sessionList);
+  anchor.parentElement.insertBefore(section, anchor);
   const paint = () => renderFavoritesList(body, { compact: true });
   paint();
   onFavoritesChange(paint);
