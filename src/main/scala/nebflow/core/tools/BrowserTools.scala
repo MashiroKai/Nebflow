@@ -3,7 +3,7 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.browser.{BrowserPolicy, BrowserSessions}
+import nebflow.core.browser.{BrowserPolicy, BrowserSecretRef, BrowserSessions}
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * browser-verbs-p0（2026-11-22）· 浏览器九动词一等工具面
@@ -143,16 +143,30 @@ object BrowserFillTool extends BrowserVerbTool:
   override def name: String = Name
 
   override def description: String =
-    """Type `text` into the element with `ref` from the latest browser_snapshot (selects existing content first). Refused for password fields and for the reserved `secret:` syntax: the model never types credentials. The result reports only the character count, never the text."""
+    """Type `text` into the element with `ref` from the latest browser_snapshot (selects existing content first). Password fields refuse typed text. To log in, pass `text` as a secret reference `secret:<name>`: the engine reads the stored secret and injects it (password fields included); the model never sees the value. The result reports only the character count, never the text."""
 
   override def inputSchema: JsonObject =
-    schema(refProp, "text" -> prop("string", "Text to enter. Not echoed back."))("ref", "text")
+    schema(
+      refProp,
+      "text" -> prop("string", "Text to enter, or `secret:<name>` to inject a stored secret. Not echoed back.")
+    )("ref", "text")
 
   override def summarize(input: JsonObject): String =
     s"browser_fill(${str(input, "ref").getOrElse("?")})"
 
   override def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    guarded(input, ctx) { s => BrowserSessions.fill(s, required(input, "ref"), rawStr(input, "text").getOrElse("")) }
+    guarded(input, ctx) { s =>
+      val raw = rawStr(input, "text").getOrElse("")
+      val fromSecret = BrowserSecretRef.isRef(raw)
+      val secretsDir = nebflow.shared.PathUtil.dataRoot.toNIO.resolve("secrets")
+      // 先解析引用（早于会话查找语义上不变：guarded 已完成身份与会话名校验）；失败统一拒绝、不回显。
+      val text =
+        if !fromSecret then raw
+        else BrowserSecretRef.resolve(secretsDir, raw) match
+          case Right(v) => v
+          case Left(msg) => throw new IllegalArgumentException(msg)
+      BrowserSessions.fill(s, required(input, "ref"), text, allowPassword = fromSecret)
+    }
 
 object BrowserWaitTool extends BrowserVerbTool:
   val Name: String = "browser_wait"

@@ -64,9 +64,13 @@ object BrowserPolicy:
    * 凭据红线（动词面侧）：本期不实现 `secret:` 解析（P1 由 daemon 侧 SecretsStore 注入），
    * 但模型参数里出现该保留语法一律拒绝，且拒绝文案不回显任何输入内容。
    */
+  /**
+   * 填充守卫（最终层）：text 在到达 CDP 前若仍以保留前缀开头即拒绝——正常路径下 secret 引用已由
+   * BrowserSecretRef 解析为明文，明文若恰以 `secret:` 开头同样拒绝（防二次引用展开）。
+   */
   def fillRefusal(text: String): Option[String] =
     if text.trim.startsWith("secret:") then
-      Some("secret: 引用解析属 P1（daemon 侧 SecretsStore 注入），本期未实现；请勿把凭据放进 text。")
+      Some("secret: 保留前缀的文本不允许直接填入（secret 引用须由引擎解析，不回显）。")
     else None
 
   /** Chrome 候选路径：显式环境变量优先，其后按平台内置位置。调用方取第一个存在的。 */

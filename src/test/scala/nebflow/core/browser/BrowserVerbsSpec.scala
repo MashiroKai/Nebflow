@@ -229,14 +229,15 @@ class BrowserVerbsSpec extends CatsEffectSuite:
     }
   }
 
-  test("凭据守卫先于会话查找：fill 输入 secret: 即刻拒绝，不回显、不尝试连接浏览器") {
+  test("凭据守卫先于会话查找：fill 输入不存在的 secret 引用即刻统一拒绝，不回显、不尝试连接浏览器") {
+    // 名称必须确定不存在（用户真实 secrets 库里若有同名项，本用例会误触发会话路径）。
     BrowserFillTool
-      .call(JsonObject("ref" -> "e1".asJson, "text" -> "secret:github-pat".asJson), ctxOf(Some("Nebula"), None))
+      .call(JsonObject("ref" -> "e1".asJson, "text" -> "secret:cubu-no-such-secret-xyz".asJson), ctxOf(Some("Nebula"), None))
       .map { res =>
         assert(res.isLeft)
         val msg = res.left.toOption.get.message
         assert(msg.contains("secret:"), msg)
-        assert(!msg.contains("github-pat"), "错误文案不得回显输入")
+        assert(!msg.contains("cubu-no-such-secret-xyz"), "错误文案不得回显输入")
       }
   }
 

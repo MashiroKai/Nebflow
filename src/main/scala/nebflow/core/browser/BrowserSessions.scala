@@ -342,15 +342,23 @@ object BrowserSessions:
    * 凭据红线：`type=password` 字段一律拒绝（登录由人在可见浏览器完成，P1 再接 secret 引用）；
    * `secret:` 保留语法拒绝；成功回执只报长度，绝不回显 text。
    */
-  def fill(name: String, ref: String, text: String, home: Path = homeRoot()): String =
+  /**
+   * allowPassword：仅当 text 来自 secret 引用注入（BrowserSecretRef）时为真；模型直接键入的 password 字段仍拒绝。
+   * 调用方应在此之前已解析引用，text 为明文值（不回显）。
+   */
+  def fill(name: String, ref: String, text: String, home: Path = homeRoot(), allowPassword: Boolean = false): String =
     BrowserPolicy.fillRefusal(text).foreach(msg => throw new IllegalArgumentException(msg))
     val h = existing(name, home)
     val bid = backendIdOf(h, ref)
     val oid = objectIdOf(h, bid)
     val kind = callOn(h, oid, "function () { return String(this.type || '').toLowerCase(); }").asString.getOrElse("")
-    if kind == "password" then
+    if allowPassword then
+      // secret 注入只许进入 password 字段：防止凭据被填进普通输入框后经页面外泄。
+      if kind != "password" then
+        throw new IllegalArgumentException("secret 引用只能注入 password 字段（凭据不得进入普通输入框）。")
+    else if kind == "password" then
       throw new IllegalArgumentException(
-        "凭据类字段（type=password）不接受模型输入。登录请由人在可见浏览器中完成；P1 将以 secret 引用注入。"
+        "凭据类字段（type=password）不接受模型直接键入。请改用 secret 引用（text=\"secret:<name>\"）由引擎注入，或由人在可见浏览器中完成登录。"
       )
     h.page.send("DOM.focus", Json.obj("backendNodeId" -> bid.asJson))
     callOn(
@@ -401,17 +409,26 @@ object BrowserSessions:
     Files.write(file, Base64.getDecoder.decode(data))
     file.toAbsolutePath.toString
 
-  private def listFiles(dir: Path): Set[String] =
+  /**
+   * 文件快照：名字 → (大小, mtime)。按名字比较会漏掉「同名覆盖」的新下载（上次运行留下的同名文件），
+   * 所以新增 / 大小或 mtime 变化都视为本次下载产物。
+   */
+  private def listFiles(dir: Path): Map[String, (Long, Long)] =
     val st = Files.list(dir)
-    try st.iterator.asScala.map(_.getFileName.toString).toSet
+    try
+      st.iterator.asScala.toList
+        .filter(p => Files.isRegularFile(p))
+        .map(p => p.getFileName.toString -> (Files.size(p), Files.getLastModifiedTime(p).toMillis))
+        .toMap
     finally st.close()
 
-  private def listNew(dir: Path, before: Set[String]): List[Path] =
+  private def listNew(dir: Path, before: Map[String, (Long, Long)]): List[Path] =
     val st = Files.list(dir)
     try
       st.iterator.asScala.toList.filter { p =>
         val n = p.getFileName.toString
-        !before.contains(n) && !n.endsWith(".crdownload") && Files.isRegularFile(p)
+        val sig = (Files.size(p), Files.getLastModifiedTime(p).toMillis)
+        !n.endsWith(".crdownload") && Files.isRegularFile(p) && !before.get(n).contains(sig)
       }
     finally st.close()
 
