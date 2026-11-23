@@ -43,9 +43,11 @@ export const CHECKS = [
   nodeCheck('noclip-floating', 'check-noclip-floating'),
   { name: 'noclip-floating-geometry', profiles: ['frontend'], timeoutMs: 240_000,
     argv: [process.execPath, 'tests/noclip-floating-geometry.spec.mjs'] },
-  // 截断/重叠巡检闸（作者令 2026-11-24 09:54：手机面板截断两例必须有自动化覆盖）：
-  // 真 Chromium 390×844 量发起群聊（首项不穿窗头）/ 后台 agent 弹窗（悬浮终止钮不压
-  // 末条）/ 主会话消息流；每面配负对照（还原修前形态必须红，否则闸失明 ⇒ FAIL）。
+  // 截断/重叠巡检闸（作者令 2026-11-24 09:54 + 继续令「一次建全」2026-11-25）：
+  // 真 Chromium 390×844 量全面板清册——发起群聊 / 后台 agent 弹窗 / 主会话消息流 /
+  // 联系人 / 设置 / 待办列表 / 看板文档阅读面 / AskUser 决策卡（P1–P8），另加桌面
+  // 1280×800 同面板族抽检（D1–D2）；每面配负对照（还原修前形态必须红，否则闸失明
+  // ⇒ FAIL）。判据 O0–O4 与修前同尺，不因面板增多而放宽。
   { name: 'mobile-overlap-sweep', profiles: ['frontend'], timeoutMs: 240_000,
     argv: [process.execPath, 'tests/mobile-overlap-sweep.spec.mjs'] },
   nodeCheck('design-tokens', 'check-design-tokens'),

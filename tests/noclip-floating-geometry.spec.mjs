@@ -81,7 +81,7 @@ const PROBE = (sel) => {
   };
 };
 
-async function boot(browser, { viewport, mobile, scheme = 'light' }) {
+async function boot(browser, { viewport, mobile, scheme = 'light', wsSeeds = [], apiOverrides = {} }) {
   const ctx = await browser.newContext({ viewport, colorScheme: scheme, deviceScaleFactor: 2, hasTouch: mobile, isMobile: mobile, locale: 'zh-CN' });
   const page = await ctx.newPage();
   const errors = [];
@@ -95,7 +95,14 @@ async function boot(browser, { viewport, mobile, scheme = 'light' }) {
   await page.route('**/*', (route) => {
     let p = decodeURIComponent(new URL(route.request().url()).pathname);
     if (p === '/') p = '/index.html';
-    if (p.startsWith('/api/')) return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    if (p.startsWith('/api/')) {
+      // apiOverrides（截断巡检批 2026-11-25 回写）：场景声明的端点替身**随装置注册**，
+      // 先于应用引导脚本执行 —— openCreateGroupDialog 的使能闸读 boot 期缓存的
+      // neblink 登录态，setup 期才补的桩接不到那次 fetch（实测 15s 超时）。
+      const ov = apiOverrides[p];
+      if (ov) return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(ov) });
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    }
     const file = normalize(join(WEB, p));
     if (!file.startsWith(WEB)) return route.fulfill({ status: 403, body: 'forbidden' });
     try { return route.fulfill({ status: 200, contentType: MIME[extname(file)] || 'application/octet-stream', body: readFileSync(file) }); }
@@ -105,6 +112,9 @@ async function boot(browser, { viewport, mobile, scheme = 'light' }) {
     const cfg = () => ws.send(JSON.stringify({ type: 'configData', config: '{}', configured: true, onboarding: 'done' }));
     const sess = () => ws.send(JSON.stringify({ type: 'sessionList', sessions: [{ id: SID, name: 'root', agentName: 'Nebula' }], folders: [], activeId: SID }));
     cfg(); sess();
+    // wsSeeds（截断巡检批 2026-11-25 回写）：场景声明的服务端推送帧在握手后随
+    // 首帧一并下发（仅声明 seeds 的场景吃到，既有场景零影响）。
+    for (const seed of wsSeeds) ws.send(JSON.stringify(seed));
     ws.onMessage((raw) => { let m; try { m = JSON.parse(raw); } catch { return; }
       if (m.type === 'getConfig') cfg();
       else if (m.type === 'getSessions' || m.type === 'listSessions') sess();
@@ -198,6 +208,36 @@ const SCENARIOS = [
     id: 'desktop-chat-ask-card', mobile: false, viewport: { width: 1280, height: 800 }, selectors: ['.option-box'],
     setup: renderTallAsk(TALL_ASK),
   },
+  // ── 截断巡检批回写（作者令 2026-11-25「noclip-floating 补入窗头让位/流底控件
+  //    让位两面」）：发起群聊窗头/加号 与 后台 agent 弹窗（终止钮 + 消息流壳）
+  //    两面进本清单，与 mobile-overlap-sweep 互补 —— 本闸量四边裁切/祖先裁，
+  //    那道闸量首行/末行让位几何。 ────────────────────────────────────────────
+  {
+    id: 'mobile-create-group-chrome', mobile: true, viewport: { width: 390, height: 844 },
+    selectors: ['.fm-pick-header', '.fm-pick-fab'],
+    // openCreateGroupDialog 的使能闸读 neblink 登录态（HTTP /api/neblink/status，
+    // 应用 boot 期取一次并缓存 ⇒ 桩必须随装置注册，见 boot() 的 apiOverrides）。
+    apiOverrides: { '/api/neblink/status': { loggedIn: true, device: { name: 'noclip' }, peers: [] } },
+    setup: async (page) => {
+      await page.evaluate(async () => { (await import('/js/friendGroups.js')).openCreateGroupDialog(); });
+      await page.waitForSelector('#fm-group-create-overlay .fm-pick-header', { timeout: 15000 });
+      await page.waitForTimeout(300);
+    },
+  },
+  {
+    id: 'mobile-bgagent-popup-chrome', mobile: true, viewport: { width: 390, height: 844 },
+    selectors: ['.bgagent-stop-fab', '.flow-agent-chat'],
+    setup: async (page) => {
+      await page.route('/api/delegates', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ record: { id: 'noclip-agent', executor: 'claude', title: 'noclip', createdAt: 1793940000000, name: 'noclip' }, live: { status: 'running' }, verdict: null, task: null }) }));
+      await page.evaluate(async () => {
+        const m = await import('/js/bgAgentPopup.js');
+        m.openStepPopup('noclip-agent', 'noclip', 'noclip');
+      });
+      await page.waitForSelector('.bgagent-overlay .flow-agent-chat', { timeout: 15000 });
+      await page.waitForTimeout(300);
+    },
+    wsSeeds: [{ type: 'activeAgents', agents: [{ rootSessionId: SID, sessionId: 'noclip-agent', agentId: 'noclip-agent', name: 'noclip', task: 'noclip', kind: 'Delegate', status: 'Processing', startedAt: 1793940000000 - 7200000, retryCount: 0 }] }],
+  },
 ];
 
 function loadLedger() {
@@ -218,7 +258,10 @@ async function main() {
   const readings = [];
   const pageErrors = [];
   for (const sc of SCENARIOS) {
-    const { ctx, page, errors } = await boot(browser, { viewport: sc.viewport, mobile: sc.mobile });
+    const { ctx, page, errors } = await boot(browser, {
+      viewport: sc.viewport, mobile: sc.mobile,
+      wsSeeds: sc.wsSeeds || [], apiOverrides: sc.apiOverrides || {},
+    });
     try {
       await sc.setup(page);
       for (const sel of sc.selectors) {
@@ -244,6 +287,17 @@ async function main() {
   }
   const fresh = violations.filter((v) => !known.has(v.key));
   const improved = ledger.runtime.filter((e) => !violations.some((v) => v.key === e.key));
+
+  // 宣告面缺失/场景崩溃 = 闸盲跑（同 O0 非空律，截断巡检批 2026-11-25 补）：
+  // 台账只收「量到了且越界」的态；场景超时或选择器没渲染出来的面此前会**静默
+  // PASS**（实测 create-group 场景超时一次，11 面照样绿）。宣告清单里的面没量到
+  // = 结构性失败，不可入台账、直接红。
+  const absent = readings.filter((r) => r.missing || r.error);
+  if (absent.length) {
+    console.error(`noclip-floating (runtime): ${absent.length} declared surface(s) NOT measured (selector missing / scenario error) — gate would run blind:`);
+    for (const r of absent) console.error(`  ${r.scenario} ${r.sel}${r.error ? ` — ${String(r.error).split('\n')[0]}` : ' — selector not found'}`);
+    process.exit(1);
+  }
 
   const report = { generatedAtNote: 'runtime geometry readings', readings, violations, fresh, improved, ledgerSize: ledger.runtime.length, pageErrors };
   writeFileSync(join(OUT, 'readings.json'), JSON.stringify(report, null, 2));
