@@ -892,19 +892,92 @@ When to use:
                 s"Session '$sessionId' is no longer live. Task record: status=${t.status}, retries=${t.retryCount}, lastError=${t.lastError.getOrElse("-")}."
               )
             case None =>
-              Left(
-                ToolError(
-                  s"No agent or task record with sessionId='$sessionId'. Run AgentControl(action=list) to see live sessions."
+              // 手抄 ID 容错（送达链路修复批 2026-11-23 P1⑥）：诊断实证 23c610c6
+              // vs 真实 23c910c6（单字符抄错）制造了「记录无痕消失」的表象。查无
+              // 此 ID 时给「did you mean」候选（活体 registry ∪ 任务台账，编辑距离
+              // ≤2 或后缀包含），先防误判再谈记录（记录从未消失）。
+              didYouMean(resources, registry, sessionId).map { suggestions =>
+                val hint =
+                  if suggestions.nonEmpty then
+                    s" Did you mean: ${suggestions.map(s => s"'$s'").mkString(", ")}?"
+                  else ""
+                Left(
+                  ToolError(
+                    s"No agent or task record with sessionId='$sessionId'.$hint " +
+                      "Run AgentControl(action=list) to see live sessions."
+                  )
                 )
-              )
+              }
           }
 
     end match
 
   end doStatusBody
 
-  /** 外部 delegate 的 status 详情（进度缓冲 + 地址簿记录 + mailbox 深度）。 */
-  private def externalStatusBody(sessionId: String): IO[Either[ToolError, String]] =
+  // ── 手抄 ID 容错（P1⑥，纯函数 = spec 判红锚）───────────────────────────
+
+  /** Levenshtein 编辑距离（早停上界；短串场景 O(n·m)，零依赖）。 */
+  private[tools] def editDistance(a: String, b: String, bound: Int = 3): Int =
+    if a == b then 0
+    else if math.abs(a.length - b.length) > bound then bound + 1
+    else
+      val prev = Array.tabulate(b.length + 1)(identity)
+      val cur = new Array[Int](b.length + 1)
+      var i = 1
+      var stop = false
+      while i <= a.length && !stop do
+        cur(0) = i
+        var rowMin = cur(0)
+        var j = 1
+        while j <= b.length do
+          val cost = if a.charAt(i - 1) == b.charAt(j - 1) then 0 else 1
+          cur(j) = math.min(math.min(cur(j - 1) + 1, prev(j) + 1), prev(j - 1) + cost)
+          rowMin = math.min(rowMin, cur(j))
+          j += 1
+        Array.copy(cur, 0, prev, 0, cur.length)
+        if rowMin > bound then stop = true
+        i += 1
+      prev(b.length)
+
+  /**
+   * 「did you mean」候选（P1⑥）：query 与候选清单（活体 registry ∪ 任务台账
+   * taskId）按编辑距离 ≤2 或「一方是另一方后缀」匹配（后缀面覆盖只抄了短
+   * 名字的人手习惯：`23c910c6` ⊂ `delegate-nebflow-23c910c6`）。最多 3 个，
+   * 距离升序、字典序稳定。
+   */
+  private[tools] def didYouMeanCandidates(query: String, candidates: Iterable[String], max: Int = 3): List[String] =
+    val q = Option(query).map(_.trim).getOrElse("")
+    if q.length < 4 then Nil
+    else
+      val qLower = q.toLowerCase
+      candidates.iterator
+        .map(_.trim)
+        .filter(_.nonEmpty)
+        .filterNot(_.equalsIgnoreCase(q))
+        .map(c => (c, c.toLowerCase))
+        .flatMap { (original, lower) =>
+          val suffixMatch = math.min(qLower.length, lower.length) >= 6 &&
+            (lower.endsWith(qLower) || qLower.endsWith(lower))
+          val dist = editDistance(qLower, lower, bound = 2)
+          if suffixMatch then Some((original, math.min(dist, 2)))
+          else if dist <= 2 then Some((original, dist))
+          else None
+        }
+        .toList
+        .sortBy((original, dist) => (dist, original))
+        .take(max)
+        .map(_._1)
+
+  private def didYouMean(
+    resources: AgentRuntimePort,
+    registry: Map[String, AgentRecord],
+    query: String
+  ): IO[List[String]] =
+    resources.subAgentTaskStore.findAllTasks()
+      .map(tasks => didYouMeanCandidates(query, registry.keys ++ tasks.map(_.taskId)))
+      .handleErrorWith(_ => IO.pure(didYouMeanCandidates(query, registry.keys)))
+
+  /** 外部 delegate 的 status 详情（进度缓冲 + 地址簿记录 + mailbox 深度）。 */  private def externalStatusBody(sessionId: String): IO[Either[ToolError, String]] =
     nebflow.core.executor.ExternalOutputStore.read(sessionId, 0).flatMap {
       case None =>
         nebflow.core.delegate.DelegateRegistry.find(sessionId) match

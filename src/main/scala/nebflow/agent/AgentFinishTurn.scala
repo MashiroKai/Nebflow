@@ -795,7 +795,12 @@ private[agent] object AgentFinishTurn:
             )
           )
         else IO.unit
-      val eventMessages = List(buildEventReminder(boundaryEvents))
+      // P1⑤（送达链路修复批 2026-11-23）：终报独立成 user 消息（不并入工具结果批
+      // 的编号 system-reminder）；其余事件保持合批形。
+      val (terminalReportEvents, batchedEvents) = boundaryEvents.partition(MailboxDrain.isDelegateTerminal)
+      val eventMessages =
+        (if batchedEvents.nonEmpty then List(buildEventReminder(batchedEvents)) else Nil) ++
+          terminalReportEvents.map(e => MailboxDrain.injectionMessages(List(e)).head)
       val messagesWithPending = newMessages ++ eventMessages
       logAgentEvent(
         agentDef,
@@ -803,7 +808,8 @@ private[agent] object AgentFinishTurn:
         state.sessionId,
         state.sessionName,
         "pending-messages-injected",
-        s"events=${boundaryEvents.size} remaining=${remainingEvents.size} mailbox=${mailboxTaken.size} mailboxHeld=${mailboxHeld}"
+        s"events=${boundaryEvents.size} remaining=${remainingEvents.size} mailbox=${mailboxTaken.size} " +
+          s"mailboxHeld=${mailboxHeld} terminalOwn=${terminalReportEvents.size}"
       )
       val updatedState = state
         .copy(execution =
