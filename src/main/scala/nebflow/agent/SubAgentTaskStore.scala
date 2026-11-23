@@ -453,6 +453,18 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
       else Right(row.copy(notificationPending = Some(false)))
     }
 
+  /** 陈旧待投递旗清除（见 [[SubAgentTaskStorePort.clearStalePendingNotification]]）。 */
+  override def clearStalePendingNotification(
+    parentSessionId: String,
+    taskId: String,
+    runId: String
+  ): IO[Either[String, SubAgentTask]] =
+    mutateRun(parentSessionId, taskId, runId) { row =>
+      if row.notificationPending.contains(true) && Set("failed", "cancelled").contains(row.status) then
+        Right(row.copy(notificationPending = Some(false)))
+      else Left("not-stale-pending")
+    }
+
   def loadTasks(parentSessionId: String): IO[List[SubAgentTask]] =
     withLock(readTasksSync(parentSessionId))
 

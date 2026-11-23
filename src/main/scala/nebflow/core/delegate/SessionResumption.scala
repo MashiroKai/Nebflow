@@ -15,8 +15,9 @@ import nebflow.shared.{ContentBlock, NebflowLogger, SubAgentTask}
 /**
  * Same-identity continuation for a completed or idle delegate with verified history.
  * Mail never creates a replacement identity. Cancellation, missing history and unknown
- * tool outcomes are explicit refusals; frozen and restart-interrupted sessions wait
- * for manual recovery. Historical scope migrations remain readable for diagnostics.
+ * tool outcomes are explicit refusals; frozen and restart-interrupted sessions are held by
+ * a gate ([[requiresManual]]) that a Mail supplement releases (`gateReleased`, Mail = wake).
+ * Historical scope migrations remain readable for diagnostics.
  */
 object SessionResumption:
 
@@ -190,7 +191,13 @@ object SessionResumption:
    *
    * 失败返回Left，原身份、历史和作用域保留；不派生替代会话。
    */
-  /** Shared with Mail: supplements never release a freeze or a saved restart gate. */
+  /**
+   * 押闸判定（单点）：冻结 / 重启打断 / 待恢复 / 活体冻结 ⇒ 押闸。取消墓碑也计入（但取消
+   * 永不释放，见 [[resumeInPlaceLocked]] 与 Mail 腿的前置拒绝）。
+   * 释放口单点：Mail 补充腿（`MailTool.deliverToDelegate` → `releaseGateByMail`）是押闸的
+   * 唯一释放来源——Mail 即唤醒（显式重试信号；确定性缺陷再撞仍按既有规则再冻结）。
+   * 其余调用方（邮箱排干 / 押闸态注入门）只读本判定，不释放。
+   */
   def requiresManual(
     record: Option[DelegateRegistry.Record],
     task: Option[nebflow.shared.SubAgentTask],
@@ -206,18 +213,28 @@ object SessionResumption:
     deps: Deps,
     record: DelegateRegistry.Record,
     message: String,
-    blocks: Option[List[ContentBlock]] = None
+    blocks: Option[List[ContentBlock]] = None,
+    gateReleased: Boolean = false
   ): IO[Either[String, InPlaceOutcome]] =
     SessionStartLease
-      .exclusive(record.id)(resumeInPlaceLocked(deps, record, message, blocks))
+      .exclusive(record.id)(resumeInPlaceLocked(deps, record, message, blocks, gateReleased))
       .handleError(e => Left(s"Continuation could not safely start: ${e.getMessage}"))
 
-  /** Caller already holds the same session-start lease as initialization and manual revival. */
+  /**
+   * Caller already holds the same session-start lease as initialization and manual revival.
+   *
+   * @param gateReleased **押闸释放口**（作者令 2026-11-22 20:44「Mail 本身就是唤醒」）：
+   *   `true` = 调用方（Mail 补充腿）已显式释放押闸——冻结 / 重启打断 / 待恢复的记录不再被
+   *   [[requiresManual]] 拦下；同 id 原位续、转录重放、补充作为下一回合注入，成功后收口冻结槽
+   *   （[[DelegateFreeze.onWoken]]）。取消墓碑与受保护执行**不因此释放**（两闸仍在前）。
+   *   `false`（默认）= 押闸态照旧拒绝（非 Mail 调用方不得绕闸）。不写预算计数（零记账）。
+   */
   private[nebflow] def resumeInPlaceLocked(
     deps: Deps,
     record: DelegateRegistry.Record,
     message: String,
-    blocks: Option[List[ContentBlock]] = None
+    blocks: Option[List[ContentBlock]] = None,
+    gateReleased: Boolean = false
   ): IO[Either[String, InPlaceOutcome]] =
     for
       latest <- IO.blocking(DelegateRegistry.find(record.id))
@@ -232,20 +249,68 @@ object SessionResumption:
         case None => IO.pure(Left("Delegate identity is missing; inspect the saved context"))
         case Some(current) if current.cancelRequestedAt.nonEmpty =>
           IO.pure(Left("Delegate was manually cancelled; create new work explicitly (DELEGATE_CANCELLED)"))
-        case Some(current) if requiresManual(Some(current), task, live) =>
+        case Some(current) if !gateReleased && requiresManual(Some(current), task, live) =>
           IO.pure(Left("Continuation is saved behind a manual recovery gate (MANUAL_RECOVERY_REQUIRED)"))
         case Some(current) =>
           live.fold(IO.pure(false))(entry => deps.system.isAlive(entry.ref.path)).flatMap {
             case true => IO.pure(Left("Session is already live; deliver the supplement to its existing actor"))
-            case false => resumeAdmitted(deps, current, message, blocks)
+            case false =>
+              // 守门拒绝 ⇒ 干净 Left（带原因），**不进 admitted 路径**、不 park 成引擎故障。
+              pendingNotificationGate(task, gateReleased) match
+                case PendingGate.Refuse(reason) => IO.pure(Left(reason))
+                case PendingGate.Clear(row) =>
+                  deps.resources.subAgentTaskStore
+                    .clearStalePendingNotification(row.parentSessionId, row.taskId, row.runId.getOrElse(""))
+                    .flatMap {
+                      case Right(_) =>
+                        val note =
+                          s"[session-resume] cleared stale pending notification on terminal row ${row.taskId} " +
+                            s"(status=${row.status}) before gate-released resume"
+                        logger.info(note).flatMap(_ => resumeAdmitted(deps, current, message, blocks, gateReleased))
+                      case Left(err) =>
+                        IO.pure(Left(s"stale pending notification could not be cleared ($err); resume refused"))
+                    }
+                case PendingGate.Proceed => resumeAdmitted(deps, current, message, blocks, gateReleased)
           }
     yield result
+
+  /** 待投递旗守门判定的结果（纯判定，见 [[pendingNotificationGate]]）。 */
+  enum PendingGate:
+    /** 无待投递旗（或旗为假）：照常进入 admitted。 */
+    case Proceed
+
+    /** 终态残留旗 ∧ 释放腿 ∧ 有 runId：清旗后照常释放。 */
+    case Clear(row: SubAgentTask)
+
+    /** 其它一律拒绝（非终态行的旗不碰；非释放腿不清旗）——干净 Left，不 park。 */
+    case Refuse(reason: String)
+
+  /**
+   * 待投递旗守门（纯判定，单点）：
+   *   - 旗为假/缺席 ⇒ Proceed；
+   *   - 旗为真 ∧ 行终态（failed/cancelled）∧ 释放腿（gateReleased）∧ 有 runId ⇒ Clear
+   *     （看门狗强终后的陈旧残留——挂起通知等不到投递，清旗是收拾尸体，不违反零通知令）；
+   *   - 旗为真 ∧ 其余（非终态 / 非释放腿 / 无 runId）⇒ Refuse（非终态旗一律不碰）。
+   */
+  def pendingNotificationGate(task: Option[SubAgentTask], gateReleased: Boolean): PendingGate =
+    task match
+      case Some(row) if row.notificationPending.contains(true) =>
+        val terminal = Set("failed", "cancelled").contains(row.status)
+        if terminal && gateReleased && row.runId.nonEmpty then PendingGate.Clear(row)
+        else
+          PendingGate.Refuse(
+            s"notification-pending: task ${row.taskId} (status=${row.status}) still carries an undelivered " +
+              "terminal notification; the continuation guard refuses it (not an engine fault — " +
+              "the row is left untouched)"
+          )
+      case _ => PendingGate.Proceed
 
   private def resumeAdmitted(
     deps: Deps,
     record: DelegateRegistry.Record,
     message: String,
-    blocks: Option[List[ContentBlock]]
+    blocks: Option[List[ContentBlock]],
+    gateReleased: Boolean
   ): IO[Either[String, InPlaceOutcome]] =
     val id = record.id
     val title = displayTitle(record)
@@ -421,6 +486,16 @@ object SessionResumption:
                     .orElse(input.blocks)
                 )
                 _ <- subagentRef ! withMedia
+                // 押闸释放收口：冻结槽 / 注册表 / 台账行一次归位。不收口 = 冻结标记残留，
+                // requiresManual 下一次仍判押闸（Mail 永远唤不醒）。仅押闸释放腿执行；
+                // 普通续聊零写（不触碰已完成行）。fail-soft：收口失败不推翻已成的续起。
+                _ <- IO.whenA(gateReleased)(
+                  DelegateFreeze
+                    .onWoken(deps.resources, id, "mail", deps.wsSend)
+                    .handleErrorWith(e =>
+                      logger.warn(s"[session-resume] gate-release wake close-out failed for $id: ${e.getMessage}").void
+                    )
+                )
                 _ <- logger.info(
                   s"[session-resume] resumed IN PLACE $id (transcript=${transcript.size} msgs, parentLive=${parentRef.isDefined}, " +
                     s"scopeMounted=${mounted.isDefined}, title='$title') — same session id, chain ownership untouched"

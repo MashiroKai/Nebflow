@@ -207,7 +207,7 @@ class DelegateFreezeE2ESpec extends CatsEffectSuite:
     )
 
   test(
-    "e2e: provider failure freezes the delegate (frozen receipt, never a failure verdict) → Mail is retained without execution → explicit manual wake in the SAME session → the continuation turn still carries the pre-freeze history"
+    "e2e: provider failure freezes the delegate (frozen receipt, never a failure verdict) → no automatic wake → Mail itself releases the gate and wakes the SAME session → the continuation turn still carries the pre-freeze history"
   ) {
     withFx("main") { fx =>
       val parentSid = "freeze-e2e-parent"
@@ -295,38 +295,28 @@ class DelegateFreezeE2ESpec extends CatsEffectSuite:
         frozenReg <- fx.resources.agentRegistry.get.map(_.get(childSid))
         frozenMail <- mailboxEvents(parentSid)
         frozenFrames <- fx.frames.get
-        // Mail preserves the supplement and the freeze; only the explicit user action resumes execution.
+        // 押闸态：无 Mail 时自动扫描（邮箱排干 / 启动扫箱）**不释放**押闸、不唤醒。
         mailInput = JsonObject(
           "address" -> s"delegate:$childSid".asJson,
           "message" -> "继续把 wiring 补完（provider 已恢复）".asJson
         )
-        mailContext = parentCtx(fx.resources, fx.system, parentSid).copy(toolCallId = "retained-supplement")
-        savedMail <- MailTool.call(mailInput, mailContext)
-        retryMail <- MailTool.call(mailInput, mailContext)
-        _ = assert(savedMail.toOption.exists(_.contains("MANUAL_RECOVERY_REQUIRED")), savedMail.toString)
-        _ = assert(retryMail.isRight)
+        mailContext = parentCtx(fx.resources, fx.system, parentSid).copy(toolCallId = "gate-release-mail")
         _ <- childRef ! AgentCommand.MailboxArrived
         _ <- childRef ! AgentCommand.RecoverPersistedQueues
         _ <- IO.sleep(200.millis)
-        beforeManual <- fx.requests.get.map(_.count(_.sessionId == childSid))
-        _ = assertEquals(beforeManual, 1, "Mail alone must not invoke the model again")
+        beforeMail <- fx.requests.get.map(_.count(_.sessionId == childSid))
+        _ = assertEquals(beforeMail, 1, "without Mail, automatic scans must not invoke the model again")
+        _ = assert(DelegateRegistry.isFrozen(childSid))
+        // Mail 即唤醒：释放押闸、同 id 续跑；补充作为下一回合注入（不滞留邮箱）。
+        savedMail <- MailTool.call(mailInput, mailContext)
+        _ = assert(savedMail.isRight, savedMail.toString)
+        _ = assert(!DelegateRegistry.isFrozen(childSid), "the Mail wake closes the freeze slot")
         pending <- SessionMailbox.scanPending(childSid)
         _ = assertEquals(
           pending.count(_.kind == "mail-supplement"),
-          1,
-          "retry and automatic mailbox scans preserve the held supplement"
+          0,
+          "the released supplement is consumed as the next turn, not left in the mailbox"
         )
-        heldTaken <- SessionMailbox.scanTaken(childSid)
-        _ = assert(heldTaken.isEmpty, "automatic scans must not consume a manually held inbox")
-        _ = assert(DelegateRegistry.isFrozen(childSid))
-        manualWake <- DelegateWakeLeg.wake(
-          fx.resources,
-          Some(j => fx.frames.update(_ :+ j)),
-          childSid,
-          "Resume from the saved checkpoint",
-          "panel-wake"
-        )
-        _ = assert(manualWake.isRight, manualWake.toString)
         // 唤醒收口读数**先行**（确定性）：onWoken 在 wake 链内同步完成（冻结槽清空 +
         // registry 回 Idle + 台账行回 running），而续做轮的自然完成链（text-finish ⇒
         // completed 终态三清：拆 registry 行、行写终态、Stop child）是合法异步收尾——

@@ -235,6 +235,17 @@ trait SubAgentTaskStorePort:
     notificationId: String
   ): IO[Either[String, SubAgentTask]] = IO.pure(Left("run-lifecycle-unsupported"))
 
+  /**
+   * 陈旧待投递旗清除（押闸释放专用）：仅当行已终态（failed / cancelled）且 `notificationPending=true`
+   * 时清旗；非终态或非该 run 一律拒绝（Left），不碰行。依据：终态行的挂起通知等不到投递
+   * （看门狗强终已按零通知令没收），清旗是收拾残留，不是伪造投递。
+   */
+  def clearStalePendingNotification(
+    parentSessionId: String,
+    taskId: String,
+    runId: String
+  ): IO[Either[String, SubAgentTask]] = IO.pure(Left("run-lifecycle-unsupported"))
+
   def recordTask(task: SubAgentTask): IO[Unit]
 
   def updateStatus(
