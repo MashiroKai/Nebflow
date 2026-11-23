@@ -5050,6 +5050,9 @@ function initCapsuleRing() {
     const pop = hdr.querySelector('.canvas-pop-btn');
     const on = !!pop && getComputedStyle(pop).display !== 'none';
     root.style.setProperty('--cr-popw', on ? '32px' : '0px');
+    const fav = hdr.querySelector('.canvas-fav-btn');
+    const favVisible = !!fav && getComputedStyle(fav).display !== 'none';
+    root.style.setProperty('--cr-favw', favVisible ? `${fav.getBoundingClientRect().width + parseFloat(getComputedStyle(fav).marginRight) + parseFloat(getComputedStyle(hdr).columnGap)}px` : '0px');
   };
 
   const layout = () => {

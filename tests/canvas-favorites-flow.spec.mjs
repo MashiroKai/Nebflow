@@ -73,13 +73,23 @@ async function starRoundTrip(page, tag, openPage) {
   // 手机端：文档页顶胶囊只在 canvas dock 页可见 ⇒ 先切到 canvas 页再找星标。
   if (tag === 'mobile') await page.evaluate(async () => (await import('/js/mobile/navController.js')).dockTo('canvas'));
   const starSel = tag === 'mobile' ? '.mf-cv-star' : '#canvas-fav-btn';
-  const headSel = tag === 'mobile' ? '.mf-cv-toolbar' : '#canvas-panel .canvas-header';
+  const headSel = '#canvas-panel .canvas-header';
   await page.waitForSelector(starSel, { state: 'attached', timeout: 15000 });
   await page.waitForFunction((q) => { const b = document.querySelector(q); return !!b && !b.hidden && b.getBoundingClientRect().width > 0; }, starSel, { timeout: 15000 });
   await settle(page, 300);
   const star = page.locator(starSel);
   const offClass = await star.getAttribute('class');
   check(`${tag}: 星标初始描边态`, offClass.indexOf('is-on') < 0);
+  if (tag === 'mobile') {
+    const geometry = await page.evaluate(() => {
+      const rect = sel => document.querySelector(sel).getBoundingClientRect();
+      const close = rect('.mf-cv-close'), star = rect('.mf-cv-star'), chip = rect('.mf-strip-chip.on');
+      return { closeRight: close.right, starLeft: star.left, starRight: star.right, chipLeft: chip.left };
+    });
+    check('mobile: close, star and chip do not overlap', geometry.closeRight < geometry.starLeft && geometry.starRight <= geometry.chipLeft, JSON.stringify(geometry));
+    await shot(page, 'mobile-star-off.png', 'mobile star off and chip');
+    await shot(page, 'mobile-star-off-close.png', 'mobile star off close-up', starSel);
+  }
   await star.click({ timeout: 8000 }).catch(async (e) => {
     const diag = await page.evaluate(() => {
       const el = document.querySelector(starSel);
@@ -96,9 +106,21 @@ async function starRoundTrip(page, tag, openPage) {
   check(`${tag}: 点亮弹出成功 toast`, toast);
   // 胶囊/工具条截图按包围盒裁切（工具条为悬浮带，locator 截图会因稳定性等待超时）。
   try {
-    const box = await page.locator(headSel).first().boundingBox();
-    if (!box) throw new Error('no bounding box');
-    await page.screenshot({ path: join(SHOT_DIR, `${tag}-star-on-capsule.png`), clip: { x: Math.max(0, box.x - 8), y: Math.max(0, box.y - 8), width: box.width + 16, height: box.height + 16 }, timeout: 8000 });
+    if (tag === 'mobile') {
+      await page.locator('.mf-strip').waitFor({ state: 'visible' });
+      await page.screenshot({ path: join(SHOT_DIR, `${tag}-star-on-capsule.png`), clip: { x: 0, y: 0, width: 390, height: 160 }, timeout: 8000 });
+      await page.screenshot({ path: join(SHOT_DIR, 'mobile-star-on-page.png'), timeout: 8000 });
+    } else {
+      const box = await page.locator(headSel).first().boundingBox();
+      if (!box || box.height < 20) throw new Error('invalid capsule bounding box');
+      await page.screenshot({ path: join(SHOT_DIR, `${tag}-star-on-capsule.png`), clip: { x: Math.max(0, box.x - 8), y: Math.max(0, box.y - 8), width: box.width + 16, height: box.height + 16 }, timeout: 8000 });
+      const geometry = await page.evaluate(() => {
+        const rect = sel => document.querySelector(sel).getBoundingClientRect();
+        const star = rect('#canvas-fav-btn'), title = rect('.cr-capsule.is-center .cr-icon');
+        return { starRight: star.right, iconLeft: title.left };
+      });
+      check('desktop: hover star and icon do not overlap', geometry.starRight <= geometry.iconLeft, JSON.stringify(geometry));
+    }
     check(`screenshot: ${tag} star lit (capsule)`, true);
   } catch (e) {
     check(`screenshot: ${tag} star lit (capsule)`, false, String(e.message).split('\n')[0]);
