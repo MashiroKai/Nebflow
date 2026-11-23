@@ -124,6 +124,9 @@ export const CHECKS = [
   nodeCheck('ask-todo-lifecycle', 'check-ask-todo-lifecycle'),
   nodeCheck('self-explaining', 'check-self-explaining'),
   nodeCheck('badge-words', 'check-badge-words'),
+  // ack-badge-pool 批（2026-11-23）：零 report 块回合 ✻ 字句池（ack 池）门禁 —
+  // 池非空/两语言对齐/{d} 占位与字数/取词分派单点/轮换同构。
+  nodeCheck('ack-phrases', 'check-ack-phrases'),
   nodeCheck('circular', 'check-circular'),
   nodeCheck('fixture-secrets', 'check-fixture-secrets'),
   nodeCheck('api-routes', 'check-api-routes'),

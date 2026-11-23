@@ -259,8 +259,10 @@ test.describe('one header per turn — history rebuild path', () => {
     const c = await badgeCensus(page);
     expect(c.groupCount).toBe(1);
     expect(c.bars[0].toolCards).toBe(5); // 2+3 aggregated
-    // ✻ phrase: seed = msg index 8 → think.8「没什么方向地飘了 3m 25s」(deterministic).
-    expect(c.bars[0].text).toBe('✻ 没什么方向地飘了 3m 25s · zhipu/GLM-5.3-Flash · 工具 5 次 · 读写 2 文件');
+    // ✻ phrase: seed = msg index 8 → ack.8「把答案轻轻搁上轨道，落稳用了
+    // 3m 25s」(deterministic)。终稿零 <report> 块 ⇒ ack 池（ack-badge-pool 批
+    // 2026-11-23；有块的回合仍走 think 池）。
+    expect(c.bars[0].text).toBe('✻ 把答案轻轻搁上轨道，落稳用了 3m 25s · zhipu/GLM-5.3-Flash · 工具 5 次 · 读写 2 文件');
     expect(c.bars[0].followsUser).toBe(true);
     expect(c.flatTexts).toEqual(['历史中间文字A。', '历史中间文字B。', '历史最终回复。']);
 

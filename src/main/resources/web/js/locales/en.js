@@ -1989,6 +1989,29 @@ export default {
   'think.17': 'A comet streaked across the sky, {d} and it was gone',
   'think.18': 'Rode a stellar wind past the nebulas, flew for {d}',
 
+  // === Ack phrases (zero <report>-block turns; ack-badge-pool batch, author order 2026-11-23) ===
+  // Semantics = received / done / light acknowledgement; same cosmic imagery and
+  // cadence as the think pool. Exactly one {d} placeholder each; count / length /
+  // cross-locale parity are guarded by scripts/check-ack-phrases.mjs.
+  'ack.0': 'Gave a soft nod this way, {d} all told',
+  'ack.1': 'A quiet "got it" skimmed the stars, {d} in flight',
+  'ack.2': 'Folded the receipt into a paper plane, {d} aloft',
+  'ack.3': 'Stamped "done" on the star chart, {d} at the desk',
+  'ack.4': 'Waved once across the porthole glass, {d} in all',
+  'ack.5': 'A meteor carried my "all set", {d} en route',
+  'ack.6': 'The radio answered with a crackle, {d} on air',
+  'ack.7': 'The lighthouse blinked its reply, {d} apart',
+  'ack.8': 'Set the answer gently into orbit, {d} to settle',
+  'ack.9': 'The pigeon landed back on the porthole, {d} of flutter',
+  'ack.10': 'Called in all-clear along the route, {d} on the line',
+  'ack.11': 'The echo came riding a star trail, {d} of ripple',
+  'ack.12': 'Opened a palm with a small star in it, {d} to unfold',
+  'ack.13': 'Starlight nodded back, {d} there and back',
+  'ack.14': 'A "received" from the moon\'s far side, {d}',
+  'ack.15': 'Condensed the reply into a grain of stardust, {d}',
+  'ack.16': 'Brushed off the stardust and answered, {d} in a breath',
+  'ack.17': 'Left "done" on the lunar dust, {d} in orbit',
+
   // === Slash commands ===
   // (/clear //compact dropdown help removed with the commands, 2026-10-09; the
   // *Done strings stay — the compact-mode send path and persisted-queue replay
