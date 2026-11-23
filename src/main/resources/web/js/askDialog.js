@@ -136,6 +136,9 @@ function setMarkdownHtml(node, text, streaming) {
  *   后的通用回调（状态可见性批：内核只报「哪一帧到了」，帧语义归消费者）
  * @property {() => void} [onStop] 覆盖停止钮动作（状态可见性批：canvas 档在消费者
  *   侧收口回合事实；缺省 = 本内核的 dlg.stopAsk）
+ * @property {(node: HTMLElement, msg: any) => void} [termLinks] 回答词条化钩子（多选
+ *   合并 Ask 批 2026-11-23，设计正本 §5 G4）：消费方在**终态落列**的 ai 气泡体上挂
+ *   词条链接腿；本内核不认识词表（缺省 = 零动作，canvas 档逐字现状）。
  * @property {string} [panelClass] 面板类（缺省 'ask-dock'）
  */
 
@@ -515,7 +518,15 @@ export function createAskDialog(cfg) {
                 srcs.map((src) => h('img', { class: 'ask-msg-img', src, alt: '', loading: 'lazy' }))));
             }
             if (m.text) b.appendChild(document.createTextNode(m.text));
-          } else setMarkdownHtml(b, m.text, false); // 唯一 HTML 落点见 setMarkdownHtml
+          } else {
+            setMarkdownHtml(b, m.text, false); // 唯一 HTML 落点见 setMarkdownHtml
+            // 回答词条化（多选合并 Ask 批 2026-11-23；设计正本 §5 G4「在
+            // createAskDialog 增加 termLinks 钩子」）：本内核**零词表知识**——词条匹配
+            // 规则、消解裁定、气泡/深链腿全在 termLexicon.js + viewers/markdown.js 那一
+            // 族，消费者经 cfg 注入。只在**终态落列**（render）走一次，流式增量
+            // （updateStreaming）不扫，避免每帧一次图谱遍历。
+            if (m.role === 'ai') cfg.termLinks?.(b, m);
+          }
           node = b;
         }
         col.insertBefore(node, ref);

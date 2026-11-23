@@ -491,8 +491,31 @@ function renderAutoTerms(mdViewer, data, projectName, absPath) {
   return made;
 }
 
+/**
+ * 任意 DOM 宿主的词条化落面（Ask 回答词条化批 2026-11-23；设计正本 §5 G4/G5
+ * 「在 createAskDialog 增加 termLinks 钩子，复用 termLexicon.js 同源」）。
+ *
+ * 与正文文档**同一个 pass**（`renderAutoTerms`：同一匹配规则、同一消解裁定、同一
+ * termTip 气泡/深链腿、同一排除面 CODE/PRE/A/KaTeX/标题），差别只有宿主与作用域：
+ *   · 宿主 = 调用方给的节点（Ask 回答气泡），不是 mdViewer；
+ *   · 作用域没有「自己的声明文档」（问答回答不属于任何 vault 文档）⇒ 自指剔除腿
+ *     传空路径，永不误剔。
+ * 唯一新增面 = 把图谱取用与自指路径从内部函数提升为**可复用导出**，零第二套实现。
+ *
+ * @param {HTMLElement} host 落面宿主
+ * @param {string|null} [projectName] 作用域工程（缺省 = 合并视图，歧义不猜）
+ * @returns {Promise<number>} 生成的词条链接数（0 = 无词条/无图谱/出错）
+ */
+export async function termLinkify(host, projectName) {
+  if (!host || typeof host.querySelectorAll !== 'function') return 0;
+  let data = null;
+  try { data = await wikiGraph(); } catch { data = null; }
+  if (!data) return 0;
+  try { return renderAutoTerms(host, data, projectName || null, ''); } catch { return 0; }
+}
+
 /** The canvas tab id hosting this viewer — the single-layer source a reference
- *  jump records (F5 返回原文档；canvas.js openWorkspaceItem 消费). */
+ * jump records (F5 返回原文档；canvas.js openWorkspaceItem 消费). */
 function refSourceTabId(mdViewer) {
   const pane = mdViewer && mdViewer.closest ? mdViewer.closest('.canvas-tab-pane') : null;
   return (pane && pane.dataset && pane.dataset.tabId) || undefined;
