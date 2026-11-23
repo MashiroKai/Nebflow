@@ -410,8 +410,9 @@ object StopCommand extends CliCommand:
     deps: ProcessManager.StopDeps = ProcessManager.StopDeps()
   ): IO[CliResult] =
     ProcessManager.stopHardened(opts, deps).map {
+      // 退出码统一（作者 15:32 批）：未运行 = 3（与 status 一致），不再按成功 0。
       case ProcessManager.StopOutcome.NotRunning =>
-        CliResult.Exit(0, s"${nebflow.shared.Branding.productName} is not running")
+        CliResult.Exit(3, s"${nebflow.shared.Branding.productName} is not running")
       case ProcessManager.StopOutcome.Stopped(message) =>
         CliResult.Exit(0, message)
       case ProcessManager.StopOutcome.Refused(reason) =>
