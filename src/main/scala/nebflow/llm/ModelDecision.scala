@@ -1,8 +1,10 @@
 package nebflow.llm
 
 import cats.effect.{IO, Ref}
+import java.time.LocalDateTime
 import nebflow.core.ModelRoles
 import nebflow.llm.kernel.LlmKernel
+import nebflow.llm.rules.{ModelRuleDsl, ModelRuleStore}
 import nebflow.shared.AgentModelConfig
 
 /**
@@ -51,7 +53,7 @@ object ModelDecision:
    */
   def resolveSource(registry: ProviderRegistry, source: LlmKernel.CandidateSource): IO[List[ModelCandidate]] =
     val ctx = ctxOf(source)
-    source match
+    val base: IO[List[ModelCandidate]] = source match
       case LlmKernel.CandidateSource.SmallLlmModel =>
         IO(smallLlmRoute(ctx)).flatMap(m => candidatesOf(registry, m))
       case LlmKernel.CandidateSource.NebulaChain =>
@@ -62,6 +64,53 @@ object ModelDecision:
         IO.pure(list)
       case LlmKernel.CandidateSource.DecisionRoute(name) =>
         decisionRouteCandidates(registry, name)
+    source match
+      // Explicit = 调用方已钉死的显式链，不受规则脚本改写。
+      case LlmKernel.CandidateSource.Explicit(_) => base
+      case _ =>
+        base.flatMap(cs => IO(applyRulesNow(ctx, sourceCall(source), cs)).map(_._1))
+
+  /** 来源 → 调用点（N1 值域）。ctx.callPoint 显式给出时优先。 */
+  def sourceCall(source: LlmKernel.CandidateSource): String = source match
+    case LlmKernel.CandidateSource.SmallLlmModel => "small-llm"
+    case LlmKernel.CandidateSource.DecisionRoute(_) => "decision-route"
+    case _ => "main-chat"
+
+  /** 候选 ref 形式（与 ModelRuleDsl 的 provider/model 口径一致）。 */
+  def refOf(c: ModelCandidate): String = s"${c.providerId}/${c.model}"
+
+  /**
+   * 规则改写候选链（P3 接线，纯函数：脚本显式传入，便于测试）。
+   *   - 脚本空 / 无命中 ⇒ 候选原样返回（逐项相等，P1 golden 不变）。
+   *   - 命中 ⇒ 按 `ModelRuleDsl.evaluate` 的顺序重排并剔除 freeze/unavailable 的候选；
+   *     evaluate 给出的 ref 在原候选中找不到的忽略（不凭空造候选）。
+   *   - 脚本解析失败 ⇒ 不应用规则，trace 记 `script-invalid`（请求期不中断选择）。
+   *   - `switch` 只产生提议（N2），不改链；`overflow` / `concurrency` 属派发时，不进请求链。
+   */
+  def applyRules(
+    loaded: ModelRuleStore.Loaded,
+    call: String,
+    at: LocalDateTime,
+    cands: List[ModelCandidate]
+  ): (List[ModelCandidate], List[Hit]) =
+    loaded.error match
+      case Some(err) =>
+        (cands, List(Hit("rule", s"script-invalid: $err ⇒ no rules applied")))
+      case None if loaded.script.rules.isEmpty =>
+        (cands, Nil)
+      case None =>
+        val outcome = ModelRuleDsl.evaluate(loaded.script, ModelRuleDsl.Session(None, None, call, at), cands.map(refOf))
+        if outcome.matched.isEmpty then (cands, Nil)
+        else
+          val byRef = cands.groupBy(refOf).view.mapValues(_.head).toMap
+          val rewritten = outcome.candidates.flatMap(byRef.get)
+          val hits = outcome.trace.map(s => Hit("rule", s"${s.rule} ${s.action}: ${s.detail}"))
+          (rewritten, hits)
+
+  /** 读取当前数据根的规则脚本并应用（生产入口；空脚本 ⇒ 恒等）。 */
+  def applyRulesNow(ctx: RequestCtx, defaultCall: String, cands: List[ModelCandidate]): (List[ModelCandidate], List[Hit]) =
+    val call = ctx.callPoint.getOrElse(defaultCall)
+    applyRules(ModelRuleStore.current, call, LocalDateTime.now(), cands)
 
   /** 一步命中依据（trace 元素）。 */
   final case class Hit(step: String, detail: String)
@@ -157,11 +206,12 @@ object ModelDecision:
     base: Option[AgentModelConfig]
   ): IO[Decision] =
     val (composed, composeHits) = composeAgentModel(ctx.sessionId, ctx.delegateMode, base, ctx.pinnedChain)
-    candidatesOf(registry, composed).map { cs =>
+    candidatesOf(registry, composed).map { cs0 =>
+      val (cs, ruleHits) = applyRulesNow(ctx, "main-chat", cs0)
       val candHits = cs.zipWithIndex.map { case (c, i) =>
         Hit("candidate", s"${c.providerId}/${c.model} rank=${i + 1} via ${composeHits.headOption.map(_.detail).getOrElse("-")}")
       }
-      Decision(cs, ctx.pinnedChain, composeHits ++ candHits)
+      Decision(cs, ctx.pinnedChain, composeHits ++ ruleHits ++ candHits)
     }
 
   /**
