@@ -119,7 +119,7 @@ object CdpConnection:
       catch case _: Exception => throw new CdpException("CDP WebSocket 连接失败")
     new CdpConnection(wsUrl, ws, pending, closedFlag)
 
-  /** 本机 HTTP 发现接口（/json/*）。任何失败返回 None（调用方据此判定会话不在线）。 */
+  /** 本机 HTTP 发现接口（/json 路径族）。任何失败返回 None（调用方据此判定会话不在线）。 */
   def httpJson(url: String, method: String = "GET", timeout: FiniteDuration = 3.seconds): Option[Json] =
     try
       val req = HttpRequest
