@@ -19,8 +19,22 @@ const STORAGE_KEY = key('canvas_favorites_v1');
 
 /** @typedef {import('./canvasFavoritesCore.js').FavoriteEntry} FavoriteEntry */
 
+// 项 5（2026-11-23）收藏不显示的根因：存储原为 origin 隔离的 localStorage（桌面 localhost
+// 与手机 mystand.space 各一份，跨端必空）。修法：引擎侧单源存储 `/api/canvas-favorites`
+// （CanvasFavoritesRoutes.scala）为真源；内存缓存为运行期视图；localStorage 仅作离线镜像。
+/** 引擎真源的内存缓存（null = 尚未与引擎同步，读回落本地镜像）。 */
+let cache = null;
+/** 一次性同步的 promise（mount 多处调用，只发一次 GET）。 */
+let syncPromise = null;
+
+function favoritesAuthHeaders() {
+  const tok = localStorage.getItem(key('token')) || '';
+  return tok ? { Authorization: `Bearer ${tok}` } : {};
+}
+
 /** @returns {FavoriteEntry[]} */
 export function loadFavorites() {
+  if (cache) return cache;
   try {
     return normalizeList(JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'));
   } catch (_) {
@@ -28,12 +42,53 @@ export function loadFavorites() {
   }
 }
 
-/** @param {FavoriteEntry[]} list */
+/** 写回：缓存 + 本地镜像 + 引擎（best-effort；引擎不可达时本地仍生效，下次同步再推）。
+ *  @param {FavoriteEntry[]} list */
 function saveFavorites(list) {
+  cache = list;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
-  } catch (_) { /* 配额/隐私模式：收藏退化为会话内有效，不抛错打断 canvas */ }
+  } catch (_) { /* 配额/隐私模式：镜像失效不影响引擎真源 */ }
   window.dispatchEvent(new CustomEvent(FAVORITES_CHANGE_EVENT));
+  void fetch('/api/canvas-favorites', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...favoritesAuthHeaders() },
+    body: JSON.stringify({ list }),
+  }).catch(() => { /* 离线：本地缓存仍是当前视图，下次同步回推 */ });
+}
+
+/**
+ * 与引擎同步（一次性，幂等）。GET 得真源；若引擎为空而本地镜像有条目（旧版 localStorage
+ * 收藏），整表迁入引擎（一次性迁移，之后以引擎为准）。引擎不可达 ⇒ 保留本地视图，不抛错。
+ * @returns {Promise<void>}
+ */
+export function syncFavoritesFromEngine() {
+  if (syncPromise) return syncPromise;
+  syncPromise = (async () => {
+    try {
+      const resp = await fetch('/api/canvas-favorites', { headers: favoritesAuthHeaders() });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const remote = normalizeList(data && data.list);
+      const local = loadFavorites();
+      if (!remote.length && local.length) {
+        // 迁移：旧 localStorage 收藏 → 引擎（仅一次；此后引擎为空也不再回填本地）。
+        cache = local;
+        await fetch('/api/canvas-favorites', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', ...favoritesAuthHeaders() },
+          body: JSON.stringify({ list: local }),
+        });
+        return;
+      }
+      cache = remote;
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(remote)); } catch (_) { /* 镜像可失效 */ }
+      window.dispatchEvent(new CustomEvent(FAVORITES_CHANGE_EVENT));
+    } catch (_) {
+      // 引擎不可达：沿用本地镜像视图（离线可读）。
+    }
+  })();
+  return syncPromise;
 }
 
 /** 按 path 切换收藏（桌面钮与列表共用的唯一写入口）。
@@ -158,6 +213,7 @@ export function buildFavoritesHubBlock(opts) {
   const paint = () => renderFavoritesList(body, { onOpened: opts.onOpened });
   paint();
   const dispose = onFavoritesChange(paint);
+  void syncFavoritesFromEngine();   // 同步完成派发变更事件 ⇒ 本列表自动重绘
   return { el: wrap, dispose };
 }
 
@@ -180,4 +236,5 @@ export function mountSidebarFavorites() {
   const paint = () => renderFavoritesList(body, { compact: true });
   paint();
   onFavoritesChange(paint);
+  void syncFavoritesFromEngine();
 }

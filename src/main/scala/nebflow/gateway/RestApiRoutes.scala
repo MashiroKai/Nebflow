@@ -104,6 +104,8 @@ class RestApiRoutes(
       // 热更新地基（台账 #919 2026-10-27）：asset stamp 指纹单点——前端
       // hotStamp.js 轮询自愈的数据源（与 StaticRoutes.indexResponse 三静态面同源）。
       AssetStampRoutes.routes(ctx) <+>
+      // 文档收藏引擎侧存储（2026-11-23 项 5）：两端同一份收藏，不依赖 origin 的 localStorage。
+      CanvasFavoritesRoutes.routes(ctx) <+>
       // 静态资产批量打包面（console-fastpath 批 2026-10-23·腿②请求打包）：
       // 路径 /api/console-assets 与既有域互不重叠，公开静态字节、无鉴权门
       // （与静态树同访问语义）。
