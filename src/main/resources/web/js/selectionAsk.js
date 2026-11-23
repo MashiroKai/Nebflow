@@ -36,6 +36,8 @@ import {
 // 回答词条化（设计正本 §5 G4/G5）：钩子在本模块注入，实现由 viewers/markdown.js
 // 的 termsForScope/buildTermMatcher/resolveTermKey 同一族承担（同源、不另建词表）。
 import { linkifyAskAnswer } from './askTermLinks.js';
+// 锚点图标 = canvas Ask 同款 svg 构形器（askDialog.js 单点）。
+import { svgNode } from './askDialog.js';
 
 /** @type {Map<string, {at: number}>} sid → 在飞提问（无请求号 ⇒ 每会话至多一个）。 */
 const pending = new Map();
@@ -333,7 +335,9 @@ function ensureAnchor() {
   btn.type = 'button';
   // 材质走唯一毛玻璃工具类 `.nf-glass`（glass.css 单一源）；本文件不写任何材质值。
   btn.className = 'selection-ask-btn nf-glass';
-  btn.textContent = 'Ask';
+  // 图标 = canvas Ask 同款（askDock.js ICON.chat 的同一 path/属性；作者第二轮：图标与 canvas 一致）。
+  btn.replaceChildren(svgNode('svg', { class: 'ask-fab-ic-chat', viewBox: '0 0 24 24', 'stroke-width': '2', fill: 'none', stroke: 'currentColor', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' },
+    [svgNode('path', { d: 'M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z' })]));
   btn.setAttribute('aria-label', tt('就选中的文字提问', 'Ask about the selection'));
   // 保住选区：按钮上的按下不得清掉当前选中（否则 snapshot 落空）。
   btn.addEventListener('mousedown', (e) => e.preventDefault());
@@ -382,24 +386,13 @@ function placeAnchor(span) {
   const w = btn.offsetWidth || 48;
   const spanTop = Math.min(br.top, er.top);
   const spanBottom = Math.max(br.bottom, er.bottom);
-  let top = Math.min(Math.max((spanTop + spanBottom) / 2 - h / 2, cr.top + 4), cr.bottom - h - 4);
-  const natural = side === 'right' ? br.right + 8 : br.left - 8 - w;
-  // 外侧放得下（不越视口边）⇒ 贴气泡外侧（桌面既有口径，逐字不变）。
-  // 外侧放不下（手机端：气泡贴视口边，夹紧会把锚点压进气泡 27px）⇒ 贴气泡**上方**，
-  // 水平居中于起选气泡；上方越过会话列顶则贴**下方**。两种位置都不与气泡相交。
-  const fits = natural >= 4 && natural + w <= window.innerWidth - 4;
-  let left;
-  let pos;
-  if (fits) {
-    left = natural;
-    pos = 'side';
-  } else {
-    left = Math.min(Math.max((br.left + br.right) / 2 - w / 2, 4), window.innerWidth - w - 4);
-    const above = br.top - h - 4;
-    top = above >= cr.top ? above : br.bottom + 4;
-    pos = above >= cr.top ? 'above' : 'below';
-  }
-  btn.dataset.askPos = pos;
+  // 作者第二轮（逐字）：锚点放**侧边靠对话中心**——气泡内侧（朝会话列中线的那一边），
+  // 垂直 = 覆盖段上下居中。user（右气泡）⇒ 贴其左缘；ai（左气泡）⇒ 贴其右缘。
+  // 不放外侧边、不夹紧、不贴上下（第一轮的外侧/上方方案撤回）。
+  const top = Math.min(Math.max((spanTop + spanBottom) / 2 - h / 2, cr.top + 4), cr.bottom - h - 4);
+  const inner = side === 'right' ? br.left - 8 - w : br.right + 8;
+  const left = Math.min(Math.max(inner, 4), window.innerWidth - w - 4);
+  btn.dataset.askPos = 'inner';
   btn.style.top = Math.round(top) + 'px';
   btn.style.left = Math.round(left) + 'px';
   anchorSpan = span;

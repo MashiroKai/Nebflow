@@ -16,7 +16,7 @@
 //
 // 运行（worktree 根）：node tests/selection-ask-multi-live.mjs
 import { spawn } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
@@ -30,7 +30,16 @@ const privateHome = `/private/tmp/qa-selmulti-user-${process.pid}`;
 // 证据落项目 .stand/tmp/<wt>/evidence（工件规则）：worktree 下取其项目根，主检出即项目根。
 const project = repo.includes('/.stand/worktrees/') ? repo.split('/.stand/worktrees/')[0] : repo;
 const artifacts = process.env.SELMULTI_EVIDENCE || path.join(project, '.stand/tmp', path.basename(repo), 'evidence', String(process.pid));
-const jar = process.env.STAND_JAR || '/Users/kaiyu/Claude code/Stand/target/scala-3.5.2/stand-assembly-2026.11.8-beta.1.jar';
+// jar 缺省 = 本 worktree 自己构建的最新 assembly（mtime 最新）；旧的硬编码 11-08 jar 不含 selectionExplain 路由。
+const ownJar = (() => {
+  try {
+    const d = path.join(repo, 'target/scala-3.5.2');
+    return readdirSync(d).filter(f => /^stand-assembly-.*\.jar$/.test(f))
+      .map(f => ({ p: path.join(d, f), t: statSync(path.join(d, f)).mtimeMs }))
+      .sort((a, b) => b.t - a.t)[0]?.p || null;
+  } catch { return null; }
+})();
+const jar = process.env.STAND_JAR || ownJar || '/Users/kaiyu/Claude code/Stand/target/scala-3.5.2/stand-assembly-2026.11.8-beta.1.jar';
 const JAVA = process.env.STAND_JAVA || '/Library/Java/JavaVirtualMachines/temurin-23.jdk/Contents/Home/bin/java';
 if (root === '/Users/kaiyu/.stand' || !root.startsWith('/private/tmp/')) throw Error('unsafe root');
 mkdirSync(privateHome, { recursive: true }); mkdirSync(artifacts, { recursive: true });
