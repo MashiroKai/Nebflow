@@ -1,0 +1,70 @@
+/* canvasFavorites.css — Canvas 文档收藏三端样式（2026-11-23 前端功能批）。
+   收藏钮 = 顶部胶囊左座（.canvas-fav-btn）；侧边栏区 = #canvas-fav-section；手机 = .mf-hub-fav 内的同源列表。
+   颜色 / 圆角 / 焦点环只经 var(--ds-*) 令牌；文本不截断（换行而非省略号）。 */
+
+.canvas-fav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  margin-right: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ds-radius-pill);
+  background: transparent;
+  color: inherit;
+  opacity: 0.62;
+  cursor: pointer;
+  flex: none;
+}
+.canvas-fav-btn:hover { opacity: 1; }
+.canvas-fav-btn:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
+.canvas-fav-btn[hidden] { display: none; }
+.canvas-fav-btn.is-on { opacity: 1; }
+.canvas-fav-btn .canvas-fav-ic { fill: none; }
+.canvas-fav-btn.is-on .canvas-fav-ic { fill: currentColor; }
+
+.canvas-fav-section {
+  margin: 8px 8px 4px;
+  padding: 6px 4px;
+}
+.canvas-fav-head {
+  font-size: 12px;
+  opacity: 0.6;
+  padding: 2px 6px 4px;
+}
+
+.canvas-fav-list { display: flex; flex-direction: column; gap: 2px; }
+.canvas-fav-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+.canvas-fav-row:hover .canvas-fav-title { text-decoration: underline; }
+/* 文本不截断：长标题换行显示（noclip 判据：不用 ellipsis 裁切）。 */
+.canvas-fav-title {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.canvas-fav-meta { font-size: 11px; opacity: 0.55; }
+.canvas-fav-row.is-invalid { opacity: 0.45; cursor: default; }
+.canvas-fav-row.is-invalid:hover .canvas-fav-title { text-decoration: none; }
+.canvas-fav-badge {
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: var(--ds-radius-badge);
+}
+.canvas-fav-empty { font-size: 12px; opacity: 0.6; padding: 6px 8px; }
+.mf-hub-fav { margin-top: 12px; }

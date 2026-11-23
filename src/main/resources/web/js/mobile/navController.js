@@ -56,6 +56,7 @@ import { hasBackHandler } from '../gesture/backSwipe.js';
 import { key } from '../branding.js';
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from '../sidebar.js';
 import { createIconsIn } from '../utils.js';
+import { buildFavoritesHubBlock } from '../canvasFavorites.js';
 import { ensureSocialPage, syncSocialFaces } from './socialFaces.js';
 // The 'tasks' page body is the Apple-Reminders-style todo face, a three-page
 // stack (tasks / todo-apple-list / todo-apple-item). The face receives push/pop
@@ -351,6 +352,11 @@ function buildHub(body) {
   const rows = document.createElement('div');
   rows.className = 'mf-hub-rows';
   hub.appendChild(rows);
+  // 文档收藏区（2026-11-23 前端功能批 · 与桌面侧边栏同源同数据）：工作台分组行之下。
+  // 点击 = 重新打开并切到 canvas 页；失效条目置灰标「已失效」（渲染时判定）。
+  const fav = buildFavoritesHubBlock({ label: tt('收藏', 'Favorites'), onOpened: () => dockTo('canvas') });
+  hub.appendChild(fav.el);
+  unsubs.push(fav.dispose);
   body.appendChild(hub);
   hubBodies.set('workbench', hub);
   syncHubGate();

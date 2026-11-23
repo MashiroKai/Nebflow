@@ -51,6 +51,9 @@ export const CHECKS = [
   { name: 'mobile-overlap-sweep', profiles: ['frontend'], timeoutMs: 240_000,
     argv: [process.execPath, 'tests/mobile-overlap-sweep.spec.mjs'] },
   nodeCheck('design-tokens', 'check-design-tokens'),
+  // 文档收藏纯逻辑闸（2026-11-23 前端功能批）：收藏切换 / 同文档去重=置顶 / 归一化 / 上限。
+  { name: 'canvas-favorites-core', profiles: ['static'], timeoutMs: 60_000,
+    argv: [process.execPath, '--test', 'tests/canvas-favorites-core.test.mjs'] },
   // 按钮样式统一闸（button-style-unify-canvas-ref 批 2026-11-22）：全站实底静止按钮面
   // 消费统一阴影令牌 var(--btn-shadow)（canvas 基准）；裸写投影/字面量圆角即红。
   nodeCheck('button-style-unify', 'check-button-style-unify'),

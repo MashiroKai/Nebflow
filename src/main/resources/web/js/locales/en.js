@@ -2306,6 +2306,12 @@ export default {
   'canvas.imgFailUnreachable': 'Cannot read this image (invalid path or no permission)',
   'canvas.imgFailUnknown': 'Read failed (HTTP {status})',
   'canvas.closeTab': 'Close tab',
+  'canvas.fav.add': 'Favorite document',
+  'canvas.fav.remove': 'Remove from favorites',
+  'canvas.fav.sectionTitle': 'Favorites',
+  'canvas.fav.empty': 'No favorite documents yet. Use the favorite button at the top of the canvas to add one.',
+  'canvas.fav.invalid': 'Unavailable',
+  'canvas.fav.missing': '"{title}" no longer exists (it may have been removed) and cannot be opened.',
   'canvas.stackToggle': 'Stacked cards (wheel / vertical drag to switch · click front card to bring in · swipe away to close)',
   'canvas.noRef': 'This tab cannot be referenced',
   // canvas-reveal-in-finder (2026-11-19): label follows the ENGINE-reported platform
