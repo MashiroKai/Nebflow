@@ -36,6 +36,10 @@ import {
 // 回答词条化（设计正本 §5 G4/G5）：钩子在本模块注入，实现由 viewers/markdown.js
 // 的 termsForScope/buildTermMatcher/resolveTermKey 同一族承担（同源、不另建词表）。
 import { linkifyAskAnswer } from './askTermLinks.js';
+// 锚点图标 = canvas Ask 同款 svg 构形器（askDialog.js 单点）。
+import { svgNode } from './askDialog.js';
+// 解释弹窗 = canvas 词条弹窗本体（自定义内容形态；见 termTip.js showTermTipCustom）。
+import { showTermTipCustom, hideTermTip } from './termTip.js';
 
 /** @type {Map<string, {at: number}>} sid → 在飞提问（无请求号 ⇒ 每会话至多一个）。 */
 const pending = new Map();
@@ -79,7 +83,7 @@ function selectionFrameKind(msg) {
 
 function ensureDialog() {
   if (dlg) return dlg;
-  face = createAskPanel({ host: document.body, dialog: {
+  face = createAskPanel({ host: document.body, onClose: () => { unwrapExplainChips(); hideTermTip(); }, dialog: {
     tt,
     panelClass: 'ask-dock selection-dock',
     placeholder: tt('针对选中的文字提问…', 'Ask about the selection…'),
@@ -333,7 +337,9 @@ function ensureAnchor() {
   btn.type = 'button';
   // 材质走唯一毛玻璃工具类 `.nf-glass`（glass.css 单一源）；本文件不写任何材质值。
   btn.className = 'selection-ask-btn nf-glass';
-  btn.textContent = 'Ask';
+  // 图标 = canvas Ask 同款（askDock.js ICON.chat 的同一 path/属性；作者第二轮：图标与 canvas 一致）。
+  btn.replaceChildren(svgNode('svg', { class: 'ask-fab-ic-chat', viewBox: '0 0 24 24', 'stroke-width': '2', fill: 'none', stroke: 'currentColor', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' },
+    [svgNode('path', { d: 'M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z' })]));
   btn.setAttribute('aria-label', tt('就选中的文字提问', 'Ask about the selection'));
   // 保住选区：按钮上的按下不得清掉当前选中（否则 snapshot 落空）。
   btn.addEventListener('mousedown', (e) => e.preventDefault());
@@ -382,9 +388,13 @@ function placeAnchor(span) {
   const w = btn.offsetWidth || 48;
   const spanTop = Math.min(br.top, er.top);
   const spanBottom = Math.max(br.bottom, er.bottom);
+  // 作者第二轮（逐字）：锚点放**侧边靠对话中心**——气泡内侧（朝会话列中线的那一边），
+  // 垂直 = 覆盖段上下居中。user（右气泡）⇒ 贴其左缘；ai（左气泡）⇒ 贴其右缘。
+  // 不放外侧边、不夹紧、不贴上下（第一轮的外侧/上方方案撤回）。
   const top = Math.min(Math.max((spanTop + spanBottom) / 2 - h / 2, cr.top + 4), cr.bottom - h - 4);
-  let left = side === 'right' ? br.right + 8 : br.left - 8 - w;
-  left = Math.min(Math.max(left, 4), window.innerWidth - w - 4);
+  const inner = side === 'right' ? br.left - 8 - w : br.right + 8;
+  const left = Math.min(Math.max(inner, 4), window.innerWidth - w - 4);
+  btn.dataset.askPos = 'inner';
   btn.style.top = Math.round(top) + 'px';
   btn.style.left = Math.round(left) + 'px';
   anchorSpan = span;
@@ -412,7 +422,127 @@ function onAnchorClick() {
   const snapshot = mergedSelectionSnapshot(cur);
   // 空选（只有空白）与「跨气泡但一段正文都没取到」都不发问。
   if (!snapshot || !String(snapshot.selected || '').trim()) { hideAnchor(); return; }
-  openSelectionAsk(snapshot, anchorEl);
+  openSelectionExplain(snapshot, anchorEl, cur);
+}
+
+// ── 选区解释（r2 批 2026-11-23；作者四点 2–4）────────────────────────────────
+// 2. 解释走**专门小模型**：`{type:'selectionExplain'}` 单次调用（small-llm 候选源），
+//    不发 `/ask`、不建会话、不复用主模型。
+// 3. 对话框 = canvas Ask 同族外壳（createAskPanel → `.ask-dock.selection-dock`，气泡 `.ask-bub`）；
+//    输入条隐藏（本面板无后续提问，避免再落 /ask 腿）。
+// 4. 解释输出词条化：选中的原文片段渲染为 canvas 词条样式（`a.nf-term`），点击 = 展开解释。
+let explainSeq = 0;
+/** @type {{requestId: string, aiEl: HTMLElement}|null} */
+let explainPending = null;
+
+/** 原始气泡里被包成词条的文字（下次选区前撤回，保证气泡结构回到原样）。 */
+let explainWrapped = [];
+/** 解释弹窗（canvas 词条弹窗同族 `.nf-term-tip`；正文 = 本段解释）。 */
+let explainPickEl = null;
+/** 弹窗正文的实时源（回包到达后弹窗随之更新）。 */
+let explainTipBody = null;
+
+function unwrapExplainChips() {
+  for (const a of explainWrapped) {
+    if (!a.isConnected) continue;
+    const parent = a.parentNode;
+    while (a.firstChild) parent.insertBefore(a.firstChild, a);
+    parent.removeChild(a);
+    parent.normalize();
+  }
+  explainWrapped = [];
+}
+
+/** 把 range 覆盖的文字在各气泡内包成 `a.nf-term`（canvas 词条族；绿色下划线由 `a.nf-term` 承担）。 */
+function wrapSelectedText(rows, range, onPick) {
+  const sc = range.startContainer, so = range.startOffset;
+  const ec = range.endContainer, eo = range.endOffset;
+  const out = [];
+  for (const row of rows) {
+    const bubble = row.querySelector('.bubble');
+    if (!bubble) continue;
+    const w = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    let n;
+    while ((n = w.nextNode())) { if (n.textContent.trim() && range.intersectsNode(n)) nodes.push(n); }
+    for (const t of nodes) {
+      const len = t.textContent.length;
+      const s = t === sc ? so : 0;
+      const e = t === ec ? eo : len;
+      if (e <= s) continue;
+      let mid = t;
+      if (e < len) t.splitText(e);
+      if (s > 0) mid = t.splitText(s);
+      const a = document.createElement('a');
+      a.className = 'nf-term selection-explain-chip';
+      a.href = '#';
+      a.textContent = mid.textContent;
+      mid.parentNode.replaceChild(a, mid);
+      a.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); onPick(a); });
+      out.push(a);
+    }
+  }
+  return out;
+}
+
+/** 解释弹窗：canvas 词条弹窗本体（termTip.js 自定义内容形态）。 */
+function explainTipShow(anchorEl, title, body) {
+  showTermTipCustom(anchorEl, { title, content: body });
+}
+
+/** 打开选区解释面板：原文片段 = 词条；解释由小模型异步返回（requestId 配对）。 */
+export function openSelectionExplain(snapshot, anchor, span) {
+  const d = ensureDialog();
+  placeholderPosition(d, anchor);
+  face.open();
+  hideAnchor();
+  d.inputRow.style.display = 'none';
+  d.col.replaceChildren();
+  // 上一次的原文词条先撤回（气泡结构回到原样），再包这一次。
+  unwrapExplainChips();
+  hideTermTip();
+  const requestId = 'sx' + (++explainSeq) + '-' + Date.now().toString(36);
+  const aiEl = document.createElement('div');
+  aiEl.className = 'ask-bub nf-glass ai selection-explain-answer';
+  aiEl.textContent = tt('解释中…', 'Explaining…');
+  // 面板里：提问 = 选中原文（纯文本）；解释 = ai 气泡。词条交互的主载体是原始气泡里的绿字。
+  const quote = document.createElement('div');
+  quote.className = 'ask-bub nf-glass user selection-explain-quote';
+  quote.textContent = String(snapshot.selected || '').trim();
+  d.col.appendChild(quote);
+  d.col.appendChild(aiEl);
+  if (span && span.range) {
+    const rows = span.multi ? coveredRows(span.chat, span.startRow, span.endRow) : [span.startRow];
+    explainWrapped = wrapSelectedText(rows, span.range, (a) => {
+      explainPickEl = a;
+      // 正文取点击时的解释气泡（回包可能晚于选中；不做快照）。
+      explainTipShow(a, tt('解释', 'Explanation'), aiEl.textContent);
+      explainTipBody = () => aiEl.textContent;
+    });
+  }
+  explainPending = { requestId, aiEl };
+  const ok = sendWs({ type: 'selectionExplain', requestId, question: buildMergedQuestion(snapshot) });
+  if (!ok) {
+    explainPending = null;
+    aiEl.textContent = tt('连接已断开，重连后再选一次。', 'Disconnected — select again once reconnected.');
+  }
+  return true;
+}
+
+/** 解释回包（main.js 的 selectionExplain / selectionExplainError）：配对 requestId 后落正文。 */
+export function selectionExplainFrame(type, msg) {
+  const p = explainPending;
+  if (!p || !msg || msg.requestId !== p.requestId) return false;
+  explainPending = null;
+  p.aiEl.textContent = type === 'selectionExplain'
+    ? String(msg.text || '')
+    : tt('解释失败：', 'Explain failed: ') + String(msg.message || '');
+  // 弹窗开着 ⇒ 同步到最新解释（回包晚于点击时）。
+  const tipEl = document.querySelector('.nf-term-tip.interactive, .nf-term-tip');
+  if (explainPickEl && explainPickEl.isConnected && explainTipBody && tipEl && tipEl.style.display !== 'none') {
+    tipEl.querySelector('.ts').textContent = explainTipBody();
+  }
+  return true;
 }
 
 function scheduleAnchor() {
@@ -457,6 +587,7 @@ export function initSelectionAsk() {
     const t = e.target;
     if (!isSelectionAskOpen()) return;
     if (dlg && t instanceof Node && dlg.panel.contains(t)) return;
+    if (t instanceof Element && t.closest('.selection-explain-chip, .nf-term-tip')) return;
     if (anchorEl && t instanceof Node && anchorEl.contains(t)) return;
     closeSelectionAsk();
   }, true);

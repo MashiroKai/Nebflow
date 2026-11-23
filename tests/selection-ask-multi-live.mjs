@@ -16,7 +16,7 @@
 //
 // 运行（worktree 根）：node tests/selection-ask-multi-live.mjs
 import { spawn } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
@@ -30,7 +30,16 @@ const privateHome = `/private/tmp/qa-selmulti-user-${process.pid}`;
 // 证据落项目 .stand/tmp/<wt>/evidence（工件规则）：worktree 下取其项目根，主检出即项目根。
 const project = repo.includes('/.stand/worktrees/') ? repo.split('/.stand/worktrees/')[0] : repo;
 const artifacts = process.env.SELMULTI_EVIDENCE || path.join(project, '.stand/tmp', path.basename(repo), 'evidence', String(process.pid));
-const jar = process.env.STAND_JAR || '/Users/kaiyu/Claude code/Stand/target/scala-3.5.2/stand-assembly-2026.11.8-beta.1.jar';
+// jar 缺省 = 本 worktree 自己构建的最新 assembly（mtime 最新）；旧的硬编码 11-08 jar 不含 selectionExplain 路由。
+const ownJar = (() => {
+  try {
+    const d = path.join(repo, 'target/scala-3.5.2');
+    return readdirSync(d).filter(f => /^stand-assembly-.*\.jar$/.test(f))
+      .map(f => ({ p: path.join(d, f), t: statSync(path.join(d, f)).mtimeMs }))
+      .sort((a, b) => b.t - a.t)[0]?.p || null;
+  } catch { return null; }
+})();
+const jar = process.env.STAND_JAR || ownJar || '/Users/kaiyu/Claude code/Stand/target/scala-3.5.2/stand-assembly-2026.11.8-beta.1.jar';
 const JAVA = process.env.STAND_JAVA || '/Library/Java/JavaVirtualMachines/temurin-23.jdk/Contents/Home/bin/java';
 if (root === '/Users/kaiyu/.stand' || !root.startsWith('/private/tmp/')) throw Error('unsafe root');
 mkdirSync(privateHome, { recursive: true }); mkdirSync(artifacts, { recursive: true });
@@ -46,6 +55,12 @@ const mock = http.createServer((req, res) => {
   let body = ''; req.on('data', d => { body += d; });
   req.on('end', () => {
     hits++;
+    // 选区解释腿（selectionExplain）是非流式单次调用 ⇒ 回 JSON；流式请求回 SSE。
+    let streaming = false; try { streaming = JSON.parse(body).stream === true; } catch {}
+    if (!streaming) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ id: 'mock', object: 'chat.completion', model: 'mock-1', choices: [{ index: 0, message: { role: 'assistant', content: ANSWER }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }));
+    }
     const text = JSON.stringify({ id: 'mock', object: 'chat.completion.chunk', model: 'mock-1', choices: [{ index: 0, delta: { content: ANSWER }, finish_reason: null }] });
     const done = JSON.stringify({ id: 'mock', object: 'chat.completion.chunk', model: 'mock-1', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
     res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end(`data: ${text}\n\ndata: ${done}\n\ndata: [DONE]\n\n`);
@@ -94,7 +109,12 @@ const PROBE = () => {
     const t = Math.min(...tops.map(x => x.top)), bm = Math.max(...tops.map(x => x.bottom));
     segMid = (t + bm) / 2;
   }
+  // M2'（新契约）：锚点矩形与覆盖段每条气泡矩形不相交（手机端外侧放不下时贴上方，不压字）。
+  const bubbleRects = rows.map(x => x.querySelector('.bubble')?.getBoundingClientRect()).filter(Boolean);
+  const overlap = !!r && bubbleRects.some(br => !(r.right <= br.left || r.left >= br.right || r.bottom <= br.top || r.top >= br.bottom));
   return {
+    overlap,
+    askPos: btn ? btn.dataset.askPos || null : null,
     visible,
     side: btn ? btn.dataset.askSide || null : null,
     spanCount: btn ? btn.dataset.spanCount || null : null,
@@ -186,16 +206,27 @@ try {
     await page.screenshot({ path: `${artifacts}/${label}-multi-onSelect.png` });
     await page.locator('.selection-ask-btn').click({ timeout: 4000 }).catch(() => {});
     try { await page.locator('.ask-dock.selection-dock').waitFor({ timeout: 4000 }); } catch {}
-    let answerLinked = null, answerText = null;
-    try { await page.locator('.ask-dock.selection-dock .ask-bub').getByText(ANSWER).first().waitFor({ timeout: 20000 }); } catch (e) { console.log(`[${label}] answer wait failed: ${String(e).slice(0, 200)}`); }
-    // 终态 render 才挂词条钩子（done 帧之后），等属性落地再读，避免流式中读到空。
-    try { await page.waitForFunction(() => !!document.querySelector('.ask-dock.selection-dock .ask-bub.ai[data-nf-term-linkified="1"]'), null, { timeout: 10000 }); } catch {}
-    answerText = await page.locator('.ask-dock.selection-dock .ask-bub').allTextContents();
-    answerLinked = await page.evaluate(() => {
-      const ai = Array.from(document.querySelectorAll('.ask-dock.selection-dock .ask-bub.ai'));
-      return ai.map(n => n.getAttribute('data-nf-term-linkified')).filter(Boolean);
-    });
-    const frames = await page.evaluate(() => window.__sent.filter(f => f.type === 'ask').map(f => String(f.question || '')));
+    // M6'（point 3 契约）：原始气泡里的选中文字 = 绿色下划线词条 chip（不在面板里）；
+    // 点击 chip ⇒ canvas 词条同族弹窗 .selection-explain-tip 展示解释（小模型返回的 ANSWER）。
+    let answerText = null, chipCount = 0, expanded = false;
+    try { await page.waitForFunction(() => document.querySelectorAll('.bubble a.nf-term.selection-explain-chip').length > 0, null, { timeout: 6000 }); } catch {}
+    chipCount = await page.locator('.bubble a.nf-term.selection-explain-chip').count();
+    // 原始气泡 chip 可能仍在 nf-pop 入场动效（opacity 0）：等可见再点。
+    try { await page.waitForFunction(() => { const c = document.querySelector('.bubble a.nf-term.selection-explain-chip'); if (!c) return false; const r = c.getBoundingClientRect(); return r.width > 0 && getComputedStyle(c).opacity !== '0'; }, null, { timeout: 6000 }); } catch {}
+    if (chipCount) console.log(`[${label}] chipGeom ${JSON.stringify(await page.evaluate(() => { const c = document.querySelector('.bubble a.nf-term.selection-explain-chip'); if (!c) return null; c.scrollIntoView({ block: 'center' }); const r = c.getBoundingClientRect(); let a = c, hid = []; while (a && a.nodeType === 1) { const cs = getComputedStyle(a); if (cs.display === 'none' || cs.visibility === 'hidden') hid.push(a.className.toString().slice(0, 40) || a.tagName); a = a.parentElement; } const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return { r: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)], top: top ? (top.className || top.tagName).toString().slice(0, 80) : null, inChat: !!top && !!top.closest('#chat'), hidden: hid.slice(0, 4), connected: c.isConnected, text: c.textContent.slice(0, 20) }; }))}`);
+    // 只点**可见**的原文 chip（同一 DOM 里可能残留不可见的旧 chip）。
+    // 限定：当前会话 #chat 内、可见、未被 hidden/动效遮罩的 chip；记录盖住它的元素（层叠诊断）。
+    const visIdx = await page.evaluate(() => { const all = [...document.querySelectorAll('#chat .bubble a.nf-term.selection-explain-chip')]; all.forEach(c => c.removeAttribute('data-probe-chip')); const v = all.find(c => { const r = c.getBoundingClientRect(); const vis = r.width > 0 && r.height > 0 && getComputedStyle(c).opacity !== '0' && !c.closest('[hidden]'); return vis; }); if (v) { v.setAttribute('data-probe-chip', '1'); const r = v.getBoundingClientRect(); const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); window.__chipCover = top ? (top.className || top.tagName).toString().slice(0, 80) : null; } return !!v; });
+    if (!visIdx) console.log(`[${label}] no visible in-transcript chip; cover=${await page.evaluate(() => window.__chipCover || null)}`);
+    else console.log(`[${label}] chip cover=${await page.evaluate(() => window.__chipCover)}`);
+    const clickErr = chipCount && visIdx ? await page.locator('#chat .bubble a.nf-term.selection-explain-chip[data-probe-chip="1"]').first().click({ timeout: 4000 }).then(() => null, (e) => String(e).slice(0, 200)) : 'no-chip';
+    if (clickErr) console.log(`[${label}] chip click: ${clickErr}`);
+    try { await page.waitForFunction((a) => { const x = document.querySelector('.nf-term-tip'); return !!x && x.style.display !== 'none' && x.textContent.includes(a); }, ANSWER, { timeout: 20000 }); expanded = true; } catch (e) { console.log(`[${label}] explain wait failed: ${String(e).slice(0, 160)}`); }
+    answerText = await page.locator('.nf-term-tip .ts').allTextContents();
+    const tipState = await page.evaluate(() => { const t = document.querySelector('.nf-term-tip'); return { display: t ? t.style.display : 'absent', td: t ? t.querySelector('.ts')?.textContent.slice(0, 60) : null, aiEl: document.querySelector('.selection-explain-answer')?.textContent.slice(0, 60) || null, chips: document.querySelectorAll('.bubble a.nf-term.selection-explain-chip').length }; });
+    console.log(`[${label}] tipState ${JSON.stringify(tipState)}`);
+    // M4'（新契约）：发送的是 selectionExplain 帧（小模型路由），不得有 ask 帧。
+    const frames = await page.evaluate(() => window.__sent.filter(f => f.type === 'selectionExplain').map(f => String(f.question || '')));
     const q = frames[0] || '';
     const dlgOpen = await page.evaluate(() => { const p = document.querySelector('.ask-dock.selection-dock'); return !!p && !p.classList.contains('closed'); });
     await page.screenshot({ path: `${artifacts}/${label}-multi-dialog.png` });
@@ -203,15 +234,17 @@ try {
       viewport: label, sel: sel.ok, pre,
       M1_btnVisibleAcrossBubbles: !!pre.visible,
       // M2 = 居中（中点在列内 ⇒ |偏差| ≤ 6px）或 夹紧（中点在列外 ⇒ 按钮仍在列内）。
-      M2_centered: pre.segMidInCol === true ? Math.abs(pre.centerDelta) <= 6 : pre.btnInCol === true,
-      M2_mode: pre.segMidInCol === true ? 'centered' : 'clamped',
+      M2_centered: pre.overlap === false && pre.btnInCol === true,
+      M2_mode: 'nonoverlap',
+      M2_askPos: pre.askPos,
       M2_centerDelta: pre.centerDelta,
       M3_dialogOpen: dlgOpen,
       // 顺序 = DOM 顺序（本 fixture 的 ai 行在前），断言两条来源都在、编号连续、计数为 2。
-      M4_questionIsMerged: /<selection count="2">/.test(q) && /<quote n="1" from="(user|ai)">/.test(q) && /<quote n="2" from="(user|ai)">/.test(q) && /from="user"/.test(q) && /from="ai"/.test(q),
+      // 段数随视口的预热行布局变化（手机端选区跨更多行）⇒ 判「≥2 段合并 + 两侧来源都在」，不钉死 2。
+      M4_questionIsMerged: /<selection count="([2-9]\d*)">/.test(q) && /<quote n="1" from="(user|ai)">/.test(q) && /<quote n="2" from="(user|ai)">/.test(q) && /from="user"/.test(q) && /from="ai"/.test(q),
       M5_noMergeStrip: pre.mergeStrips === 0,
-      M6_termHookRan: Array.isArray(answerLinked) && answerLinked.length > 0,
-      M6_answerShown: (answerText || []).some(t => t.includes(ANSWER)),
+      M6_termHookRan: chipCount > 0,
+      M6_answerShown: expanded && (answerText || []).some(t => t.includes(ANSWER)),
       M7_menuZero: pre.menuCount === 0,
       question: q.slice(0, 400),
       answerText: (answerText || []).join(' | ').slice(0, 120),

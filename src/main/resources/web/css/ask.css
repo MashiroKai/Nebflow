@@ -237,7 +237,9 @@ nf-ask-dock { display: contents; }
   right: auto;
   bottom: auto;
   max-height: min(60vh, 420px);
+  pointer-events: none;
 }
+.ask-dock.selection-dock > * { pointer-events: auto; }
 
 /* ═══ 覆盖层（作者令④无窗体）：气泡列 + 输入条，z < 顶行（v2.1：徽标退场）═══
  * 记事本批（2026-11-05）：`.note-dock` 是本规则的**成员**（不是副本）——同一座位
@@ -1044,3 +1046,18 @@ body.mobile-layer .ask-user-source { flex-wrap: wrap; white-space: normal; max-w
   max-width: 220px; width: auto; height: auto; border-radius: var(--ds-radius-button); display: block;
   border: 1px solid var(--color-border, rgba(128,128,128,0.35));
 }
+
+/* ── 选区解释：原始气泡里的选中文字（r2 作者令 point 3）──────────────────
+   绿色 + 实线下划线，颜色取 canvas 词条同一 token（--ds-link-term），不另写色值。 */
+.bubble a.nf-term.selection-explain-chip {
+  color: var(--ds-link-term);
+  text-decoration: underline;
+  text-decoration-color: currentColor;
+  text-underline-offset: 2px;
+  border-bottom: 0;
+  cursor: pointer;
+}
+.bubble a.nf-term.selection-explain-chip.active { text-decoration-thickness: 2px; }
+
+/* 解释弹窗（canvas 词条弹窗同族 .nf-term-tip；定位见 selectionAsk.js explainTipShow）。 */
+.nf-term-tip.selection-explain-tip { max-width: 320px; }
