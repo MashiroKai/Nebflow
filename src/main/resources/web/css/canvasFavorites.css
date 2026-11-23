@@ -8,7 +8,7 @@
   justify-content: center;
   width: 30px;
   height: 30px;
-  margin-right: 6px;
+  margin-right: var(--ds-space-1h);
   padding: 0;
   border: 0;
   border-radius: var(--ds-radius-pill);

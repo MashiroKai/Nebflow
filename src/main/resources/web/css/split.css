@@ -1583,7 +1583,7 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
      收口裁定（作者 2026-11-05 09:40）：间距按 main 侧形态走档位令牌
      （gap 用 --ds-space-1h），不保留裸 7px。 */
   border: var(--ds-border-width) solid transparent;
-  padding: var(--ds-space-1) calc(7px + var(--cr-popw, 0px)) var(--ds-space-1) var(--ds-space-3);
+  padding: var(--ds-space-1) calc(7px + var(--cr-popw, 0px)) var(--ds-space-1) calc(var(--ds-space-3) + var(--cr-favw, 0px));
   background: transparent;
   border-color: transparent;
   box-shadow: none;
