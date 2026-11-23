@@ -550,7 +550,12 @@ private[agent] object AgentProcessing:
                 // would sit registered as running. Targets = this turn's replyTo
                 // plus any parked debt (deduped).
                 failTargets = (replyTo.toList ++ state.execution.owedCompletion).distinct
-                _ <- failTargets.traverse_(_ ! AgentEvent.Failed(cleanedState.sessionId.getOrElse(""), agentError))
+                // 卡片批（2026-11-21）：上行 Failed 的 message 是上级 LLM / 节点结果的输入，LLM 类只给
+                // 中性句（原文已由上方 recordFailure 卡片直呈用户）；非 LLM 类逐字原路径。
+                upstreamError = agentError.copy(message =
+                  nebflow.llm.LlmFailureSignal.upstreamMessage(agentError.llmClass)(agentError.message)
+                )
+                _ <- failTargets.traverse_(_ ! AgentEvent.Failed(cleanedState.sessionId.getOrElse(""), upstreamError))
                 // Mail team members have no replyTo (their turns are driven by
                 // UserInput(replyTo=None)), so the notification above is a no-op
                 // for them and a fatal LLM failure evaporated silently — the

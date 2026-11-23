@@ -92,4 +92,16 @@ class LlmFailureSignalSpec extends FunSuite:
     assertEquals(LlmFailureSignal.parentPayload(llmClass = false, "d")(verbatim), verbatim)
   }
 
+  test("致命上行 Failed：LLM 类 ⇒ message 只剩中性句，原文不上行") {
+    val raw = "HTTP 503 upstream overloaded: provider=acme key=sk-xxx"
+    val up = LlmFailureSignal.upstreamMessage(llmClass = true)(raw)
+    assertEquals(up, LlmFailureSignal.ParentNeutralNotice)
+    assert(!up.contains("503") && !up.contains("sk-xxx"))
+  }
+
+  test("致命上行 Failed：非 LLM 类 ⇒ message 逐字原路径") {
+    val raw = "NullPointerException at Foo.scala:12"
+    assertEquals(LlmFailureSignal.upstreamMessage(llmClass = false)(raw), raw)
+  }
+
 end LlmFailureSignalSpec
