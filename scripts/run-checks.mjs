@@ -43,6 +43,11 @@ export const CHECKS = [
   nodeCheck('noclip-floating', 'check-noclip-floating'),
   { name: 'noclip-floating-geometry', profiles: ['frontend'], timeoutMs: 240_000,
     argv: [process.execPath, 'tests/noclip-floating-geometry.spec.mjs'] },
+  // 截断/重叠巡检闸（作者令 2026-11-24 09:54：手机面板截断两例必须有自动化覆盖）：
+  // 真 Chromium 390×844 量发起群聊（首项不穿窗头）/ 后台 agent 弹窗（悬浮终止钮不压
+  // 末条）/ 主会话消息流；每面配负对照（还原修前形态必须红，否则闸失明 ⇒ FAIL）。
+  { name: 'mobile-overlap-sweep', profiles: ['frontend'], timeoutMs: 240_000,
+    argv: [process.execPath, 'tests/mobile-overlap-sweep.spec.mjs'] },
   nodeCheck('design-tokens', 'check-design-tokens'),
   // 按钮样式统一闸（button-style-unify-canvas-ref 批 2026-11-22）：全站实底静止按钮面
   // 消费统一阴影令牌 var(--btn-shadow)（canvas 基准）；裸写投影/字面量圆角即红。

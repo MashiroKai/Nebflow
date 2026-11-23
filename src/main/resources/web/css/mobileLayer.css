@@ -6540,6 +6540,13 @@ body.mobile-layer .bgagent-overlay .bgagent-stop-fab svg {
   width: var(--micon-sm, 20px);
   height: var(--micon-sm, 20px);
 }
+/* 消息流底部让位（截断巡检批 2026-11-24，作者截图「停止钮压在 BG-LIFECYCLE 气泡文字上」）：
+   终止悬浮钮与消息流同处右下，流末端必须为它留出足迹（钮底离距 + 钮径 + 一档缝），
+   与「发起群聊」面板主体让位同一公式（令牌同源）；滚到底末条可完整读且不被钮压。 */
+body.mobile-layer .bgagent-overlay .flow-agent-chat {
+  padding-bottom: calc(var(--ask-fab-bottom, 24px) + var(--mtap-lg, 48px) + var(--ds-space-3));
+  scroll-padding-bottom: calc(var(--ask-fab-bottom, 24px) + var(--mtap-lg, 48px) + var(--ds-space-3));
+}
 /* 只读 kinds（Team/Root）灰档：权限矩阵语义照旧（syncManageControls 挂 readonly）。 */
 body.mobile-layer .bgagent-overlay .bgagent-stop-fab.readonly {
   opacity: 0.35;
