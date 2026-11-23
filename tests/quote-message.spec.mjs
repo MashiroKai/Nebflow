@@ -253,40 +253,61 @@ test.describe('B16 — 选区面收敛（只留 Ask）', () => {
   });
 });
 
-/* ═════ B2/B3/B4 — 引用 chip 落附件条（输入框上方）+ 替换语义 + ✕ 清除 ═════ */
+/* ═════ B2/B3/B4 — 引用牌落附件条（输入框上方）+ 多选追加/单条移除 + ✕ 清除 ═════
+ *
+ * 🔴 多选引用批（2026-11-22 作者令逐字「还有支持 多选引用 现在引用两个还做不到」）：
+ * B3 的旧断言「换引 = 替换 ⇒ 仍 1 条」是**被本批合法推翻**的规格（一条回复只带一条
+ * 引用）。新规格：连续引用 = **追加**（顺序 = 选择顺序），同一条再点 = 取消该条，
+ * 每条可单独 ✕ 移除；≥2 条时牌面自动缩成图标 chip（B17 专测）。 */
 
 test.describe('B2-B4 — 引用态', () => {
-  test('右键引用 → 引用 chip 落输入框上方附件条；换引替换；✕ 清除', async ({ browser }) => {
+  test('右键引用 → 引用牌落输入框上方附件条；第二次引用为追加（多选）；✕ 逐条/整体清除', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     const aiId = await page.evaluate(() => window.__renderHistory([{ type: 'ai', text: '第一条助手结论，比较长一点的摘要内容' }]).then(() => window.__msgIds()[0]));
     const userId = await page.evaluate(() => window.__renderUserRow('用户原始消息'));
 
-    // B2 引用助手行 —— chip 与附件同宿主（#attachment-preview）、位于输入框上方
+    // B2 引用助手行 —— 牌与附件同宿主（#attachment-preview）、位于输入框上方
     const q1 = await page.evaluate(async id => window.__startQuoteOn(id), aiId);
     expect(q1.ok, '菜单引用项存在').toBe(true);
+    expect(q1.action, '未引用态 ⇒ 菜单项 =「引用」').toBe('引用');
     let strip = await page.evaluate(() => window.__quoteStripState());
-    expect(strip.hidden, '引用 chip 可见').toBe(false);
-    expect(strip.hostId, 'chip 宿主 = 附件条 #attachment-preview（与附件同条带）').toBe('attachment-preview');
-    expect(strip.aboveInput, 'chip 整体位于输入框上方').toBe(true);
-    expect(strip.refType, 'chip refType=chat-message').toBe('chat-message');
+    expect(strip.hidden, '引用牌可见').toBe(false);
+    expect(strip.hostId, '牌宿主 = 附件条 #attachment-preview（与附件同条带）').toBe('attachment-preview');
+    expect(strip.aboveInput, '牌整体位于输入框上方').toBe(true);
+    expect(strip.refType, '牌 refType=chat-message').toBe('chat-message');
     expect(strip.chipText).toContain('主 Agent：');
     expect(strip.chipText).toContain('第一条助手结论');
     expect(strip.hasRemove, '✕（实心圆白）在场').toBe(true);
     expect(await page.evaluate(() => window.__pendingQuoteCount()), 'pendingAttachments 恰 1 条引用').toBe(1);
+    let chips = await page.evaluate(() => window.__quoteChips());
+    expect(chips.compact, '① 选中 1 条 = 现状整卡预览（非紧凑档）').toBe(0);
 
-    // B3 换引 = 替换语义
+    // B3 追加语义（本批新规格）：第二条引用 ⇒ 2 条，顺序 = 选择顺序
     const q2 = await page.evaluate(async id => window.__startQuoteOn(id), userId);
     expect(q2.ok).toBe(true);
-    strip = await page.evaluate(() => window.__quoteStripState());
-    expect(strip.chipText).toContain('我：');
-    expect(strip.chipText).toContain('用户原始消息');
-    expect(await page.evaluate(() => window.__pendingQuoteCount()), '换引后仍 1 条').toBe(1);
+    expect(await page.evaluate(() => window.__pendingQuoteCount()), '② 追加后 2 条（旧规格是替换成 1 条）').toBe(2);
+    const order = await page.evaluate(() => window.__pendingQuoteOrder());
+    expect(order.map(o => o.messageId), '选择顺序 = 卡片顺序（助手行在前、用户行在后）').toEqual([aiId, userId]);
+    chips = await page.evaluate(() => window.__quoteChips());
+    expect(chips.count, '条带上 2 枚引用牌').toBe(2);
+    expect(chips.compact, '③ ≥2 条 ⇒ 自动缩小为图标 chip').toBe(2);
+    expect(chips.chips.map(c => c.order), '牌面顺序号 = 选择顺序').toEqual(['1', '2']);
+    expect(chips.chips.every(c => c.hasOpen && c.hasRemove), '每枚牌面 = 回看钮 + ✕（每条可单独移除）').toBe(true);
 
-    // B4 ✕ 清除
+    // B3' 同一条再点 = 取消该条（多选 toggle；菜单项文案同步切换为「取消引用」）
+    const q3 = await page.evaluate(async id => window.__startQuoteOn(id), userId);
+    expect(q3.action, '已在引用态 ⇒ 菜单项 =「取消引用」').toBe('取消引用');
+    expect(await page.evaluate(() => window.__pendingQuoteCount()), 'toggle 移除后 1 条').toBe(1);
+    chips = await page.evaluate(() => window.__quoteChips());
+    expect(chips.compact, '回到 1 条 ⇒ 牌面回到整卡档').toBe(0);
+    strip = await page.evaluate(() => window.__quoteStripState());
+    expect(strip.chipText).toContain('主 Agent：');
+
+    // B4 ✕ 清除（单枚 ✕ 删尽后引用态清空）
     const rm = await page.evaluate(() => window.__clearQuoteViaX());
     expect(rm.clicked).toBe(true);
     strip = await page.evaluate(() => window.__quoteStripState());
-    expect(strip.hidden, '✕ 后引用 chip 消失').toBe(true);
+    expect(strip.hidden, '✕ 后引用牌消失').toBe(true);
     expect(await page.evaluate(() => window.__pendingQuoteCount()), '✕ 后引用态清空').toBe(0);
 
     expect(pageErrors).toEqual([]);
@@ -340,6 +361,9 @@ test.describe('B6 — 摘要规则', () => {
     expect(s.chipText).toContain('[图片]');
     expect(s.chipText).toContain('screenshot-2026.png');
 
+    // 多选引用批（2026-11-22）：引用态改追加语义 ⇒ 逐例复位（本用例验的是**摘要
+    // 规则**，每例都必须是「单条整卡」的读数面）。
+    await page.evaluate(() => window.__clearQuoteAll());
     await page.evaluate(() => window.__startQuoteDirect({
       kind: 'tool', label: 'Read', summary: '读取 src/main.rs',
       senderRole: 'tool', senderName: 'Nebula', ts: Date.now(),
@@ -349,6 +373,7 @@ test.describe('B6 — 摘要规则', () => {
     expect(s.chipText).toContain('Read');
     expect(s.chipText).toContain('读取 src/main.rs');
 
+    await page.evaluate(() => window.__clearQuoteAll());
     await page.evaluate(() => window.__startQuoteDirect({
       kind: 'ask', question: '请选择部署目标环境？',
       senderRole: 'askUser', senderName: 'Nebula', ts: Date.now(),
@@ -358,6 +383,7 @@ test.describe('B6 — 摘要规则', () => {
     expect(s.chipText).toContain('请选择部署目标环境？');
 
     const long = '一'.repeat(120);
+    await page.evaluate(() => window.__clearQuoteAll());
     await page.evaluate(txt => window.__startQuoteDirect({
       kind: 'text', text: txt, senderRole: 'user', senderName: '我', ts: Date.now(),
     }), long);
@@ -776,5 +802,341 @@ test.describe('B15 — 引用块宽度约束（几何断言）', () => {
       expect(pageErrors).toEqual([]);
       await context.close();
     }
+  });
+});
+
+/* ═════ B17 — 多选引用（2026-11-22 作者令「还有支持 多选引用 现在引用两个还做不到」
+ *              ＋「多选的就自动缩小为小图标」）═══════════════════════════════════
+ *
+ * 本块是**本批的新规格验收面**（B2-B4 已按追加语义同步改）：
+ *   ① 多选可达且顺序 = 选择顺序（右键入口连续引用三条 ⇒ 牌面/数据面同序）；
+ *   ② 选中 ≥2 条 ⇒ 牌面自动缩成图标 chip（定长短名、零 CSS 省略；单条回整卡档）；
+ *      每条可单独移除，幸存者按新序重排（牌面 = 现实）；
+ *   ③ 发送链路：全部引用按选择顺序进同一条消息（live 腿 N 块引用块、顺序一致、
+ *      复合盒在场）；历史重放腿读引擎落盘的 quotes 有序数组逐条渲染（旧 quote
+ *      单条行仍渲染 1 块 = 旧读法零回归）；
+ *   ④ 牌面回看原消息：点牌 = 目标行高亮（与气泡引用块同一实现）；目标不在页内 ⇒
+ *      就地展开快照摘要（零死点击）；
+ *   ⑤ 真机尺寸（390×844）不撑爆 composer：条带无横向溢出、牌面仍在输入框上方、
+ *      手机层「+N」折叠接管溢出。
+ * 证据帧：.nebflow/evidence/20261122_quote-multiselect/（真实渲染像素）。
+ */
+const MULTI_EVIDENCE_DIR = path.join(REPO_ROOT, '.nebflow/evidence/20261122_quote-multiselect');
+
+test.describe('B17 — 多选引用', () => {
+  test('连续引用三条 ⇒ 追加、顺序 = 选择顺序、牌面缩成图标 chip（定长可读短名）', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    // 几何断言在牌面入场动画之外采样（reduce = 既有 CSS 的 animation:none 档，
+    // 与 B12/B13/B15 同口径）。
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const ids = await page.evaluate(async () => {
+      const a = window.__renderUserRow('第一条原始消息');
+      const b = window.__renderUserRow('第二条原始消息');
+      window.__renderToolRow('Read', '读取 src/main.rs');
+      const t = Array.from(document.querySelectorAll('#chat > .row.tool')).pop().dataset.msgId;
+      return [a, b, t];
+    });
+    for (const id of ids) {
+      const r = await page.evaluate(async rid => window.__startQuoteOn(rid), id);
+      expect(r.ok, `引用 ${id} 成功`).toBe(true);
+    }
+    expect(await page.evaluate(() => window.__pendingQuoteCount()), '三条全部在引用态（旧实现在这里只有 1 条）').toBe(3);
+    const order = await page.evaluate(() => window.__pendingQuoteOrder());
+    expect(order.map(o => o.messageId), '数据面顺序 = 点击顺序').toEqual(ids);
+    const chips = await page.evaluate(() => window.__quoteChips());
+    expect(chips.count).toBe(3);
+    expect(chips.compact, '≥2 条 ⇒ 全部缩成紧凑图标 chip').toBe(3);
+    expect(chips.chips.map(c => c.order), '牌面顺序号 1/2/3').toEqual(['1', '2', '3']);
+    // 短名可读且**定长**（角色词：我 / 工具），标签不靠省略号（text-overflow: clip）
+    expect(chips.chips[0].label, '第 1 枚 = 顺序号 + 发送方短名').toBe('1 · 我');
+    expect(chips.chips[2].label, '第 3 枚 = 工具行短名').toBe('3 · 工具');
+    expect(chips.chips.every(c => c.textOverflow === 'clip'), '牌面标签零 ellipsis 截断').toBe(true);
+    expect(chips.chips.every(c => c.labelOverflowing === false), '定长短名不溢出（无需截断）').toBe(true);
+    expect(chips.chips.every(c => c.aboveInput && c.inHost), '牌面全在条带内、位于输入框上方').toBe(true);
+    expect(chips.hostOverflowX, '条带无横向溢出').toBe(false);
+    expect(chips.chips.every(c => c.height === 28), '牌面保持 28px 档（与附件 chip 同档）').toBe(true);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('单条移除后幸存者按新序重排；点牌回看原消息（目标高亮）/目标不在页内降级展开', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const ids = await page.evaluate(async () => {
+      const a = window.__renderUserRow('甲消息');
+      const b = window.__renderUserRow('乙消息');
+      const c = window.__renderUserRow('丙消息');
+      return [a, b, c];
+    });
+    for (const id of ids) await page.evaluate(async rid => window.__startQuoteOn(rid), id);
+    // ② 移除中间一条 ⇒ 幸存者顺序 = 原相对顺序、牌面顺序号重排
+    const removed = await page.evaluate(() => window.__removeChip(1));
+    expect(removed.ok).toBe(true);
+    expect(removed.left, '3 - 1 = 2 条').toBe(2);
+    const order = await page.evaluate(() => window.__pendingQuoteOrder());
+    expect(order.map(o => o.messageId), '幸存者 = 第 1、3 条（原相对顺序不变）').toEqual([ids[0], ids[2]]);
+    let chips = await page.evaluate(() => window.__quoteChips());
+    expect(chips.chips.map(c => c.order), '牌面顺序号重排为 1/2').toEqual(['1', '2']);
+    // ④ 点牌回看原消息 ⇒ 目标行高亮（与气泡引用块点击同一实现）
+    const jump = await page.evaluate(() => window.__revealChip(1));
+    expect(jump.ok).toBe(true);
+    expect(jump.flashed, '第 2 枚牌指向「丙消息」⇒ 该行高亮').toEqual([ids[2]]);
+    expect(jump.expanded, '命中目标 ⇒ 不展开摘要').toBe(false);
+    // 目标不在页内 ⇒ 就地展开快照摘要（零死点击）
+    await page.evaluate(() => window.__clearChat());
+    await page.evaluate(() => window.__renderUserRow('仍在页内的行'));
+    const probe = await page.evaluate(() => {
+      const chip = document.querySelector('#attachment-preview .att-ref[data-ref-type="chat-message"]');
+      const open = chip.querySelector('.att-ref-open');
+      open.click();
+      return { expanded: chip.classList.contains('expanded'), meta: (chip.querySelector('.att-ref-meta') || {}).textContent || '' };
+    });
+    expect(probe.expanded, '目标行不在页内 ⇒ 牌面展开').toBe(true);
+    expect(probe.meta).toContain('甲消息');
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('发送：三条引用按选择顺序进同一条消息（live 腿 3 块引用块、复合盒在场、逐块可跳转）', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    fs.mkdirSync(MULTI_EVIDENCE_DIR, { recursive: true });
+    const ids = await page.evaluate(async () => {
+      const a = window.__renderUserRow('第一条原始消息');
+      const b = window.__renderUserRow('第二条原始消息');
+      const c = window.__renderUserRow('第三条原始消息');
+      return [a, b, c];
+    });
+    for (const id of ids) await page.evaluate(async rid => window.__startQuoteOn(rid), id);
+    const rowId = await page.evaluate(() => window.__sendPendingQuoted('三条并进同一回复', 'cm-multi-1'));
+    const blocks = await page.evaluate(id => window.__quoteBlocksOn(id), rowId);
+    expect(blocks.length, '发送后消息面 = 3 块引用块（顺序 = 选择顺序）').toBe(3);
+    expect(blocks.map(b => b.refMessageId), '块顺序 = 选择顺序').toEqual(ids);
+    expect(blocks.map(b => b.text.includes('原始消息')), '逐块摘要落位').toEqual([true, true, true]);
+    expect(blocks.every(b => b.jump === 'ready'), '三条目标都在页内 ⇒ 逐块可跳转').toBe(true);
+    expect(blocks.every(b => b.inComposite && b.beforeBubble), '全部在复合盒内、气泡正上方').toBe(true);
+    // 证据帧（真实渲染像素）：多选态 composer + 发送后消息面多块
+    await page.locator('#input-bar').screenshot({ path: path.join(MULTI_EVIDENCE_DIR, 'desktop-after-multi-composer.png'), animations: 'disabled' });
+    await page.locator(`.row[data-msg-id="${rowId}"]`).screenshot({ path: path.join(MULTI_EVIDENCE_DIR, 'desktop-after-multi-sent.png'), animations: 'disabled' });
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('历史重放：quotes 有序数组 ⇒ 逐块渲染；旧 quote 单条行仍 1 块（旧读法零回归）', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    const rows = await page.evaluate(async () => {
+      // 目标行（跳转就绪面）先在场
+      const t1 = window.__renderUserRow('历史目标一');
+      const t2 = window.__renderUserRow('历史目标二');
+      const multi = [t1, t2].map((id, i) => ({
+        refMessageId: id,
+        excerpt: `历史被引 ${i + 1}`,
+        senderRole: 'user',
+        senderName: '我',
+        ts: 1700000000000 + i,
+      }));
+      await window.__renderHistory([
+        // 引擎落盘形态：quote = 首条（旧读法）+ quotes = 全量有序（新读法）
+        { type: 'user', text: '多条并引回复', quote: multi[0], quotes: multi },
+        { type: 'user', text: '旧单条引用回复', quote: multi[0] },
+      ]);
+      return window.__msgIds();
+    });
+    const multiRow = rows[rows.length - 2];
+    const legacyRow = rows[rows.length - 1];
+    const multiBlocks = await page.evaluate(id => window.__quoteBlocksOn(id), multiRow);
+    expect(multiBlocks.length, '引擎落盘的 quotes 有序数组 ⇒ 2 块（顺序一致）').toBe(2);
+    expect(multiBlocks.map(b => b.jump), '命中页内目标 ⇒ 逐块 ready').toEqual(['ready', 'ready']);
+    expect(multiBlocks[0].text).toContain('历史被引 1');
+    expect(multiBlocks[1].text).toContain('历史被引 2');
+    const legacyBlocks = await page.evaluate(id => window.__quoteBlocksOn(id), legacyRow);
+    expect(legacyBlocks.length, '旧 quote 单条行 ⇒ 仍 1 块（旧读法逐字不变）').toBe(1);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('真机尺寸（390×844）：多选 5 条不撑爆 composer —— 无横向溢出、不压输入框', async ({ browser }) => {
+    // 视口口径 = 作者主用 iPhone Safari 的 CSS 像素档（390×844）。本壳无 viewport meta
+    // （既有 B16 触屏腿依赖 980 布局视口），故这里用 viewport + hasTouch 精确量 390
+    // CSS px，并显式挂 body.mobile-layer（产品真机姿态类）—— 与产品同一条手机层
+    // 样式域；isMobile emulation 会绕过本壳的固定宽度夹具，故不启用。
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
+    const page = await context.newPage();
+    const pageErrors = [];
+    page.on('pageerror', e => pageErrors.push(String(e && e.message ? e.message : e)));
+    await page.goto(`http://127.0.0.1:${port}${HARNESS_PATH}`);
+    await page.waitForFunction(() => window.__ready === true);
+    await page.evaluate(() => { document.body.classList.add('mobile-layer'); });
+    const ids = await page.evaluate(async () => {
+      const out = [];
+      for (let i = 1; i <= 5; i++) out.push(window.__renderUserRow(`手机档第 ${i} 条被引消息`));
+      return out;
+    });
+    // 手机层的引用入口 = 行 footer 引用钮（长按/右键菜单在 mobile-layer 下不出，
+    // 见 attachQuoteMenu 的手机端长按退役批）—— 多选可达性按真入口验。
+    for (const id of ids) {
+      const r = await page.evaluate(async rid => window.__clickQuoteButtonOn(rid), id);
+      expect(r.ok, `footer 引用钮在手机档可用（${id}）`).toBe(true);
+    }
+    const chips = await page.evaluate(() => window.__quoteChips());
+    expect(chips.count, '5 枚引用牌都在数据面').toBe(5);
+    expect(chips.compact, '全部紧凑档').toBe(5);
+    expect(chips.hostOverflowX, '手机层条带无横向溢出（溢出走 +N 折叠）').toBe(false);
+    const geom = await page.evaluate(() => {
+      const host = document.getElementById('attachment-preview');
+      const input = document.getElementById('input');
+      const hr = host.getBoundingClientRect();
+      const ir = input.getBoundingClientRect();
+      return {
+        hostBottom: Math.round(hr.bottom), inputTop: Math.round(ir.top),
+        hostW: Math.round(hr.width), inputW: Math.round(ir.width),
+        inputVisible: ir.height > 0 && ir.top >= 0 && ir.bottom <= window.innerHeight,
+        foldCount: host.querySelectorAll('.mh-att-collapsed').length,
+        moreBtn: !!host.querySelector('.mh-att-more'),
+        viewport: { w: window.innerWidth, h: window.innerHeight },
+      };
+    });
+    expect(geom.hostBottom, '条带底 ≤ 输入框顶（不压输入框）').toBeLessThanOrEqual(geom.inputTop + 1);
+    expect(geom.inputVisible, '输入框仍在视口内').toBe(true);
+    expect(geom.viewport.w, '量的是 390 真机档').toBe(390);
+    // 手机层溢出：要么折叠腿接管（+N / collapsed），要么条带自身不溢出 —— 二者必居其一
+    expect(geom.foldCount > 0 || geom.moreBtn || !chips.hostOverflowX).toBe(true);
+    fs.mkdirSync(MULTI_EVIDENCE_DIR, { recursive: true });
+    await page.locator('#input-bar').screenshot({ path: path.join(MULTI_EVIDENCE_DIR, 'mobile-390-after-multi-composer.png'), animations: 'disabled' });
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+});
+
+
+/* ═══════ B18 — ④ 引用**作者自己**的消息（2026-11-22 09:21 作者补充令）═══════
+ * 作者令逐字：「我发现 我无法引用自己的话 这个要支持」。
+ *
+ * 现状排查（本腿要钉住的面）：引用链上**没有任何 senderRole 过滤** ——
+ *   · 入口 ①  msgQuote.js::openQuoteMenuForRow（菜单项 复制+引用/取消引用，无角色判断）
+ *   · 入口 ②  msgQuote.js::mountQuoteFooterButton（行 footer 引用钮，无角色判断）
+ *   · 渲染 ③  chat.js::renderUserBubble 的行级 attachQuoteMenu（senderRole:'user'）+ 气泡
+ *              引用块（quoteViewOf 把 'user' 映成「我」）
+ *   · 落盘 ④  WebSocketRoutes.quotesFromRefs / RefResolver.scala 的 chat-message 分支
+ *  ⇒ 自引与它引必须是**同一交互面、同一卡片形态**（短名/展开/投递规则一致），
+ *    本条把「自己的消息」做成显式回归项（此前只有它引侧的用例）。
+ * 另外：手机层的唯一入口是 footer 引用钮（长按/右键菜单在 mobile-layer 下不出），
+ * 自引的手机可达性单列一腿（作者主视口 = iPhone）。 */
+
+test.describe('B18 — ④ 引用作者自己的消息', () => {
+  test('自己消息：右键菜单与 footer 钮两入口都可引；与 AI 消息混选；发送后卡片同形可跳', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    // 铺两条目标：先铺历史 AI 行（restoreFromBackendHistory 会重写 #chat，故先于
+    // 作者自己那条），再铺作者自己的一条既往消息 —— 混选腿要两者同时在页。
+    const aiId = await page.evaluate(async () => {
+      await window.__renderHistory([{ type: 'ai', text: 'AI 的回答正文', timestamp: Date.now() }]);
+      const ai = Array.from(document.querySelectorAll('#chat > .row.ai'));
+      return ai.length ? ai[ai.length - 1].dataset.msgId : null;
+    });
+    expect(aiId, 'AI 目标行在场（它引侧对账用）').toBeTruthy();
+    const ownId = await page.evaluate(() => window.__renderUserRow('我自己的原话：先查 A 再查 B'));
+    expect(ownId, '作者自己那条行在场').toBeTruthy();
+
+    // ① 入口 a：右键菜单对自己消息给出「引用」（无角色过滤 —— 现状反证点）
+    const menu = await page.evaluate(id => window.__menuLabelsOn(id), ownId);
+    expect(menu.some(l => l === '引用'), `自己消息的右键菜单含「引用」（实读：${JSON.stringify(menu)}）`).toBe(true);
+
+    // ① 入口 b：footer 引用钮对自己消息在场、可用（复制钮右侧同族）
+    const btn = await page.evaluate(id => window.__quoteButtonOn(id), ownId);
+    expect(btn.present, '自己消息 footer 有引用钮').toBe(true);
+    expect(btn.badge, '引用钮在徽章内（按钮 ⊆ footer）').toBe(true);
+
+    // ② 点按钮 = 进引用态，引用目标 = 自己那条（身份不错位）
+    expect((await page.evaluate(id => window.__clickQuoteButtonOn(id), ownId)).ok).toBe(true);
+    const pend = await page.evaluate(() => window.__pendingQuoteOrder());
+    expect(pend.length, '引用态 1 条').toBe(1);
+    expect(pend[0].messageId, '引用目标 = 作者自己那条消息的行 id').toBe(ownId);
+    expect(pend[0].excerpt, '自引摘要 = 自己原话').toContain('先查 A');
+
+    // ② 单条 = 整卡预览（与它引同档，不因「自己」降级）
+    let chips = await page.evaluate(() => window.__quoteChips());
+    expect(chips.count).toBe(1);
+    expect(chips.compact, '单条 = 整卡（非紧凑档）').toBe(0);
+    expect(chips.chips[0].hasRemove, '整卡带 ✕').toBe(true);
+
+    // ③ 与 AI 消息混选（自引 + 它引同一交互面；顺序 = 选择顺序）
+    expect((await page.evaluate(id => window.__startQuoteOn(id), aiId)).ok).toBe(true);
+    const order = await page.evaluate(() => window.__pendingQuoteOrder());
+    expect(order.length, '自引 + 它引 = 2 条').toBe(2);
+    expect(order[0].messageId, '顺序 1 = 自己那条（先选）').toBe(ownId);
+    expect(order[1].messageId, '顺序 2 = AI 那条').toBe(aiId);
+    chips = await page.evaluate(() => window.__quoteChips());
+    expect(chips.compact, '≥2 条全部紧凑档（②的规则对自引一视同仁）').toBe(2);
+    expect(chips.chips[0].label, '紧凑牌短名 = 「我」+ 顺序号').toContain('我');
+    expect(chips.chips[0].textOverflow, '短名零省略（clip）').toBe('clip');
+
+    // ④ 回看：点自己那条的引用牌 ⇒ 目标行高亮（不是死点击）
+    const reveal = await page.evaluate(() => window.__revealChip(0));
+    expect(reveal.ok).toBe(true);
+    expect(reveal.flashed, '回看落在作者自己那条消息上').toContain(ownId);
+
+    // ⑤ 发送面：两块引用块（顺序同选择顺序），自引块形制 = 它引块形制，
+    //    发送方标注走「我」（quoteViewOf 的 user 分支），可跳 ready
+    const sentId = await page.evaluate(() => window.__sendPendingQuoted('收到，我按这个顺序来', 'cm-own-quote-1'));
+    const blocks = await page.evaluate(id => window.__quoteBlocksOn(id), sentId);
+    expect(blocks.length, '发送后气泡上方 2 块（自引未被吞）').toBe(2);
+    expect(blocks[0].refMessageId, '块 1 = 自己那条').toBe(ownId);
+    expect(blocks[0].text, '块 1 摘要 = 自己原话').toContain('先查 A');
+    expect(blocks[0].sender, '块 1 发送方标注 = 我').toBe('我');
+    expect(blocks[0].jump, '块 1 可跳（目标在页内）').toBe('ready');
+    expect(blocks[1].refMessageId, '块 2 = AI 那条').toBe(aiId);
+    expect(blocks[0].inComposite && blocks[1].inComposite, '两块与它引同壳（composite）').toBe(true);
+    expect(blocks[0].beforeBubble, '引用块在气泡上方').toBe(true);
+
+    // ⑥ 复位面零残留（本壳的发送腿只渲渲染半边，不消费引用态 —— 真 send 的
+    //    clearQuote 在 input.js；此处按探针清空并核计数归零，供后续腿复用干净状态）
+    expect(await page.evaluate(() => window.__clearQuoteAll())).toBe(0);
+
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('手机层（390×844）：自己消息的 footer 引用钮是唯一入口且可用；自引多选可达', async ({ browser }) => {
+    // 手机层口径同 B17：viewport 精确 390 + hasTouch + 产品姿态类 body.mobile-layer
+    //（长按/右键菜单在 mobile-layer 下不出 ⇒ 触屏唯一入口 = footer 引用钮）。
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, reducedMotion: 'reduce' });
+    const page = await context.newPage();
+    const pageErrors = [];
+    page.on('pageerror', e => pageErrors.push(String(e && e.message ? e.message : e)));
+    await page.goto(`http://127.0.0.1:${port}${HARNESS_PATH}`);
+    await page.waitForFunction(() => window.__ready === true);
+    await page.evaluate(() => { document.body.classList.add('mobile-layer'); });
+    const own = await page.evaluate(() => [
+      window.__renderUserRow('手机档：我自己的第一条'),
+      window.__renderUserRow('手机档：我自己的第二条'),
+    ]);
+    // 手机层右键菜单不出（现状，写死为判据）—— 入口只剩 footer 钮
+    const menu = await page.evaluate(id => window.__menuLabelsOn(id), own[0]);
+    expect(menu, 'mobile-layer 下右键菜单不出（长按退役批）').toEqual([]);
+    for (const id of own) {
+      const b = await page.evaluate(rid => window.__quoteButtonOn(rid), id);
+      expect(b.present, `手机层自己消息 footer 引用钮在场（${id}）`).toBe(true);
+      expect((await page.evaluate(rid => window.__clickQuoteButtonOn(rid), id)).ok).toBe(true);
+    }
+    const chips = await page.evaluate(() => window.__quoteChips());
+    expect(chips.count, '自己两条 = 2 枚引用牌').toBe(2);
+    expect(chips.compact, '≥2 紧凑档').toBe(2);
+    expect(chips.chips.map(c => c.label).join('|'), '两枚都标「我」（短名可读、可区分顺序号）').toContain('我');
+    expect(chips.chips[0].label, '带顺序号 1').toContain('1');
+    expect(chips.chips[1].label, '带顺序号 2').toContain('2');
+    const geom = await page.evaluate(() => {
+      const hr = document.getElementById('attachment-preview').getBoundingClientRect();
+      const ir = document.getElementById('input').getBoundingClientRect();
+      return { hostBottom: Math.round(hr.bottom), inputTop: Math.round(ir.top), vw: window.innerWidth };
+    });
+    expect(geom.vw, '量的是 390 真机档').toBe(390);
+    expect(geom.hostBottom, '条带不压输入框').toBeLessThanOrEqual(geom.inputTop + 1);
+    // 发送：两块引用块都在（手机层自引 + 自引）
+    const sentId = await page.evaluate(() => window.__sendPendingQuoted('手机档发送', 'cm-own-m1'));
+    const blocks = await page.evaluate(id => window.__quoteBlocksOn(id), sentId);
+    expect(blocks.length, '手机层发送后 2 块').toBe(2);
+    expect(blocks.map(b => b.sender), '两块发送方都是「我」').toEqual(['我', '我']);
+    expect(blocks.map(b => b.jump), '两块都可跳').toEqual(['ready', 'ready']);
+    expect(pageErrors).toEqual([]);
+    await context.close();
   });
 });

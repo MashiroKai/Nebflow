@@ -35,7 +35,7 @@
       flex: 1; width: 680px; max-width: 96vw; margin: 0 auto; padding: 16px 0 36px;
       overflow-y: auto;
     }
-    #input-bar { display: flex; align-items: flex-end; width: 680px; margin: 0 auto; padding: 8px; }
+    #input-bar { display: flex; align-items: flex-end; width: 680px; max-width: 96vw; margin: 0 auto; padding: 8px; }
     #input-wrap { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
     #input { width: 100%; }
   </style>
@@ -131,6 +131,29 @@
     window.__rowById = (id) => document.querySelector(`#chat .row[data-msg-id="${CSS.escape(String(id))}"]`);
 
     window.__quoteBlocks = () => Array.from(document.querySelectorAll('#chat .msg-quote-block'));
+    /** 单行上的**全部**引用块（多选引用批：一条回复可带 N 块，顺序 = 选择顺序）。
+     *  读数 = 每块的摘要/发送方/跳转态 + 与气泡的先后关系（②③ 两腿对账面）。 */
+    window.__quoteBlocksOn = (rowId) => {
+      const row = window.__rowById(rowId);
+      if (!row) return [];
+      const bubble = row.querySelector('.bubble.user:not(.att-bubble)');
+      return Array.from(row.querySelectorAll('.msg-quote-block')).map((box, i) => ({
+        order: i + 1,
+        refMessageId: box.dataset.refMessageId || '',
+        text: (box.querySelector('.msg-quote-text') || {}).textContent || '',
+        sender: (box.querySelector('.msg-quote-sender') || {}).textContent || '',
+        jump: box.dataset.quoteJump || '',
+        note: (box.querySelector('.msg-quote-note') || {}).textContent || '',
+        beforeBubble: !!(bubble && (box.compareDocumentPosition(bubble) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0),
+        inComposite: !!box.closest('.msg-quote-composite'),
+      }));
+    };
+    /** 发送腿（真实 send 前半段 + 真 renderUserBubble）：带当前引用态发一条消息，
+     *  返回该行 id —— 多选引用「发送后消息面多块」的取证入路。 */
+    window.__sendPendingQuoted = (text, msgId) => {
+      const row = window.__renderUserRowWithQuote(text, msgId);
+      return row && row.dataset.msgId;
+    };
     window.__quoteShape = (rowId) => {
       const row = window.__rowById(rowId);
       if (!row) return null;
@@ -202,10 +225,95 @@
       chatMod.renderAttachmentPreview({ attPreviewEl: view.dom.attPreview, attachments: view.pendingAttachments });
       return view.pendingAttachments.length;
     };
-    window.__pendingQuoteCount = () => quoteMod.quoteAttOf(view.pendingAttachments) ? 1 : 0;
+    /** 引用态条数（多选引用批 2026-11-22：引用态是**有序列表**，本探针数全部
+     *  chat-message ref —— 旧实现读 quoteAttOf（首条）恒 0/1，作者报障「引用两个
+     *  还做不到」的读数面就在这条）。 */
+    window.__pendingQuoteCount = () => quoteMod.quoteAttsOf(view.pendingAttachments).length;
+    /** 引用态顺序（= 选择顺序 = 发送 refs 顺序 = 引用牌顺序；②③ 两腿的对账读数）。 */
+    window.__pendingQuoteOrder = () => quoteMod.quoteAttsOf(view.pendingAttachments).map((q, i) => ({
+      order: i + 1,
+      messageId: (q.source && q.source.messageId) || '',
+      itemIndex: q.content ? q.content.itemIndex : undefined,
+      excerpt: (q.content && q.content.excerpt) || '',
+      refId: q.id,
+    }));
     window.__pendingQuoteExcerpt = () => {
       const q = quoteMod.quoteAttOf(view.pendingAttachments);
       return q ? (q.content ? q.content.excerpt : '') : '';
+    };
+    /** composer 引用牌面读数（多选引用批）：条数 / 紧凑档 / 逐枚顺序号与短名 /
+     *  回看钮与 ✕ 钮在场 / 几何（高度档 + 条带内不溢出 + 不压输入框）。
+     *  「1 条 = 整卡，≥2 = 紧凑图标 chip」是②的机械判据，全部读渲染后 DOM。 */
+    window.__quoteChips = () => {
+      const host = document.getElementById('attachment-preview');
+      const input = document.getElementById('input');
+      const chips = host ? Array.from(host.querySelectorAll('.att-ref[data-ref-type="chat-message"]')) : [];
+      const ir = input ? input.getBoundingClientRect() : null;
+      const hr = host ? host.getBoundingClientRect() : null;
+      return {
+        count: chips.length,
+        compact: chips.filter(c => c.classList.contains('is-compact')).length,
+        hostOverflowX: !!(host && host.scrollWidth > host.clientWidth + 1),
+        hostHeight: hr ? Math.round(hr.height) : 0,
+        hostRect: hr ? { top: Math.round(hr.top), bottom: Math.round(hr.bottom), left: Math.round(hr.left), width: Math.round(hr.width) } : null,
+        inputHeight: ir ? Math.round(ir.height) : 0,
+        inputRect: ir ? { top: Math.round(ir.top), bottom: Math.round(ir.bottom), width: Math.round(ir.width) } : null,
+        chips: chips.map(c => {
+          const r = c.getBoundingClientRect();
+          const label = c.querySelector('.att-ref-label');
+          const open = c.querySelector('.att-ref-open');
+          return {
+            order: c.dataset.quoteOrder || '',
+            compact: c.classList.contains('is-compact'),
+            label: label ? label.textContent : (c.querySelector('.att-ref-label') || {}).textContent || '',
+            // 短名不靠 CSS 省略：计算样式的 text-overflow 必须是 clip（紧凑档）。
+            textOverflow: label ? getComputedStyle(label).textOverflow : '',
+            labelOverflowing: label ? label.scrollWidth > label.clientWidth + 1 : false,
+            hasOpen: !!open,
+            openTag: open ? open.tagName.toLowerCase() : '',
+            openFocusable: !!open && open.tabIndex >= 0,
+            hasRemove: !!c.querySelector('.att-ref-remove'),
+            removeTag: (c.querySelector('.att-ref-remove') || {}).tagName || '',
+            title: c.getAttribute('title') || '',
+            ariaLabel: c.getAttribute('aria-label') || '',
+            role: c.getAttribute('role') || '',
+            height: Math.round(r.height),
+            aboveInput: !!(ir && r.bottom <= ir.top + 1),
+            inHost: !!(hr && r.top >= hr.top - 1 && r.bottom <= hr.bottom + 1),
+            metaShown: label && c.classList.contains('expanded')
+              ? (c.querySelector('.att-ref-meta') || {}).textContent || '' : '',
+          };
+        }),
+      };
+    };
+    /** 点第 i 枚引用牌牌面（回看原消息）⇒ 目标行高亮 / 目标不在页内时降级展开。 */
+    window.__revealChip = async (i) => {
+      const host = document.getElementById('attachment-preview');
+      const chip = host && host.querySelectorAll('.att-ref[data-ref-type="chat-message"]')[i || 0];
+      if (!chip) return { ok: false, why: 'no chip' };
+      const open = chip.querySelector('.att-ref-open');
+      if (!open) return { ok: false, why: 'no open node' };
+      open.click();
+      await new Promise(r => setTimeout(r, 60));
+      const flashed = Array.from(document.querySelectorAll('#chat .row.quote-target-flash'))
+        .map(r => r.dataset.msgId || '');
+      return {
+        ok: true,
+        flashed,
+        expanded: chip.classList.contains('expanded'),
+        meta: (chip.querySelector('.att-ref-meta') || {}).textContent || '',
+      };
+    };
+    /** 移除第 i 枚引用牌（牌面 ✕ 真实点击）⇒ 幸存者顺序 / 条数。 */
+    window.__removeChip = async (i) => {
+      const host = document.getElementById('attachment-preview');
+      const chip = host && host.querySelectorAll('.att-ref[data-ref-type="chat-message"]')[i || 0];
+      if (!chip) return { ok: false, why: 'no chip' };
+      const x = chip.querySelector('.att-ref-remove');
+      if (!x) return { ok: false, why: 'no remove' };
+      x.click();
+      await new Promise(r => setTimeout(r, 60));
+      return { ok: true, left: window.__pendingQuoteCount() };
     };
     window.__startQuoteOn = async (rowId) => {
       const row = window.__rowById(rowId);
@@ -214,11 +322,15 @@
       const menu = document.querySelector('.fm-context-menu');
       if (!menu) return { ok: false, why: 'no menu' };
       const items = Array.from(menu.querySelectorAll('button')).map(b => b.textContent);
-      const quoteBtn = Array.from(menu.querySelectorAll('button')).find(b => b.textContent === '引用');
+      // 多选引用批（2026-11-22）：已在引用态的行，菜单项文案切到「取消引用」
+      // （同一条再点 = 移除）。探针两条都认，并把实际动作词回带（断言可核）。
+      const quoteBtn = Array.from(menu.querySelectorAll('button'))
+        .find(b => b.textContent === '引用' || b.textContent === '取消引用');
       if (!quoteBtn) return { ok: false, why: 'no quote item', items };
+      const action = quoteBtn.textContent;
       quoteBtn.click();
       await new Promise(r => setTimeout(r, 20));
-      return { ok: true, items };
+      return { ok: true, items, action };
     };
     window.__menuLabelsOn = (rowId) => {
       const row = window.__rowById(rowId);
@@ -235,6 +347,12 @@
       x.click();
       await new Promise(r => setTimeout(r, 20));
       return { clicked: true };
+    };
+    /** 清空**全部**引用态（多选引用批：单条用例之间复位；✕ 只删一枚）。 */
+    window.__clearQuoteAll = async () => {
+      quoteMod.clearQuote();
+      await new Promise(r => setTimeout(r, 20));
+      return window.__pendingQuoteCount();
     };
     // 2026-10-09 改版后落面是异步委托（renderQuoteStrip → 动态 import chat.js 重渲
     // 附件条）：探针统一 settle 20ms 再返回，读数不在渲染竞态窗口里采样。

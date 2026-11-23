@@ -1149,14 +1149,21 @@ function buildHistoryRow(m, i, ctx) {
       // 引用块宽度约束（2026-10-20 作者令「引用文字不要超过用户发送的文字」）：
       // 与 live 腿同一包裹规则 —— 引用块 + 文本气泡同时在场 ⇒ .msg-quote-composite
       // 气泡驱宽复合盒（规则单点 = chat.css 同名段）；仅引用无文本不包裹。
-      const quoteBox = (m.quote && typeof m.quote === 'object') ? renderQuoteBlock(m.quote) : null;
+      // 🔴 多选引用批（2026-11-22）：单条走 `m.quote`（旧行形态逐字不变）；多条走
+      // `m.quotes` 有序数组（引擎落盘的白名单快照列表，顺序 = 用户选择顺序）——
+      // 逐条同一渲染器渲染，与 live 腿同序同面。旧前端读不到 `quotes` 时只塌回
+      // `m.quote`（首条），不崩、不空。
+      const quoteSnaps = Array.isArray(m.quotes)
+        ? m.quotes.filter(q => q && typeof q === 'object')
+        : (m.quote && typeof m.quote === 'object' ? [m.quote] : []);
+      const quoteBoxes = quoteSnaps.map(q => renderQuoteBlock(q)).filter(Boolean);
       let composite = null;
-      if (quoteBox && m.text) {
+      if (quoteBoxes.length && m.text) {
         composite = document.createElement('div');
         composite.className = 'msg-quote-composite';
         row.appendChild(composite);
       }
-      if (quoteBox) (composite || row).appendChild(quoteBox);
+      quoteBoxes.forEach((box) => (composite || row).appendChild(box));
       // 媒体统一适配批（2026-10-20）：存量「已存至」行级换算（单点
       // unifyUserMediaFace，与缓存恢复腿同源）——识别命中 ⇒ 媒体行接管、
       // 文本气泡隐去；否则逐字现状。

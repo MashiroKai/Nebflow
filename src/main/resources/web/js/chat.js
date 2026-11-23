@@ -33,7 +33,7 @@ import { askSourceParts, removePendingAsk, askAnswerFrame, cancelAskFrame, notif
 import { renderRefBlock, normalizeTaskRef, parseTaskReturnText, buildTaskRefLine, CLOSE_X_SVG } from './reference.js';
 // quote-message 一期（spec §7）：主聊天区右键引用 —— 菜单/引用条/引用块/跳转收口在
 // msgQuote.js 单模块（chat.js 只挂点，不复制逻辑）。
-import { attachQuoteMenu, renderQuoteBlock, quoteFromRef, nextChatMsgId, syncQuoteJumpStates, scheduleQuoteButtonMount } from './msgQuote.js';
+import { attachQuoteMenu, renderQuoteBlock, quoteFromRef, nextChatMsgId, syncQuoteJumpStates, scheduleQuoteButtonMount, revealQuoteTarget } from './msgQuote.js';
 // 图标眼单源（设计语言批 2026-10-21）：AskUser 密钥题的「显示」眼与设置页
 // provider 密码域（sidebar.js）同一份 SVG——providersUi.js 单向提供，无环。
 import { eyeSvg, eyeOffSvg } from './sidebar/providersUi.js';
@@ -540,20 +540,28 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
   // quote-message 一期：带引用发送 ⇒ 气泡上方引用块（微信形态）。数据单点 =
   // 附件里的 chat-message ref（live/排队/草稿恢复共用同一形状 ⇒ 三个入路零
   // 额外处理）；该 ref 不进气泡内的 ref 卡循环（引用块是它唯一的消费面）。
-  const quoteAtt = (attachments || []).find(a => a && a.type === 'ref' && a.refType === 'chat-message');
-  const quoteBox = quoteAtt ? (() => { const q = quoteFromRef(quoteAtt); return q ? renderQuoteBlock(q) : null; })() : null;
+  // 🔴 多选引用批（2026-11-22 作者令「还有支持 多选引用」）：旧 `.find(...)` 只取
+  // 首条是「一条回复只带一条引用」的第二个断点 —— 改为按 refs 顺序**逐条**渲染
+  // （顺序 = 用户选择顺序 = 引擎逐条注入顺序），每条各自一枚引用块、各自可点回看。
+  const quoteAtts = (attachments || []).filter(a => a && a.type === 'ref' && a.refType === 'chat-message');
+  const quoteBoxes = quoteAtts
+    .map(a => quoteFromRef(a))
+    .filter(Boolean)
+    .map(q => renderQuoteBlock(q))
+    .filter(Boolean);
   // 引用块宽度约束（2026-10-20 作者令「引用文字不要超过用户发送的文字」）：
   // 引用块 + 文本气泡同时在场 ⇒ 包进 .msg-quote-composite（气泡驱宽复合盒，
   // 规则见 chat.css 同名段）——引用块渲染宽 = 气泡宽（窄气泡跟着窄），替代原
   // 「引用块 ≤ 100% 行宽」与气泡 80% 帽的错位。仅引用无气泡（纯引用帧被
   // isRefOnlyFrame 闸拦截；此处防御性兜底）不包裹，保持整行形态零回归。
+  // 多块同盒：复合盒是 flex column（chat.css），N 块按顺序纵向叠放，宽度同一支尺。
   let composite = null;
-  if (quoteBox && text) {
+  if (quoteBoxes.length && text) {
     composite = document.createElement('div');
     composite.className = 'msg-quote-composite';
     row.appendChild(composite);
   }
-  if (quoteBox) (composite || row).appendChild(quoteBox);
+  quoteBoxes.forEach((box) => (composite || row).appendChild(box));
 
   // Text bubble (separate)
   if (text) {
@@ -4332,6 +4340,12 @@ function renderAttachmentPreviewInner(target) {
   if (attPreview.dataset.attClearing === '1' && attachments.length === 0) return;
   if (attPreview.dataset.attClearing) delete attPreview.dataset.attClearing;
   attPreview.innerHTML = '';
+  // 多选引用批（2026-11-22 作者令「多选的就自动缩小为小图标」）：引用牌**条数**决定
+  // 形态 —— 1 条 = 现状整卡预览（逐字节不变）；≥2 条 = 每枚缩成图标 chip（类型图标 +
+  // 选择顺序号 + 定长短名 + ✕），选择顺序 = 数组顺序（= 发送时 refs 顺序）。
+  // 顺序号在这里现算（不落数据面：移除中间一条后幸存者按新序重排，牌面与现实一致）。
+  const quoteRefs = attachments.filter(a => a && a.type === 'ref' && a.refType === 'chat-message');
+  const compactQuotes = quoteRefs.length >= 2;
   attachments.forEach((att, idx) => {
     // ── 全局引用（#303 v1.1）：type='ref'（新统一模型）与旧 type='taskRef'
     // 都走 renderRefBlock —— 输入框引用块定高/截断/可展开（A1-A6）。旧 taskRef
@@ -4346,8 +4360,23 @@ function renderAttachmentPreviewInner(target) {
         attachments.splice(idx, 1);
         renderAttachmentPreview(target);
       };
+      // 多选引用批：≥2 条 ⇒ chat-message 引用牌走紧凑档（图标 chip）。单条与其余
+      // refType 逐字走原整卡面（零回归）。
+      const isQuoteRef = att.type === 'ref' && att.refType === 'chat-message';
+      const quoteOrder = isQuoteRef ? quoteRefs.indexOf(att) + 1 : 0;
       const card = renderRefBlock(ref,
-        att.refType === 'chat-message' ? { mode: 'input', closeStyle: 'disc' } : { mode: 'input' },
+        isQuoteRef
+          ? {
+            mode: 'input', closeStyle: 'disc',
+            compact: compactQuotes,
+            order: quoteOrder,
+            // 点牌回看原消息：与气泡引用块点击同一条定位/高亮实现（msgQuote 单点）。
+            // 目标不在页内（跨刷新/被裁剪）⇒ 返回 false ⇒ 牌面就地展开快照摘要。
+            onOpen: (r) => revealQuoteTarget(
+              r?.source?.messageId, r?.content ? r.content.itemIndex : undefined,
+            ),
+          }
+          : { mode: 'input' },
         remove);
       attPreview.appendChild(card);
     } else if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {

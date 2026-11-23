@@ -96,15 +96,21 @@ async function seedFourPills(page) {
     attachments: [{ type: 'image', name: 'site-photo.png', path: '/tmp/x/site-photo.png', preview }],
     senderRole: 'user', senderName: '我', ts: Date.now(),
   }, '带图片引用', 'cm-u-img'), [tiny]);
+  // 多选引用批（2026-11-22）：引用态是**追加**语义（连续引用 = 多选）⇒ 每铺一类
+  // 引用牌前复位，使每一行只携带自己那一条（本组要验的是「一行一类引用牌的图标
+  // 分支」，不是多选叠加后的形态）。
+  await page.evaluate(() => window.__clearQuoteAll());
   const docId = await page.evaluate(() => window.__quotePill({
     kind: 'file', fileName: '季度报告.pdf', path: '/tmp/x/季度报告.pdf',
     attachments: [{ type: 'file', name: '季度报告.pdf', path: '/tmp/x/季度报告.pdf' }],
     senderRole: 'user', senderName: '我', ts: Date.now(),
   }, '带文档引用', 'cm-u-doc'));
+  await page.evaluate(() => window.__clearQuoteAll());
   const txtId = await page.evaluate(() => window.__quotePill({
     kind: 'text', text: '这是一段被引用的文字', senderRole: 'ai', senderName: 'Nebula', ts: Date.now(),
   }, '带文字引用', 'cm-u-txt'));
   // 历史腿：后端 quote 快照白名单无 preview ⇒ 图片只落字形（不伪造缩略）
+  await page.evaluate(() => window.__clearQuoteAll());
   const histId = await page.evaluate(() => window.__quotePill({
     kind: 'image', fileName: 'archived-shot.png', path: '/tmp/x/archived-shot.png',
     attachments: [{ type: 'image', name: 'archived-shot.png', path: '/tmp/x/archived-shot.png' }],
@@ -276,6 +282,8 @@ test.describe('④ 深浅主题下随引用牌色上下文', () => {
       const { context, page, pageErrors } = await newPage(browser, { width: 1200, height: 900 }, { colorScheme: scheme });
       const ids = await seedFourPills(page);
       await page.evaluate(() => window.__renderUserStack(3));
+      // 多选引用批：chip 侧取证要的是**单条** chip（复位后再引，读数面唯一）
+      await page.evaluate(() => window.__clearQuoteAll());
       await page.evaluate(() => window.__startQuoteDirect({
         kind: 'text', text: '被引用的文字消息', senderRole: 'ai', senderName: 'Nebula', ts: Date.now(),
       }));
@@ -343,6 +351,8 @@ test.describe('⑤ 图片 / 文档 / 历史腿三类零变化', () => {
     expect(hist.text, '摘要仍 [图片]').toContain('[图片]');
 
     // 既有跳转语义零回归：先铺一条真实在场的目标行，再从它引用 ⇒ 必须 ready 可跳
+    // （多选引用批：复位后单条取证 —— 本腿验的是「单条文字引用牌可跳」的既有语义）
+    await page.evaluate(() => window.__clearQuoteAll());
     const userId = await page.evaluate(() => window.__renderUserRow('被引用的目标消息'));
     await page.evaluate(async id => window.__startQuoteOn(id), userId);
     const jumpId = await page.evaluate(() => window.__renderUserRowWithQuote('跳转断言', 'cm-u-jump').dataset.msgId);

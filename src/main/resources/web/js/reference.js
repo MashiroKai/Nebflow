@@ -33,7 +33,7 @@ import { buildImageRefMediaFace, fileIconStyle } from './popArtifacts.js';
 // 引用牌图标化批（2026-11-02 11:00 作者令）：composer 引用 chip 的类型图标与气泡
 // 引用块同源（quoteLogo.js 单点 —— 图片=真缩略 / 文档=.fc-icon 原图标 / 文字=
 // 引用入口图标 QUOTE_ENTRY_ICON，即 footer 引用键那颗，作者令 2026-11-02 12:58）。
-import { quoteTypeIcon } from './quoteLogo.js';
+import { quoteTypeIcon, quoteShortNameOf } from './quoteLogo.js';
 
 /** Legacy taskRef → normalized Reference (向后兼容，§2.4 不推翻 taskRef). */
 export function normalizeTaskRef(att) {
@@ -100,17 +100,113 @@ function truncate(str, n) {
 /**
  * Build the reference block element.
  * @param {Object} ref  unified Reference
- * @param {{mode?:'input'|'message', closeStyle?:'glyph'|'disc'}} [opts]
+ * @param {{mode?:'input'|'message', closeStyle?:'glyph'|'disc', compact?:boolean,
+ *          order?:number, onOpen?:(ref:Object)=>boolean}} [opts]
  *   closeStyle（input 模式）：`'glyph'`（缺省）= 既有 18×18 透明描边 ✕（主窗口输入框
  *   引用卡 `.att-ref-remove`）；`'disc'` = 主窗口同类的**实心圆白 ✕** 清除键
  *   （`.fm-quote-remove`，形态与主窗口图片/文件附件 ❌ 同款 —— 作者 2026-09-19
  *   04:22 修正①：「引用条的 ❌ 与样式一律参考主窗口既有模式」）。
+ *   compact（多选引用批 2026-11-22）：选中 ≥2 条引用 ⇒ 引用牌自动缩成**图标 chip**
+ *   （`.att-ref.is-compact`：类型图标 + 顺序号 + 定长短名 + ✕）；单条仍走整卡预览
+ *   （本分支不参与，逐字现状）。order = 选择顺序（1 基，卡片顺序 = 选择顺序）。
+ *   onOpen = 点牌回看原消息的落点（返回 false ⇒ 目标不在页内 ⇒ 就地展开摘要降级）。
  * @param {(ref:Object)=>void} [onRemove]  input-mode local remove callback
  * @returns {HTMLElement}
  */
-export function renderRefBlock(ref, { mode = 'input', closeStyle = 'glyph' } = {}, onRemove) {
+export function renderRefBlock(ref, { mode = 'input', closeStyle = 'glyph', compact = false, order = 0, onOpen = null } = {}, onRemove) {
   if (mode === 'message') return renderMessageRef(ref);
+  // 紧凑档只对 chat-message 引用牌开放（其余 refType 的多卡形态不存在：一条回复
+  // 只引消息），且必须显式请求 —— 默认面零变化。
+  if (compact && ref && ref.refType === 'chat-message') return renderCompactInputRef(ref, onRemove, order, onOpen);
   return renderInputRef(ref, onRemove, closeStyle);
+}
+
+/**
+ * 紧凑引用牌（多选引用批 2026-11-22 作者令「多选的就自动缩小为小图标」）。
+ *
+ * 形态：类型图标（与整卡/气泡引用块同源 `quoteTypeIcon`）+ 顺序号 + **定长短名**
+ * （`quoteShortNameOf`，零 CSS 省略）+ ✕（实心圆白，与整卡同族）。几何由
+ * css/input.css 的 `.att-ref.is-compact` 段承担（28px 档，与附件 chip 同条带）。
+ *
+ * 交互：牌面是可焦点真钮（回看原消息 = `onOpen`，与气泡引用块点击同一条定位/高亮
+ * 实现）；目标不在页内（跨刷新/被裁剪）⇒ 就地展开 `.expanded` 显示快照摘要
+ * （整卡同款降级，零死点击）。✕ 单独一枚钮（牌面内不嵌套交互面，读屏语义干净）。
+ */
+/** CLOSE_X_SVG → 真实节点（零 `innerHTML` 写面）。缘由：component-contract 的
+ *  bare-innerhtml 台账只许减不许增，故新面用 Range 解析同一份字符串常量。 */
+function closeXNode() {
+  const frag = document.createRange().createContextualFragment(CLOSE_X_SVG);
+  return frag.firstElementChild;
+}
+
+function renderCompactInputRef(ref, onRemove, order, onOpen) {
+  const wrap = document.createElement('div');
+  wrap.className = 'att-ref is-compact';
+  wrap.dataset.refType = 'chat-message';
+  wrap.dataset.refId = ref.id || '';
+  wrap.dataset.quoteOrder = String(order || '');
+  wrap.setAttribute('role', 'group');
+  wrap.setAttribute('aria-expanded', 'false');
+  const shortName = quoteShortNameOf({
+    senderRole: ref.source?.senderRole,
+    senderName: ref.source?.senderName,
+    excerpt: ref.content?.excerpt,
+    attachments: ref.content?.attachments,
+    itemIndex: ref.content?.itemIndex,
+  });
+  const orderText = order > 0 ? String(order) : '';
+  const chipLabel = [orderText, shortName].filter(Boolean).join(' · ');
+  const summary = String(ref.content?.excerpt || ref.display?.preview || '');
+  const senderName = String(ref.source?.senderName || shortName);
+  wrap.setAttribute('aria-label', t('chat.quoteCompactAria', { n: orderText || '1', name: shortName }));
+  wrap.title = [senderName && summary ? `${senderName}：${summary}` : summary, t('chat.quoteCompactHint')]
+    .filter(Boolean).join('\n');
+
+  // 牌面钮（回看原消息）：图标 + 顺序号 + 短名，全部定长内容 —— 不设 max-width，
+  // 因此不需要任何 text-overflow（见 input.css 同名段）。
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.className = 'att-ref-open';
+  open.setAttribute('aria-label', t('chat.quoteCompactOpenAria', { name: shortName }));
+  open.title = wrap.title;
+  const icon = document.createElement('span');
+  icon.className = 'att-ref-icon';
+  icon.appendChild(quoteTypeIcon(
+    { excerpt: ref.content?.excerpt, attachments: ref.content?.attachments, itemIndex: ref.content?.itemIndex },
+    'att-ref-qicon',
+  ));
+  icon.setAttribute('aria-hidden', 'true');
+  const label = document.createElement('span');
+  label.className = 'att-ref-label';
+  label.textContent = chipLabel;
+  open.append(icon, label);
+  open.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const jumped = typeof onOpen === 'function' ? onOpen(ref) : false;
+    if (jumped) return;
+    // 降级：目标行不在页内 ⇒ 就地展开快照摘要（整卡 .expanded 同款语义）。
+    const expanded = wrap.classList.toggle('expanded');
+    wrap.setAttribute('aria-expanded', String(expanded));
+  });
+
+  // 快照摘要行（面上不占位；仅降级展开时可见 —— 与整卡 `.att-ref-meta` 同族）。
+  const meta = document.createElement('span');
+  meta.className = 'att-ref-meta';
+  meta.textContent = summary;
+
+  const rm = document.createElement('button');
+  rm.type = 'button';
+  rm.className = 'att-ref-remove fm-quote-remove';
+  // ✕ 字形走 closeXNode()（同一份 CLOSE_X_SVG，零第二份拷贝）；**不用 innerHTML**
+  // —— component-contract 的 bare-innerhtml 台账只许减不许增，本文件既有 8 处已
+  // 入账，新面（紧凑牌）不再加第 9 处。
+  rm.appendChild(closeXNode());
+  rm.title = t('ref.remove');
+  rm.setAttribute('aria-label', t('ref.remove'));
+  rm.addEventListener('click', (e) => { e.stopPropagation(); onRemove?.(ref); });
+
+  wrap.append(open, meta, rm);
+  return wrap;
 }
 
 // ── 转发消息引用块「按需展开按钮」溢出重估基座（作者 2026-09-14 17:26 裁定）──

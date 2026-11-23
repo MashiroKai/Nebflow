@@ -10,10 +10,21 @@
 //   · 引用块     = .msg-quote-block（friends.css .fm-quote-block D1 同值材质，两行 clamp）
 //   · 跳转高亮   = 1.8s 一次性整块 fade（fmQuoteTargetFlash 同值 --sapphire-tint-15）
 //
-// 引用态数据面 = activeView.pendingAttachments 里 **至多一条** type:'ref' +
-// refType:'chat-message' 的附件（spec §7.4）：随既有 refs wire / 排队 / 草稿链路
-// 原样走（input.js send :835、queueMessage、chatView saveDraft 全部零改动复用），
-// 本模块只负责「放进/取出 + 渲染」。
+// 引用态数据面 = activeView.pendingAttachments 里 type:'ref' +
+// refType:'chat-message' 的附件**列表**（spec §7.4；多选引用批 2026-11-22 由
+// 「至多一条」放开为**有序多选**，顺序 = 用户选择顺序 = 引用牌/卡顺序）：
+// 随既有 refs wire / 排队 / 草稿链路原样走（input.js send、queueMessage、
+// chatView saveDraft 全部零改动复用 —— 它们本来就按数组搬运），本模块只负责
+// 「放进/取出 + 渲染」。
+//
+// 🔴 单引用硬限制的历史位置（本批放开的三个断点，改后逐条复核）：
+//   ① 本文件 startQuote（旧：先 filter 掉既有 chat-message ref 再 push ⇒ 替换语义）
+//      ＋ quoteAttOf（旧：`find` 取首条）—— 前端引用态只能存 1 条；
+//   ② chat.js renderUserBubble（旧：`.find(...)` 只取一条 ⇒ 气泡上方只渲 1 块）；
+//   ③ 后端 WebSocketRoutes.quoteFromRefs（旧：`refs.find(...)` 只落盘首条 ⇒ 历史
+//      重放只剩 1 块）。三处同时是「一条回复只带一条引用」的实现面，逐一放开；
+//      投递端（ConsoleQuoteResolver.structured 经 processRefs 的 refs.traverse_）
+//      本来就是逐条注入，零改动。
 //
 // id 方案（spec §3.6 一期，纯前端）：
 //   · 用户自己发送的行 = clientMessageId（input.js send 生成，与引擎帧同键）
@@ -307,30 +318,80 @@ function attsOf(target) {
   return (view && Array.isArray(view.pendingAttachments)) ? view.pendingAttachments : [];
 }
 
-/** pendingAttachments 里的引用态（至多一条；多条取首条）。 */
-export function quoteAttOf(atts) {
-  return (atts || []).find(a => a && a.type === 'ref' && a.refType === 'chat-message') || null;
+/** pendingAttachments 里的引用态（多选有序；返回**引用牌顺序**的只读清单，
+ *  顺序 = 用户选择顺序 = 发送时 refs 数组顺序 = 气泡引用块顺序 = 引擎逐条注入
+ *  顺序。旧 `quoteAttOf`（单条首取）保留为兼容面：既有调用点语义不变）。 */
+export function quoteAttsOf(atts) {
+  return (atts || []).filter(a => a && a.type === 'ref' && a.refType === 'chat-message');
 }
 
+/** pendingAttachments 里的引用态（单条首取；兼容面，多选请用 quoteAttsOf）。 */
+export function quoteAttOf(atts) {
+  return quoteAttsOf(atts)[0] || null;
+}
+
+/** 引用牌去重键：被引消息身份 + 叠卡单张位置（同一条消息的不同单张 = 不同引用）。 */
+function quoteKeyOf(src) {
+  const mid = String((src && (src.messageId || (src.source && src.source.messageId))) || '');
+  if (!mid) return '';
+  const raw = src && (src.itemIndex !== undefined ? src.itemIndex : (src.content && src.content.itemIndex));
+  const idx = Number.isInteger(Number(raw)) && raw !== null && raw !== undefined && raw !== '' ? Number(raw) : '';
+  return `${mid}#${idx}`;
+}
+
+/** 行描述符是否已在引用态（右键菜单项的「引用 / 取消引用」文案切换依据）。 */
+export function isQuotedTarget(d) {
+  const key = quoteKeyOf(d || {});
+  if (!key) return false;
+  const view = state.getActiveView && state.getActiveView();
+  if (!view || !Array.isArray(view.pendingAttachments)) return false;
+  return quoteAttsOf(view.pendingAttachments).some(a => quoteKeyOf(a) === key);
+}
+
+/** 引用态上限（同时挂住的被引消息数）。与 MAX_QUOTE_ATTS（单条引用随附附件上限）
+ *  同族思路：引用牌进 wire/落盘/prompt 三段，条数必须有个可解释的顶 ——
+ *  8 = 附件条单屏可读 + refs 帧体积可控。到顶后新增请求被拒（返回 false，
+ *  既有引用态零变化，不静默顶掉别人的位）。 */
+export const MAX_PENDING_QUOTES = 8;
+
 /**
- * 进入引用态（右键菜单「引用」/footer 引用按钮）。微信语义：一条回复只带一条引用
- * ⇒ 已有引用态做**替换**（换引，不是追加）。popups（无附件条宿主 = dom.attPreview
+ * 进入/退出引用态（右键菜单「引用」/footer 引用按钮）。
+ *
+ * 多选引用批（2026-11-22 作者令逐字「还有支持 多选引用 现在引用两个还做不到」）：
+ * **追加语义** —— 连续引用多条 ⇒ 引用牌按选择顺序累加（旧行为是「换引 = 替换」，
+ * 作者实测「引用两个还做不到」即此）。同一条再点 = **取消该条**（多选的标准
+ * toggle；去重键 = 消息身份 + 叠卡单张位置），入口文案随态切换（messages.quote /
+ * messages.unquote），删除单条另有每牌 ✕。popups（无附件条宿主 = dom.attPreview
  * 缺席）不进引用态。
+ * @returns {boolean} 引用态是否被本次调用改变（true = 有变化）
  */
 export function startQuote(d) {
   if (!d) return false;
   const view = state.getActiveView && state.getActiveView();
   if (!view || !Array.isArray(view.pendingAttachments)) return false;
   if (!view.dom || !view.dom.attPreview) return false;   // 无附件条宿主 ⇒ 不进引用态
+  const key = quoteKeyOf(d);
+  const existing = quoteAttsOf(view.pendingAttachments);
+  // ① 已在引用态 ⇒ 再点即取消（多选 toggle；顺序号由幸存者重排，见渲染面）
+  if (key) {
+    const hit = existing.find(a => quoteKeyOf(a) === key);
+    if (hit) {
+      view.pendingAttachments = view.pendingAttachments.filter(a => a !== hit);
+      renderQuoteStrip();
+      return true;
+    }
+  }
+  // ② 到顶 ⇒ 拒绝新增（既有引用牌一条不动）
+  if (existing.length >= MAX_PENDING_QUOTES) return false;
   const ref = makeReference(chatMessageRefInput(d));
   if (!ref) return false;
-  view.pendingAttachments = view.pendingAttachments.filter(a => !(a && a.type === 'ref' && a.refType === 'chat-message'));
-  view.pendingAttachments.push(ref);
+  view.pendingAttachments.push(ref);   // 顺序 = 选择顺序（②③ 两腿逐字依赖）
   renderQuoteStrip();
   return true;
 }
 
-/** 取消/消费引用态（✕ 键、发送完成、排队三条路径共用）。 */
+/** 取消/消费引用态（✕ 键、发送完成、排队三条路径共用；清**全部**引用牌 —
+ *  单条移除走牌面 ✕（chat.js renderAttachmentPreview 的 splice 腿））。 */
 export function clearQuote() {
   const view = state.getActiveView && state.getActiveView();
   if (view && Array.isArray(view.pendingAttachments)) {
@@ -338,6 +399,7 @@ export function clearQuote() {
   }
   renderQuoteStrip();
 }
+
 
 /** 引用 chip 落面（宿主 = activeView 附件条 #attachment-preview，与附件同条带）。
  *  数据单点 = target/activeView 的 pendingAttachments；渲染单点 = chat.js
@@ -408,7 +470,14 @@ export function openQuoteMenuForRow(rowEl, x, y) {
   if (body.trim()) {
     items.push({ label: t('messages.copy'), onClick: () => { navigator.clipboard?.writeText(body).catch(() => {}); } });
   }
-  items.push({ label: t('messages.quote'), onClick: () => startQuote(resolveQuoteDesc(rowEl, d)) });
+  // 多选引用批（2026-11-22）：菜单项文案随引用态切换 —— 已在引用态 ⇒「取消引用」
+  // （再点是 toggle 移除，见 startQuote①）；不在 ⇒「引用」。入口名与动作始终一致，
+  // 多选的「连续点多条」由此可发现（同一条的退出也有明确出口，零隐藏手势）。
+  const quoted = isQuotedTarget(resolveQuoteDesc(rowEl, d));
+  items.push({
+    label: quoted ? t('messages.unquote') : t('messages.quote'),
+    onClick: () => startQuote(resolveQuoteDesc(rowEl, d)),
+  });
   showPopupMenu(x, y, items);
   return true;
 }
@@ -702,12 +771,38 @@ function targetRows(box) {
 }
 
 /** 滚动到目标行（在其滚动容器内滚，不写任意外层祖先 —— revealQuoteTarget 同纪律）
- *  + 一次性 1.8s 高亮（宿主 = 整行；prefers-reduced-motion 由 CSS 降为 0.01s）。 */
+ *  + 一次性 1.8s 高亮（宿主 = 整行；prefers-reduced-motion 由 CSS 降为 0.01s）。
+ *  @returns {boolean} 是否真的定位到（false = 页内无此行，调用方自行降级） */
 export function jumpToQuote(box) {
   if (!box || box.dataset.quoteJump !== 'ready') return false;
   const rows = targetRows(box);
   if (!rows.length) return false;
-  const idx = Number(box.dataset.quoteItemIndex ?? NaN);
+  flashQuoteRows(rows, Number(box.dataset.quoteItemIndex ?? NaN));
+  return true;
+}
+
+/**
+ * 按**被引消息身份**直接回看（不依赖 `.msg-quote-block` 宿主）—— 多选引用批
+ * 2026-11-22：composer 的紧凑引用牌（`.att-ref.is-compact`）点开即回看原消息，
+ * 与气泡引用块点击走**同一条**定位/高亮实现（flashQuoteRows 单点，零第二套滚动
+ * 逻辑）。第 4 条腿（叠卡单张）与引用块深链逐字同语义。
+ * @param {string} messageId 被引消息的 data-msg-id
+ * @param {number} [itemIndex] 叠卡单张位置（0 基；缺席 = 消息级）
+ * @returns {boolean} 目标行是否在页内（false ⇒ 调用方降级为展开摘要，零死点击）
+ */
+export function revealQuoteTarget(messageId, itemIndex) {
+  const id = String(messageId || '');
+  if (!id) return false;
+  const rows = Array.from(document.querySelectorAll(`.row[data-msg-id="${CSS.escape(id)}"]`))
+    .filter(r => r.isConnected);
+  if (!rows.length) return false;
+  const idx = Number(itemIndex);
+  flashQuoteRows(rows, Number.isInteger(idx) && idx >= 0 ? idx : NaN);
+  return true;
+}
+
+/** 定位 + 高亮的**唯一实现**（引用块点击 / 紧凑引用牌点击共用）。 */
+function flashQuoteRows(rows, idx) {
   // 叠卡单图（2026-11-02）：带叠卡的那一行优先（展开 + 高亮第 N 张），
   // 滚动目标优先用那张本身（比整行更准）；拿不到叠卡/旧宿主 ⇒ 退回整行。
   const stackRow = Number.isInteger(idx) ? (rows.find(r => r.querySelector('.pop-stack-area')) || rows[0]) : rows[0];
@@ -740,7 +835,6 @@ export function jumpToQuote(box) {
   _flashTimer = setTimeout(() => {
     document.querySelectorAll('.row.quote-target-flash').forEach(el => el.classList.remove('quote-target-flash'));
   }, 1800);
-  return true;
 }
 
 /** 引用 ref（wire/pendingAttachments 形状）→ renderQuoteBlock 入参视图。

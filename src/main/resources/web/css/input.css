@@ -628,7 +628,11 @@
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
-  border-radius: var(--ds-radius-badge);
+  /* 多选引用批合并期修正（2026-11-22）：本块原取 --ds-radius-badge（4px），低于
+     focus-ring-spec §2.6 标准档 —— 本批给 ✕ 钮新加了焦点环（可 Tab），环基座必须
+     ≥6px（--ds-radius-chip 档 = 「28px 图标钮、chip」）。18px 方形钮取 6px 与全站
+     图标钮同档；.att-ref-expand 与本钮同块同形，随之一并升档（不做半档分裂）。 */
+  border-radius: var(--ds-radius-chip);
   padding: 0;
 }
 .att-ref-expand:hover,
@@ -682,6 +686,68 @@
    `.icon-btn[hidden] { display:none }` 这条同权补丁原只为「没有可引叠卡时按需
    隐身」而写；键本身移除后无消费方，规则一并摘除（.icon-btn 是 display:flex，
    UA hidden 会被压过，将来若重引入按需隐身形态须同时补回该补丁）。 */
+/* ── 紧凑引用牌（多选引用批 2026-11-22 作者令逐字「还有支持 多选引用 现在引用
+   两个还做不到」「多选的就自动缩小为小图标」）─────────────────────────────
+   选中 ≥2 条被引消息 ⇒ 引用牌自动缩成图标 chip，内容 = 类型图标（js/quoteLogo.js
+   单源，与整卡/气泡引用块同形）+ 选择顺序号 + **定长短名**（quoteShortNameOf）+ ✕。
+   · 几何：沿用 .att-ref 基座 28px 档（与附件 chip 同条带同高度 —— B12 的「同大小档
+     ±4px」断言继续成立，本段只收紧内外间距，不加高度）。
+   · 宽度：短名由 JS 定长产出且此处**撤销 max-width + 改 clip** ⇒ 不新增任何
+     text-overflow:ellipsis（noclip-floating 台账只减不增；装不下走既有换行/手机层
+     「+N」折叠，放不下的信息在 hover title 与点开回看里）。
+   · 交互：牌面是**真钮**（Tab 可达、Enter/Space 回看原消息），✕ 是同位兄弟钮 ——
+     牌面内不嵌套交互面（读屏语义干净）；两者的焦点环走全站单规则（下段）。 */
+#attachment-preview .att-ref.is-compact {
+  gap: var(--ds-space-1);
+  padding: 0 var(--ds-space-1h) 0 var(--ds-space-1);
+  flex: 0 0 auto;
+}
+.att-ref.is-compact .att-ref-open {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+#attachment-preview .att-ref.is-compact[data-ref-type="chat-message"] .att-ref-label {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;      /* 定长短名：不靠省略号（不新增截断声明） */
+  white-space: nowrap;
+  font-weight: 500;
+  color: var(--color-text);
+}
+.att-ref.is-compact.expanded {
+  height: auto;
+  max-height: 72px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  overflow-y: auto;
+}
+.att-ref.is-compact.expanded .att-ref-open { align-items: flex-start; }
+.att-ref.is-compact.expanded .att-ref-meta {
+  display: block;
+  flex-basis: 100%;
+  max-height: 44px;
+  overflow-y: auto;
+}
+/* 环基座圆角（focus-ring-spec.md §2.6 标准档，round2 起「方角登记」机制已废除）：
+   焦点环跟随组件自身半径 ⇒ 可 Tab 的牌面钮必须显式落 ≥6px 档。牌面钮本体透明无边框，
+   视觉半径来自 .att-ref 基座（--ds-radius-input 8px），此处显式声明 6px 只服务判据
+   与环形状（环内缩 2px 后贴着牌内侧走，不会溢出牌面）。 */
+.att-ref-open { border-radius: var(--ds-radius-chip); }
+/* 焦点环（全站单规则：--nf-focus-ring-w / --nf-focus-ring + 内缩 2px，禁光晕）——
+   紧凑引用牌是本批新造的可 Tab 面，必须与站内同一条环；✕ 钮同族补环（同一条声明）。 */
+.att-ref-open:focus-visible,
+.att-ref-remove:focus-visible {
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
+}
 /* ✕ 圆盘随 chip 同比例缩小（同字形/同色/同居中纪律，仅尺寸档位）—— 与 .att-file
    的紧凑高度对齐；hover 态沿用共用块「红底白 ✕」钉回（input.css 上方同段）。 */
 #attachment-preview .att-ref[data-ref-type="chat-message"] .fm-quote-remove { width: 13px; height: 13px; }

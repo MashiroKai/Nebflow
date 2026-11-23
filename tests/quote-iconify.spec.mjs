@@ -156,15 +156,18 @@ test.describe('③ 引用牌带类型图标（图片缩略 / 文档原图标 / �
       attachments: [{ type: 'image', name: 'site-photo.png', path: '/tmp/x/site-photo.png', preview }],
       senderRole: 'user', senderName: '我', ts: Date.now(),
     }, '带图片引用', 'cm-ic-img'), [tiny]);
+    await page.evaluate(() => window.__clearQuoteAll());
     const docId = await page.evaluate(() => window.__quotePill({
       kind: 'file', fileName: '季度报告.pdf', path: '/tmp/x/季度报告.pdf',
       attachments: [{ type: 'file', name: '季度报告.pdf', path: '/tmp/x/季度报告.pdf' }],
       senderRole: 'user', senderName: '我', ts: Date.now(),
     }, '带文档引用', 'cm-ic-doc'));
+    await page.evaluate(() => window.__clearQuoteAll());
     const txtId = await page.evaluate(() => window.__quotePill({
       kind: 'text', text: '这是一段被引用的文字', senderRole: 'ai', senderName: 'Nebula', ts: Date.now(),
     }, '带文字引用', 'cm-ic-txt'));
     // 历史腿：后端 quote 快照白名单无 preview ⇒ 图片只能落字形（不伪造缩略）
+    await page.evaluate(() => window.__clearQuoteAll());
     const histId = await page.evaluate(() => window.__quotePill({
       kind: 'image', fileName: 'archived-shot.png', path: '/tmp/x/archived-shot.png',
       attachments: [{ type: 'image', name: 'archived-shot.png', path: '/tmp/x/archived-shot.png' }],
@@ -262,6 +265,8 @@ test.describe('⑥⑦ composer 引用 chip', () => {
     expect(chip.chipHeight).toBeLessThanOrEqual(30);
 
     // ⑥ 文档 chip：.fc-icon 色族
+    // 多选引用批（2026-11-22）：引用态是追加语义 ⇒ 换类取证前复位（单条整卡读数面）。
+    await page.evaluate(() => window.__clearQuoteAll());
     await page.evaluate(() => window.__startQuoteDirect({
       kind: 'file', fileName: '季度报告.pdf', path: '/tmp/x/季度报告.pdf',
       attachments: [{ type: 'file', name: '季度报告.pdf', path: '/tmp/x/季度报告.pdf' }],
@@ -274,6 +279,7 @@ test.describe('⑥⑦ composer 引用 chip', () => {
     expect(chip.chipHeight).toBeLessThanOrEqual(30);
 
     // ⑥ 文字 chip：logo 字形
+    await page.evaluate(() => window.__clearQuoteAll());
     await page.evaluate(() => window.__startQuoteDirect({
       kind: 'text', text: '被引用的文字消息', senderRole: 'ai', senderName: 'Nebula', ts: Date.now(),
     }));
