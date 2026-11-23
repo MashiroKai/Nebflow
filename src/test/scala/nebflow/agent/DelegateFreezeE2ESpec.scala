@@ -324,8 +324,10 @@ class DelegateFreezeE2ESpec extends CatsEffectSuite:
         // poll#1 一旦错过，poll#2 几乎必败 = 本件在补详批合并后稳定翻红的原因）。
         // 唤醒一返回即读 = 契约原语义（wake ⇒ 诚实 in-flight 面），断言零增减、零竞态。
         wokeRecord <- IO(DelegateRegistry.find(childSid))
-        wokeRow <- fx.resources.subAgentTaskStore.findByTaskId(childSid)
-        wokeReg <- fx.resources.agentRegistry.get.map(_.get(childSid))
+        // 唤醒事实 = 审计链行 `delegate-frozen-wake`（action=woken，由 DelegateFreeze.onWoken
+        // 同步写入，续做完成链不删它）。取代原先读瞬时 registry 状态 / 台账行 —— 那两者会被
+        // 续做轮完成清理改写（Idle→None、running→completed），属于竞态读数。事件是事实，不变。
+        wokeChain <- IO(nebflow.core.delegate.ChainStore.readSync(nebflow.core.delegate.ChainStore.keyFor(None, childSid)))
         // ③ 续做轮：第二轮 LLM 请求必须带冻结前的 brief（上下文没丢）。
         _ <- waitUntil(30.seconds) {
           fx.requests.get.map(rs => rs.count(_.sessionId == childSid) >= 2)
@@ -379,12 +381,15 @@ class DelegateFreezeE2ESpec extends CatsEffectSuite:
         )
         // ── ② 唤醒：同一 actor、同一 session id、冻结槽清空、行回 running ──
         assertEquals(DelegateRegistry.find(childSid).flatMap(_.frozenSince), None, "the frozen slot is cleared on wake")
+        val wokenEvents = wokeChain.toList.flatMap(_.entries).filter { e =>
+          e.kind == "delegate-frozen-wake" && e.payload.hcursor.get[String]("action").toOption.contains("woken")
+        }
+        assert(wokenEvents.nonEmpty, "the wake fact is recorded in the audit chain (delegate-frozen-wake / woken)")
         assertEquals(
-          wokeReg.map(_.status),
-          Some(nebflow.actor.AgentStatus.Idle),
-          "registry back to Idle after the wake"
+          wokenEvents.headOption.flatMap(_.payload.hcursor.get[String]("via").toOption),
+          Some("mail"),
+          "the wake fact names its channel (via = mail)"
         )
-        assertEquals(wokeRow.map(_.status), Some("running"), "the ledger row is honestly in-flight again")
         // ── ③ 续做 = 别丢上下文（本件硬断言）────────────────────────────
         assertEquals(
           resumedTurn.sessionId,
