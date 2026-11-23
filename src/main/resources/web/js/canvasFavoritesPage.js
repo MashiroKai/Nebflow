@@ -41,18 +41,6 @@ function formatDate(ms) {
     : { year: 'numeric', month: 'numeric', day: 'numeric' });
 }
 
-/** 来源 = 父目录名（微信收藏的「来源」位；stand 条目无独立来源字段）。 */
-function sourceOf(path) {
-  const parts = String(path).split('/').filter(Boolean);
-  return parts.length >= 2 ? parts[parts.length - 2] : '';
-}
-
-/** 摘要：文件所在目录（两行内，不截断）。 */
-function summaryOf(path) {
-  const parts = String(path).split('/').filter(Boolean);
-  return parts.slice(0, -1).join('/') || '/';
-}
-
 /** 右侧缩略图 / 类型角标。图片 = 真缩略图（nfTicket URL，浏览器按需拉取）；PDF = 红色文件角标；其它 = 扩展名角标。
  *  @param {import('./canvasFavoritesCore.js').FavoriteEntry} entry */
 async function buildThumb(entry) {
@@ -169,19 +157,16 @@ function buildPage(onClose, onOpened) {
       const h = document.createElement('div');
       h.className = 'cfp-row-title';
       h.textContent = entry.title;
-      const sum = document.createElement('div');
-      sum.className = 'cfp-row-sum';
-      sum.textContent = summaryOf(entry.path);
       const meta = document.createElement('div');
       meta.className = 'cfp-row-meta';
       const src = document.createElement('span');
       src.className = 'cfp-row-src';
-      src.textContent = `${KIND_LABEL[favKind(entry.path)]()} · ${sourceOf(entry.path)}`;
+      src.textContent = KIND_LABEL[favKind(entry.path)]();
       const date = document.createElement('span');
       date.className = 'cfp-row-date';
       date.textContent = formatDate(entry.savedAt);
       meta.append(src, date);
-      main.append(h, sum, meta);
+      main.append(h, meta);
       row.appendChild(main);
       row.addEventListener('click', () => {
         void openFavorite(entry).then((status) => {
