@@ -382,9 +382,24 @@ function placeAnchor(span) {
   const w = btn.offsetWidth || 48;
   const spanTop = Math.min(br.top, er.top);
   const spanBottom = Math.max(br.bottom, er.bottom);
-  const top = Math.min(Math.max((spanTop + spanBottom) / 2 - h / 2, cr.top + 4), cr.bottom - h - 4);
-  let left = side === 'right' ? br.right + 8 : br.left - 8 - w;
-  left = Math.min(Math.max(left, 4), window.innerWidth - w - 4);
+  let top = Math.min(Math.max((spanTop + spanBottom) / 2 - h / 2, cr.top + 4), cr.bottom - h - 4);
+  const natural = side === 'right' ? br.right + 8 : br.left - 8 - w;
+  // 外侧放得下（不越视口边）⇒ 贴气泡外侧（桌面既有口径，逐字不变）。
+  // 外侧放不下（手机端：气泡贴视口边，夹紧会把锚点压进气泡 27px）⇒ 贴气泡**上方**，
+  // 水平居中于起选气泡；上方越过会话列顶则贴**下方**。两种位置都不与气泡相交。
+  const fits = natural >= 4 && natural + w <= window.innerWidth - 4;
+  let left;
+  let pos;
+  if (fits) {
+    left = natural;
+    pos = 'side';
+  } else {
+    left = Math.min(Math.max((br.left + br.right) / 2 - w / 2, 4), window.innerWidth - w - 4);
+    const above = br.top - h - 4;
+    top = above >= cr.top ? above : br.bottom + 4;
+    pos = above >= cr.top ? 'above' : 'below';
+  }
+  btn.dataset.askPos = pos;
   btn.style.top = Math.round(top) + 'px';
   btn.style.left = Math.round(left) + 'px';
   anchorSpan = span;
