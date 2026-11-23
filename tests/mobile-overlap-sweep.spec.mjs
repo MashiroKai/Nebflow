@@ -164,6 +164,15 @@ async function runPanel(browser, panel, negative) {
   return res;
 }
 
+// 负对照装置（项 2 修补后）：main.js 的 ResizeObserver 观察 #chat 自身，注入 padding 会
+// 触发它重算 reserve，把陈旧形态洗回正确值 ⇒ 负对照空转。故注入时同时屏蔽本页对
+// #chat padding-bottom 的后续写入（只拦这一个属性），使「修前陈旧 reserve」形态被真实保持。
+const freezeChatReserve = (px) => (page) => page.evaluate((v) => {
+  const chat = document.getElementById('chat');
+  const orig = chat.style.setProperty.bind(chat.style);
+  chat.style.setProperty = (prop, val, pri) => (prop === 'padding-bottom' ? undefined : orig(prop, val, pri));
+  orig('padding-bottom', `${v}px`, 'important');
+}, px);
 const openCreateGroup = (page) => page.evaluate(async () => {
   const m = await import('/js/friendGroups.js');
   m.openCreateGroupDialog();
@@ -238,7 +247,7 @@ const PANELS = [
     setup: (page) => page.waitForSelector('#chat .row', { timeout: 15000 }),
     cfg: { scrollSel: '#chat', headerSel: null, fabSels: ['#send-btn'], rowSel: '.row', bubbleSel: '.bubble' },
     // 修前形态：#chat 底让位归零（main.js inline important，须页内同级后写才能压过）。
-    negative: async (page) => page.evaluate(() => document.getElementById('chat').style.setProperty('padding-bottom', '8px', 'important')),
+    negative: freezeChatReserve(8),
   },
   {
     name: 'P4-contacts',
@@ -305,7 +314,7 @@ const PANELS = [
     // 卡为流内末件面：O2 对照 = 输入钮（send-btn），O0/O2 的行 = .option-box。
     cfg: { scrollSel: '#chat', headerSel: null, fabSels: ['#send-btn'], rowSel: '.option-box', bubbleSel: '.bubble' },
     // 修前形态：流底让位归零 ⇒ 末件（此处 = 决策卡自身）落进输入钮足迹（O2 红）。
-    negative: async (page) => page.evaluate(() => document.getElementById('chat').style.setProperty('padding-bottom', '8px', 'important')),
+    negative: freezeChatReserve(8),
   },
   // ── 桌面 1280×800 抽检（同类缺陷桌面也在；作者继续令「桌面视口对同面板族抽检」）──
   {
@@ -328,7 +337,7 @@ const PANELS = [
     setup: (page) => page.waitForSelector('#chat .row', { timeout: 15000 }),
     cfg: { scrollSel: '#chat', headerSel: null, fabSels: ['#send-btn'], rowSel: '.row', bubbleSel: '.bubble' },
     // 修前形态同 P3：流底让位归零（inline 同级后写压过 main.js 的 important）。
-    negative: async (page) => page.evaluate(() => document.getElementById('chat').style.setProperty('padding-bottom', '8px', 'important')),
+    negative: freezeChatReserve(8),
   },
   {
     // 文档收藏块（2026-11-23 补齐验收面）：工作台根页「收藏」分组，长标题 + 失效行。
