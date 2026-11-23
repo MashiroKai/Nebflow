@@ -2,14 +2,12 @@
 //
 // 加提示 = 往 BADGE_TIPS 数组加一行字符串。不要在别处改逻辑。
 //
-// 依据（给未来维护者）：候选与代码面证据见
-//   /Users/kaiyu/Claude code/Stand/.stand/tmp/badge-tip-pool/tips.md
-// 关键实现位置：
-//   - 「给好友也能直接发文件」「文件也能发到自己另一台机器」：
-//       src/main/scala/nebflow/core/tools/FriendMessageTool.scala:122-123
-//   - 「问答窗可以把任务转给主会话」：src/main/scala/nebflow/core/tools/AskTools.scala:77-80
-//   - 「密钥不用贴聊天，弹框直接存」：
-//       src/main/scala/nebflow/core/tools/AskUserQuestionTool.scala:102-107（secret 题，只回指针）
+// 依据（给未来维护者）：候选与代码面证据原记录在仓外临时台账（badge-tip-pool 批）。
+// 关键实现位置（Scala 侧工具源码，类名即检索锚点；local-coupling 闸要求 ship js
+// 注释不携带仓库路径/行号，故此处只记类名——合并批 II 闸适应，语义未动）：
+//   - 「给好友也能直接发文件」「文件也能发到自己另一台机器」→ FriendMessageTool
+//   - 「问答窗可以把任务转给主会话」→ AskTools
+//   - 「密钥不用贴聊天，弹框直接存」→ AskUserQuestionTool（secret 题，只回指针）
 //
 // 混入规则（createBadgeTipMixer）：徽章每出现一次计数一次；每 TIP_EVERY 次出现中
 // 恰好第 TIP_EVERY 次换成一条 tip，其余走浪漫池。周期 = TIP_EVERY ≥ 2，因此两条 tip
