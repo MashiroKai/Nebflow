@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   addFavorite, removeFavorite, toggleFavorite, normalizeList, isFavorited,
-  basenameOf, FAVORITES_MAX,
+  basenameOf, FAVORITES_MAX, favKind, favTabOf, presentTabs, filterFavorites,
 } from '../src/main/resources/web/js/canvasFavoritesCore.js';
 
 test('toggle: 未收藏 → 收藏；再点 → 取消', () => {
@@ -67,4 +67,36 @@ test('上限截断：超过 FAVORITES_MAX 时丢弃最旧（表尾）', () => {
 test('basenameOf', () => {
   assert.equal(basenameOf('/a/b/c.txt'), 'c.txt');
   assert.equal(basenameOf('/'), '/');
+});
+
+test('favKind: 扩展名 → 类型；pdf 归入文件 tab；无扩展名按笔记', () => {
+  assert.equal(favKind('/w/a.md'), 'note');
+  assert.equal(favKind('/w/README'), 'note');
+  assert.equal(favKind('/w/p.PNG'), 'media');
+  assert.equal(favKind('/w/v.mp4'), 'media');
+  assert.equal(favKind('/w/t.pdf'), 'pdf');
+  assert.equal(favTabOf('pdf'), 'file');
+  assert.equal(favKind('/w/d.docx'), 'file');
+});
+
+test('presentTabs: 只返回实际存在的分类，固定顺序', () => {
+  const list = [
+    { path: '/w/t.pdf', title: 't', savedAt: 1 },
+    { path: '/w/a.md', title: 'a', savedAt: 2 },
+  ];
+  assert.deepEqual(presentTabs(list), ['note', 'file']);
+  assert.deepEqual(presentTabs([]), []);
+});
+
+test('filterFavorites: 分类 + 关键词（标题或路径，大小写不敏感），保持顺序', () => {
+  const list = [
+    { path: '/w/Alpha.md', title: 'Alpha', savedAt: 1 },
+    { path: '/w/img/beta.png', title: 'beta.png', savedAt: 2 },
+    { path: '/w/gamma.md', title: 'Gamma', savedAt: 3 },
+  ];
+  assert.deepEqual(filterFavorites(list, { tab: 'note' }).map((e) => e.title), ['Alpha', 'Gamma']);
+  assert.deepEqual(filterFavorites(list, { tab: 'media' }).map((e) => e.title), ['beta.png']);
+  assert.deepEqual(filterFavorites(list, { query: 'ALPHA' }).map((e) => e.title), ['Alpha']);
+  assert.deepEqual(filterFavorites(list, { query: 'img/' }).map((e) => e.title), ['beta.png']);
+  assert.equal(filterFavorites(list, { tab: 'media', query: 'zzz' }).length, 0);
 });

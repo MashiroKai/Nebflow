@@ -51,12 +51,14 @@ import {
   // 源解析/克隆腿**单源复用**桌面 canvas.js 的同一内核（不另造第二套截图方案），
   // 手机层只负责缓存与挂载。
   canvasSnapshotFor, canvasSnapshotStamp,
+  activeFavoriteTarget, FAV_SYNC_EVENT,
 } from '../canvas.js';
+import { toggleFavoritePath, isFavoritePath, onFavoritesChange } from '../canvasFavorites.js';
 import { hasBackHandler } from '../gesture/backSwipe.js';
 import { key } from '../branding.js';
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from '../sidebar.js';
 import { createIconsIn } from '../utils.js';
-import { buildFavoritesHubBlock } from '../canvasFavorites.js';
+import { openFavoritesPage } from '../canvasFavoritesPage.js';
 import { ensureSocialPage, syncSocialFaces } from './socialFaces.js';
 // The 'tasks' page body is the Apple-Reminders-style todo face, a three-page
 // stack (tasks / todo-apple-list / todo-apple-item). The face receives push/pop
@@ -102,6 +104,8 @@ function dockDef(id) {
  *  工作台批（作者令 2026-10-30「设置并入工作台一览」）：末行 = 设置——
  *  设置自顶层导航降级为工作台成员，点行进设置页（push 详情）。 */
 const HUB_ROWS = [
+  // 收藏（2026-11-23 收藏 r2）：不是 push 页——打开独立收藏页 overlay（action = 'favorites'）。
+  { page: 'favorites',  icon: 'star',            zh: '收藏',      en: 'Favorites', action: 'favorites' },
   { page: 'projects',   icon: 'folder-kanban',   zh: '项目',      en: 'Projects' },
   { page: 'plugins',    icon: 'puzzle',          zh: '插件',      en: 'Plugins' },
   { page: 'usage',      icon: 'bar-chart-3',     zh: 'token 用量', en: 'Usage' },
@@ -330,6 +334,11 @@ function buildHubRow(r) {
     // 打开的面板（桌面 outside-close 监听 document 冒泡）会被本记点击的
     // 继续冒泡误关 —— 入口键一律停冒泡（dock 批 2026-10-29 实测修复）。
     e.stopPropagation();
+    if (r.action === 'favorites') {
+      logEvent('hub-open', { page: r.page });
+      openFavoritesPage({ onOpened: () => dockTo('canvas') });
+      return;
+    }
     touchLayer();
     logEvent('hub-open', { page: r.page });
     pushPage(r.page);
@@ -352,11 +361,6 @@ function buildHub(body) {
   const rows = document.createElement('div');
   rows.className = 'mf-hub-rows';
   hub.appendChild(rows);
-  // 文档收藏区（2026-11-23 前端功能批 · 与桌面侧边栏同源同数据）：工作台分组行之下。
-  // 点击 = 重新打开并切到 canvas 页；失效条目置灰标「已失效」（渲染时判定）。
-  const fav = buildFavoritesHubBlock({ label: tt('收藏', 'Favorites'), onOpened: () => dockTo('canvas') });
-  hub.appendChild(fav.el);
-  unsubs.push(fav.dispose);
   body.appendChild(hub);
   hubBodies.set('workbench', hub);
   syncHubGate();
@@ -1847,7 +1851,38 @@ function buildCanvasPage(body) {
   stack.setAttribute('aria-label', tt('堆叠卡视图', 'Stacked cards'));
   stack.innerHTML = '<i data-lucide="layers"></i>';
   stack.addEventListener('click', () => { logEvent('canvas-stack-toggle'); toggleDeck(); });
-  toolbar.append(close, count, stack);
+  // 文档星标（r2 · 作者令「电脑和手机端星标都要」）：手机端桌面胶囊被隐藏（mobileLayer.css），
+  // 星标落在工具条内，与桌面同一写入口 toggleFavoritePath；激活态经 FAV_SYNC_EVENT / 收藏变更重绘。
+  const star = document.createElement('button');
+  star.type = 'button';
+  // Author-approved r2 mobile favorite star: same g2-fab + canvas-button family as mf-cv-stack.
+  star.className = 'mf-cv-star g2-fab canvas-button';
+  star.innerHTML = '<i data-lucide="star" class="canvas-fav-ic"></i>';
+  const paintStar = () => {
+    const tgt = activeFavoriteTarget();
+    star.hidden = !tgt;
+    if (!tgt) return;
+    const on = isFavoritePath(tgt.path);
+    star.classList.toggle('is-on', on);
+    star.setAttribute('aria-pressed', on ? 'true' : 'false');
+    const label = tt(on ? '取消收藏' : '收藏文档', on ? 'Remove from favorites' : 'Favorite document');
+    star.title = label;
+    star.setAttribute('aria-label', label);
+  };
+  star.addEventListener('click', () => {
+    const tgt = activeFavoriteTarget();
+    if (!tgt) return;
+    const nowOn = toggleFavoritePath(tgt);
+    paintStar();
+    star.classList.remove('is-pop');
+    void star.offsetWidth;
+    if (nowOn) star.classList.add('is-pop');
+    window.__showToast?.(tt(nowOn ? '已收藏' : '已取消收藏', nowOn ? 'Added to favorites' : 'Removed from favorites'), 'success');
+  });
+  window.addEventListener(FAV_SYNC_EVENT, paintStar);
+  onFavoritesChange(paintStar);
+  toolbar.append(close, count, stack, star);
+  paintStar();
 
   const host = document.createElement('div');
   host.className = 'mf-cv-host';

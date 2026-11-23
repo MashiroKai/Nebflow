@@ -17,7 +17,7 @@ for (const [file, patterns] of Object.entries({
   'js/viewers/html.js': ['glass-control nf-frame-nav-back'],
   'js/askDock.js': ['ask-fab', 'ask-fab note-fab'],
   'js/canvas.js': ['deck-fab g2-fab', 'g2-fab canvas-button', 'canvas-pop-btn', 'canvas-refback-btn', 'deck-card-pop', 'canvas-merge-btn'],
-  'js/mobile/navController.js': ['mf-cv-close g2-fab', 'mf-cv-stack g2-fab'],
+  'js/mobile/navController.js': ['mf-cv-close g2-fab', 'mf-cv-stack g2-fab', 'mf-cv-star g2-fab'],
 })) {
   const src = read(file);
   for (const name of patterns) {
@@ -90,7 +90,7 @@ for (const r of rules) {
     }
   }
 }
-const CANVAS_SINGLE = /(?:\.canvas-button|\.canvas-source-toggle|\.canvas-ref-select|\.canvas-find-toggle|\.canvas-refresh-toggle|\.ask-fab|\.mf-cv-close|\.mf-cv-stack|#deck-fab|#canvas-head-close)/;
+const CANVAS_SINGLE = /(?:\.canvas-button|\.canvas-source-toggle|\.canvas-ref-select|\.canvas-find-toggle|\.canvas-refresh-toggle|\.ask-fab|\.mf-cv-close|\.mf-cv-stack|\.mf-cv-star|#deck-fab|#canvas-head-close)/;
 // G-CB3c（回归修复后口径，canvas-button-unify 收口 2026-11-18）：单钮投影只许
 // ① none（摘除），或 ② **glass.css 那一条「Canvas 单钮共享面」**的
 // var(--ds-shadow-float)（退役私有钩子的回归修复值；选择器必须整列
@@ -121,7 +121,7 @@ const REGISTERED_FAMILIES = [
   'canvas-tab-close', 'canvas-video-btn', 'deck-fab', 'deck-card-pop', 'deck-card-x',
   'epub-nav-btn', 'epub-toc-item', 'epub-menu-btn', 'epub-anno-swatch', 'xlsx-sheet-tab',
   'g2-fab', 'ask-fab', 'note-fab',
-  'lt-btn', 'viewer-retry-btn', 'nf-frame-nav-back', 'glass-control', 'mf-cv-close', 'mf-cv-stack',
+  'lt-btn', 'viewer-retry-btn', 'nf-frame-nav-back', 'glass-control', 'mf-cv-close', 'mf-cv-stack', 'mf-cv-star',
 ];
 const jsFiles = [...readdirSync(join(web, 'js')).filter(f => f.endsWith('.js')).map(f => `js/${f}`),
   ...readdirSync(join(web, 'js', 'viewers')).filter(f => f.endsWith('.js')).map(f => `js/viewers/${f}`),
@@ -166,10 +166,10 @@ try {
   const issues = await page.evaluate(() => {
     const errors = [];
     const visible = e => { const s = getComputedStyle(e); return e.getClientRects().length && s.display !== 'none' && s.visibility === 'visible' && Number(s.opacity) > 0; };
-    const registry = ['canvas-find-toggle', 'canvas-source-toggle', 'canvas-ref-select', 'ask-fab', 'mf-cv-close', 'mf-cv-stack', 'mf-stack-x', 'mobile-back-btn', 'mh-chrome-btn', 'mh-sess-more', 'bgagent-more', 'bgagent-stop-fab', 'reminder-fab-add', 'tfl-fab-add', 'tfl-topmenu-btn', 'pf-edit-submit', 'pf-edit-cancel', 'fm-pick-back', 'fm-pick-fab', 'ta-fab', 'ta-save', 'mh-search-bar', 'deck-fab'];
+    const registry = ['canvas-find-toggle', 'canvas-source-toggle', 'canvas-ref-select', 'ask-fab', 'mf-cv-close', 'mf-cv-stack', 'mf-cv-star', 'mf-stack-x', 'mobile-back-btn', 'mh-chrome-btn', 'mh-sess-more', 'bgagent-more', 'bgagent-stop-fab', 'reminder-fab-add', 'tfl-fab-add', 'tfl-topmenu-btn', 'pf-edit-submit', 'pf-edit-cancel', 'fm-pick-back', 'fm-pick-fab', 'ta-fab', 'ta-save', 'mh-search-bar', 'deck-fab'];
     const buttons = [...document.querySelectorAll('button.g2-fab,button.canvas-find-toggle,button.canvas-source-toggle,button.canvas-ref-select,button.ask-fab,#deck-fab,#canvas-head-close')].filter(visible);
     for (const e of buttons) if (!registry.some(name => e.classList.contains(name)) && e.id !== 'canvas-head-close') errors.push(`unregistered circular button: ${e.className}`);
-    const family = buttons.filter(e => e.matches('.canvas-find-toggle,.canvas-source-toggle,.canvas-ref-select,.ask-fab,.mf-cv-close,.mf-cv-stack'));
+    const family = buttons.filter(e => e.matches('.canvas-find-toggle,.canvas-source-toggle,.canvas-ref-select,.ask-fab,.mf-cv-close,.mf-cv-stack,.mf-cv-star'));
     const ref = family.find(e => e.classList.contains('canvas-find-toggle'));
     if (!ref || family.length < 5) errors.push(`fixture missing canvas controls: ${family.length}`);
     if (ref) {

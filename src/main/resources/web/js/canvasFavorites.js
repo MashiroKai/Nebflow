@@ -1,4 +1,4 @@
-// canvasFavorites.js — Canvas 文档收藏：持久化 + 失效判定 + 三端列表渲染。
+// canvasFavorites.js — Canvas 文档收藏：持久化 + 失效判定 + 侧栏/收藏页渲染（收藏页见 canvasFavoritesPage.js）。
 //
 // 作者令（2026-11-23，前端功能批）：canvas 顶部胶囊左侧加收藏钮（已收藏态实心/描边区分，
 // 再点取消）；侧边栏与手机工作台加同源收藏列表（点击 = 重新打开）；文档被移除后条目置灰
@@ -24,7 +24,19 @@ const STORAGE_KEY = key('canvas_favorites_v1');
 // （CanvasFavoritesRoutes.scala）为真源；内存缓存为运行期视图；localStorage 仅作离线镜像。
 /** 引擎真源的内存缓存（null = 尚未与引擎同步，读回落本地镜像）。 */
 let cache = null;
-/** 一次性同步的 promise（mount 多处调用，只发一次 GET）。 */
+/** 缓存所对应的 localStorage 原始串。外部写入 storage（另一标签页 / 迁移 / 测试注入）
+ *  使其与此不等 ⇒ 缓存失效、重读归一化（修 dedupe：缓存旁路会吞掉外部变更）。 */
+let cacheRaw = null;
+
+function readRaw() {
+  try { return localStorage.getItem(STORAGE_KEY); } catch (_) { return null; }
+}
+
+/** 记住一份视图：缓存 + 其对应的 storage 原始串（写镜像之后调用）。 */
+function remember(list) {
+  cache = list;
+  cacheRaw = readRaw();
+}/** 一次性同步的 promise（mount 多处调用，只发一次 GET）。 */
 let syncPromise = null;
 
 function favoritesAuthHeaders() {
@@ -34,21 +46,24 @@ function favoritesAuthHeaders() {
 
 /** @returns {FavoriteEntry[]} */
 export function loadFavorites() {
-  if (cache) return cache;
+  const raw = readRaw();
+  if (cache && raw === cacheRaw) return cache;   // 缓存与 storage 一致 ⇒ 直接用
   try {
-    return normalizeList(JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'));
+    const list = normalizeList(JSON.parse(raw || '[]'));
+    if (raw !== null) { cache = list; cacheRaw = raw; }   // storage 为真镜像：外部变更生效
+    return list;
   } catch (_) {
-    return [];
+    return cache || [];
   }
 }
 
 /** 写回：缓存 + 本地镜像 + 引擎（best-effort；引擎不可达时本地仍生效，下次同步再推）。
  *  @param {FavoriteEntry[]} list */
 function saveFavorites(list) {
-  cache = list;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
   } catch (_) { /* 配额/隐私模式：镜像失效不影响引擎真源 */ }
+  remember(list);
   window.dispatchEvent(new CustomEvent(FAVORITES_CHANGE_EVENT));
   void fetch('/api/canvas-favorites', {
     method: 'PUT',
@@ -73,7 +88,7 @@ export function syncFavoritesFromEngine() {
       const local = loadFavorites();
       if (!remote.length && local.length) {
         // 迁移：旧 localStorage 收藏 → 引擎（仅一次；此后引擎为空也不再回填本地）。
-        cache = local;
+        remember(local);
         await fetch('/api/canvas-favorites', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json', ...favoritesAuthHeaders() },
@@ -81,8 +96,8 @@ export function syncFavoritesFromEngine() {
         });
         return;
       }
-      cache = remote;
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(remote)); } catch (_) { /* 镜像可失效 */ }
+      remember(remote);
       window.dispatchEvent(new CustomEvent(FAVORITES_CHANGE_EVENT));
     } catch (_) {
       // 引擎不可达：沿用本地镜像视图（离线可读）。
@@ -97,6 +112,11 @@ export function toggleFavoritePath(item) {
   const { list, favorited } = toggleFavorite(loadFavorites(), item, Date.now());
   saveFavorites(list);
   return favorited;
+}
+
+/** 收藏页打开入口计数（工作台 / 侧栏共用）。 */
+export function favoriteCount() {
+  return loadFavorites().length;
 }
 
 /** @param {string} path */
@@ -199,24 +219,6 @@ export function onFavoritesChange(fn) {
   return () => window.removeEventListener(FAVORITES_CHANGE_EVENT, fn);
 }
 
-/** 手机工作台收藏区（工作台根页分组行之下）：标题 + 同源列表；收藏变化即时重绘。
- *  @param {{ label: string, onOpened?: () => void }} opts
- *  @returns {{ el: HTMLElement, dispose: () => void }} */
-export function buildFavoritesHubBlock(opts) {
-  const wrap = document.createElement('div');
-  wrap.className = 'mf-hub-fav';
-  const head = document.createElement('div');
-  head.className = 'mf-hub-label';
-  head.textContent = opts.label;
-  const body = document.createElement('div');
-  wrap.append(head, body);
-  const paint = () => renderFavoritesList(body, { onOpened: opts.onOpened });
-  paint();
-  const dispose = onFavoritesChange(paint);
-  void syncFavoritesFromEngine();   // 同步完成派发变更事件 ⇒ 本列表自动重绘
-  return { el: wrap, dispose };
-}
-
 /** 侧边栏收藏区：挂在会话列表（#session-list）之前，标题 + 列表。幂等。 */
 export function mountSidebarFavorites() {
   if (document.getElementById('canvas-fav-section')) return;
@@ -227,9 +229,16 @@ export function mountSidebarFavorites() {
   const section = document.createElement('section');
   section.id = 'canvas-fav-section';
   section.className = 'canvas-fav-section';
-  const head = document.createElement('div');
+  // 表头可点 = 打开收藏页（微信收藏形态的全量入口；与工作台「收藏」栏同一页）。
+  const head = document.createElement('button');
+  head.type = 'button';
   head.className = 'canvas-fav-head';
-  head.textContent = t('canvas.fav.sectionTitle');
+  head.textContent = `${t('canvas.fav.sectionTitle')} ›`;
+  head.setAttribute('aria-label', t('canvas.favPage.open'));
+  head.addEventListener('click', (e) => {
+    e.stopPropagation();
+    void import('./canvasFavoritesPage.js').then((m) => m.openFavoritesPage());
+  });
   const body = document.createElement('div');
   section.append(head, body);
   anchor.parentElement.insertBefore(section, anchor);

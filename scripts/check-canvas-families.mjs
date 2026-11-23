@@ -96,6 +96,7 @@ const FAMILIES = [
   { family: 'glass-control', to: 'exempt', reason: '阅读面玻璃控件条内钮：族文件内自带 13 条 hover/active/focus-visible 声明（本脚本实测），且 split.css 面板段自带组内态层；本批不收编以免与预览面留白批同档相撞。' },
   { family: 'mf-cv-close', to: 'companion' },
   { family: 'mf-cv-stack', to: 'companion' },
+  { family: 'mf-cv-star', to: 'companion' },
 ];
 
 // ── 态层**未覆盖**族（本批实测：既不在三份共享态层文件的状态选择器里、族内也
@@ -110,6 +111,7 @@ const KNOWN_UNCOVERED = {
   'nf-frame-nav-back': '非独立面：HTML 预览 iframe 导航钮恒与 .glass-control 同元素（js/viewers/html.js），态层由 .glass-control 供给。',
   'mf-cv-close': '非独立面：js/mobile/navController.js 发射点为 "mf-cv-close g2-fab"，态层由 g2-fab（.ds-btn 参考实现）供给。',
   'mf-cv-stack': '非独立面：js/mobile/navController.js 发射点为 "mf-cv-stack g2-fab"，态层由 g2-fab（.ds-btn 参考实现）供给。',
+  'mf-cv-star': '非独立面：js/mobile/navController.js 发射点为 "mf-cv-star g2-fab canvas-button"（手机工具条星标），态层由 g2-fab 供给；星形填充仅在 canvasFavorites.css 的 .mf-cv-star.is-on 补一条。',
 };
 
 const failures = [];
@@ -200,7 +202,7 @@ const listMatch = /const REGISTERED_FAMILIES = \[([\s\S]*?)\];/.exec(gateSrc);
 if (!listMatch) { console.error('check-canvas-families: 取不到 check-canvas-buttons.mjs 的族名单'); process.exit(2); }
 const gateFamilies = [...listMatch[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
 const mine = FAMILIES.map((f) => f.family);
-if (gateFamilies.length !== 27) failures.push(`族名单不是 27 个（实测 ${gateFamilies.length}）`);
+if (gateFamilies.length !== 28) failures.push(`族名单不是 28 个（实测 ${gateFamilies.length}）`);
 for (const f of gateFamilies) if (!mine.includes(f)) failures.push(`族 ${f} 在本台账里没有归宿`);
 for (const f of mine) if (!gateFamilies.includes(f)) failures.push(`本台账多出未登记族 ${f}`);
 if (new Set(mine).size !== mine.length) failures.push('本台账存在重复族名');
