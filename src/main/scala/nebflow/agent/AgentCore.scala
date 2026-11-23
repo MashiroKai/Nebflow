@@ -300,10 +300,10 @@ object AgentCore:
     "GenerateImage"
   )
 
-  // 浏览器动词面（browser-verbs-p0 裁定变更，作者 2026-11-22「BU 和 CU 的能力都通过插件来分发，
-  // 不落 agent 直接的默认工具面」）：九动词不在 RootExclusiveTools、无机制固定授能单点。
-  // 授权 = 项目派发挂载 browser-use 插件，经 AgentSessionExecution.buildAllowedToolSet 的
-  // `pluginEngineGrant` 腿（前缀来源 `plugin_<p>_engine`；EngineToolWhitelist 限定）。
+  // 观测/浏览器动词面（作者 2026-11-22「BU 和 CU 的能力都通过插件来分发，不落 agent 直接的默认
+  // 工具面」）：浏览器九动词与桌面六动词均**不在** RootExclusiveTools、无机制固定授能单点。
+  // 授权 = 项目派发挂载对应插件（browser-use / computer-use），经 AgentSessionExecution.buildAllowedToolSet
+  // 的 `pluginEngineGrant` 腿（前缀来源 `plugin_<p>_engine`；PluginRegistry.engineGrantFor 按插件查表）。
 
   /**
    * dream 的 MemoryNote 准入例外（2026-09-05 作者签准，修订 2026-08-31 裁定①）：

@@ -112,11 +112,12 @@ object PluginRegistry:
    */
   /**
    * 按插件分域的引擎工具表（单点）：插件名 → 允许它声明的引擎工具集。授权按**挂载的那个插件**
-   * 逐个落地——挂载 browser-use 只得浏览器九动词，不串授其它插件的引擎工具。
-   * （回灌自 feat/desktop-observe-p0 8f3521b6a：修 engineGrantFor 整表串授。）
+   * 逐个落地——挂载 browser-use 只得浏览器九动词，挂载 computer-use 只得桌面六动词，互不串授。
+   * （分域修复回灌自 feat/desktop-observe-p0 8f3521b6a，修 engineGrantFor 整表串授。）
    */
   val EngineToolsByPlugin: Map[String, Set[String]] = Map(
-    "browser-use" -> nebflow.core.tools.BrowserVerbNames.All.toSet
+    "browser-use" -> nebflow.core.tools.BrowserVerbNames.All.toSet,
+    "computer-use" -> nebflow.core.tools.DesktopVerbNames.All.toSet
   )
 
   /** 全部引擎工具名（并集；仅作参考，授权一律经 [[engineGrantFor]] 按插件）。 */
@@ -127,7 +128,7 @@ object PluginRegistry:
 
   /**
    * 挂载态授权判据（单点，纯函数）：会话的 plugin 前缀来源含 `plugin_<p>_engine` ⇒ 授予该插件
-   * 在 [[EngineToolsByPlugin]] 中的工具集；未挂载或插件未登记 ⇒ 空集。
+   * 在 [[EngineToolsByPlugin]] 中的工具集；未挂载或插件未登记 ⇒ 空集（默认工具面无引擎工具名）。
    */
   def engineGrantFor(pluginServerIds: List[String]): Set[String] =
     val suffix = "_" + EngineServerName
