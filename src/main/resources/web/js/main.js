@@ -4236,7 +4236,10 @@ onMessage('bgRateAlert', (msg) => {
 });
 
 // --- /ask command ---
-import { selectionAskFrame, initSelectionAsk } from './selectionAsk.js';
+import { selectionAskFrame, selectionExplainFrame, initSelectionAsk } from './selectionAsk.js';
+// 选区解释（r2 批 2026-11-23）：小模型一次解释的回包（非 /ask 会话帧）。
+onMessage('selectionExplain', (msg) => { selectionExplainFrame('selectionExplain', msg); });
+onMessage('selectionExplainError', (msg) => { selectionExplainFrame('selectionExplainError', msg); });
 onMessage('askTextDelta', (msg, view) => {
   if (selectionAskFrame('askTextDelta', msg)) return;
   const sid = msg.sessionId || state.activeSessionId;

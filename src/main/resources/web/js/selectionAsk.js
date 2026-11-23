@@ -427,7 +427,77 @@ function onAnchorClick() {
   const snapshot = mergedSelectionSnapshot(cur);
   // 空选（只有空白）与「跨气泡但一段正文都没取到」都不发问。
   if (!snapshot || !String(snapshot.selected || '').trim()) { hideAnchor(); return; }
-  openSelectionAsk(snapshot, anchorEl);
+  openSelectionExplain(snapshot, anchorEl);
+}
+
+// ── 选区解释（r2 批 2026-11-23；作者四点 2–4）────────────────────────────────
+// 2. 解释走**专门小模型**：`{type:'selectionExplain'}` 单次调用（small-llm 候选源），
+//    不发 `/ask`、不建会话、不复用主模型。
+// 3. 对话框 = canvas Ask 同族外壳（createAskPanel → `.ask-dock.selection-dock`，气泡 `.ask-bub`）；
+//    输入条隐藏（本面板无后续提问，避免再落 /ask 腿）。
+// 4. 解释输出词条化：选中的原文片段渲染为 canvas 词条样式（`a.nf-term`），点击 = 展开解释。
+let explainSeq = 0;
+/** @type {{requestId: string, aiEl: HTMLElement}|null} */
+let explainPending = null;
+
+/** 选中原文 → 词条 chip（点击 = 展开本面板的解释气泡）。 */
+function explainChip(text, onPick) {
+  const a = document.createElement('a');
+  a.className = 'nf-term selection-explain-chip';
+  a.href = '#';
+  a.textContent = text;
+  a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); onPick(a); });
+  return a;
+}
+
+/** 打开选区解释面板：原文片段 = 词条；解释由小模型异步返回（requestId 配对）。 */
+export function openSelectionExplain(snapshot, anchor) {
+  const d = ensureDialog();
+  placeholderPosition(d, anchor);
+  face.open();
+  hideAnchor();
+  d.inputRow.style.display = 'none';
+  d.col.replaceChildren();
+  const segs = Array.isArray(snapshot.segments) && snapshot.segments.length
+    ? snapshot.segments
+    : [{ text: snapshot.selected }];
+  const requestId = 'sx' + (++explainSeq) + '-' + Date.now().toString(36);
+  const aiEl = document.createElement('div');
+  aiEl.className = 'ask-bub nf-glass ai selection-explain-answer';
+  aiEl.textContent = tt('解释中…', 'Explaining…');
+  aiEl.hidden = true;
+  const quote = document.createElement('div');
+  quote.className = 'ask-bub nf-glass user selection-explain-quote';
+  const chipEls = [];
+  segs.forEach((s, i) => {
+    if (i) quote.appendChild(document.createTextNode(' '));
+    const chip = explainChip(String(s.text || '').trim(), (a) => {
+      chipEls.forEach((c) => c.classList.toggle('active', c === a));
+      aiEl.hidden = false;
+    });
+    chipEls.push(chip);
+    quote.appendChild(chip);
+  });
+  d.col.appendChild(quote);
+  d.col.appendChild(aiEl);
+  explainPending = { requestId, aiEl };
+  const ok = sendWs({ type: 'selectionExplain', requestId, question: buildMergedQuestion(snapshot) });
+  if (!ok) {
+    explainPending = null;
+    aiEl.textContent = tt('连接已断开，重连后再选一次。', 'Disconnected — select again once reconnected.');
+  }
+  return true;
+}
+
+/** 解释回包（main.js 的 selectionExplain / selectionExplainError）：配对 requestId 后落正文。 */
+export function selectionExplainFrame(type, msg) {
+  const p = explainPending;
+  if (!p || !msg || msg.requestId !== p.requestId) return false;
+  explainPending = null;
+  p.aiEl.textContent = type === 'selectionExplain'
+    ? String(msg.text || '')
+    : tt('解释失败：', 'Explain failed: ') + String(msg.message || '');
+  return true;
 }
 
 function scheduleAnchor() {
