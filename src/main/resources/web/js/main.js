@@ -110,7 +110,8 @@ import {
   deleteSession, formatSessionTime, setSessionAttention,
   persistUnread, createNewFolder, getCurrentFolderId,
   resetChatForActiveSession,
-  computeAgentStates
+  computeAgentStates,
+  openSettingsPanel
 } from './sidebar.js';
 import { initOnboarding } from './onboarding.js';
 import { rootDisplayName, initRootNameProbe, reprobeRootName } from './rootName.js';
@@ -1927,6 +1928,8 @@ onMessage('llmFailure', (msg) => {
       saveModel: saveSlotPreferredModel,
       modelRefs: getAllModelRefs,
       onDismiss: (k) => llmDismissed.add(k),
+      // 窗口受限型「去设置」：同一设置面板打开入口（活动栏同款，单点接线）。
+      openSettings: openSettingsPanel,
     });
     host.appendChild(card);
     createIconsIn(card);

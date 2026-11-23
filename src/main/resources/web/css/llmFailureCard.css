@@ -63,6 +63,8 @@
 .llm-failure-spin {
   animation: spin 1s linear infinite;
 }
+/* 窗口受限型状态行图标（hourglass 静置，不旋转——等待不是进行中动作）。 */
+.llm-failure-spin-off { animation: none; }
 .llm-failure-switch {
   display: flex;
   align-items: center;

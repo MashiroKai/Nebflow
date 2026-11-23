@@ -57,6 +57,12 @@ class LlmFailureSignalSpec extends FunSuite:
     assert(!LlmFailureSignal.isLlmClass(new StuckAbort("s-1")))
   }
 
+  // ── 窗口受限型（provider-notice-card-unify 批 2026-11-23）─────────────────
+
+  test("时段窗全受限 = LLM 类（provider 侧条件性不可用，窗口结束自愈 ⇒ 卡家族收编）") {
+    assert(LlmFailureSignal.isLlmClass(ModelScheduleRestrictedError(List("UTSC/glm-5.3-flash"), "06:00-01:00")))
+  }
+
   test("null = 非 LLM 类（防御）") {
     assert(!LlmFailureSignal.isLlmClass(null))
   }

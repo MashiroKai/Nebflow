@@ -1,7 +1,7 @@
 package nebflow.llm
 
 import nebflow.actor.{LoopDetectedError, ToolPipelineError}
-import nebflow.shared.{ErrorPermanence, FailoverReason, FallbackExhaustedError, StreamInactivityTimeout}
+import nebflow.shared.{ErrorPermanence, FailoverReason, FallbackExhaustedError, ModelScheduleRestrictedError, StreamInactivityTimeout}
 
 /**
  * LlmFailureSignal —— 「LLM 类失败」的**唯一判据**（LLM 失败卡片批，2026-11-21）。
@@ -54,6 +54,11 @@ object LlmFailureSignal:
     case _: LoopDetectedError => false
     case _: FallbackExhaustedError => true
     case _: StreamInactivityTimeout => true
+    // 时段窗全受限（provider-notice-card-unify 批 2026-11-23）：时间闸失败 = provider
+    // 侧条件性不可用（窗口结束后自愈），不是引擎缺陷——收进 LLM 卡家族（窗口受限型），
+    // 不再落裸 error 帧。此前 classifyBase 把它兜底成 Unknown ⇒ 不在白名单 ⇒ 卡闸
+    // 关闭，作者只看到一条无法处置的横幅。
+    case _: ModelScheduleRestrictedError => true
     case _ =>
       val cls = Fallback.classifyError(error)
       LlmClassReasons.contains(cls.reason) && cls.permanence != ErrorPermanence.Fatal

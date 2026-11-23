@@ -957,6 +957,8 @@ export default {
   'subagents.frozenAutoResumes': '已自动续跑 {n} 次',
   'subagents.frozenAutoResumesSpent': '自动续跑次数已用尽——需要你：充值 / 换模型 / 取消',
   'subagents.providerFailureGroup': '后台 {count} 个任务服务商不可用 · {provider}',
+  // 卡片化收编批（2026-11-23）：失败组卡面（llm-failure-card 家族）的恢复预期行。
+  'subagents.providerFailureRecovering': '等待恢复中：引擎正在退避重试 / 探测服务商恢复，恢复后原会话续跑——不是任务失败，也不需要你做什么。',
   // 族区分呈现（2026-11-21 作者裁定）：服务商不可用只用于可用性族；形状族与配置族
   // 各说各的，避免把「我们的请求不合契约」读成「服务商挂了」。
   'subagents.providerFailureGroupShape': '后台 {count} 个任务因请求/响应格式不合规未完成 · {provider}',

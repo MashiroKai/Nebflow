@@ -55,6 +55,9 @@ export const CHECKS = [
   nodeCheck('llm-failure-dismiss', 'check-llm-failure-dismiss'),
   { name: 'llm-failure-card-dismiss', profiles: ['frontend'], timeoutMs: 180_000,
     argv: [process.execPath, 'tests/llm-failure-card-dismiss.spec.mjs'] },
+  // 服务商受限通知「卡片化收编」静态闸（provider-notice-card-unify 批 2026-11-23）：
+  // 失败组走 llm-failure-card 家族卡面（不再裸横幅）；窗口受限型卡态 + provider id 兜底。
+  nodeCheck('provider-notice-unify', 'check-provider-notice-unify'),
   // 双档令牌镜像闸（2026-11-21）：base.css 的亮/暗显式档 ≡ 媒体暗档，逐令牌；与卡族闸同档。
   nodeCheck('theme-token-mirror', 'check-theme-token-mirror'),
   nodeCheck('message-style', 'check-msgstyle-single-source'),

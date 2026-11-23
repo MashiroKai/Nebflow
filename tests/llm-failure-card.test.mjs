@@ -59,6 +59,7 @@ test('视图模型：空摘要给占位文案，缺模型名给「未知模型�
 // ── 消失语义（2026-11-22 作者 23:24 报「点了不消失」）──
 import {
   isLlmFailureControlTarget, createLlmDismissStore, SWITCH_FADE_MS, FADE_OUT_MS,
+  SCHEDULE_WINDOW_CLASS, buildWindowTitle,
 } from '../src/main/resources/web/js/llmFailureCard.js';
 
 const fakeEl = (hits) => ({ closest: (sel) => (hits.some((h) => sel.includes(h)) ? {} : null) });
@@ -87,4 +88,35 @@ test('消失：dismiss store 记录同组，recovered 清除后才允许再出',
 test('消失：切换成功自动淡出的时长常量为正且淡出早于移除', () => {
   assert.ok(SWITCH_FADE_MS > 0);
   assert.ok(FADE_OUT_MS > 0 && FADE_OUT_MS < SWITCH_FADE_MS);
+});
+
+// ── 窗口受限·等待恢复型（provider-notice-card-unify 批 2026-11-23）──
+
+test('窗口受限：视图模型标记 isWindow、带 windowDesc，分类标签为「窗口受限」', () => {
+  assert.equal(SCHEDULE_WINDOW_CLASS, 'llm-schedule-window');
+  const m = buildLlmFailureModel({
+    layer: 'root', modelRef: 'UTSC/glm-5.3-flash',
+    summary: '当前时段全部候选模型受限', failureClass: 'llm-schedule-window', windowDesc: '06:00-01:00',
+  });
+  assert.equal(m.isWindow, true);
+  assert.equal(m.windowDesc, '06:00-01:00');
+  assert.equal(m.failureLabel, '窗口受限');
+});
+
+test('窗口受限：普通失败不受影响（isWindow=false、windowDesc 空串）', () => {
+  const m = buildLlmFailureModel({ layer: 'root', modelRef: 'p/m', summary: 'boom', failureClass: 'llm-auth' });
+  assert.equal(m.isWindow, false);
+  assert.equal(m.windowDesc, '');
+});
+
+test('窗口受限：标题带 provider 与窗口时段；缺窗口时不追加括号', () => {
+  assert.equal(buildWindowTitle('UTSC/glm-5.3-flash', '06:00-01:00'), 'UTSC/glm-5.3-flash 当前时段不可用（06:00-01:00）');
+  assert.equal(buildWindowTitle('UTSC/glm-5.3-flash', ''), 'UTSC/glm-5.3-flash 当前时段不可用');
+  assert.equal(buildWindowTitle('', ''), '未知模型 当前时段不可用');
+});
+
+test('窗口受限：聚合键仍为层级+模型（窗口描述不进键，同组更新不重复出卡）', () => {
+  const a = buildLlmFailureModel({ layer: 'root', modelRef: 'UTSC/glm-5.3-flash', failureClass: 'llm-schedule-window', windowDesc: '06:00-01:00' });
+  const b = buildLlmFailureModel({ layer: 'root', modelRef: 'UTSC/glm-5.3-flash', failureClass: 'llm-schedule-window', windowDesc: '06:00-02:00' });
+  assert.equal(a.key, b.key);
 });
