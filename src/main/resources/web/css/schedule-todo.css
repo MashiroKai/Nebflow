@@ -4,8 +4,8 @@
 .reminder-decision-q { font-weight: 600; }
 .reminder-decision-opts { display: flex; flex-direction: column; gap: 4px; }
 .reminder-decision-opt { display: flex; align-items: center; gap: 6px; cursor: pointer; }
-.reminder-decision-key { font-size: 11px; opacity: 0.6; border: 1px solid currentColor; border-radius: 3px; padding: 0 4px; }
-.reminder-decision-err { color: var(--ds-danger, #d33); font-size: 12px; min-height: 0; }
+.reminder-decision-key { font-size: 11px; opacity: 0.6; border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; }
+.reminder-decision-err { color: var(--color-danger); font-size: 12px; min-height: 0; }
 .reminder-decision-err:empty { display: none; }
 .reminder-decision-submit { align-self: flex-end; }
 
