@@ -2311,16 +2311,11 @@ function fillOptionText(host, label, desc, wrapInSpan) {
 /** 媒体选项的**卡片体**（askuser-media 批 2026-11-18）：媒体面在上、文字在下
  *  （label + 可选 description），整块占满选项行宽。
  *
- *  选中语义（本批裁定）：点击**媒体面本身**也要选中该选项——媒体组的叠卡组件
- *  把「面内真点击」经 `onPick` 回灌到选项按钮的既有 pick 逻辑（同一个 `onclick`），
- *  而拖划/横滑翻页、`展开 N`、视频播放键各自消费自己的事件（不选中）。
- *  `btn.onclick` 在此刻**尚未赋值**（调用方随后才挂）——闭包惰性求值，点击时才读。 */
-function buildOptionMediaBody(pv, label, desc, btn) {
+ *  媒体组消费自身操作；文字及媒体组外的选项区域仍由选项按钮处理。 */
+function buildOptionMediaBody(pv, label, desc) {
   const body = document.createElement('div');
   body.className = 'option-media-body';
-  const node = buildAskPreviewNode(pv, {
-    onPick: () => { if (typeof btn.onclick === 'function') btn.onclick(); },
-  });
+  const node = buildAskPreviewNode(pv);
   if (node) body.appendChild(node);
   fillOptionText(body, label, desc, true);
   return body;
@@ -2860,7 +2855,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
           btn.appendChild(check);
           if (mediaPreview) {
             btn.classList.add('has-media');
-            btn.appendChild(buildOptionMediaBody(preview, label, desc, btn));
+            btn.appendChild(buildOptionMediaBody(preview, label, desc));
           } else {
             const pvNode = buildOptionPreviewEl(preview);
             if (pvNode) btn.appendChild(pvNode);
@@ -2879,7 +2874,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
           if (preview) btn.classList.add('has-preview');
           if (preview && askPreviewKind(preview) === 'media') {
             btn.classList.add('has-media');
-            btn.appendChild(buildOptionMediaBody(preview, label, desc, btn));
+            btn.appendChild(buildOptionMediaBody(preview, label, desc));
           } else if (pvNode) {
             btn.appendChild(pvNode);
             fillOptionText(btn, label, desc, true);

@@ -34,13 +34,9 @@
 //   并盖住「哪个选项更适合」的判读；静帧在视觉上与图片面同族（一眼可比），
 //   要点开才动 —— 与消息面视频件的既有语义**逐字一致**（同源优先）。
 //
-// ── 点击语义 ─────────────────────────────────────────────────────────────
-//   整面点击 = **选中该选项**（不是打开 Canvas/灯箱）：这是「用媒体来选」的
-//   场合，点媒体就该选中。叠卡区的内部手势（拖划/横滑翻页、展开钮、视频播放键）
-//   各自消费自己的事件，**不**顺带选中（见 buildAskMediaGroup 的 stopPropagation
-//   与 `suppressClick` 语义）。
+// 媒体区独立于选项选择：媒体操作打开共享画廊或操作叠卡，不触发选项。
 
-import { buildMediaStack, buildMediaFlat } from './popArtifacts.js';
+import { buildMediaStack, buildMediaFlat, openMediaLightbox } from './popArtifacts.js';
 
 /** 带 scheme 的串 = URL（`https:` / `data:` / `blob:` …）；其余视作本地路径。 */
 const URL_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
@@ -187,31 +183,34 @@ function normalizeSvgDataUri(src) {
  * ≥2 件 = **消息面既有叠卡组件**的一张卡脸 + 露边 + 展开 N（零第二套）。
  *
  * @param {Array<any>} items 归一化后的媒体件（[[askPreviewMediaItems]] 的产物）
- * @param {{onPick?: (item:any, index:number) => void}} [opts]
- *   `onPick` = 叠卡整面/展开行点击的动作。**缺省不动作**（宿主自己在根上挂点击）。
  * @returns {HTMLDivElement|null}
  */
-export function buildAskMediaGroup(items, opts = {}) {
+export function buildAskMediaGroup(items) {
   const list = (items || []).filter(Boolean);
   if (!list.length) return null;
   const wrap = document.createElement('div');
   wrap.className = 'option-preview-media';
-  const pick = typeof opts.onPick === 'function' ? opts.onPick : null;
+  // Include the entire media rectangle, not just the stack face, in the exclusion.
+  wrap.addEventListener('click', (e) => e.stopPropagation());
   if (list.length === 1) {
     wrap.classList.add('option-preview-media--single');
-    // 单件面 = 消息面同款 flat 卡（`onOpen: null` ⇒ 不挂面内点击 = 整面点击交给
-    // 选项按钮自己；`corner: null` ⇒ 不挂 Canvas 角标）。图片面/视频面同族。
-    wrap.appendChild(buildMediaFlat(list[0], { onOpen: null, corner: null }));
+    const face = buildMediaFlat(list[0], { onOpen: () => openMediaLightbox(list[0]), corner: null });
+    face.tabIndex = 0;
+    face.addEventListener('keydown', (e) => {
+      if (e.target === face && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault();
+        e.stopPropagation();
+        openMediaLightbox(list[0]);
+      }
+    });
+    wrap.appendChild(face);
     return wrap;
   }
   const stack = buildMediaStack(list, {
-    onOpen: (item, index) => { if (pick) pick(item, index); },
+    onOpen: (item) => openMediaLightbox(item),
+    cornerFor: () => null,
   });
   stack.classList.add('option-media-stack');
-  // 叠卡区内部的点击一律不冒泡到选项按钮：选中动作**只**由 `onOpen`（真点击）
-  // 单点驱动 ⇒ 拖划/横滑翻页（组件置 `suppressClick`）与「展开 N」钮都不会
-  // 顺手把选项选掉。视频播放键/控件自带 stopPropagation（组件内）。
-  stack.addEventListener('click', (e) => e.stopPropagation());
   wrap.appendChild(stack);
   return wrap;
 }
@@ -219,14 +218,13 @@ export function buildAskMediaGroup(items, opts = {}) {
 /**
  * 选项预览的**唯一渲染入口**（chat.js 两个调用点共用）。
  * @param {any} pv `option.preview`
- * @param {{onPick?: (item:any, index:number) => void}} [opts]
  * @returns {HTMLElement|null} 无预览 / 形态不可渲染 ⇒ `null`（调用方按无预览渲染）
  */
-export function buildAskPreviewNode(pv, opts = {}) {
+export function buildAskPreviewNode(pv) {
   switch (askPreviewKind(pv)) {
     case 'swatch': return buildSwatchPreview(pv);
     case 'thumb': return buildThumbPreview(pv);
-    case 'media': return buildAskMediaGroup(askPreviewMediaItems(pv), opts);
+    case 'media': return buildAskMediaGroup(askPreviewMediaItems(pv));
     default: return null;
   }
 }
