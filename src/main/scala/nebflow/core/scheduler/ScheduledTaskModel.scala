@@ -1,14 +1,60 @@
 package nebflow.core.scheduler
 
-import io.circe.Codec
+import io.circe.{Codec, Decoder, DecodingFailure, Encoder, Json}
+import io.circe.syntax.*
 import io.circe.derivation.{Configuration, ConfiguredCodec}
 
-import java.time.{Instant, ZoneId, ZonedDateTime}
+import java.time.{Instant, LocalDateTime, LocalTime, ZoneId, ZoneOffset, ZonedDateTime}
+import scala.util.Try
 import java.util.UUID
 
 // `TodoDecision` / `DecisionOption` / `DecisionMedia` 已迁至本包
 // [[TodoDecisionModel]]（待办数据模型与命名规范批 2026-11-18）：决策/选项/媒体
 // 是同一份线格式，模型与校验（[[TodoTaxonomy]]）同处一地，避免「两张表两处改」。
+
+/** Stored reminder intent; weekly local time is interpreted in the saved region, never the host zone. */
+sealed trait TodoDue
+object TodoDue:
+  final case class Once(dueAt: Long, zoneId: String, wallClock: String, originalOffset: String) extends TodoDue
+  final case class Weekly(dayOfWeek: Int, localTime: String, zoneId: String, wallClock: String) extends TodoDue
+
+  given Encoder[TodoDue] = Encoder.instance {
+    case Once(at, zone, wall, offset) =>
+      Json.obj("type" -> "once".asJson, "dueAt" -> at.asJson, "zoneId" -> zone.asJson,
+        "wallClock" -> wall.asJson, "originalOffset" -> offset.asJson)
+    case Weekly(day, time, zone, wall) =>
+      Json.obj("type" -> "weekly".asJson, "dayOfWeek" -> day.asJson, "localTime" -> time.asJson,
+        "zoneId" -> zone.asJson, "wallClock" -> wall.asJson)
+  }
+
+  given Decoder[TodoDue] = Decoder.instance { c =>
+    def valid(value: Boolean, message: String): Decoder.Result[Unit] =
+      Either.cond(value, (), DecodingFailure(message, c.history))
+    for
+      kind <- c.get[String]("type")
+      zone <- c.get[String]("zoneId")
+      _ <- valid(ZoneId.getAvailableZoneIds.contains(zone), "zoneId must be a valid IANA region")
+      wall <- c.get[String]("wallClock")
+      _ <- valid(Try(LocalDateTime.parse(wall)).isSuccess, "wallClock must be a local date and time")
+      due <- kind match
+        case "once" =>
+          for
+            at <- c.get[Long]("dueAt")
+            offset <- c.get[String]("originalOffset")
+            _ <- valid(Try(ZoneOffset.of(offset)).isSuccess, "originalOffset must be a valid UTC offset")
+          yield Once(at, zone, wall, offset)
+        case "weekly" =>
+          for
+            day <- c.get[Int]("dayOfWeek")
+            _ <- valid(day >= 1 && day <= 7, "dayOfWeek must be between 1 and 7")
+            time <- c.get[String]("localTime")
+            _ <- valid(Try(LocalTime.parse(time)).toOption.exists(t => t.getSecond == 0 && t.getNano == 0),
+              "localTime must be a valid local hour and minute")
+          yield Weekly(day, time, zone, wall)
+        case _ => Left(DecodingFailure("type must be once or weekly", c.history))
+    yield due
+  }
+end TodoDue
 
 /** A scheduled task attached to a session — fires once or on a recurring schedule. */
 case class ScheduledTask(
@@ -134,7 +180,9 @@ case class ScheduledTask(
    * [[TodoTaxonomy.validateCreate]]）。None = 无决策（存量行 / 提醒面 / 定时任务面
    * 一律 None，缺键零迁移）。
    */
-  decision: Option[TodoDecision] = None
+  decision: Option[TodoDecision] = None,
+  /** Independent human reminder schedule; absent on legacy records. */
+  due: Option[TodoDue] = None
 ):
   /** true = 待办面（周期浮出直至销账），false = 定时任务面（现状）。 */
   def isTodo: Boolean = kind.contains(ScheduledTask.KindTodo)
