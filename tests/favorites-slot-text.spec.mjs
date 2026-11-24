@@ -135,6 +135,7 @@ try {
       // must retain the complete value without widening the surrounding panel.
       const search=s.page.locator(`${root} .cfp-search-input`);
       const query='SearchLongValue0123456789'.repeat(12);
+      for(const sample of samples.slice(0,3)) await checkSearch(s.page,`${root} .cfp-search-input`,root,sample);
       await checkSearch(s.page,`${root} .cfp-search-input`,root,query);
       if(width===1280) await negativeSearch(s.page,`${root} .cfp-search-input`,root,query);
       await search.fill(query);
@@ -179,6 +180,7 @@ try {
         }
         await rows.first().focus(); await s.page.keyboard.type('VeryLong');
         const fileSearch=s.page.locator('#explorer-search'); await fileSearch.waitFor({state:'visible'});
+        for(const sample of samples.slice(0,3)) await checkSearch(s.page,'#explorer-search','#panel-sessions',sample);
         await checkSearch(s.page,'#explorer-search','#panel-sessions',query);
         if(width===1280) await negativeSearch(s.page,'#explorer-search','#panel-sessions',query);
         await fileSearch.fill('VeryLong');
