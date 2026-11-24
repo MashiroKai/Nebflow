@@ -6,6 +6,19 @@ import io.circe.Json
 import io.circe.parser.parse
 import io.circe.syntax.*
 import munit.CatsEffectSuite
+import cats.effect.unsafe.implicits.global
+import java.nio.file.Paths
+
+object TodoOccurrenceCrashChild:
+  def main(args: Array[String]): Unit =
+    val store = new ScheduledTaskStore(os.Path(args(0)))
+    val occurrence = TodoOccurrence.create("old", 1000L, 7L)
+    val halt = () => Runtime.getRuntime.halt(71)
+    val before = if args(1) == "before" then halt else () => ()
+    val after = if args(1) == "after" then halt else () => ()
+    store.recordOccurrence("s1", occurrence, Some(2000L), before, after).unsafeRunSync()
+    sys.exit(72)
+
 
 class TodoDuePersistenceSpec extends CatsEffectSuite:
 
@@ -89,6 +102,44 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       assertEquals(rows.head.nextDueAt, Some(2000L))
       assertEquals(rows.head.occurrences, List(occurrence))
       assertEquals(retry, false)
+
+  test("hard process termination before and after commit preserves atomic occurrence state"):
+    List("before", "after").traverse_ { point =>
+      val dir = os.temp.dir(prefix = "occurrence-halt-")
+      val initial = legacy.as[ScheduledTask].toOption.get.copy(nextDueAt = Some(1000L))
+      val occurrence = TodoOccurrence.create("old", 1000L, 7L)
+      val cp = List.newBuilder[String]
+      var loader = Thread.currentThread().getContextClassLoader
+      while loader != null do
+        loader match
+          case urls: java.net.URLClassLoader =>
+            cp ++= urls.getURLs.toList.filter(_.getProtocol == "file").map(u => Paths.get(u.toURI).toString)
+          case _ => ()
+        loader = loader.getParent
+      cp += System.getProperty("java.class.path")
+      for
+        _ <- new ScheduledTaskStore(dir).addTask(initial)
+        status <- IO.blocking {
+          val process = new ProcessBuilder(Paths.get(System.getProperty("java.home"), "bin", "java").toString,
+            "-cp", cp.result().distinct.mkString(java.io.File.pathSeparator),
+            "nebflow.core.scheduler.TodoOccurrenceCrashChild", dir.toString, point)
+            .redirectErrorStream(true).redirectOutput((dir / "child.log").toIO).start()
+          assert(process.waitFor(90, java.util.concurrent.TimeUnit.SECONDS), "child did not exit")
+          process.exitValue()
+        }
+        rows <- new ScheduledTaskStore(dir).loadTasks("s1")
+        _ <- IO {
+          assertEquals(status, 71, os.read(dir / "child.log"))
+          assertEquals(rows.head.occurrences, if point == "before" then Nil else List(occurrence))
+          assertEquals(rows.head.nextDueAt, Some(if point == "before" then 1000L else 2000L))
+        }
+        result <- new ScheduledTaskStore(dir).recordOccurrence("s1", occurrence, Some(2000L))
+        finalRows <- new ScheduledTaskStore(dir).loadTasks("s1")
+      yield
+        assertEquals(result, point == "before")
+        assertEquals(finalRows.head.occurrences, List(occurrence))
+        assertEquals(finalRows.head.nextDueAt, Some(2000L))
+    }
 
   test("one-shot and weekly golden payloads survive store and fresh reader"):
     val dir = os.temp.dir(prefix = "todo-due-fixture-")
