@@ -355,10 +355,10 @@ async function downloadPopRow(page, ts, wantName, wantBytes, tag, tmpName) {
 /* ── 用例：手机层四格（双引擎 × 双主题）────────────────────────────────── */
 
 for (const [engineName, engine] of [['chromium', chromium], ['webkit', webkit]]) {
-  for (const scheme of ['dark', 'light']) {
-    console.log(`\n── ${engineName} × ${scheme} ─────────────────────────────`);
-    const tag = `${engineName}-${scheme}`;
-    const { page, dlCounts } = await boot(375, 812, scheme, engine);
+  for (const [width, height, scheme] of [[375, 812, 'dark'], [375, 812, 'light'], [1280, 900, 'dark']]) {
+    console.log(`\n── ${engineName} × ${scheme} × ${width} ─────────────────────────────`);
+    const tag = `${engineName}-${scheme}-${width}`;
+    const { page, dlCounts } = await boot(width, height, scheme, engine);
 
     // T1 三类卡片同框 footer 家族。
     await assertFamily(page, tag);
@@ -440,6 +440,7 @@ for (const [engineName, engine] of [['chromium', chromium], ['webkit', webkit]])
         await page.waitForFunction(() => !!document.querySelector('#chat .row.user .msg-quote-block'), null, { timeout: 8000 });
         const qText = await page.evaluate(() => document.querySelector('#chat .row.user .msg-quote-block .msg-quote-text')?.textContent || '');
         ok(`${tag} 引用块摘要 = [文件] 季度报告`, qText.includes('文件') && qText.includes('quarterly-report.pdf'), qText.trim().slice(0, 40));
+        await page.waitForSelector('#chat .row.user .msg-quote-block .msg-quote-atts', { timeout: 5000 }).catch(() => {});
         const qAtts = await page.evaluate(() => ({
           strip: !!document.querySelector('#chat .row.user .msg-quote-block .msg-quote-atts'),
           fileChip: !!document.querySelector('#chat .row.user .msg-quote-att-file'),
