@@ -683,6 +683,8 @@ class ScheduledTaskStore(
                 val canonical =
                   distinctById(owned).sortBy(t => (-t.revision, t.createdAt, t.id)).headOption
                 canonical match
+                  case _ if distinctById(owned).size != owned.map(_.id).distinct.size =>
+                    IO.raiseError(new IllegalStateException("conflicting task replicas; rearm refused"))
                   case None if owned.nonEmpty =>
                     IO.raiseError(new IllegalStateException("conflicting task replicas; rearm refused"))
                   case None =>

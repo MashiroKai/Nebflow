@@ -217,6 +217,22 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       assert(result.isLeft)
       assertEquals(exists, false)
 
+  test("rearm rejects conflicting replicas even when another same-name id is valid"):
+    val dir = os.temp.dir(prefix = "rearm-mixed-conflict-")
+    val store = new ScheduledTaskStore(dir)
+    val initial = legacy.as[ScheduledTask].toOption.get.copy(name = Some("series"), source = Some("engine"))
+    val conflict = initial.copy(sessionId = "s2", content = "conflict")
+    val other = initial.copy(id = "other", sessionId = "s3")
+    for
+      _ <- store.addTask(initial)
+      _ <- IO(os.write(dir / "s2.json", List(conflict).asJson.noSpaces))
+      _ <- store.addTask(other)
+      result <- store.upsertTaskByName(initial.copy(sessionId = "s4")).attempt
+      exists <- IO(os.exists(dir / "s4.json"))
+    yield
+      assert(result.isLeft)
+      assertEquals(exists, false)
+
   test("cross-session rearm retains and advances reminder rule history"):
     val dir = os.temp.dir(prefix = "due-rearm-history-")
     val store = new ScheduledTaskStore(dir)
