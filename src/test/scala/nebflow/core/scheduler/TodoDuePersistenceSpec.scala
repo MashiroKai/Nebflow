@@ -230,6 +230,8 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       competing <- cats.effect.Ref.of[IO, Boolean](false)
       waiter <- store.withStoreLock(ran.set(true), waiting.complete(()).void *> gate.get).start
       _ <- waiting.get.timeout(scala.concurrent.duration.DurationInt(5).seconds)
+      available <- store.tryStoreMutex
+      _ <- IO(assertEquals(available, false))
       mutexAttempt <- cats.effect.Deferred[IO, Unit]
       mutexAcquired <- cats.effect.Deferred[IO, Unit]
       rival <- new ScheduledTaskStore(dir).withStoreLock(competing.set(true), IO.unit,
@@ -247,6 +249,8 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       _ <- new ScheduledTaskStore(dir).withStoreLock(IO.unit, uncontended.set(true)).timeout(scala.concurrent.duration.DurationInt(5).seconds)
       observed <- uncontended.get
       _ <- IO(assertEquals(observed, false))
+      free <- store.tryStoreMutex
+      _ <- IO(assertEquals(free, true))
     yield ()).guarantee(IO.blocking { process.getOutputStream.close(); () })
 
   test("two independent JVMs serialize occurrence writes"):

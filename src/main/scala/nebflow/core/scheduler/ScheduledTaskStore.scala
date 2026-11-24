@@ -1,7 +1,7 @@
 package nebflow.core.scheduler
 
 import cats.effect.{IO, Resource}
-import cats.effect.std.Mutex
+import cats.effect.std.Semaphore
 import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
@@ -46,13 +46,19 @@ class ScheduledTaskStore(
    * 全库读写互斥：任何文件读/改/写都必须持有（见类注）。CE 3.5 的 Mutex 无
    * unsafe 直构 —— lazy + global runtime 物化一次（先例：DeviceProfile.scala）。
    */
+  private[scheduler] def tryStoreMutex: IO[Boolean] =
+    IO.blocking(baseDir.toNIO.toRealPath()).flatMap { canonical =>
+      val mutex = ScheduledTaskStore.mutexFor(canonical)
+      mutex.tryAcquire.flatMap(acquired => if acquired then mutex.release.as(true) else IO.pure(false))
+    }
+
   private[scheduler] def withStoreLock[A](action: IO[A], onOsWait: IO[Unit] = IO.unit, onMutexWait: IO[Unit] = IO.unit, onMutexAcquired: IO[Unit] = IO.unit): IO[A] =
     for
       canonical <- IO.blocking {
         java.nio.file.Files.createDirectories(baseDir.toNIO)
         baseDir.toNIO.toRealPath()
       }
-      result <- (onMutexWait *> ScheduledTaskStore.mutexFor(canonical).lock.surround {
+      result <- (onMutexWait *> ScheduledTaskStore.mutexFor(canonical).permit.surround {
         onMutexAcquired *> {
         val fileLock = Resource.make {
           IO.blocking(java.nio.channels.FileChannel.open(
@@ -637,10 +643,10 @@ class ScheduledTaskStore(
 end ScheduledTaskStore
 
 object ScheduledTaskStore:
-  private val directoryLocks = new java.util.concurrent.ConcurrentHashMap[java.nio.file.Path, Mutex[IO]]()
-  private def mutexFor(path: java.nio.file.Path): Mutex[IO] =
+  private val directoryLocks = new java.util.concurrent.ConcurrentHashMap[java.nio.file.Path, Semaphore[IO]]()
+  private def mutexFor(path: java.nio.file.Path): Semaphore[IO] =
     import cats.effect.unsafe.implicits.global
-    directoryLocks.computeIfAbsent(path, _ => Mutex[IO].unsafeRunSync())
+    directoryLocks.computeIfAbsent(path, _ => Semaphore[IO](1).unsafeRunSync())
 
   /**
    * Production default storage directory (SharedResources assembly point; the default-root
