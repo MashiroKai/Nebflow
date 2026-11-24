@@ -26,7 +26,7 @@ const WAIT = { timeout: 3000 };
 async function openCasePage(browser, opts = {}) {
   const page = await browser.newPage({ viewport: { width: opts.width || 390, height: opts.height || 844 } });
   const extraCss = opts.css ? `<style>${opts.css}</style>` : '';
-  const html = `<link rel="stylesheet" href="/split.css"><style>body{margin:0}#term{position:absolute;top:200px;left:30px}.nf-term-tip{background:white;padding:12px;border:1px solid #555;box-sizing:border-box}</style>${extraCss}<a id="term" href="#">term</a>`;
+  const html = `<meta charset="utf-8"><link rel="stylesheet" href="/split.css"><style>body{margin:0}#term{position:absolute;top:200px;left:30px}.nf-term-tip{background:white;padding:12px;border:1px solid #555;box-sizing:border-box}</style>${extraCss}<a id="term" href="#">term</a>`;
   await page.route('http://fixture.test/**', async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: html });

@@ -18,7 +18,7 @@ for (const arg of process.argv.slice(2)) {
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await page.route('http://fixture.test/**', async (route) => {
       const url = new URL(route.request().url());
-      if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: '<link rel="stylesheet" href="/split.css"><a id="term" href="#">Alias</a>' });
+      if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: '<meta charset="utf-8"><link rel="stylesheet" href="/split.css"><a id="term" href="#">Alias</a>' });
       if (url.pathname === '/termTip.js') return route.fulfill({ contentType: 'text/javascript', body: readFileSync('src/main/resources/web/js/termTip.js', 'utf8') });
       if (url.pathname === '/split.css') return route.fulfill({ contentType: 'text/css', body: readFileSync('src/main/resources/web/css/split.css', 'utf8') });
       if (url.pathname === '/flowHelpers.js') return route.fulfill({ contentType: 'text/javascript', body: 'export const authHeaders = () => ({})' });
@@ -279,7 +279,7 @@ for (const arg of process.argv.slice(2)) {
       const screen = await browser.newPage({ viewport: { width, height: width === 1440 ? 900 : 812 } });
       await screen.route('http://fixture.test/**', async (route) => {
         const url = new URL(route.request().url());
-        if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: '<link rel="stylesheet" href="/split.css"><style>body{margin:0}#term{position:absolute;top:200px;left:30px}.nf-term-tip{background:white;padding:12px;border:1px solid #555;box-sizing:border-box}</style><a id="term" href="#">term</a>' });
+        if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: '<meta charset="utf-8"><link rel="stylesheet" href="/split.css"><style>body{margin:0}#term{position:absolute;top:200px;left:30px}.nf-term-tip{background:white;padding:12px;border:1px solid #555;box-sizing:border-box}</style><a id="term" href="#">term</a>' });
         if (url.pathname === '/split.css') return route.fulfill({ contentType: 'text/css', body: readFileSync('src/main/resources/web/css/split.css', 'utf8') });
         if (url.pathname === '/termTip.js') return route.fulfill({ contentType: 'text/javascript', body: readFileSync('src/main/resources/web/js/termTip.js', 'utf8') });
         if (url.pathname === '/flowHelpers.js') return route.fulfill({ contentType: 'text/javascript', body: 'export const authHeaders = () => ({})' });
@@ -328,7 +328,7 @@ for (const arg of process.argv.slice(2)) {
       const statePage = await browser.newPage({ viewport: { width, height } });
       await statePage.route('http://fixture.test/**', async (route) => {
         const url = new URL(route.request().url());
-        if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: '<link rel="stylesheet" href="/split.css"><style>body{margin:0}#term{position:absolute;top:200px;left:30px}.nf-term-tip{background:white;padding:12px;border:1px solid #555;box-sizing:border-box}</style><a id="term" href="#">term</a>' });
+        if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: '<meta charset="utf-8"><link rel="stylesheet" href="/split.css"><style>body{margin:0}#term{position:absolute;top:200px;left:30px}.nf-term-tip{background:white;padding:12px;border:1px solid #555;box-sizing:border-box}</style><a id="term" href="#">term</a>' });
         if (url.pathname === '/split.css') return route.fulfill({ contentType: 'text/css', body: readFileSync('src/main/resources/web/css/split.css', 'utf8') });
         if (url.pathname === '/termTip.js') return route.fulfill({ contentType: 'text/javascript', body: readFileSync('src/main/resources/web/js/termTip.js', 'utf8') });
         if (url.pathname === '/flowHelpers.js') return route.fulfill({ contentType: 'text/javascript', body: 'export const authHeaders = () => ({})' });
@@ -457,7 +457,7 @@ for (const arg of process.argv.slice(2)) {
     const sourcePage = await browser.newPage();
     await sourcePage.route('http://fixture.test/**', async (route) => {
       const url = new URL(route.request().url());
-      if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: '<a id="source-term" href="#">source</a>' });
+      if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: '<meta charset="utf-8"><a id="source-term" href="#">source</a>' });
       if (url.pathname === '/termTip.js') return route.fulfill({ contentType: 'text/javascript', body: readFileSync('src/main/resources/web/js/termTip.js', 'utf8') });
       if (url.pathname === '/flowHelpers.js') return route.fulfill({ contentType: 'text/javascript', body: 'export const authHeaders = () => ({})' });
       if (url.pathname === '/i18n.js') return route.fulfill({ contentType: 'text/javascript', body: 'export const t = (key) => key' });
@@ -484,7 +484,7 @@ for (const arg of process.argv.slice(2)) {
     const missingSourcePage = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await missingSourcePage.route('http://fixture.test/**', async (route) => {
       const url = new URL(route.request().url());
-      if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: '<link rel="stylesheet" href="/split.css"><a id="missing-source" href="#">missing-source</a>' });
+      if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: '<meta charset="utf-8"><link rel="stylesheet" href="/split.css"><a id="missing-source" href="#">missing-source</a>' });
       if (url.pathname === '/split.css') return route.fulfill({ contentType: 'text/css', body: readFileSync('src/main/resources/web/css/split.css', 'utf8') });
       if (url.pathname === '/termTip.js') return route.fulfill({ contentType: 'text/javascript', body: readFileSync('src/main/resources/web/js/termTip.js', 'utf8') });
       if (url.pathname === '/flowHelpers.js') return route.fulfill({ contentType: 'text/javascript', body: 'export const authHeaders = () => ({})' });
