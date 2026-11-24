@@ -191,6 +191,7 @@ export function mountModelRulesSection(host) {
       errors = [];
       status = t('modelRules.applied');
       await load();
+      host.dispatchEvent(new CustomEvent('model-rules-saved', { bubbles: true }));
       return;
     }
     errors = [];

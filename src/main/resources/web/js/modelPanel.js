@@ -1017,6 +1017,15 @@ function renderChainSectionBody(container) {
       summary.className = 'set-row-hint';
       summary.textContent = ruleSummary;
       const host = document.createElement('div');
+      host.addEventListener('model-rules-saved', async () => {
+        try {
+          const response = await fetch('/api/model-rules', { headers: authHeaders() });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const data = await response.json();
+          ruleSummary = data.error ? `${t('modelRules.loadError')}: ${data.error}` : (data.source ? t('modelRules.source') : t('modelRules.diagramEmpty'));
+        } catch (error) { ruleSummary = `${t('modelRules.loadFailed')}: ${error.message}`; }
+        summary.textContent = ruleSummary;
+      });
       rules.append(heading, summary, host);
       container.appendChild(rules);
       rulesUnmount = mountModelRulesSection(host);

@@ -85,7 +85,7 @@ await new Promise((r) => webServer.listen(PORT, '127.0.0.1', r));
 /* ─────────────── 引导（mock API + mock WS + 真 web 壳） ─────────────── */
 async function boot(browser, { viewport, colorScheme, locale = 'zh-CN', touch = false }) {
   const ctx = await browser.newContext({ viewport, colorScheme, deviceScaleFactor: 2, hasTouch: touch });
-  const sim = { mode: 'follow', chains: Object.fromEntries(['Nebula', 'kernel', 'project-dispatcher', 'node', 'subagent'].map((r) => [r, r === 'Nebula' ? CHAIN : null])), puts: [] };
+  const sim = { mode: 'follow', source: '', chains: Object.fromEntries(['Nebula', 'kernel', 'project-dispatcher', 'node', 'subagent'].map((r) => [r, r === 'Nebula' ? CHAIN : null])), puts: [] };
   await ctx.addInitScript((l) => {
     localStorage.setItem('nebflow_token', 't');
     localStorage.setItem('neblink_token', 't');
@@ -107,7 +107,10 @@ async function boot(browser, { viewport, colorScheme, locale = 'zh-CN', touch = 
       sim.mode = r.request().postDataJSON().mode;
       return r.fulfill({ json: { mode: sim.mode } });
     }
-    if (p === '/api/model-rules') return r.fulfill({ json: { mode: sim.mode, source: '', diagram: { nodes: [] } } });
+    if (p === '/api/model-rules') {
+      if (r.request().method() === 'PUT') sim.source = r.request().postDataJSON().source;
+      return r.fulfill({ json: { mode: sim.mode, source: sim.source, diagram: { nodes: [] } } });
+    }
     if (p === '/api/sessions') {
       return r.fulfill({ json: { sessions: [{ id: SID, name: 'root', agentName: 'Nebula' }], activeId: SID } });
     }
@@ -229,13 +232,13 @@ async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = fals
     await page.locator('.mr-draft').waitFor({ state: 'visible' });
     await section.screenshot({ path: join(SHOTS_DIR, `tri-rules-${mobile ? 'mobile' : 'desktop'}.png`) });
     ok(tag, '规则摘要和编辑器在场', await page.locator('#model-rules-section-body .set-row-hint').innerText() === '暂无规则。');
+    await page.locator('.mr-draft').fill('rule example');
+    await page.locator('[data-act="apply"]').click();
+    await page.waitForFunction(() => document.querySelector('#model-rules-section-body .set-row-hint')?.textContent === '源码');
+    ok(tag, '规则保存后摘要更新', sim.source === 'rule example');
     await modes.locator('[data-rule-mode="follow"]').click();
     await page.waitForFunction(() => document.querySelector('[data-rule-mode="follow"]')?.getAttribute('aria-checked') === 'true');
-    sim.failMode = true;
-    await modes.locator('[data-rule-mode="slots"]').click();
-    await page.waitForFunction(() => document.querySelector('#model-chain-mode-state')?.textContent.includes('保存失败'));
-    ok(tag, '失败切换回滚到跟随', await modes.locator('[data-rule-mode="follow"]').getAttribute('aria-checked') === 'true');
-    sim.failMode = false;
+    await page.waitForFunction(() => document.querySelector('#model-chain-config .mp-config-inner')?.children.length === 0);
   }
 
   // ① 模式开关（switch 批）：全站唯一开关组件，一个 role=switch 的按钮 + 一行当前态。
@@ -468,6 +471,17 @@ async function functionalLeg(browser) {
   await ctx.close();
 }
 
+async function modeFailureLeg(browser) {
+  const { ctx, page, errors, sim } = await boot(browser, { viewport: { width: 1280, height: 800 }, colorScheme: 'light' });
+  await openSettings(page, { mobile: false });
+  sim.failMode = true;
+  await page.locator('[data-rule-mode="slots"]').click();
+  await page.waitForFunction(() => document.querySelector('#model-chain-mode-state')?.textContent.includes('保存失败'));
+  ok('mode-failure', '失败后回滚跟随模式', await page.locator('[data-rule-mode="follow"]').getAttribute('aria-checked') === 'true');
+  ok('mode-failure', '仅预期 500 错误', errors.every(e => /500/.test(e)));
+  await ctx.close();
+}
+
 /* ─────────────── 主流程：双引擎 × 双主题 ─────────────── */
 for (const engineName of ENGINES) {
   const browser = await (engineName === 'webkit' ? webkit : chromium).launch({ headless: process.env.HEADLESS !== '0' });
@@ -479,7 +493,7 @@ for (const engineName of ENGINES) {
     // 英文腿（i18n 双语实拍；最窄 390 视口那一条才是「不折行」的真判据）
     await leg(engineName, browser, { theme: 'dark', locale: 'en' });
     await leg(engineName, browser, { theme: 'dark', locale: 'en', mobile: true });
-    if (engineName === 'chromium') await functionalLeg(browser);
+    if (engineName === 'chromium') { await functionalLeg(browser); await modeFailureLeg(browser); }
   } finally {
     await browser.close();
   }
