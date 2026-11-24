@@ -403,6 +403,7 @@
   opacity: 0.4;
 }
 .explorer-empty {
+  overflow-wrap: anywhere;
   padding: var(--ds-space-1) var(--ds-space-5);
   font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);

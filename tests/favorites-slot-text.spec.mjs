@@ -205,6 +205,16 @@ try {
       await s.page.locator('#explorer-tree .explorer-empty').waitFor({state:'attached'});
       console.log('EMPTY-DIAG',JSON.stringify(await s.page.evaluate(()=>({sent:window.__wsSent.filter(f=>f.type==='listDir'),chain:(()=>{let a=document.querySelector('#explorer-tree .explorer-empty'),out=[];while(a){let s=getComputedStyle(a),r=a.getBoundingClientRect();out.push({tag:a.tagName,id:a.id,cls:String(a.className),display:s.display,visibility:s.visibility,width:r.width,height:r.height});a=a.parentElement;}return out;})()}))));
       await s.page.locator('#explorer-tree .explorer-empty').waitFor({state:'visible',timeout:1500});
+      const emptyLabel=s.page.locator('#explorer-tree .explorer-empty');
+      const originalFileEmpty=await emptyLabel.textContent();
+      for(const sample of samples.slice(0,3)) {
+        await emptyLabel.evaluate((el,text)=>{el.textContent=text;},sample);
+        const state=await measure(s.page,'#panel-sessions'); assertNoOverlap(state); assertText(state);
+      }
+      await emptyLabel.evaluate(el=>{el.style.whiteSpace='nowrap';el.style.overflowWrap='normal';});
+      const badFileEmpty=await measure(s.page,'#panel-sessions');
+      assert.throws(()=>assertText(badFileEmpty),/clipped/);
+      await emptyLabel.evaluate((el,text)=>{el.removeAttribute('style');el.textContent=text;},originalFileEmpty);
       const emptyState=await measure(s.page,'#panel-sessions'); assertNoOverlap(emptyState); assertText(emptyState);
       if(width===1280) await negativeOverlap(s.page,'#panel-sessions','#explorer-tree .explorer-empty');
       console.log(`PASS empty explorer directory ${width}`);
