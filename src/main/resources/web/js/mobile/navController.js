@@ -829,7 +829,7 @@ const CONTENT_GESTURE_SELECTOR =
 let swipeSuppressed = false;
 
 /** @type {{strip: HTMLElement, toolbar: HTMLElement, host: HTMLElement,
- *          empty: HTMLElement, dots: HTMLElement}|null} */
+ *          empty: HTMLElement, dots: HTMLElement, star: HTMLButtonElement}|null} */
 let canvasUI = null;
 /** @type {{pane: Element, parent: Node, next: Node|null}|null} 活动文档 pane 收编槽（单槽）。 */
 let canvasDocAnchor = null;
