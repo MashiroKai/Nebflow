@@ -210,6 +210,23 @@ const assert = require('node:assert/strict');
     await page.waitForFunction(() => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'cache 1'));
     assert.equal(await page.evaluate(() => window.cacheLookups), 1);
     await capture(page, '390x844-positive-cache-reuse');
+    await page.evaluate(() => {
+      window.testTip.hideTermTip();
+      window.fetch = async () => { throw new TypeError('service offline'); };
+      window.testTip.termTapExpand(document.querySelector('#term'), null);
+    });
+    await page.waitForFunction(() => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'cache 1'));
+    assert.equal(await page.evaluate(() => window.cacheLookups), 1);
+    await capture(page, '390x844-cached-value-service-offline');
+    await page.evaluate(() => {
+      window.fetch = async (url) => {
+        if (String(url).includes('/lookup?')) {
+          window.cacheLookups++;
+          return new Response(JSON.stringify({ available: true, results: [{ name: 'cache-test', definition: 'cache ' + window.cacheLookups, doc: {} }] }));
+        }
+        return new Response('{}', { status: 404 });
+      };
+    });
     await page.evaluate(() => { window.testTip.hideTermTip(); document.querySelector('#term').dataset.wikiProject = 'project-b'; window.testTip.termTapExpand(document.querySelector('#term'), null); });
     await page.waitForFunction(() => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'cache 2'));
     await page.evaluate(() => { window.testTip.hideTermTip(); window.advanceClock(); window.testTip.termTapExpand(document.querySelector('#term'), null); });
@@ -343,7 +360,7 @@ const assert = require('node:assert/strict');
       window.testTip.termTapExpand(a, null);
     });
     await page.waitForFunction(() => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'offline fallback'));
-    await capture(page, '390x844-network-fallback');
+    await capture(page, '390x844-network-error-resolved-payload');
     console.log('PASS: network failure falls back to resolved payload');
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
