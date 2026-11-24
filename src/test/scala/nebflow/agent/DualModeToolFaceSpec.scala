@@ -29,6 +29,14 @@ class DualModeToolFaceSpec extends FunSuite:
     def askFace(defn: AgentDef): Set[String] =
       buildAllowedToolSet(defn, 1, askSession = true, delegateSession = true, delegateMode = Some("dispatcher"))
 
+    def gitvizAndAskFace(defn: AgentDef): Set[String] =
+      buildAllowedToolSet(defn, 1, askGitViz = true, askSession = true, delegateSession = true)
+
+  test("GitViz face wins when both Ask flags are set") {
+    val definition = AgentDef(name = "subagent", description = "", tools = List("*"))
+    assertEquals(CoreProbe.gitvizAndAskFace(definition), nebflow.core.ask.AskSessions.GitVizAllowedTools)
+  }
+
   test("Ask effective face stays independent of dispatcher and declared tools") {
     val definition = AgentDef(name = "subagent", description = "", tools = List("*"))
     val face = CoreProbe.askFace(definition)
