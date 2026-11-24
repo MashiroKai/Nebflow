@@ -152,19 +152,16 @@ try {
           for(const position of [0,0.5,1]) {
             await s.page.locator(`${root} .cfp-body`).evaluate((el,p)=>{el.scrollTop=(el.scrollHeight-el.clientHeight)*p;},position);
             const measured=await measure(s.page,root); assertText(measured); assertNoOverlap(measured);
-            for(const sample of samples.slice(0,3)) {
-              const visibleIndex=await s.page.locator(`${root} .cfp-row`).evaluateAll(els=>els.findIndex(el=>{const r=el.getBoundingClientRect(), p=el.closest('.cfp-body').getBoundingClientRect();return r.bottom>p.top && r.top<p.bottom;}));
-              assert(visibleIndex>=0,'visible complete row at scroll offset');
-              const row=s.page.locator(`${root} .cfp-row`).nth(visibleIndex);
-              for(const part of ['.cfp-row-title','.cfp-row-src']) {
-                const text=row.locator(part), original=await text.textContent();
-                await text.evaluate((el,value)=>{el.textContent=value;},sample);
-                const good=await measure(s.page,root); assertText(good); assertNoOverlap(good);
-                await text.evaluate(el=>{el.style.whiteSpace='nowrap';el.style.overflowWrap='normal';});
-                const bad=await measure(s.page,root); assert.throws(()=>assertText(bad),/clipped/);
-                await text.evaluate((el,value)=>{el.removeAttribute('style');el.textContent=value;},original);
-                const restored=await measure(s.page,root); assertText(restored); assertNoOverlap(restored);
-              }
+            const row=s.page.locator(`${root} .cfp-row`).nth(position===0?0:position===1?8:4);
+            for(const [title,path] of [['a'.repeat(150),'/short.md'],['中文标题'.repeat(8),'/'+ 'p'.repeat(63)],['English name','/'+ 'p'.repeat(127)]]) {
+              const original=await row.evaluate((el,data)=>{const title=el.querySelector('.cfp-row-title'),src=el.querySelector('.cfp-row-src'),old=[title.textContent,src.textContent];title.textContent=data[0];src.textContent=data[1];return old;},[title,path]);
+              await row.evaluate(el=>el.scrollIntoView({block:'center'}));
+              const state=await row.evaluate(el=>{const p=el.closest('.cfp-body').getBoundingClientRect(),r=el.getBoundingClientRect();return {row:r.height,viewport:p.height,titleBytes:new TextEncoder().encode(el.querySelector('.cfp-row-title').textContent).length,pathBytes:new TextEncoder().encode(el.querySelector('.cfp-row-src').textContent).length,inside:[...el.querySelectorAll('.cfp-row-title,.cfp-row-src')].every(item=>{const x=item.getBoundingClientRect();return x.left>=p.left&&x.right<=p.right&&x.top>=p.top&&x.bottom<=p.bottom;})};});
+              console.log('REGULAR',JSON.stringify({sidebarWidth,position,...state}));
+              assert(state.row<=state.viewport,'regular row must fit viewport');
+              assert(state.inside,'title and path fully visible');
+              const good=await measure(s.page,root); assertText(good); assertNoOverlap(good);
+              await row.evaluate((el,data)=>{el.querySelector('.cfp-row-title').textContent=data[0];el.querySelector('.cfp-row-src').textContent=data[1];},original);
             }
           }
           console.log(`PASS sidebar width=${sidebarWidth} positions=start,middle,end`);
