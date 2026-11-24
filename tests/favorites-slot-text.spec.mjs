@@ -152,6 +152,18 @@ try {
           for(const position of [0,0.5,1]) {
             await s.page.locator(`${root} .cfp-body`).evaluate((el,p)=>{el.scrollTop=(el.scrollHeight-el.clientHeight)*p;},position);
             const measured=await measure(s.page,root); assertText(measured); assertNoOverlap(measured);
+            for(const sample of samples.slice(0,3)) {
+              const row=s.page.locator(`${root} .cfp-row`).first();
+              for(const part of ['.cfp-row-title','.cfp-row-src']) {
+                const text=row.locator(part), original=await text.textContent();
+                await text.evaluate((el,value)=>{el.textContent=value;},sample);
+                const good=await measure(s.page,root); assertText(good); assertNoOverlap(good);
+                await text.evaluate(el=>{el.style.whiteSpace='nowrap';el.style.overflowWrap='normal';});
+                const bad=await measure(s.page,root); assert.throws(()=>assertText(bad),/clipped/);
+                await text.evaluate((el,value)=>{el.removeAttribute('style');el.textContent=value;},original);
+                const restored=await measure(s.page,root); assertText(restored); assertNoOverlap(restored);
+              }
+            }
           }
           console.log(`PASS sidebar width=${sidebarWidth} positions=start,middle,end`);
         }
