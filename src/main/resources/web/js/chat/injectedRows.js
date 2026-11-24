@@ -802,5 +802,6 @@ export function renderInjectedBubble(text, source, timestamp, eventType, sender,
   // A 侧 #491 单点落序（chat.js appendChatRow = `chat.append(row)`）随簇同位落此：
   // 纯 doc-order 追加，等价语义、同为唯一追加语义（禁反向 import chat.js 成环）。
   chat.append(row);
+  chat.dispatchEvent(new CustomEvent('nf-injection-appended', { bubbles: true, detail: { row } }));
   if (shouldFollowBottom(activeView, chat)) chat.scrollTop = chat.scrollHeight;
 }

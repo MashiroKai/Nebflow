@@ -164,6 +164,10 @@ test.describe('injected turn opens its OWN badge group (16:54 追加令)', () =>
     expect(after.linePresent).toBe(true);
     expect(after.linePrevIsUser).toBe(true);                    // 行线未动（isConnected 短路）
     expect(after.linePrevIsInjected).toBe(false);
+    await expect(page.locator('[data-nf-injection-stack] button')).toContainText('1');
+    await page.evaluate(() => window.__tdInject('第二条轮内注入', 'nodeMessage'));
+    await expect(page.locator('[data-nf-injection-stack] button')).toContainText('2');
+    expect(await page.locator('.row .bubble.injected').count()).toBe(2);
 
     // turn 1 闭合；排队腿随后开 turn 2 → 自己的行线贴注入泡、自己的 badge。
     await page.evaluate(() => window.__tdDone('Bash\n  (sleep 30)', 'No output', 'ok', false, '{"command":"sleep 30"}'));

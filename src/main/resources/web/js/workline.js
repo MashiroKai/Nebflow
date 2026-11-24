@@ -258,6 +258,7 @@ function ensureRow(view) {
   const anchor = turnAnchor(chat);
   if (anchor && anchor.parentNode === chat) anchor.after(row);
   else chat.appendChild(row);
+  chat.dispatchEvent(new CustomEvent('nf-workline-created', { bubbles: true, detail: { row } }));
   // The line is one row tall; keep the viewport pinned when it was pinned (the
   // insertion above would otherwise push the pinned content out of view).
   if (isNearBottom(chat)) chat.scrollTop = chat.scrollHeight;

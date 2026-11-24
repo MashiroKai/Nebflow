@@ -167,6 +167,45 @@ const T_B = '找到关键线索了：收起分组在turnGroup.js，继续核对�
 const T_FINAL = '这是最终回复：中间过程已收起，回复与卡片照常可见。';
 const T_FINAL2 = '新回合的最终回复。';
 
+for (const width of [900, 390, 375]) {
+  test(`injection stack preserves mid-turn user order and four states at ${width}px`, async ({ browser }) => {
+    const { context, page } = await newPage(browser, { viewport: { width, height: 900 } });
+    const T = 1735689600000;
+    const msgs = [
+      { type: 'user', text: '开轮', timestamp: T },
+      { type: 'tool', label: 'Read', summary: 'ok', content: 'x', isError: false },
+      { type: 'user', injected: true, source: 'deviceMail', text: '第一条蓝色', timestamp: T + 1 },
+      { type: 'user', text: '中途用户插话', midTurn: true, timestamp: T + 2 },
+      { type: 'user', injected: true, source: 'deviceMail', text: '第二条蓝色', timestamp: T + 3 },
+      { type: 'ai', text: '完成', durationMs: 3000, model: 'test-model', timestamp: T + 4 },
+    ];
+    await page.evaluate(m => window.__history(m, { busyTail: false }), msgs);
+    const rows = page.locator('#chat > .row');
+    const baseline = await rows.evaluateAll(els => els.map(el => el.textContent));
+    const button = page.locator('[data-nf-injection-stack] button');
+    await expect(button).toContainText('2');
+    const injected = page.locator('#chat > .row:has(.bubble.injected)');
+    await expect(injected.nth(0)).toBeHidden();
+    await expect(injected.nth(1)).toBeHidden();
+    await button.click();
+    await expect(injected.nth(0)).toBeVisible();
+    await expect(injected.nth(1)).toBeVisible();
+    await page.locator('.turn-header').click();
+    await expect(button).toBeHidden();
+    await expect(injected.nth(0)).toBeVisible();
+    await page.locator('.turn-header').click();
+    await expect(button).toHaveAttribute('aria-expanded', 'true');
+    await button.click();
+    await page.locator('.turn-header').click();
+    await expect(button).toBeHidden();
+    await expect(injected.nth(1)).toBeVisible();
+    await page.locator('.turn-header').click();
+    await expect(button).toHaveAttribute('aria-expanded', 'false');
+    expect(await rows.evaluateAll(els => els.map(el => el.textContent))).toEqual(baseline);
+    await context.close();
+  });
+}
+
 test.describe('decompression model — live alternating turn (验收 ②④)', () => {
   test('done tucks thinking+tools behind a persistent stats header; texts/injected stay visible', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);

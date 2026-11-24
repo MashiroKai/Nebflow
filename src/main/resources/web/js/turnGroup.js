@@ -285,6 +285,11 @@ function syncInjectionStack(header) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'pill ds-media-stack__pill';
+    const label = document.createElement('span');
+    label.className = 'nf-injection-stack-label';
+    const count = document.createElement('span');
+    count.className = 'nf-injection-stack-count';
+    button.append(label, count);
     const face = document.createElement('div');
     face.className = 'bubble injected nf-injection-stack-face';
     stack.append(button, face);
@@ -301,9 +306,31 @@ function syncInjectionStack(header) {
   stack.hidden = forced;
   face.hidden = expanded;
   button.setAttribute('aria-expanded', String(expanded));
-  button.textContent = `${expanded ? '收起' : '展开'} ${rows.length}`;
+  button.firstElementChild.textContent = expanded ? '收起' : '展开';
+  const count = button.lastElementChild;
+  if (count.textContent !== String(rows.length)) {
+    const digit = document.createElement('span');
+    digit.className = 'nf-injection-stack-digit';
+    digit.textContent = String(rows.length);
+    count.replaceChildren(digit);
+  }
+  button.setAttribute('aria-label', `${expanded ? '收起' : '展开'} ${rows.length} 条注入消息`);
   face.textContent = `本轮收到 ${rows.length} 条注入消息`;
   for (const row of rows) row.classList.toggle('nf-injection-stack-hidden', !expanded && !forced);
+}
+
+// Events are dispatched by the live workline and injection append paths. A
+// settled header is deliberately not selected: post-closure mail starts a
+// new turn, never changes a previous badge's count.
+if (typeof document !== 'undefined') {
+  document.addEventListener('nf-injection-appended', event => {
+    const chat = event.target;
+    const line = Array.from(chat.children).find(el => el.classList.contains('nf-workline'));
+    if (line) syncInjectionStack(line);
+  });
+  document.addEventListener('nf-workline-created', event => {
+    syncInjectionStack(event.detail.row);
+  });
 }
 
 /* ---------- header build / toggle ---------- */
