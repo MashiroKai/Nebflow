@@ -16,6 +16,7 @@ let termTipHost = null;
 let termTipTimer = 0;
 let termTipDocBound = false;
 let termTipGeneration = 0;
+let termTipAbort = null;
 /** 深链导航回调（docs viewer 注入 onWikilinkClick；无导航面留空 = 收泡即止）。 */
 let termTipNav = null;
 /** @type {Map<string, any>} term-API fallback cache, including misses. */
@@ -67,6 +68,7 @@ function ensureTermTipEl() {
 
 export function hideTermTip() {
   termTipGeneration++;
+  if (termTipAbort) { termTipAbort.abort(); termTipAbort = null; }
   if (termTipTimer) { clearTimeout(termTipTimer); termTipTimer = 0; }
   termTipLink = null;
   termTipHost = null;
@@ -98,7 +100,7 @@ async function checkTermIndexVersion(headers) {
   finally { termIndexStatsPending = false; }
 }
 
-async function termInfoFor(a) {
+async function termInfoFor(a, signal) {
   let resolved = null;
   try { resolved = JSON.parse(a.dataset.wikiResolved || 'null'); } catch (e) { /* fallback below */ }
   const name = a.dataset.wikiTermFallback || a.dataset.wikiTarget || resolved?.term?.name || '';
@@ -114,7 +116,7 @@ async function termInfoFor(a) {
       if (cached && Date.now() - cached.time < 300000) return cached.info;
       termIndexCache.delete(key);
       const res = await fetch('/api/wiki/terms/lookup?name=' + encodeURIComponent(name), {
-        headers, signal: AbortSignal.timeout(5000),
+        headers, signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
       });
       const body = res.ok ? await res.json() : null;
       if (body?.available === true && Array.isArray(body.results)) {
@@ -135,11 +137,11 @@ async function termInfoFor(a) {
       }
     } catch (e) { /* unavailable, malformed, or timed out: use existing path */ }
   }
-  return legacyTermInfoFor(a);
+  return signal.aborted ? null : legacyTermInfoFor(a, signal);
 }
 
 /** Existing resolved payload, then registry lookup. */
-async function legacyTermInfoFor(a) {
+async function legacyTermInfoFor(a, signal) {
   if (a.dataset.wikiResolved) {
     try {
       const hit = JSON.parse(a.dataset.wikiResolved);
@@ -157,7 +159,7 @@ async function legacyTermInfoFor(a) {
   let info = null;
   try {
     const { authHeaders } = await import('./flowHelpers.js');
-    const res = await fetch('/api/wiki/term?name=' + encodeURIComponent(name), { headers: { ...authHeaders() } });
+    const res = await fetch('/api/wiki/term?name=' + encodeURIComponent(name), { headers: { ...authHeaders() }, signal });
     if (res.ok) {
       const body = await res.json();
       if (body && body.resolved && body.term) {
@@ -199,8 +201,10 @@ function requestTermTip(a, host, delay) {
   termTipLink = a;
   termTipHost = host || null;
   const generation = termTipGeneration;
+  const controller = new AbortController();
+  termTipAbort = controller;
   termTipTimer = setTimeout(async () => {
-    const info = await termInfoFor(a);
+    const info = await termInfoFor(a, controller.signal);
     if (generation !== termTipGeneration || termTipLink !== a) return;   // superseded/hidden while fetching
     if (!info) return;               // not a term after all — stay closed
     paintTermTip(a, info);

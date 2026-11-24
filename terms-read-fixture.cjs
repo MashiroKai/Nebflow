@@ -27,5 +27,24 @@ const assert = require('node:assert/strict');
     await page.locator('.nf-term-tip .ts').waitFor({ state: 'visible' });
     assert.equal(await page.locator('.nf-term-tip .ts').textContent(), 'derived definition');
     console.log('PASS: derived alias lookup precedes resolved payload');
+    await page.evaluate(async () => {
+      const tip = await import('/termTip.js');
+      tip.hideTermTip();
+      const a = document.querySelector('#term');
+      a.dataset.wikiTarget = 'pending';
+      window.aborted = false;
+      const originalFetch = window.fetch;
+      window.fetch = (url, options) => String(url).includes('/lookup?')
+        ? new Promise((resolve, reject) => options.signal.addEventListener('abort', () => {
+          window.aborted = true;
+          reject(new DOMException('Aborted', 'AbortError'));
+        })) : originalFetch(url, options);
+      tip.termTapExpand(a, null);
+    });
+    await page.waitForFunction(() => document.querySelector('#term') && window.aborted === false);
+    await page.waitForTimeout(50);
+    await page.evaluate(async () => (await import('/termTip.js')).hideTermTip());
+    assert.equal(await page.evaluate(() => window.aborted), true);
+    console.log('PASS: closing aborts pending lookup');
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
