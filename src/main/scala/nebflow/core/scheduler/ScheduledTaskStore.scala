@@ -362,17 +362,23 @@ class ScheduledTaskStore(
         val local = date.atTime(java.time.LocalTime.parse(weekly.localTime))
         val rules = zone.getRules
         val offsets = rules.getValidOffsets(local)
-        val instant = if offsets.isEmpty then rules.getTransition(local).getDateTimeAfter.atZone(zone).toInstant
-                      else local.toInstant(offsets.get(0))
+        val instant =
+          if offsets.isEmpty then rules.getTransition(local).getDateTimeAfter.atZone(zone).toInstant
+          else local.toInstant(offsets.get(0))
         Some(instant.toEpochMilli)
     def advance(sessionId: String, task: ScheduledTask): IO[Unit] =
       (task.due, task.nextDueAt) match
         case (Some(rule), Some(at)) if at <= now =>
           val following = next(rule, at)
           val occurrence = TodoOccurrence.create(task.id, at, task.revision)
-          val updated = task.copy(occurrences = task.occurrences :+ occurrence, nextDueAt = following,
-            revision = Math.addExact(task.revision, 1L))
-          loadUnlocked(sessionId).flatMap(rows => saveUnlocked(sessionId, rows.map(t => if t.id == task.id then updated else t))) *>
+          val updated = task.copy(
+            occurrences = task.occurrences :+ occurrence,
+            nextDueAt = following,
+            revision = Math.addExact(task.revision, 1L)
+          )
+          loadUnlocked(sessionId).flatMap(rows =>
+            saveUnlocked(sessionId, rows.map(t => if t.id == task.id then updated else t))
+          ) *>
             advance(sessionId, updated)
         case _ => IO.unit
     withStoreLock {

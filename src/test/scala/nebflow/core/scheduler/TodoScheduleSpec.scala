@@ -222,9 +222,14 @@ class TodoScheduleSpec extends CatsEffectSuite:
     val scheduled = System.currentTimeMillis() - 1000L
     for
       _ <- reset()
-      task <- IO(ScheduledTask.create("s1", "due", future, kind = Some(ScheduledTask.KindTodo)).copy(
-        due = Some(TodoDue.Once(scheduled, "Europe/London", "2025-01-01T00:00", "Z")),
-        nextDueAt = Some(scheduled)))
+      task <- IO(
+        ScheduledTask
+          .create("s1", "due", future, kind = Some(ScheduledTask.KindTodo))
+          .copy(
+            due = Some(TodoDue.Once(scheduled, "Europe/London", "2025-01-01T00:00", "Z")),
+            nextDueAt = Some(scheduled)
+          )
+      )
       _ <- taskStore.addTask(task)
       _ <- mkService().fireDueTasks
       _ <- mkService().fireDueTasks
@@ -240,9 +245,11 @@ class TodoScheduleSpec extends CatsEffectSuite:
     val now = java.time.Instant.parse("2024-03-10T08:00:00Z").toEpochMilli
     for
       _ <- reset()
-      task <- IO(ScheduledTask.create("s1", "weekly", future, kind = Some(ScheduledTask.KindTodo)).copy(
-        due = Some(TodoDue.Weekly(7, "02:30", "America/New_York", "2024-03-03T02:30")),
-        nextDueAt = Some(first)))
+      task <- IO(
+        ScheduledTask
+          .create("s1", "weekly", future, kind = Some(ScheduledTask.KindTodo))
+          .copy(due = Some(TodoDue.Weekly(7, "02:30", "America/New_York", "2024-03-03T02:30")), nextDueAt = Some(first))
+      )
       _ <- taskStore.addTask(task)
       _ <- taskStore.materializeDueOccurrences(now)
       stored <- taskStore.loadTasks("s1")
