@@ -104,7 +104,7 @@ async function newPage(browser, opts = {}) {
 function readSeq(page) {
   return page.evaluate(() => {
     const chat = document.getElementById('chat');
-    return Array.from(chat.children).map(k => {
+    return Array.from(chat.children).filter(k => !k.hasAttribute('data-nf-injection-stack')).map(k => {
       if (k.classList.contains('turn-header')) return 'header';
       if (k.classList.contains('row')) {
         const tuck = k.classList.contains('nf-tucked') ? ':tucked' : '';
@@ -142,7 +142,7 @@ function visibleTexts(page) {
 function rowsSnapshot(page) {
   return page.evaluate(() =>
     Array.from(document.getElementById('chat').children)
-      .filter(el => !el.classList.contains('turn-header'))
+      .filter(el => !el.classList.contains('turn-header') && !el.hasAttribute('data-nf-injection-stack'))
       .map(el => el.outerHTML).join('\n'));
 }
 
@@ -203,11 +203,14 @@ test.describe('decompression model — live alternating turn (验收 ②④)', (
         thinking: pick('.row.thinking-row'),
         tools: pick('.row.tool'),
         injected: pick('.row .bubble.injected'),
+        stack: pick('[data-nf-injection-stack]'),
       };
     });
     expect(vis.thinking).toEqual([false]);
     expect(vis.tools).toEqual([false, false]);
-    expect(vis.injected).toEqual([true]);
+    expect(vis.injected).toEqual([false]);
+    expect(vis.stack).toEqual([true]);
+    await expect(page.locator('[data-nf-injection-stack] button')).toContainText('1');
 
     // The header carries the restored ✻ design phrase + model + whole-turn
     // tool count + file count (Read turnGroup.js → 1 file;
