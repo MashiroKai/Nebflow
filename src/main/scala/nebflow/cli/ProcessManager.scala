@@ -391,12 +391,12 @@ object ProcessManager:
     val hardGate =
       ports.exists(ProtectedPorts.contains) && DevHostMarkers.exists(cmd.contains)
     if hardGate then
-      return StopOutcome.Refused(
+      StopOutcome.Refused(
         s"pid $pid listens on ${ports.intersect(ProtectedPorts).sorted.mkString("/")} with a dev-host " +
           s"command line (${StaleProcessGuard.truncate(cmd)}) — refusing; this gate is not bypassable " +
           "with --force (dev host instances are managed by their own session)"
       )
-
+    else {
     // Ownership gate (piece 2): only launcher-started instances are managed
     // by default; --force skips this gate only, --tree also unlocks it and
     // extends the kill set. Piece 1 and the hard gate are never bypassed.
@@ -409,8 +409,8 @@ object ProcessManager:
           "instance was started by nebflow-restart.sh — use that script to manage it, or rerun with --tree/--force"
         case _ =>
           "instance ownership is unknown — rerun with --tree or --force if you really own this process"
-      return StopOutcome.Refused(s"refusing to stop pid $pid: $hint")
-
+      StopOutcome.Refused(s"refusing to stop pid $pid: $hint")
+    else {
     val targetsEither =
       if opts.tree then treeTargets(pid, deps)
       else Right((List(pid), None))
@@ -423,35 +423,41 @@ object ProcessManager:
         // and fail closed if it does not exit within the grace window.
         targets.foreach(deps.destroy)
         val gracefulDied = waitUntil(deps, pid, deps.graceTimeoutMs)
-        if !gracefulDied then return StopOutcome.Failed(s"process $pid did not exit after graceful stop; left running")
-
+        if !gracefulDied then StopOutcome.Failed(s"process $pid did not exit after graceful stop; left running")
+        else {
         // Piece 3: port-release confirmation from the TARGET pid's own
         // listener set. Empty after death (or lsof unavailable) = released /
         // fail-open — a broken probe never blocks a stop.
         val remaining = deps.listeningPortsOf(pid)
-        if remaining.nonEmpty then
-          val deadline = System.currentTimeMillis() + deps.drainTimeoutMs
-          var busy = remaining.filter(deps.listenerAlive)
-          while busy.nonEmpty && System.currentTimeMillis() < deadline do
-            if deps.pollMs > 0 then Thread.sleep(deps.pollMs)
-            busy = remaining.filter(deps.listenerAlive)
-          if busy.nonEmpty then return StopOutcome.Failed(s"ports still served after stop: ${busy.mkString(", ")}")
-
+        val busy =
+          if remaining.nonEmpty then
+            val deadline = System.currentTimeMillis() + deps.drainTimeoutMs
+            var active = remaining.filter(deps.listenerAlive)
+            while active.nonEmpty && System.currentTimeMillis() < deadline do
+              if deps.pollMs > 0 then Thread.sleep(deps.pollMs)
+              active = remaining.filter(deps.listenerAlive)
+            active
+          else remaining
+        if busy.nonEmpty then StopOutcome.Failed(s"ports still served after stop: ${busy.mkString(", ")}")
+        else {
         // Post-stop sweep (cli-lifecycle round2): the pid file names ONE process;
         // a same-home stand jar that is still alive keeps its jar locked and is
         // a residue, not a successful stop. Residue ⇒ Failed with the PIDs listed.
         val residue = waitSweep(deps)
         if residue.nonEmpty then
-          return StopOutcome.Failed(
+          StopOutcome.Failed(
             s"stopped pid $pid, but same-home ${nebflow.shared.Branding.productName} process(es) still running: " +
               s"pids ${residue.mkString(", ")} (their jars stay locked; stop them and re-run)"
           )
-
-        removePid()
-        val base = declaration.getOrElse(s"${nebflow.shared.Branding.productName} stopped (pid $pid)")
-        StopOutcome.Stopped(degradedVia.fold(base)(via => s"$base — identity via degraded chain: $via"))
-
+        else
+          removePid()
+          val base = declaration.getOrElse(s"${nebflow.shared.Branding.productName} stopped (pid $pid)")
+          StopOutcome.Stopped(degradedVia.fold(base)(via => s"$base — identity via degraded chain: $via"))
+        }
+        }
     end match
+    }
+    }
 
   end stopVerified
 
