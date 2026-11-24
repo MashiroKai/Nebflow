@@ -153,13 +153,13 @@ test('T2 process row anatomy: status dot + name + :port + command + autostart sw
   await expect(r1.locator('a.daemon-name')).toHaveAttribute('href', 'http://localhost:8111');
   await expect(r1.locator('.daemon-port')).toHaveText(':8111');
   await expect(r1.locator('.daemon-command')).toHaveText('npm run dev');
-  await expect(r1.locator('.daemon-autostart-input')).toBeChecked();
+  await expect(r1.locator('[role="switch"][data-autostart-id]')).toBeChecked();
 
   // 行 2 watcher：starting 点 + 非链名 + 开关未选。
   const r2 = rows.nth(1);
   await expect(r2.locator('.daemon-status')).toHaveClass(/starting/);
   await expect(r2.locator('a.daemon-name')).toHaveCount(0);
-  await expect(r2.locator('.daemon-autostart-input')).not.toBeChecked();
+  await expect(r2.locator('[role="switch"][data-autostart-id]')).not.toBeChecked();
   // 行 3 legacy：error 点。
   await expect(rows.nth(2).locator('.daemon-status')).toHaveClass(/error/);
   expect(errors).toEqual([]);
@@ -180,9 +180,9 @@ test('T4 autostart toggle flips → PUT /api/daemons/:id (open point ④)', asyn
   const errors = watchErrors(page);
   await openPanel(page);
   const r1 = page.locator('#daemon-panel .daemon-row').nth(0);
-  const r1input = r1.locator('.daemon-autostart-input');
-  // 开关 = 自绘 track/thumb（input 本体不可视点）—— 用户路径点 label。
-  const r1label = r1.locator('label.daemon-autostart');
+  const r1input = r1.locator('[role="switch"][data-autostart-id]');
+  // 共享开关以 role=switch 暴露状态和点击入口。
+  const r1label = r1input;
   await expect(r1input).toBeChecked();
   await r1label.click();
   await expect(r1input).not.toBeChecked();

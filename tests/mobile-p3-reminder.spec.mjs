@@ -195,10 +195,11 @@ test('T4 next-trigger main line + last-triggered sub line (open point ①)', asy
   const body = page.locator('#reminder-panel .reminder-panel-body');
   const row = body.locator('.reminder-row', { hasText: '每小时巡检构建' });
   await expect(row.locator('.reminder-row-time')).toContainText('今天');
-  await expect(row.locator('.reminder-row-last')).toContainText('上次触发');
-  // 无 lastTriggered 的行不出现副行节点。
+  await row.locator('.reminder-expand-btn').click();
+  await expect(row.locator('.reminder-row-fact').filter({ hasText: '上次触发' })).toBeVisible();
+  // 无 lastTriggered 的行不出现对应详情。
   const daily = body.locator('.reminder-row', { hasText: '每天晨报摘要' });
-  await expect(daily.locator('.reminder-row-last')).toHaveCount(0);
+  await expect(daily.locator('.reminder-row-fact').filter({ hasText: '上次触发' })).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 
