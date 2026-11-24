@@ -232,7 +232,8 @@ function buildPage(onClose, onOpened) {
 export function mountFavoritesSidebar() {
   const panel = document.getElementById('panel-favorites');
   if (!panel || panel.firstElementChild) return;
-  const built = buildPage(() => { void import('./activityBar.js').then((m) => m.showSidePanel('files')); });
+  const built = buildPage(() => {});
+  built.el.querySelector('.cfp-back')?.remove();
   built.el.id = 'canvas-fav-sidebar-page';
   built.el.classList.add('cfp-sidebar', 'is-open');
   built.el.removeAttribute('role');
@@ -251,10 +252,15 @@ function onKey(e) {
  *  @param {{ onOpened?: () => void }} [opts] 条目打开成功后的回调（手机端 = 切到 canvas 页）。 */
 export function openFavoritesPage(opts = {}) {
   if (current) return;
+  const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const built = buildPage(() => closeFavoritesPage(), opts.onOpened);
   document.body.appendChild(built.el);
-  current = built;
-  requestAnimationFrame(() => built.el.classList.add('is-open'));
+  current = { ...built, previousFocus };
+  requestAnimationFrame(() => {
+    built.el.classList.add('is-open');
+    const back = built.el.querySelector('.cfp-back');
+    if (back instanceof HTMLElement) back.focus();
+  });
   document.addEventListener('keydown', onKey);
   void syncFavoritesFromEngine();   // 打开即与引擎真源对齐（同步完成派发变更 ⇒ 页内重绘）
 }
@@ -264,7 +270,9 @@ export function closeFavoritesPage() {
   if (!current) return;
   current.dispose();
   current.el.remove();
+  const previousFocus = current.previousFocus;
   current = null;
+  if (previousFocus?.isConnected) previousFocus.focus();
   document.removeEventListener('keydown', onKey);
 }
 
