@@ -53,6 +53,27 @@ async function measure(page, root) {
 }
 function assertText(result) { for (const e of result.text) assert(e.sw <= e.cw+1 && e.sh <= e.ch+1 && e.overflow !== 'ellipsis', `clipped ${JSON.stringify(e)}`); }
 function assertNoOverlap(result) { assert.deepEqual(result.pairs, [], 'independent visible siblings overlap'); }
+async function checkSearch(page, selector, panel, query) {
+  const input=page.locator(selector);
+  await input.fill(query); await input.press('Home'); await input.press('End');
+  const state=await input.evaluate((el,sel)=>{const p=document.querySelector(sel),r=el.getBoundingClientRect();return {value:el.value,start:el.selectionStart,end:el.selectionEnd,scroll:el.scrollLeft,ro:el.readOnly,pw:p.clientWidth,ps:p.scrollWidth,hits:[.05,.5,.95].flatMap(x=>[.05,.5,.95].map(y=>{const hit=document.elementFromPoint(r.left+r.width*x,r.top+r.height*y);return hit===el||el.contains(hit);}))};},panel);
+  assert(!state.ro && state.value===query && state.start===query.length && state.end===query.length && state.scroll>0, 'search keyboard');
+  assert(state.ps<=state.pw,'search panel overflow');
+  assert(state.hits.every(Boolean),'search obscured');
+}
+async function negativeSearch(page, selector, panel, query) {
+  const input=page.locator(selector);
+  await input.evaluate(el=>{el.readOnly=true;});
+  await assert.rejects(checkSearch(page,selector,panel,query),/search keyboard|read.?only|Timeout/i);
+  await input.evaluate(el=>{el.readOnly=false;});
+  await page.evaluate(sel=>{let r=document.querySelector(sel).getBoundingClientRect(),e=document.createElement('div');e.id='injected-obstruction';Object.assign(e.style,{position:'fixed',left:r.left+'px',top:r.top+'px',width:r.width+'px',height:r.height+'px',zIndex:'999999'});document.body.append(e);},selector);
+  await assert.rejects(checkSearch(page,selector,panel,query),/search obscured/);
+  await page.locator('#injected-obstruction').evaluate(el=>el.remove());
+  await input.evaluate(el=>{const p=el.closest('.cfp-page, #panel-sessions');const x=document.createElement('div');x.id='injected-overflow';x.textContent='x'.repeat(1000);x.style.whiteSpace='nowrap';p.append(x);});
+  await assert.rejects(checkSearch(page,selector,panel,query),/search panel overflow/);
+  await page.locator('#injected-overflow').evaluate(el=>el.remove());
+  console.log(`PASS three independent search negative controls ${selector}`);
+}
 try {
   for (const [width,height] of (process.env.EMPTY_ONLY ? [] : [[1280,800],[1440,900],[375,844],[390,844]])) {
     const s=await createSession(browser,{width,height,colorScheme:'light',explorerEntries:samples.map((name,i)=>({name:`${i}-${name.replaceAll('/','_')}.md`,type:'file',size:1}))});
@@ -88,6 +109,8 @@ try {
       // must retain the complete value without widening the surrounding panel.
       const search=s.page.locator(`${root} .cfp-search-input`);
       const query='SearchLongValue0123456789'.repeat(12);
+      await checkSearch(s.page,`${root} .cfp-search-input`,root,query);
+      if(width===1280) await negativeSearch(s.page,`${root} .cfp-search-input`,root,query);
       await search.fill(query);
       await search.press('Home'); await search.press('End');
       const inputState=await search.evaluate(el=>({value:el.value, start:el.selectionStart, end:el.selectionEnd, scrollLeft:el.scrollLeft, panelScroll:el.closest('.cfp-page').scrollWidth, panelWidth:el.closest('.cfp-page').clientWidth, rect:el.getBoundingClientRect().toJSON()}));
@@ -116,6 +139,9 @@ try {
         }
         await rows.first().focus(); await s.page.keyboard.type('VeryLong');
         const fileSearch=s.page.locator('#explorer-search'); await fileSearch.waitFor({state:'visible'});
+        await checkSearch(s.page,'#explorer-search','#panel-sessions',query);
+        if(width===1280) await negativeSearch(s.page,'#explorer-search','#panel-sessions',query);
+        await fileSearch.fill('VeryLong');
         assertNoOverlap(await measure(s.page,'#panel-sessions'));
         await fileSearch.fill('no-match-987654321');
         assertNoOverlap(await measure(s.page,'#panel-sessions'));
