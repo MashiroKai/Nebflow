@@ -76,8 +76,70 @@ export function hideTermTip() {
   }
 }
 
-/** 气泡数据两条腿（①载荷直读 ②term API 兜底）的统一取数口。 */
+// The term database is derived from the vault; keep successful lookups only briefly.
+const termIndexCache = new Map();
+let termIndexVersion = null;
+let termIndexStatsAt = 0;
+let termIndexStatsPending = false;
+
+async function checkTermIndexVersion(headers) {
+  const now = Date.now();
+  if (termIndexStatsPending || (termIndexStatsAt && now - termIndexStatsAt < 60000)) return;
+  termIndexStatsAt = now;
+  termIndexStatsPending = true;
+  try {
+    const res = await fetch('/api/wiki/terms/stats', { headers });
+    const data = res.ok ? await res.json() : null;
+    if (data && typeof data.last_rebuild === 'string') {
+      if (termIndexVersion !== null && termIndexVersion !== data.last_rebuild) termIndexCache.clear();
+      termIndexVersion = data.last_rebuild;
+    }
+  } catch (e) { /* TTL remains the fallback when stats is unavailable. */ }
+  finally { termIndexStatsPending = false; }
+}
+
 async function termInfoFor(a) {
+  let resolved = null;
+  try { resolved = JSON.parse(a.dataset.wikiResolved || 'null'); } catch (e) { /* fallback below */ }
+  const name = a.dataset.wikiTermFallback || a.dataset.wikiTarget || resolved?.term?.name || '';
+  const project = a.dataset.wikiProject || '';
+  const rel = resolved?.term?.rel || '';
+  if (name) {
+    try {
+      const { authHeaders } = await import('./flowHelpers.js');
+      const headers = { ...authHeaders() };
+      void checkTermIndexVersion(headers);
+      const key = JSON.stringify([name.toLowerCase(), project, rel]);
+      const cached = termIndexCache.get(key);
+      if (cached && Date.now() - cached.time < 300000) return cached.info;
+      termIndexCache.delete(key);
+      const res = await fetch('/api/wiki/terms/lookup?name=' + encodeURIComponent(name), {
+        headers, signal: AbortSignal.timeout(5000),
+      });
+      const body = res.ok ? await res.json() : null;
+      if (body?.available === true && Array.isArray(body.results)) {
+        const matches = body.results.filter((item) => item && typeof item.name === 'string' &&
+          (item.name.toLowerCase() === name.toLowerCase() ||
+            (Array.isArray(item.aliases) && item.aliases.some((alias) => typeof alias === 'string' && alias.toLowerCase() === name.toLowerCase()))));
+        const primary = matches.filter((item) => item.name.toLowerCase() === name.toLowerCase());
+        const candidates = primary.length ? primary : matches;
+        const scoped = candidates.length > 1 && project && rel
+          ? candidates.filter((item) => item.doc?.project === project && item.doc?.rel === rel)
+          : candidates;
+        if (scoped.length === 1) {
+          const hit = scoped[0];
+          const info = { name: hit.name, definition: hit.definition || '', rel: hit.doc?.rel || '', doc: hit.source || '' };
+          termIndexCache.set(key, { time: Date.now(), info });
+          return info;
+        }
+      }
+    } catch (e) { /* unavailable, malformed, or timed out: use existing path */ }
+  }
+  return legacyTermInfoFor(a);
+}
+
+/** Existing resolved payload, then registry lookup. */
+async function legacyTermInfoFor(a) {
   if (a.dataset.wikiResolved) {
     try {
       const hit = JSON.parse(a.dataset.wikiResolved);
@@ -103,7 +165,7 @@ async function termInfoFor(a) {
       }
     }
   } catch (e) { info = null; }
-  if (termApiVersions.get(key) === version) termApiCache.set(key, info);
+  if (info && termApiVersions.get(key) === version) termApiCache.set(key, info);
   return info;
 }
 
