@@ -11,6 +11,7 @@ test('model rules mobile mounting and scroll geometry', async ({page}) => {
   await page.addInitScript(() => { localStorage.setItem('nebflow_token','e2e'); localStorage.setItem('nebflow_locale','zh-CN'); });
   await page.route('**/*', route => {
     let p = decodeURIComponent(new URL(route.request().url()).pathname); if (p === '/') p = '/index.html';
+    if (p === '/api/secrets') return route.fulfill({json:{secrets:Array.from({length:12},(_,i)=>({name:`sample-long-secret-metadata-name-${i}`,variable:`SAMPLE_${i}`,purpose:'fixture only',updatedAt:'2024-01-01'}))}});
     if (p === '/api/model-rules/mode') return route.fulfill({json:{mode:'rules'}});
     if (p === '/api/model-rules') return route.fulfill({json:{mode:'rules',source:'long rule text '.repeat(30),diagram:{nodes:[]}}});
     if (p === '/api/sessions') return route.fulfill({json:{sessions:[{id:SID,name:'root',agentName:'Nebula'}],activeId:SID}});
@@ -28,6 +29,29 @@ test('model rules mobile mounting and scroll geometry', async ({page}) => {
   await dockTo(page,'workbench');
   await page.locator('.mobile-page[data-page="workbench"] .mf-hub-row[data-hub-page="settings"]').click();
   await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
+  await page.locator('#btn-open-secrets').click({timeout:10000});
+  await expect(page.locator('#secrets-modal')).toBeVisible({timeout:10000});
+  await expect(page.locator('.secrets-row').first()).toBeVisible();
+  const name = page.locator('.secrets-row-name').last();
+  const longName = await name.evaluate(el => { const cs=getComputedStyle(el); const r=el.getBoundingClientRect(); return {text:el.textContent, overflow:el.scrollWidth>el.clientWidth, ellipsis:cs.textOverflow, right:r.right}; });
+  expect(longName.text).toContain('sample-long-secret');
+  expect(longName.right).toBeLessThanOrEqual(375);
+  if (longName.overflow) expect(longName.ellipsis).toBe('ellipsis');
+  await page.locator('.secrets-row-head').first().click();
+  await expect(page.locator('.secrets-modal-header')).toBeVisible();
+  const secretsScroll = page.locator('.secrets-modal-body');
+  for (const fraction of [0, 0.5, 1]) {
+    const geo = await secretsScroll.evaluate((el, f) => {
+      el.scrollTop = (el.scrollHeight - el.clientHeight) * f;
+      const r = el.getBoundingClientRect(); const h = document.querySelector('.secrets-modal-header').getBoundingClientRect();
+      return {left:r.left,right:r.right,top:r.top,headerBottom:h.bottom};
+    }, fraction);
+    expect(geo.left).toBeGreaterThanOrEqual(-1); expect(geo.right).toBeLessThanOrEqual(376);
+    expect(geo.top).toBeGreaterThanOrEqual(geo.headerBottom - 1);
+  }
+  if(process.env.MOBILE_AUDIT_EVIDENCE) { mkdirSync(process.env.MOBILE_AUDIT_EVIDENCE,{recursive:true}); await page.screenshot({path:join(process.env.MOBILE_AUDIT_EVIDENCE,'密钥.png')}); }
+  await page.locator('#secrets-modal-close').click();
+  await expect(page.locator('#secrets-modal')).toBeHidden();
   const disclosure=page.locator('[data-settings-disclosure="models"]');
   if(await disclosure.getAttribute('aria-expanded')!=='true') await disclosure.click();
   await page.locator('#model-chain-modes [data-rule-mode="rules"]').click();
