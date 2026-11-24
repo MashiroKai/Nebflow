@@ -50,6 +50,18 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       }
     }
 
+  test("occurrence identities survive snooze and differ only by scheduled instant"):
+    val first = TodoOccurrence.create("todo-1", 1735732800000L, 1L)
+    val retry = TodoOccurrence.create("todo-1", 1735732800000L, 1L)
+    val next = TodoOccurrence.create("todo-1", 1736337600000L, 1L)
+    val snoozed = first.copy(nextReminderAt = Some(1736340000000L))
+    assertEquals(first.key, retry.key)
+    assertNotEquals(first.key, next.key)
+    assertEquals(snoozed.key, first.key)
+    assertEquals(snoozed.scheduledAt, first.scheduledAt)
+    assertEquals(snoozed.nextReminderAt, Some(1736340000000L))
+    assertEquals(snoozed.asJson.as[TodoOccurrence].toOption, Some(snoozed))
+
   test("one-shot and weekly golden payloads survive store and fresh reader"):
     val dir = os.temp.dir(prefix = "todo-due-fixture-")
     val store = new ScheduledTaskStore(dir)

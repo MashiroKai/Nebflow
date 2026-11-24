@@ -69,6 +69,20 @@ object TodoDue:
   }
 end TodoDue
 
+/** One planned reminder, with snoozing separate from its immutable identity. */
+final case class TodoOccurrence(
+  todoId: String,
+  scheduledAt: Long,
+  ruleVersion: Long,
+  nextReminderAt: Option[Long] = None
+):
+  def key: String = s"${todoId.length}:$todoId:$scheduledAt"
+
+object TodoOccurrence:
+  given Codec[TodoOccurrence] = io.circe.generic.semiauto.deriveCodec
+  def create(todoId: String, scheduledAt: Long, ruleVersion: Long): TodoOccurrence =
+    TodoOccurrence(todoId, scheduledAt, ruleVersion)
+
 /** A scheduled task attached to a session — fires once or on a recurring schedule. */
 case class ScheduledTask(
   id: String,

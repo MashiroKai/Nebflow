@@ -1,6 +1,6 @@
 # What
 
-Add independent human reminder schedule persistence and validation.
+Add independent human reminder schedule persistence and validation, and an occurrence identity value with an independent next-reminder time.
 
 # Why
 
