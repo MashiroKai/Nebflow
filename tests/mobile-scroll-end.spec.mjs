@@ -77,7 +77,7 @@ const TARGETS = [
   { id: 'me', face: '.mobile-page[data-page="me"] .mobile-page-body', owner: 'self' },
 ];
 
-async function bootApp(page) {
+async function bootApp(page, holdContactsRefresh = false) {
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.addInitScript(({ n }) => {
     localStorage.setItem('nebflow_token', 'e2e-token');
@@ -121,7 +121,14 @@ async function bootApp(page) {
     }
     const file = normalize(join(WEB, p));
     if (!file.startsWith(WEB)) return route.fulfill({ status: 403, body: 'forbidden' });
-    try { return route.fulfill({ status: 200, contentType: MIME[extname(file)] || 'application/octet-stream', body: readFileSync(file) }); }
+    try {
+      let body = readFileSync(file);
+      if (holdContactsRefresh && p === '/js/friendsApi.js') {
+        body = body.toString().replace('export async function getFriends() {',
+          'export async function getFriends() { if (window.__holdContactsRefresh) { window.__contactsRefreshHeld = true; await new Promise(resolve => window.__releaseContactsRefresh = resolve); }');
+      }
+      return route.fulfill({ status: 200, contentType: MIME[extname(file)] || 'application/octet-stream', body });
+    }
     catch { return route.fulfill({ status: 404, body: 'not found' }); }
   });
   await page.routeWebSocket(/\/ws/, (ws) => {
@@ -264,7 +271,8 @@ const PROBE = async ({ faceSel, ownerSpec, token }) => {
 test.use({ viewport: { width: 375, height: 812 }, hasTouch: true, deviceScaleFactor: 2 });
 
 test.beforeEach(async ({ page }) => {
-  await bootApp(page);
+  await bootApp(page, test.info().title === 'activation refresh preserves focused friend');
+  if (test.info().title === 'activation refresh preserves focused friend') return;
   await page.locator('#mobile-dock .dock-key[data-dock="workbench"]').click();
   await page.waitForFunction(() => !!document.querySelector('.mobile-page[data-page="workbench"].live'));
   await page.waitForTimeout(300);
@@ -284,6 +292,29 @@ async function goto(page, id) {
   }
   await page.waitForTimeout(900);
 }
+
+test.describe('desktop focus', () => {
+  test.use({ viewport: { width: 1280, height: 812 }, hasTouch: false });
+  test('activation refresh preserves focused friend', async ({ page }) => {
+  await page.evaluate(() => { window.__holdContactsRefresh = true; });
+  await page.locator('#contacts-btn').click();
+  await page.waitForFunction(() => window.__contactsRefreshHeld === true);
+  const friend = page.locator('#fm-contacts-body .fm-friend-row').nth(15);
+  await expect(friend).toBeVisible();
+  await friend.focus();
+  const id = await friend.getAttribute('data-friend-id');
+  await expect(friend).toBeFocused();
+  await page.evaluate(() => {
+    const row = document.activeElement;
+    window.__refreshReplaced = new Promise(resolve => new MutationObserver((records, observer) => {
+      if (!row.isConnected) { observer.disconnect(); resolve(); }
+    }).observe(document.getElementById('fm-contacts-body'), { childList: true, subtree: true }));
+    window.__releaseContactsRefresh();
+  });
+  await page.evaluate(() => window.__refreshReplaced);
+  await expect(page.locator('.fm-friend-row:focus')).toHaveAttribute('data-friend-id', id);
+  });
+});
 
 test('mobile social dock pages: real mounted rows and long content', async ({ page }, testInfo) => {
   await page.locator('#mobile-dock .dock-key[data-dock="messages"]').click();
@@ -323,7 +354,8 @@ test('mobile social dock pages: real mounted rows and long content', async ({ pa
   for(let i=0;i<31;i++) {
     const friend=friends.nth(i), probe=`friend-${i}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     await friend.evaluate((el, marker)=>{el.dataset.nfProbe=marker; el.scrollIntoView({block:'center',behavior:'instant'});}, probe);
-    const r=await friend.boundingBox(), dock=await page.locator('#mobile-dock').boundingBox();
+    // Panel activation refresh replaces rows; resolve the current row for this frame without scrolling again.
+    const r=await contacts.evaluate((list, index) => { const el = list.querySelectorAll('.fm-friend-row')[index]; if (!el || !el.getClientRects().length) return null; const box = el.getBoundingClientRect(); return box.width && box.height ? { x: box.x, y: box.y, width: box.width, height: box.height } : null; }, i), dock=await page.locator('#mobile-dock').boundingBox();
     if (r === null) {
       const diagnostic = await page.evaluate(({ marker, index }) => {
         const list = document.querySelector('.mobile-page[data-page="contacts"] #fm-contacts-body');
