@@ -10,24 +10,29 @@ import cats.effect.unsafe.implicits.global
 import java.nio.file.Paths
 
 object TodoOccurrenceCrashChild:
+
   def main(args: Array[String]): Unit =
     val store = new ScheduledTaskStore(os.Path(args(0)))
     val occurrence = TodoOccurrence.create("old", 1000L, 7L)
     if args(1) == "probe" then
       val channel = java.nio.channels.FileChannel.open(
         os.Path(args(0)).toNIO.resolve(".scheduled-tasks.lock"),
-        java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.WRITE)
+        java.nio.file.StandardOpenOption.CREATE,
+        java.nio.file.StandardOpenOption.WRITE
+      )
       val lock = channel.tryLock()
       if lock == null then sys.exit(4)
       lock.release()
       channel.close()
       sys.exit(0)
     if args(1) == "hold" then
-      store.withStoreLock(IO.blocking {
-        System.out.println("LOCKED")
-        System.out.flush()
-        System.in.read()
-      }).unsafeRunSync()
+      store
+        .withStoreLock(IO.blocking {
+          System.out.println("LOCKED")
+          System.out.flush()
+          System.in.read()
+        })
+        .unsafeRunSync()
       sys.exit(0)
     val halt = () => Runtime.getRuntime.halt(71)
     if args(1) == "race" then
@@ -37,7 +42,6 @@ object TodoOccurrenceCrashChild:
     val after = if args(1) == "after" then halt else () => ()
     store.recordOccurrence("s1", occurrence, Some(2000L), before, after).unsafeRunSync()
     sys.exit(72)
-
 
 class TodoDuePersistenceSpec extends CatsEffectSuite:
 
@@ -123,42 +127,47 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       assertEquals(retry, false)
 
   private def checkHardCrash(point: String): IO[Unit] =
-    {
-      val dir = os.temp.dir(prefix = "occurrence-halt-")
-      val initial = legacy.as[ScheduledTask].toOption.get.copy(nextDueAt = Some(1000L))
-      val occurrence = TodoOccurrence.create("old", 1000L, 7L)
-      val cp = List.newBuilder[String]
-      var loader = Thread.currentThread().getContextClassLoader
-      while loader != null do
-        loader match
-          case urls: java.net.URLClassLoader =>
-            cp ++= urls.getURLs.toList.filter(_.getProtocol == "file").map(u => Paths.get(u.toURI).toString)
-          case _ => ()
-        loader = loader.getParent
-      cp += System.getProperty("java.class.path")
-      for
-        _ <- new ScheduledTaskStore(dir).addTask(initial)
-        status <- IO.blocking {
-          val process = new ProcessBuilder(Paths.get(System.getProperty("java.home"), "bin", "java").toString,
-            "-cp", cp.result().distinct.mkString(java.io.File.pathSeparator),
-            "nebflow.core.scheduler.TodoOccurrenceCrashChild", dir.toString, point)
-            .redirectErrorStream(true).redirectOutput((dir / "child.log").toIO).start()
-          assert(process.waitFor(90, java.util.concurrent.TimeUnit.SECONDS), "child did not exit")
-          process.exitValue()
-        }
-        rows <- new ScheduledTaskStore(dir).loadTasks("s1")
-        _ <- IO {
-          assertEquals(status, 71, os.read(dir / "child.log"))
-          assertEquals(rows.head.occurrences, if point == "before" then Nil else List(occurrence))
-          assertEquals(rows.head.nextDueAt, Some(if point == "before" then 1000L else 2000L))
-        }
-        result <- new ScheduledTaskStore(dir).recordOccurrence("s1", occurrence, Some(2000L))
-        finalRows <- new ScheduledTaskStore(dir).loadTasks("s1")
-      yield
-        assertEquals(result, point == "before")
-        assertEquals(finalRows.head.occurrences, List(occurrence))
-        assertEquals(finalRows.head.nextDueAt, Some(2000L))
-    }
+    val dir = os.temp.dir(prefix = "occurrence-halt-")
+    val initial = legacy.as[ScheduledTask].toOption.get.copy(nextDueAt = Some(1000L))
+    val occurrence = TodoOccurrence.create("old", 1000L, 7L)
+    val cp = List.newBuilder[String]
+    var loader = Thread.currentThread().getContextClassLoader
+    while loader != null do
+      loader match
+        case urls: java.net.URLClassLoader =>
+          cp ++= urls.getURLs.toList.filter(_.getProtocol == "file").map(u => Paths.get(u.toURI).toString)
+        case _ => ()
+      loader = loader.getParent
+    cp += System.getProperty("java.class.path")
+    for
+      _ <- new ScheduledTaskStore(dir).addTask(initial)
+      status <- IO.blocking {
+        val process = new ProcessBuilder(
+          Paths.get(System.getProperty("java.home"), "bin", "java").toString,
+          "-cp",
+          cp.result().distinct.mkString(java.io.File.pathSeparator),
+          "nebflow.core.scheduler.TodoOccurrenceCrashChild",
+          dir.toString,
+          point
+        )
+          .redirectErrorStream(true)
+          .redirectOutput((dir / "child.log").toIO)
+          .start()
+        assert(process.waitFor(90, java.util.concurrent.TimeUnit.SECONDS), "child did not exit")
+        process.exitValue()
+      }
+      rows <- new ScheduledTaskStore(dir).loadTasks("s1")
+      _ <- IO {
+        assertEquals(status, 71, os.read(dir / "child.log"))
+        assertEquals(rows.head.occurrences, if point == "before" then Nil else List(occurrence))
+        assertEquals(rows.head.nextDueAt, Some(if point == "before" then 1000L else 2000L))
+      }
+      result <- new ScheduledTaskStore(dir).recordOccurrence("s1", occurrence, Some(2000L))
+      finalRows <- new ScheduledTaskStore(dir).loadTasks("s1")
+    yield
+      assertEquals(result, point == "before")
+      assertEquals(finalRows.head.occurrences, List(occurrence))
+      assertEquals(finalRows.head.nextDueAt, Some(2000L))
 
   test("hard halt before atomic replacement preserves unadvanced series"):
     checkHardCrash("before")
@@ -174,8 +183,10 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
     val occurrence = TodoOccurrence.create("old", 1000L, 7L)
     for
       _ <- first.addTask(initial)
-      outcomes <- (first.recordOccurrence("s1", occurrence, Some(2000L)),
-        second.recordOccurrence("s1", occurrence, Some(2000L))).parTupled
+      outcomes <- (
+        first.recordOccurrence("s1", occurrence, Some(2000L)),
+        second.recordOccurrence("s1", occurrence, Some(2000L))
+      ).parTupled
       rows <- new ScheduledTaskStore(dir).loadTasks("s1")
     yield
       assertEquals(List(outcomes._1, outcomes._2).count(identity), 1)
@@ -213,10 +224,17 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       loader = loader.getParent
     cp += System.getProperty("java.class.path")
     def probe: IO[Int] = IO.blocking {
-      val child = new ProcessBuilder(Paths.get(System.getProperty("java.home"), "bin", "java").toString,
-        "-cp", cp.result().distinct.mkString(java.io.File.pathSeparator),
-        "nebflow.core.scheduler.TodoOccurrenceCrashChild", dir.toString, "probe")
-        .redirectErrorStream(true).redirectOutput((dir / "probe.log").toIO).start()
+      val child = new ProcessBuilder(
+        Paths.get(System.getProperty("java.home"), "bin", "java").toString,
+        "-cp",
+        cp.result().distinct.mkString(java.io.File.pathSeparator),
+        "nebflow.core.scheduler.TodoOccurrenceCrashChild",
+        dir.toString,
+        "probe"
+      )
+        .redirectErrorStream(true)
+        .redirectOutput((dir / "probe.log").toIO)
+        .start()
       assert(child.waitFor(30, java.util.concurrent.TimeUnit.SECONDS))
       child.exitValue()
     }
@@ -254,9 +272,14 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
         case _ => ()
       loader = loader.getParent
     cp += System.getProperty("java.class.path")
-    val process = new ProcessBuilder(Paths.get(System.getProperty("java.home"), "bin", "java").toString,
-      "-cp", cp.result().distinct.mkString(java.io.File.pathSeparator),
-      "nebflow.core.scheduler.TodoOccurrenceCrashChild", dir.toString, "hold").redirectErrorStream(true).start()
+    val process = new ProcessBuilder(
+      Paths.get(System.getProperty("java.home"), "bin", "java").toString,
+      "-cp",
+      cp.result().distinct.mkString(java.io.File.pathSeparator),
+      "nebflow.core.scheduler.TodoOccurrenceCrashChild",
+      dir.toString,
+      "hold"
+    ).redirectErrorStream(true).start()
     val reader = new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream))
     val store = new ScheduledTaskStore(dir)
     (for
@@ -272,8 +295,9 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       _ <- IO(assertEquals(available, false))
       mutexAttempt <- cats.effect.Deferred[IO, Unit]
       mutexAcquired <- cats.effect.Deferred[IO, Unit]
-      rival <- new ScheduledTaskStore(dir).withStoreLock(competing.set(true), IO.unit,
-        mutexAttempt.complete(()).void, mutexAcquired.complete(()).void).start
+      rival <- new ScheduledTaskStore(dir)
+        .withStoreLock(competing.set(true), IO.unit, mutexAttempt.complete(()).void, mutexAcquired.complete(()).void)
+        .start
       _ <- mutexAttempt.get.timeout(scala.concurrent.duration.DurationInt(5).seconds)
       acquiredBefore <- mutexAcquired.tryGet
       _ <- IO(assertEquals(acquiredBefore, None))
@@ -284,7 +308,9 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       _ <- IO.blocking { process.getOutputStream.write(1); process.getOutputStream.flush(); process.waitFor() }
       _ <- rival.joinWithNever.timeout(scala.concurrent.duration.DurationInt(5).seconds)
       uncontended <- cats.effect.Ref.of[IO, Boolean](false)
-      _ <- new ScheduledTaskStore(dir).withStoreLock(IO.unit, uncontended.set(true)).timeout(scala.concurrent.duration.DurationInt(5).seconds)
+      _ <- new ScheduledTaskStore(dir)
+        .withStoreLock(IO.unit, uncontended.set(true))
+        .timeout(scala.concurrent.duration.DurationInt(5).seconds)
       observed <- uncontended.get
       _ <- IO(assertEquals(observed, false))
       free <- store.tryStoreMutex
@@ -305,9 +331,17 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
     cp += System.getProperty("java.class.path")
     val classpath = cp.result().distinct.mkString(java.io.File.pathSeparator)
     def child(n: Int): Process =
-      new ProcessBuilder(Paths.get(System.getProperty("java.home"), "bin", "java").toString,
-        "-cp", classpath, "nebflow.core.scheduler.TodoOccurrenceCrashChild", dir.toString, "race")
-        .redirectErrorStream(true).redirectOutput((dir / s"child-$n.log").toIO).start()
+      new ProcessBuilder(
+        Paths.get(System.getProperty("java.home"), "bin", "java").toString,
+        "-cp",
+        classpath,
+        "nebflow.core.scheduler.TodoOccurrenceCrashChild",
+        dir.toString,
+        "race"
+      )
+        .redirectErrorStream(true)
+        .redirectOutput((dir / s"child-$n.log").toIO)
+        .start()
     for
       _ <- new ScheduledTaskStore(dir).addTask(initial)
       statuses <- IO.blocking {

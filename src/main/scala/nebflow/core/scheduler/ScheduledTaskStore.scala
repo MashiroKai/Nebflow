@@ -52,7 +52,12 @@ class ScheduledTaskStore(
       mutex.tryAcquire.flatMap(acquired => if acquired then mutex.release.as(true) else IO.pure(false))
     }
 
-  private[scheduler] def withStoreLock[A](action: IO[A], onOsWait: IO[Unit] = IO.unit, onMutexWait: IO[Unit] = IO.unit, onMutexAcquired: IO[Unit] = IO.unit): IO[A] =
+  private[scheduler] def withStoreLock[A](
+    action: IO[A],
+    onOsWait: IO[Unit] = IO.unit,
+    onMutexWait: IO[Unit] = IO.unit,
+    onMutexAcquired: IO[Unit] = IO.unit
+  ): IO[A] =
     for
       canonical <- IO.blocking {
         java.nio.file.Files.createDirectories(baseDir.toNIO)
@@ -60,23 +65,27 @@ class ScheduledTaskStore(
       }
       result <- (onMutexWait *> ScheduledTaskStore.mutexFor(canonical).permit.surround {
         onMutexAcquired *> {
-        val fileLock = Resource.make {
-          IO.blocking(java.nio.channels.FileChannel.open(
-            canonical.resolve(".scheduled-tasks.lock"),
-            java.nio.file.StandardOpenOption.CREATE,
-            java.nio.file.StandardOpenOption.WRITE
-          ))
-        }(channel => IO.blocking(channel.close()).handleError(_ => ())).flatMap { channel =>
-          def acquire: IO[java.nio.channels.FileLock] =
-            IO.blocking(Option(channel.tryLock())).flatMap {
-              case Some(lock) => IO.pure(lock)
-              case None => onOsWait *> IO.sleep(scala.concurrent.duration.DurationInt(25).millis) *> acquire
+          val fileLock = Resource
+            .make {
+              IO.blocking(
+                java.nio.channels.FileChannel.open(
+                  canonical.resolve(".scheduled-tasks.lock"),
+                  java.nio.file.StandardOpenOption.CREATE,
+                  java.nio.file.StandardOpenOption.WRITE
+                )
+              )
+            }(channel => IO.blocking(channel.close()).handleError(_ => ()))
+            .flatMap { channel =>
+              def acquire: IO[java.nio.channels.FileLock] =
+                IO.blocking(Option(channel.tryLock())).flatMap {
+                  case Some(lock) => IO.pure(lock)
+                  case None => onOsWait *> IO.sleep(scala.concurrent.duration.DurationInt(25).millis) *> acquire
+                }
+              Resource.makeFull[IO, java.nio.channels.FileLock](poll => poll(acquire))(lock =>
+                IO.blocking(lock.release()).handleError(_ => ())
+              )
             }
-          Resource.makeFull[IO, java.nio.channels.FileLock](poll => poll(acquire))(
-            lock => IO.blocking(lock.release()).handleError(_ => ())
-          )
-        }
-        fileLock.use(_ => action)
+          fileLock.use(_ => action)
         }
       })
     yield result
@@ -644,6 +653,7 @@ end ScheduledTaskStore
 
 object ScheduledTaskStore:
   private val directoryLocks = new java.util.concurrent.ConcurrentHashMap[java.nio.file.Path, Semaphore[IO]]()
+
   private def mutexFor(path: java.nio.file.Path): Semaphore[IO] =
     import cats.effect.unsafe.implicits.global
     directoryLocks.computeIfAbsent(path, _ => Semaphore[IO](1).unsafeRunSync())
