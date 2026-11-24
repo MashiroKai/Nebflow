@@ -42,7 +42,7 @@ import { isImeComposing } from './imeGuard.js';
 import { bindComposerKeys } from './input/composer.js';
 import { sessionShowsNodeEntries } from './taskList.js';
 import { todoStore, TAG_COLOR_PRESETS, PRIORITY_COLORS, PRIORITY_LABEL_KEYS } from './todoStore.js';
-import { isAskRow, buildAskCardForRow } from './askTodoQuestion.js';
+import { isAskRow, buildAskCardForRow, buildDecisionOption, decisionOptionLabel } from './askTodoQuestion.js';
 // 时间滚轮选择器（time-wheel-picker 实施批 2026-11-03，作者令 22:16/22:20）：
 // 待办截止时刻从裸 `<input type="datetime-local">` 收编为同款点选面。交互单源
 // = ./timeWheel.js；隐藏输入 `.tfl-due-input` 保留为值域载体（saveEditing /
@@ -1369,6 +1369,7 @@ class TodoFace {
     // 同一张列表、同一套排序，但没有打卡 / 删除 / 编辑语义；行体点开 = 行内**问题卡**
     // （单点模板 askTodoQuestion.js；作答/取消走 askPending 同一收口）。
     if (isAskRow(item) && !editing) return this.buildAskRow(item);
+    if (item.decision && !editing) return this.buildDecisionRow(item);
     const row = el('div', 'tfl-row');
     row.dataset.id = item.id;
     row.setAttribute('role', 'option');
@@ -1495,10 +1496,67 @@ class TodoFace {
     return row;
   }
 
+  buildDecisionRow(item) {
+    const row = el('div', 'tfl-row');
+    row.dataset.id = item.id;
+    const main = el('div', 'tfl-row-main');
+    const title = el('button', 'tfl-row-title', item.name);
+    title.type = 'button';
+    title.setAttribute('aria-expanded', 'false');
+    const detail = el('div', 'tfl-row-detail');
+    detail.hidden = true;
+    const dec = item.decision;
+    detail.appendChild(el('div', 'ta-qd-q', String(dec.question || '')));
+    const options = Array.isArray(dec.options) ? dec.options : [];
+    const picks = new Set();
+    const list = el('div', 'ta-qd-opts');
+    list.setAttribute('role', dec.multiSelect ? 'group' : 'radiogroup');
+    options.forEach((option) => {
+      if (!decisionOptionLabel(option)) return;
+      const optionRow = buildDecisionOption(item.id, option, !!dec.multiSelect, false, (checked) => {
+        if (!dec.multiSelect) picks.clear();
+        if (checked) picks.add(option.id); else picks.delete(option.id);
+      });
+      if (dec.answer || dec.secret) optionRow.querySelector('input').disabled = true;
+      list.appendChild(optionRow);
+    });
+    detail.appendChild(list);
+    const other = document.createElement('textarea');
+    other.className = 'ta-qd-answer-input';
+    other.placeholder = t('todoface.replyPh');
+    other.disabled = !!dec.answer || !!dec.secret;
+    if (dec.allowOther) detail.appendChild(other);
+    const error = el('div', 'ta-decision-error');
+    error.setAttribute('role', 'alert');
+    const submit = el('button', 'ta-decision-submit', t('todoapple.answerSubmit'));
+    submit.type = 'button';
+    submit.disabled = !!dec.answer || !!dec.secret;
+    if (dec.secret) error.textContent = t('todoapple.answerSecretBlocked');
+    submit.addEventListener('click', async () => {
+      const text = dec.allowOther ? other.value.trim() : '';
+      if ((!picks.size && !text) || submit.disabled) { error.textContent = t('todoapple.answerFirst'); return; }
+      submit.disabled = true;
+      const result = await todoStore.answerItem(item.id, { selectedOptionIds: [...picks], otherText: text || undefined, via: 'desktop' });
+      if (result.ok) todoStore.completeItem(item.id);
+      else { error.textContent = `${t('todoapple.answerRejected')}：${result.message || result.code || ''}`; submit.disabled = false; }
+    });
+    detail.append(error, submit);
+    title.addEventListener('click', () => {
+      detail.hidden = !detail.hidden;
+      title.setAttribute('aria-expanded', String(!detail.hidden));
+    });
+    main.append(title, detail);
+    row.append(main, this.buildCompleteButton(item));
+    return row;
+  }
+
   buildCompleteButton(item) {
     const btn = el('button', 'tfl-complete');
     btn.type = 'button';
-    btn.setAttribute('aria-label', t('todoface.complete'));
+    const gated = !!(item.decision && !item.decision.answer);
+    btn.disabled = gated;
+    btn.title = gated ? t('todoapple.answerFirst') : t('todoface.complete');
+    btn.setAttribute('aria-label', btn.title);
     const ring = el('span', 'tfl-complete-ring');
     const fill = el('span', 'tfl-complete-fill');
     fill.innerHTML = CHECK_SVG;

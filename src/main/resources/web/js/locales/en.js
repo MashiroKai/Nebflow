@@ -3539,7 +3539,7 @@ export default {
   'todoapple.createUnconfirmed': 'Save not confirmed. Check your connection and retry in the original session to avoid duplicates.',
   'todoapple.discardPending': 'Discard retry',
   'todoapple.replyFailed': 'Reply not sent. Please try again.',
-  'todoapple.answerFirst': 'Answer first, then complete',
+  'todoapple.answerFirst': 'Choose an option first',
   'todoapple.decisionPending': 'Awaiting answer',
   'todoapple.decisionAnswered': 'Answered',
   'todoapple.answerSubmit': 'Submit answer',

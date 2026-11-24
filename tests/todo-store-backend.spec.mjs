@@ -21,6 +21,7 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
+const shot = async (page, name) => { if (process.env.TODO_SHOTS) await page.screenshot({ path: join(process.env.TODO_SHOTS, name + '.png') }); };
 import { fileURLToPath } from 'node:url';
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
@@ -97,7 +98,7 @@ const rowJson = (r) => ({
   triggered: r.triggered, triggeredAt: r.triggeredAt, referencePath: r.referencePath,
   repeat: r.repeat, enabled: r.enabled, kind: r.kind, name: r.name, detail: r.detail ?? null, missCount: r.missCount,
   sessionId: r.sessionId, project: r.project,
-  priority: r.priority, completed: !!r.completed, completedAt: r.completedAt ?? null,
+  priority: r.priority, completed: !!r.completed, completedAt: r.completedAt ?? null, decision: r.decision ?? null,
 });
 
 /** 有状态 WS 夹具后端：按 WsTasksWorkspaceHandlers 口径处理写帧并回帧。 */
@@ -202,9 +203,19 @@ async function bootApp(page) {
           send({ type: 'scheduledTaskUpdated', sessionId: row.sessionId, task: rowJson(row) });
           break;
         }
+        case 'answerTodoDecision': {
+          const row = findRow(m.id);
+          row.decision.answer = { selectedOptionIds: m.selectedOptionIds, otherText: m.otherText || null };
+          send({ type: 'todoDecisionAnswered', id: row.id, sessionId: row.sessionId, answer: row.decision.answer, task: rowJson(row) });
+          break;
+        }
         case 'completeTodo': {
           const row = findRow(m.id);
           if (!row) { send({ type: 'scheduledTaskDeleted', id: m.id, sessionId: m.sessionId }); break; }
+          if (row.decision && !row.decision.answer) {
+            send({ type: 'error', msgType: 'completeTodo', id: row.id, code: 'decision_unanswered', message: '先作答' });
+            break;
+          }
           row.completed = true;
           row.completedAt = row.completedAt ?? Date.now();
           // 后端兼容策略：新帧 + 老帧同发（CONTRACT.md §3）。
@@ -268,13 +279,114 @@ async function bootApp(page) {
 
 const frames = (captured, type) => captured.filter((f) => f.type === type);
 
+test('Ask 待办自由文本覆盖先选预设', async ({ page }) => {
+  await bootApp(page);
+  await page.evaluate(async () => {
+    const pending = await import('/js/askPending.js');
+    const { buildAskQuestionCard } = await import('/js/askTodoQuestion.js');
+    const frames = [];
+    pending.startPendingAskSync((frame) => frames.push(frame));
+    const entry = { requestId: 'ask-free-test', sessionId: 'todo-store-root', items: [{ question: '选择', options: [{ label: '甲' }], allowOther: true }] };
+    pending.notePendingAsk(entry);
+    const card = buildAskQuestionCard(entry);
+    document.body.append(card);
+    card.querySelector('.ask-todo-opt').click();
+    const input = card.querySelector('.ask-todo-other');
+    input.value = '自由答案';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    window.__askEvidenceFrames = frames;
+  });
+  await shot(page, 'ask-other-before-submit');
+  await page.locator('.ask-todo-submit').click();
+  const result = await page.evaluate(() => window.__askEvidenceFrames.find((f) => f.type === 'askUserAnswer'));
+  expect(result.answers).toEqual(['自由答案']);
+  await shot(page, 'ask-other-submitted');
+});
+
+test('桌面决策选项作答后完成并移除', async ({ page }) => {
+  const h = await bootApp(page);
+  await h.waitRows(4);
+  h.backend.rows[0].decision = { question: '选择方案', options: [{ id: 'yes', title: '选甲' }, { id: 'no', title: '选乙' }], multiSelect: false };
+  h.sendFrame({ type: 'scheduledTaskList', sessionId: SID, scope: 'all', tasks: h.backend.rows.map(rowJson) });
+  await page.evaluate(async (sid) => (await import('/js/todoFace.js')).renderTodoTaskList(sid), SID);
+  await page.locator('.tfl-capsule').click();
+  const row = page.locator('.tfl-row[data-id="t4"]');
+  await expect(row.locator('.tfl-complete')).toBeDisabled();
+  await row.locator('.tfl-row-title').click();
+  await shot(page, 'desktop-unanswered');
+  await row.locator('.ta-qd-opt').first().click();
+  await shot(page, 'desktop-selected');
+  await row.locator('.ta-decision-submit').click();
+  await expect.poll(() => frames(h.captured, 'completeTodo').some((f) => f.id === 't4')).toBe(true);
+  expect(frames(h.captured, 'answerTodoDecision').find((f) => f.id === 't4').selectedOptionIds).toEqual(['yes']);
+  await expect(row).toHaveCount(0);
+  await shot(page, 'desktop-completed');
+  expect(h.backend.rows[0].completed).toBe(true);
+});
+
+test('直接完成普通待办会发送帧并移除行', async ({ page }) => {
+  const h = await bootApp(page);
+  await h.waitRows(4);
+  await page.evaluate(async (sid) => (await import('/js/todoFace.js')).renderTodoTaskList(sid), SID);
+  await page.locator('.tfl-capsule').click();
+  const row = page.locator('.tfl-row[data-id="t4"]');
+  await row.locator('.tfl-complete').click();
+  await expect.poll(() => frames(h.captured, 'completeTodo').some((f) => f.id === 't4')).toBe(true);
+  await expect(row).toHaveCount(0);
+  expect(h.backend.rows[0].completed).toBe(true);
+});
+
+test('未作答决策禁止完成且后端拒绝后恢复待办', async ({ page }) => {
+  const h = await bootApp(page);
+  await h.waitRows(4);
+  h.backend.rows[0].decision = { question: '选择方案', options: [{ id: 'yes', title: '选甲' }], multiSelect: false };
+  h.sendFrame({ type: 'scheduledTaskList', sessionId: SID, scope: 'all', tasks: h.backend.rows.map(rowJson) });
+  await page.evaluate(async (sid) => (await import('/js/todoFace.js')).renderTodoTaskList(sid), SID);
+  await page.locator('.tfl-capsule').click();
+  const row = page.locator('.tfl-row[data-id="t4"]');
+  await expect(row.locator('.tfl-complete')).toBeDisabled();
+  await expect(row.locator('.tfl-complete')).toHaveAttribute('title', '先选一项');
+  expect(frames(h.captured, 'completeTodo')).toHaveLength(0);
+  // Simulate a stale client bypassing the UI gate; the fixture rejects and store refreshes.
+  await page.evaluate(async () => (await import('/js/todoStore.js')).todoStore.completeItem('t4'));
+  await expect.poll(() => frames(h.captured, 'completeTodo').length).toBe(1);
+  await expect(row).toBeVisible();
+  await expect(row.locator('.tfl-complete')).toBeDisabled();
+  await expect(row.locator('.tfl-complete')).toHaveAttribute('title', '先选一项');
+  expect(h.backend.rows[0].completed).toBe(false);
+});
+
+test('移动列表决策选项作答后完成并移除', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  const h = await bootApp(page);
+  await h.waitRows(4);
+  h.backend.rows[0].decision = { question: '选择方案', options: [{ id: 'yes', title: '选甲' }], multiSelect: false };
+  h.sendFrame({ type: 'scheduledTaskList', sessionId: SID, scope: 'all', tasks: h.backend.rows.map(rowJson) });
+  await page.evaluate(async () => (await import('/js/mobile/navController.js')).pushPage('todo-apple-list'));
+  const panel = page.locator('.mobile-page[data-page="todo-apple-list"]');
+  await panel.locator('.ta-item-body', { hasText: '待办四' }).click();
+  const mobileRow = panel.locator('.ta-item').filter({ hasText: '待办四' });
+  await expect(mobileRow.locator('.ta-check')).toBeDisabled();
+  await expect(mobileRow.locator('.ta-check')).toHaveAttribute('aria-label', '先选一项');
+  await shot(page, 'mobile-unanswered');
+  await panel.locator('.ta-decision-option').first().click();
+  await shot(page, 'mobile-selected');
+  await panel.locator('.ta-decision-submit').click();
+  await expect.poll(() => frames(h.captured, 'completeTodo').some((f) => f.id === 't4')).toBe(true);
+  expect(frames(h.captured, 'answerTodoDecision').find((f) => f.id === 't4').selectedOptionIds).toEqual(['yes']);
+  await expect(panel.locator('.ta-item-body', { hasText: '待办四' })).toHaveCount(0);
+  await shot(page, 'mobile-completed');
+  expect(h.backend.rows[0].completed).toBe(true);
+});
+
 test('旧待办隐藏决策卡结构化内容，普通待办仍显示', async ({ page }) => {
   const h = await bootApp(page);
   await h.waitRows(4);
-  h.sendFrame({ type: 'scheduledTaskList', sessionId: SID, scope: 'all', tasks: [
+  h.backend.rows = [
     { id: 'decision', kind: 'todo', sessionId: SID, project: '__decision_card_mvp__', name: '卡', detail: '{"summary":"secret-json"}', content: '{"summary":"secret-json"}' },
     { id: 'normal', kind: 'todo', sessionId: SID, content: '普通待办' },
-  ] });
+  ];
+  h.sendFrame({ type: 'scheduledTaskList', sessionId: SID, scope: 'all', tasks: h.backend.rows });
   await h.waitRows(1);
   const rows = await page.evaluate(async () => (await import('/js/todoStore.js')).todoStore.allItems());
   expect(rows.map(row => row.id)).toEqual(['normal']);
