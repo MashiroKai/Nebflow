@@ -175,6 +175,20 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
   test("hard halt after atomic replacement preserves advanced series"):
     checkHardCrash("after")
 
+  test("rearm rejects equal-revision conflicting copies instead of creating a third row"):
+    val dir = os.temp.dir(prefix = "rearm-conflict-")
+    val store = new ScheduledTaskStore(dir)
+    val initial = legacy.as[ScheduledTask].toOption.get.copy(name = Some("series"), source = Some("engine"))
+    val conflict = initial.copy(sessionId = "s2", content = "conflict")
+    for
+      _ <- store.saveTasks("s1", List(initial))
+      _ <- store.saveTasks("s2", List(conflict))
+      result <- store.upsertTaskByName(initial.copy(sessionId = "s3")).attempt
+      exists <- IO(os.exists(dir / "s3.json"))
+    yield
+      assert(result.isLeft)
+      assertEquals(exists, false)
+
   test("cross-session rearm retains and advances reminder rule history"):
     val dir = os.temp.dir(prefix = "due-rearm-history-")
     val store = new ScheduledTaskStore(dir)
