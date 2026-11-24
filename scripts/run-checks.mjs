@@ -48,6 +48,8 @@ export const CHECKS = [
   // 联系人 / 设置 / 待办列表 / 看板文档阅读面 / AskUser 决策卡（P1–P8），另加桌面
   // 1280×800 同面板族抽检（D1–D2）；每面配负对照（还原修前形态必须红，否则闸失明
   // ⇒ FAIL）。判据 O0–O4 与修前同尺，不因面板增多而放宽。
+  { name: 'mermaid-download-app', profiles: ['frontend'], timeoutMs: 180_000,
+    argv: [process.execPath, 'tests/mermaid-download-app.spec.mjs'] },
   { name: 'mobile-overlap-sweep', profiles: ['frontend'], timeoutMs: 240_000,
     argv: [process.execPath, 'tests/mobile-overlap-sweep.spec.mjs'] },
   // 手机图片「点开大图预览失败」闸（2026-11-23 · IMG_2039）：原图腿败 + 卡面缩略在场 ⇒ 仍开灯箱
@@ -532,12 +534,18 @@ export async function main(args = process.argv.slice(2)) {
     return 0;
   }
   let failures = 0;
+  let pending = 0;
   for (const check of checks) {
+    if (check.name === 'selection-ask-multi-live') {
+      console.log(`PENDING ${check.name} (token required)`);
+      pending++;
+      continue;
+    }
     const result = await runCheck(check);
     if (result.interrupted) return result.interrupted === 'SIGINT' ? 130 : 143;
     if (!result.ok) failures++;
   }
-  console.log(`${profile}: ${checks.length - failures}/${checks.length} checks passed`);
+  console.log(`${profile}: ${checks.length - failures - pending} passed / ${failures} failed / ${pending} pending`);
   return failures ? 1 : 0;
 }
 
