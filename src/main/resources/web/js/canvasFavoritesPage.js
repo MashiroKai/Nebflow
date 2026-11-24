@@ -161,7 +161,7 @@ function buildPage(onClose, onOpened) {
       meta.className = 'cfp-row-meta';
       const src = document.createElement('span');
       src.className = 'cfp-row-src';
-      src.textContent = KIND_LABEL[favKind(entry.path)]();
+      src.textContent = entry.path;
       const date = document.createElement('span');
       date.className = 'cfp-row-date';
       date.textContent = formatDate(entry.savedAt);

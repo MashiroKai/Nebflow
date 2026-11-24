@@ -26,7 +26,7 @@ import { setSideBarCollapsed, isMobileViewport } from './activityBar.js';
 // 切法单源在 capsuleLabel.js（桌面/触屏腿与手机层腿共用一份），本模块只消费。
 import { splitCapsuleLabel, createTextMeasurer, capsuleTextAvail, CAPSULE_ELLIPSIS } from './capsuleLabel.js';
 // 文档收藏（2026-11-23 前端功能批）：胶囊左座收藏钮 + 侧边栏收藏区；存储与渲染单源在 canvasFavorites.js。
-import { toggleFavoritePath, isFavoritePath, mountSidebarFavorites, onFavoritesChange } from './canvasFavorites.js';
+import { toggleFavoritePath, isFavoritePath, onFavoritesChange } from './canvasFavorites.js';
 // keyboard-first 三期：叠卡/胶囊环/卡窗的键位搬进规则表（keyRules.js），本模块
 // 提供三件事——① 状态 → 上下文键（派生，无推送）② 动作函数（deckKeyAction 等）
 // ③ 不再持有任何 document 级 keydown 监听。
@@ -5495,8 +5495,7 @@ export function quoteActiveCardRef() {
 
 /** Initialize canvas event listeners. Call on DOM ready. */
 export function initCanvas() {
-  // 文档收藏（2026-11-23）：侧边栏收藏区挂载（幂等）+ 收藏变化回写胶囊钮态。
-  mountSidebarFavorites();
+  // 收藏变化回写胶囊钮态；列表由独立收藏面板承载。
   onFavoritesChange(() => syncFavoriteButton());
   writerChanged('reader');
   canvasWriter.refresh();
