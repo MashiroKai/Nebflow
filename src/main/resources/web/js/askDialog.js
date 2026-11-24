@@ -48,6 +48,12 @@ import { createScrollPill, bottomDistance, AT_BOTTOM_PX } from './scrollPill.js'
 // 都不计未读）。抽取批后本内核是 canvas 档唯一的落列/计数写点，故该腿落在这里（作者线
 // 该腿写在旧 askDock.js 的 settleCol，那一段已被抽取批搬空 ⇒ 按其语义在本处重建）。
 import { countUnread } from './unreadCount.js';
+// 回答正文相对路径图片（ask-image-ticket 批 2026-11-24 · 作者报「Ask 回答正文
+// 相对路径图片看不了」）：DOM 级图片 pass 单源在 mdImagePass.js（候选表/铸票/账本/
+// 失败占位/级联自愈与文档查看器共用同一实现）。本内核只补三样：cfg.docPath 缝
+//（所问文档的绝对路径，消费者注入）、每渲染轮的 epoch 竞争闸、setMarkdownHtml
+// 落地后的挂点。通用 markdown 渲染本身零改动——其余调用方零影响。
+import { resolveRelativeImages, neutralizePendingImages } from './mdImagePass.js';
 import { timeDividerIndices, timeDividerLabel, msgTs, carryTs } from './askTimeDivider.js';
 import { formatHm } from './timeFormat.js';
 // card-tool-revive 批（2026-11-18 作者裁定②）：ask 会话里 Card 工具返回的 HTML 卡
@@ -97,6 +103,12 @@ function setMarkdownHtml(node, text, streaming) {
     ? renderMarkdownWithMath(text, true, { cache: false })
     : renderMarkdownWithMath(text);
   const parsed = new DOMParser().parseFromString(String(html || ''), 'text/html');
+  // 落 DOM 前先摘「会被页面相对解析」的 img src（ask-image-ticket 批）：importNode
+  // /replaceChildren 一步就会让浏览器对相对路径发一轮注定 404 的请求（WebKit
+  // clone 拍即取数；Chromium 任务拍判，但无文档分支 replaceWith 不摘 src ⇒ 照样
+  // 发）——双核红实证。摘掉后终局 src 由 renderImages 的 DOM 级 pass 就地换上；
+  // 远端 / data: / blob: / 已代理 URL 原样（通用渲染语义不动）。
+  neutralizePendingImages(parsed.body);
   node.replaceChildren(...Array.from(parsed.body.childNodes, (n) => document.importNode(n, true)));
 }
 
@@ -140,6 +152,10 @@ function setMarkdownHtml(node, text, streaming) {
  * @property {(node: HTMLElement, msg: any) => void} [termLinks] 回答词条化钩子（多选
  *   合并 Ask 批 2026-11-23，设计正本 §5 G4）：消费方在**终态落列**的 ai 气泡体上挂
  *   词条链接腿；本内核不认识词表（缺省 = 零动作，canvas 档逐字现状）。
+ * @property {() => string} [docPath] 所问文档的绝对路径钩子（ask-image-ticket 批
+ *   2026-11-24）：回答正文相对路径图片以**该文档所在目录**为基准解析（候选 → 铸票
+ *   → 账本 → 失败占位，单源 mdImagePass）。缺省/空 = 无文档上下文 ⇒ 相对引用落
+ *   明确占位、零网络（选区档现状即此形态，不再是注定 404 的页面相对请求）。
  * @property {string} [panelClass] 面板类（缺省 'ask-dock'）
  */
 
@@ -319,6 +335,28 @@ export function createAskDialog(cfg) {
   let colSnapped = true;
   let colUnseen = 0;
 
+  // ── 回答正文相对路径图片（ask-image-ticket 批 2026-11-24）──────────────────
+  // 竞争闸：Ask 的正文会**多次重渲**（流式 done / askState 回放 / 切文档都重建
+  // 气泡）。每渲染轮持一个 epoch；铸票/取数是异步的，迟到的旧轮结果一律弃写
+  // ——不回填已被新轮替换的节点，也不对已弃图再发字节请求。同轮的多个气泡
+  // 共用一个 epoch（一轮 render 只递增一次，不能逐气泡递增——否则同轮前排
+  // 气泡会被后排气泡「挤死」）。
+  let mdImgEpoch = 0;
+  const nextMdEpoch = () => ++mdImgEpoch;
+  /**
+   * 气泡体落地后的图片 pass 挂点：docPath 由消费者注入（canvas 档 = 所问文档
+   * 绝对路径；选区档缺省 = 无文档上下文），账本 blob 归属面 = 气泡体自身。
+   * @param {HTMLElement} node 气泡体
+   * @param {number} epoch 本渲染轮令牌
+   */
+  function renderImages(node, epoch) {
+    resolveRelativeImages(node, {
+      docPath: cfg.docPath ? cfg.docPath() : '',
+      pane: node,
+      alive: () => epoch === mdImgEpoch,
+    }).catch(() => { /* 铸票/取数失败 ⇒ mdImagePass 落失败占位；这里不再加面 */ });
+  }
+
   const dlg = {
     panel, handle, colwrap, col, inputRow, input, send, stop,
 
@@ -414,6 +452,8 @@ export function createAskDialog(cfg) {
     // （原释放契约不放松：泄漏面仍是每张 2–10MB 的独立上下文）。
     render() {
       const s = cfg.activeSession();
+      // 本渲染轮的图片 pass 令牌（见上方 mdImgEpoch 头注）：本轮内所有 ai 气泡共用。
+      const mdEpoch = nextMdEpoch();
       // v2.1 显示面减法：只出 user/ai 两族——sys（回执/状态噪声类）转录仍存但永不呈现。
       const vis = s ? s.msgs.filter((m) => m.role !== 'sys') : [];
       const rowsDesired = vis.map((m) => (m.role === 'card'
@@ -527,6 +567,10 @@ export function createAskDialog(cfg) {
             // 族，消费者经 cfg 注入。只在**终态落列**（render）走一次，流式增量
             // （updateStreaming）不扫，避免每帧一次图谱遍历。
             if (m.role === 'ai') cfg.termLinks?.(b, m);
+            // 相对路径图片 pass（ask-image-ticket 批）：ai 正文里的 <img> 以所问文档
+            // 目录为基准铸票换 src（与词条化同一挂点、同轮 epoch；用户泡是纯文本面，
+            // 不进 pass）。
+            if (m.role === 'ai') renderImages(b, mdEpoch);
           }
           node = b;
         }
@@ -541,8 +585,11 @@ export function createAskDialog(cfg) {
       const last = s.msgs[s.msgs.length - 1];
       const node = col.lastElementChild;
       if (!node || !node.classList.contains('ai')) { dlg.render(); return; }
-      if (last) setMarkdownHtml(node, last.text, true);
-      else node.replaceChildren();
+      if (last) {
+        setMarkdownHtml(node, last.text, true);
+        // 流式轮自成一轮 epoch（同 render：新轮结果落地前，旧轮的图片 pass 弃写）。
+        renderImages(/** @type {HTMLElement} */ (node), nextMdEpoch());
+      } else node.replaceChildren();
       col.scrollTop = col.scrollHeight;
     },
 

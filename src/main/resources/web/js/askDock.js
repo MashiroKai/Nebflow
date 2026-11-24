@@ -460,6 +460,10 @@ function buildDialog() {
     activeSession,
     canSubmit: () => !!currentFile && isAskableFile(currentFile),
     ensureSession: () => ensureActiveSession(),
+    // 回答正文相对路径图片的基准（ask-image-ticket 批 2026-11-24）：canvas 档的
+    // 「所问文档」= 当前活动文件卡（isAskableFile 闸后的 currentFile）。切卡即换
+    // 基准——旧会话在飞的图片 pass 由内核的 epoch 闸弃写。
+    docPath: () => currentFile,
     ensureBound: (s) => askOpen(s),
     // 状态可见性与失败上报批：sendWs 的返回值**不再被丢弃**（内核把它经通用挂钩
     // cfg.onQueued 原样回传）——false = 连接未开、帧进了 ws.js 的 pending 队列

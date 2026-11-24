@@ -2333,6 +2333,10 @@ export default {
   'canvas.imgFailUnsupported': 'This type is not served as image bytes (HTTP {status})',
   'canvas.imgFailUnreachable': 'Cannot read this image (invalid path or no permission)',
   'canvas.imgFailUnknown': 'Read failed (HTTP {status})',
+  // ask-image-ticket batch (2026-11-24): placeholder reason when an answer has no
+  // document context (selection Ask has no asked file) — explicit placeholder
+  // instead of a guaranteed-404 page-relative request.
+  'canvas.imgFailNoDoc': 'This answer has no document context; relative-path images cannot be resolved',
   'canvas.closeTab': 'Close tab',
   'canvas.fav.add': 'Favorite document',
   'canvas.fav.remove': 'Remove from favorites',
