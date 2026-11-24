@@ -159,10 +159,12 @@ test('mobile daemon audit: containment, header, controls and long text', async (
     const geo = await scroll.evaluate((el, fraction) => {
       el.scrollTop = (el.scrollHeight - el.clientHeight) * fraction;
       const b = el.getBoundingClientRect(), h = document.querySelector('.mobile-page[data-page="daemon"] .mobile-back-btn').getBoundingClientRect();
-      return {left:b.left,right:b.right,top:b.top,headerBottom:h.bottom};
+      const items=[...el.querySelectorAll('.daemon-row')].map(n=>n.getBoundingClientRect()).filter(r=>r.bottom>b.top && r.top<b.bottom).map(r=>({left:r.left,right:r.right}));
+      return {left:b.left,right:b.right,top:b.top,headerBottom:h.bottom,items};
     }, f);
     expect(geo.left).toBeGreaterThanOrEqual(0); expect(geo.right).toBeLessThanOrEqual(375);
     expect(geo.top).toBeGreaterThanOrEqual(geo.headerBottom - 1);
+    expect(geo.items.length).toBeGreaterThan(0); for(const item of geo.items) {expect(item.left).toBeGreaterThanOrEqual(0); expect(item.right).toBeLessThanOrEqual(375);}
   }
   await scroll.evaluate(el => { el.scrollTop=0; });
   await page.locator('#daemon-panel [data-act="config"][data-id="d1"]').click();

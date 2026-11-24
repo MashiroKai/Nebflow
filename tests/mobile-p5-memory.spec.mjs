@@ -152,8 +152,9 @@ test('mobile memory audit: card geometry and long title', async ({ page }) => {
   expect(text.over).toBe(true); expect(text.ellipsis).toBe('ellipsis');
   const scroll = page.locator('.mh-memory-cards');
   for (const f of [0,0.5,1]) {
-    const r = await scroll.evaluate((el, fraction) => {el.scrollTop=(el.scrollHeight-el.clientHeight)*fraction; const b=el.getBoundingClientRect(), h=document.querySelector('.mobile-page[data-page="profile"] .mobile-back-btn').getBoundingClientRect(); return {left:b.left,right:b.right,top:b.top,headerBottom:h.bottom};},f);
+    const r = await scroll.evaluate((el, fraction) => {el.scrollTop=(el.scrollHeight-el.clientHeight)*fraction; const b=el.getBoundingClientRect(), h=document.querySelector('.mobile-page[data-page="profile"] .mobile-back-btn').getBoundingClientRect(); const items=[...el.querySelectorAll('.mh-memory-card')].map(n=>n.getBoundingClientRect()).filter(r=>r.bottom>b.top && r.top<b.bottom).map(r=>({left:r.left,right:r.right})); return {left:b.left,right:b.right,top:b.top,headerBottom:h.bottom,items};},f);
     expect(r.left).toBeGreaterThanOrEqual(0); expect(r.right).toBeLessThanOrEqual(375); expect(r.top).toBeGreaterThanOrEqual(r.headerBottom-1);
+    expect(r.items.length).toBeGreaterThan(0); for(const item of r.items) {expect(item.left).toBeGreaterThanOrEqual(0); expect(item.right).toBeLessThanOrEqual(375);}
   }
   await page.locator('.mh-memory-edit').click();
   await expect(page.locator('#memory-modal-body')).toBeVisible();

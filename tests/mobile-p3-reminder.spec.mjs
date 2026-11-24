@@ -166,10 +166,12 @@ test('mobile reminder audit: containment, header, floating control and long text
     const geo = await scroll.evaluate((el, fraction) => {
       el.scrollTop = (el.scrollHeight - el.clientHeight) * fraction;
       const b=el.getBoundingClientRect(), h=document.querySelector('#reminder-panel .reminder-panel-header').getBoundingClientRect();
-      return {left:b.left,right:b.right,top:b.top,headerBottom:h.bottom};
+      const items=[...el.querySelectorAll('.reminder-row')].map(n=>n.getBoundingClientRect()).filter(r=>r.bottom>b.top && r.top<b.bottom).map(r=>({left:r.left,right:r.right}));
+      return {left:b.left,right:b.right,top:b.top,headerBottom:h.bottom,items};
     }, f);
     expect(geo.left).toBeGreaterThanOrEqual(0); expect(geo.right).toBeLessThanOrEqual(375);
     expect(geo.top).toBeGreaterThanOrEqual(geo.headerBottom - 1);
+    expect(geo.items.length).toBeGreaterThan(0); for(const item of geo.items) {expect(item.left).toBeGreaterThanOrEqual(0); expect(item.right).toBeLessThanOrEqual(375);}
   }
   const out = process.env.MOBILE_AUDIT_EVIDENCE;
   if (out) { mkdirSync(out, { recursive: true }); await page.screenshot({ path: join(out, '提醒.png'), animations: 'disabled' }); }
