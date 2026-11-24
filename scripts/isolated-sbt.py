@@ -274,7 +274,10 @@ def judge_deny(text, tree_pids, port):
         # observed WebKit event; require the exact identity and operation.
         if line.startswith('MetaData: '):
             try:
-                metadata = json.loads(line[len('MetaData: '):])
+                raw = line[len('MetaData: '):]
+                # macOS log renders path separators as non-JSON octal escapes.
+                raw = raw.replace(r'\134/', '/')
+                metadata = json.loads(raw)
                 metadata_pid = int(metadata['pid'])
                 if (metadata_pid not in tree_pids and
                         metadata['process'] == 'com.apple.WebKit.Networking.Deve' and
