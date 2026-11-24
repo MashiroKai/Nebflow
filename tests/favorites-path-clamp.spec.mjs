@@ -107,6 +107,37 @@ try {
         await check('focus');
       } finally { await s.close(); }
     }
+    for (const theme of ['light', 'dark']) {
+      const s = await createSession(browser, { width: 1280, height: 800, colorScheme: theme, explorerEntries: [] });
+      try {
+        const requests = [];
+        await s.page.route('**/api/nf-ticket', route => { const body = JSON.parse(route.request().postData() || '{}'), tickets = {}; for (const p of body.paths || []) tickets[p] = { t: `tok${p.length}`, exp: Date.now()+1800000, size: 1 }; return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ tickets }) }); });
+        await s.page.route(/\/api\/nf-file/, route => { requests.push(new URL(route.request().url()).searchParams.get('path')); return route.fulfill({ status: 200, contentType: 'text/markdown', body: '# doc' }); });
+        await s.boot({ config: { llm: { providers: {} }, features: {} }, sessionId: 'tooltip-passthrough', messages: [] });
+        const longPath = '/' + 'p'.repeat(252) + '.md';
+        await s.page.evaluate(async longPath => { const f = await import('/js/canvasFavorites.js'); for (let i=0; i<9; i++) { if (i===4) f.toggleFavoritePath({path:longPath, title:'Hover target'}); f.toggleFavoritePath({path:`/valid-${i}.md`, title:`Valid ${i}`}); } }, longPath);
+        await s.page.click('#favorites-btn');
+        await s.page.locator('#sidebar').evaluate(el => { el.style.transition='none'; el.style.flex='0 0 950px'; });
+        const row = s.page.locator('#panel-favorites .cfp-row').filter({hasText:'Hover target'});
+        await row.waitFor();
+        // Move the hovered row into the middle of the scrollport; the clamped popup overlaps rows below it.
+        await row.evaluate(el => { const body=el.closest('.cfp-body'); body.scrollTop = Math.max(0, el.offsetTop - body.offsetTop - 180); });
+        await row.hover();
+        const tip = s.page.locator('.cfp-path-tooltip');
+        const hit = await tip.evaluate(el => { const r=el.getBoundingClientRect(), x=r.left+r.width/2, y=r.top+r.height/2, hit=document.elementFromPoint(x,y), entry=hit?.closest('#panel-favorites .cfp-row'); return {x,y,path:entry?.dataset.favPath, contained:!!entry && entry.contains(hit), tipPath:el.textContent}; });
+        assert.equal(hit.tipPath, longPath);
+        assert(hit.contained && hit.path && hit.path !== longPath, `tooltip center must hit another row: ${JSON.stringify(hit)}`);
+        const target = s.page.locator('#panel-favorites .cfp-row').filter({has: s.page.locator(`.cfp-row-src[title="${hit.path}"]`)});
+        await s.page.waitForFunction(path => document.querySelector(`.cfp-row[data-fav-path="${path}"]`)?.getAttribute('aria-disabled') !== 'true', hit.path);
+        assert.equal(await target.count(), 1);
+        await s.page.screenshot({path:join(shots,`passthrough-${theme}.png`), animations:'disabled'});
+        const opened = s.page.waitForRequest(req => req.url().includes('/api/nf-file') && new URL(req.url()).searchParams.get('path') === hit.path);
+        await s.page.mouse.click(hit.x, hit.y);
+        await opened;
+        assert(requests.includes(hit.path), `click must open ${hit.path}; requests=${JSON.stringify(requests)}`);
+        console.log('PASSTHROUGH', JSON.stringify({theme, ...hit}));
+      } finally { await s.close(); }
+    }
     const s = await createSession(browser, { width: 1280, height: 800, colorScheme: 'light', explorerEntries: [] });
     try {
       await s.boot({ config: { llm: { providers: {} }, features: {} }, sessionId: 'overflow-tooltip', messages: [] });
