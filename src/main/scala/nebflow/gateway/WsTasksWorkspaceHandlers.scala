@@ -634,6 +634,7 @@ private[gateway] object WsTasksWorkspaceHandlers:
       "createdAt" -> t.createdAt.asJson,
       "triggered" -> t.triggered.asJson,
       "triggeredAt" -> t.triggeredAt.asJson,
+      "lastTriggered" -> t.lastFiredAt.asJson,
       "referencePath" -> t.referencePath.asJson,
       "repeat" -> t.repeat.asJson,
       "enabled" -> t.enabled.asJson,
