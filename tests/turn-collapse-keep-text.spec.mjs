@@ -184,6 +184,17 @@ for (const width of [900, 390, 375]) {
     const baseline = await rows.evaluateAll(els => els.map(el => el.textContent));
     const button = page.locator('[data-nf-injection-stack] button');
     await expect(button).toContainText('2');
+    const geometry = await page.evaluate(() => {
+      const rect = el => { const r = el.getBoundingClientRect(); return { left:r.left, right:r.right, top:r.top, bottom:r.bottom }; };
+      const stack = document.querySelector('[data-nf-injection-stack]');
+      return { viewport: innerWidth, stack: rect(stack), button: rect(stack.querySelector('button')), face: rect(stack.querySelector('.nf-injection-stack-face')), header: rect(document.querySelector('.turn-header')), chat: rect(document.querySelector('#chat')), user: rect(document.querySelector('#chat > .row.user')) };
+    });
+    expect(geometry.stack.top).toBeGreaterThanOrEqual(geometry.header.bottom - 1);
+    expect(geometry.stack.top).toBeGreaterThanOrEqual(geometry.user.bottom - 1);
+    expect(geometry.button.right).toBeLessThanOrEqual(geometry.face.left + 1);
+    expect(Math.abs((geometry.button.top + geometry.button.bottom - geometry.face.top - geometry.face.bottom) / 2)).toBeLessThanOrEqual(1);
+    expect(geometry.button.left).toBeGreaterThanOrEqual(Math.max(0, geometry.chat.left) - 1);
+    expect(geometry.face.right).toBeLessThanOrEqual(Math.min(geometry.viewport, geometry.chat.right) + 1);
     const injected = page.locator('#chat > .row:has(.bubble.injected)');
     await expect(injected.nth(0)).toBeHidden();
     await expect(injected.nth(1)).toBeHidden();
