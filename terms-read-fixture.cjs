@@ -28,12 +28,26 @@ const assert = require('node:assert/strict');
       tip.attachTermFace(a, null, { term: true });
       a.addEventListener('click', (event) => { event.preventDefault(); tip.termTapExpand(a, null); });
     });
-    await capture(page, '390x844-empty');
+    await capture(page, '390x844-before-activation');
     await page.locator('#term').click();
     await page.waitForFunction(() => document.querySelector('.nf-term-tip .ts').textContent === 'derived definition');
     assert.equal(await page.locator('.nf-term-tip .ts').textContent(), 'derived definition');
     await capture(page, '390x844-normal');
     console.log('PASS: derived alias lookup precedes resolved payload');
+    await page.evaluate(async () => {
+      const tip = await import('/termTip.js');
+      tip.hideTermTip();
+      const a = document.querySelector('#term');
+      a.dataset.wikiTarget = 'empty-definition';
+      window.fetch = async (url) => String(url).includes('/lookup?')
+        ? new Response(JSON.stringify({ available: true, results: [{ name: 'empty-definition', definition: '', doc: {} }] }))
+        : new Response('{}', { status: 404 });
+      tip.termTapExpand(a, null);
+    });
+    await page.waitForFunction(() => document.querySelector('.nf-term-tip .tt').textContent === 'empty-definition');
+    assert.equal(await page.locator('.nf-term-tip .ts').textContent(), '');
+    await capture(page, '390x844-empty-definition');
+    console.log('PASS: empty definition rendered');
     await page.evaluate(async () => {
       const tip = await import('/termTip.js');
       tip.hideTermTip();
@@ -195,6 +209,7 @@ const assert = require('node:assert/strict');
     await page.evaluate(() => { window.testTip.hideTermTip(); window.testTip.termTapExpand(document.querySelector('#term'), null); });
     await page.waitForFunction(() => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'cache 1'));
     assert.equal(await page.evaluate(() => window.cacheLookups), 1);
+    await capture(page, '390x844-positive-cache-reuse');
     await page.evaluate(() => { window.testTip.hideTermTip(); document.querySelector('#term').dataset.wikiProject = 'project-b'; window.testTip.termTapExpand(document.querySelector('#term'), null); });
     await page.waitForFunction(() => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'cache 2'));
     await page.evaluate(() => { window.testTip.hideTermTip(); window.advanceClock(); window.testTip.termTapExpand(document.querySelector('#term'), null); });
@@ -328,7 +343,7 @@ const assert = require('node:assert/strict');
       window.testTip.termTapExpand(a, null);
     });
     await page.waitForFunction(() => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'offline fallback'));
-    await capture(page, '390x844-fallback');
+    await capture(page, '390x844-network-fallback');
     console.log('PASS: network failure falls back to resolved payload');
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
