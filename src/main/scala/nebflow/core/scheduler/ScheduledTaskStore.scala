@@ -216,8 +216,9 @@ class ScheduledTaskStore(
             createdAt = current.createdAt,
             source = current.source,
             revision = current.revision,
-            dueRuleVersion = if requested.due == current.due then current.dueRuleVersion
-                             else Math.addExact(current.dueRuleVersion, 1L)
+            dueRuleVersion =
+              if requested.due == current.due then current.dueRuleVersion
+              else Math.addExact(current.dueRuleVersion, 1L)
           )
           val updated =
             if changed == current then current
@@ -341,23 +342,23 @@ class ScheduledTaskStore(
       scanUnlocked(_.id == occurrence.todoId, sort = false).flatMap { copies =>
         val authority = distinctById(copies).headOption
         loadUnlocked(sessionId).flatMap { rows =>
-        rows.find(_.id == occurrence.todoId) match
-          case Some(task) if !authority.contains(task) =>
-            IO.raiseError(new IllegalStateException("stale or conflicting task revision"))
-          case None => IO.raiseError(new IllegalArgumentException("todo not found"))
-          case Some(task) if task.occurrences.exists(_.key == occurrence.key) => IO.pure(false)
-          case Some(task) if task.due.isDefined && task.dueRuleVersion != occurrence.ruleVersion =>
-            IO.raiseError(new IllegalStateException("stale reminder rule version"))
-          case Some(task) if !task.nextDueAt.contains(occurrence.scheduledAt) =>
-            IO.raiseError(new IllegalArgumentException("occurrence does not match next due time"))
-          case Some(task) =>
-            val updated = task.copy(
-              occurrences = task.occurrences :+ occurrence,
-              nextDueAt = nextDueAt,
-              revision = Math.addExact(task.revision, 1L)
-            )
-            IO(beforeCommit()) *> saveUnlocked(sessionId, rows.map(t => if t.id == task.id then updated else t)) *>
-              IO(afterCommit()).as(true)
+          rows.find(_.id == occurrence.todoId) match
+            case Some(task) if !authority.contains(task) =>
+              IO.raiseError(new IllegalStateException("stale or conflicting task revision"))
+            case None => IO.raiseError(new IllegalArgumentException("todo not found"))
+            case Some(task) if task.occurrences.exists(_.key == occurrence.key) => IO.pure(false)
+            case Some(task) if task.due.isDefined && task.dueRuleVersion != occurrence.ruleVersion =>
+              IO.raiseError(new IllegalStateException("stale reminder rule version"))
+            case Some(task) if !task.nextDueAt.contains(occurrence.scheduledAt) =>
+              IO.raiseError(new IllegalArgumentException("occurrence does not match next due time"))
+            case Some(task) =>
+              val updated = task.copy(
+                occurrences = task.occurrences :+ occurrence,
+                nextDueAt = nextDueAt,
+                revision = Math.addExact(task.revision, 1L)
+              )
+              IO(beforeCommit()) *> saveUnlocked(sessionId, rows.map(t => if t.id == task.id then updated else t)) *>
+                IO(afterCommit()).as(true)
         }
       }
     }
