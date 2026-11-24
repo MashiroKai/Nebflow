@@ -80,6 +80,7 @@ final case class TodoOccurrence(
 
 object TodoOccurrence:
   given Codec[TodoOccurrence] = io.circe.generic.semiauto.deriveCodec
+
   def create(todoId: String, scheduledAt: Long, ruleVersion: Long): TodoOccurrence =
     TodoOccurrence(todoId, scheduledAt, ruleVersion)
 
@@ -209,7 +210,9 @@ case class ScheduledTask(
    */
   decision: Option[TodoDecision] = None,
   /** Independent human reminder schedule; absent on legacy records. */
-  due: Option[TodoDue] = None
+  due: Option[TodoDue] = None,
+  nextDueAt: Option[Long] = None,
+  occurrences: List[TodoOccurrence] = Nil
 ):
   /** true = 待办面（周期浮出直至销账），false = 定时任务面（现状）。 */
   def isTodo: Boolean = kind.contains(ScheduledTask.KindTodo)
@@ -264,7 +267,13 @@ object ScheduledTask:
 
   given Codec[ScheduledTask] = Codec.from(
     derivedCodec,
-    Encoder.instance(t => if t.due.isEmpty then derivedCodec(t).mapObject(_.remove("due")) else derivedCodec(t))
+    Encoder.instance { t =>
+      derivedCodec(t).mapObject { obj =>
+        val noDue = if t.due.isEmpty then obj.remove("due") else obj
+        val noNext = if t.nextDueAt.isEmpty then noDue.remove("nextDueAt") else noDue
+        if t.occurrences.isEmpty then noNext.remove("occurrences") else noNext
+      }
+    }
   )
 
   def create(

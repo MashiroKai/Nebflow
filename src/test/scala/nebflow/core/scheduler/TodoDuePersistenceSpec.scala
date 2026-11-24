@@ -31,7 +31,8 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
     assertEquals(encoded.as[ScheduledTask].toOption, Some(task))
 
   test("legacy encoded golden bytes are identical after decoding and encoding"):
-    val expected = """{"id":"old","sessionId":"s1","content":"legacy","triggerAt":123456,"createdAt":100,"triggered":false,"triggeredAt":null,"referencePath":null,"repeat":null,"enabled":true,"name":null,"detail":null,"kind":"todo","condition":null,"conditionState":null,"idleStreak":0,"reviewFlag":false,"lastFiredAt":null,"missCount":0,"project":null,"priority":0,"completedAt":null,"source":null,"revision":0,"decision":null}"""
+    val expected =
+      """{"id":"old","sessionId":"s1","content":"legacy","triggerAt":123456,"createdAt":100,"triggered":false,"triggeredAt":null,"referencePath":null,"repeat":null,"enabled":true,"name":null,"detail":null,"kind":"todo","condition":null,"conditionState":null,"idleStreak":0,"reviewFlag":false,"lastFiredAt":null,"missCount":0,"project":null,"priority":0,"completedAt":null,"source":null,"revision":0,"decision":null}"""
     val output = legacy.as[ScheduledTask].toOption.get.asJson.noSpaces
     assertEquals(output, expected)
     assert(!output.contains("\"due\""))
@@ -63,6 +64,31 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
     assertEquals(snoozed.scheduledAt, first.scheduledAt)
     assertEquals(snoozed.nextReminderAt, Some(1736340000000L))
     assertEquals(snoozed.asJson.as[TodoOccurrence].toOption, Some(snoozed))
+
+  test("occurrence and next due commit atomically across crash and retry"):
+    val dir = os.temp.dir(prefix = "occurrence-atomic-")
+    val store = new ScheduledTaskStore(dir)
+    val initial = legacy.as[ScheduledTask].toOption.get.copy(nextDueAt = Some(1000L))
+    val occurrence = TodoOccurrence.create(initial.id, 1000L, 7L).copy(nextReminderAt = Some(1200L))
+    for
+      _ <- store.addTask(initial)
+      before <- store
+        .recordOccurrence("s1", occurrence, Some(2000L), () => throw new RuntimeException("before commit"))
+        .attempt
+      unchanged <- new ScheduledTaskStore(dir).loadTasks("s1")
+      after <- store
+        .recordOccurrence("s1", occurrence, Some(2000L), () => (), () => throw new RuntimeException("after commit"))
+        .attempt
+      retry <- new ScheduledTaskStore(dir).recordOccurrence("s1", occurrence, Some(2000L))
+      rows <- new ScheduledTaskStore(dir).loadTasks("s1")
+    yield
+      assert(before.isLeft)
+      assertEquals(unchanged.head.nextDueAt, Some(1000L))
+      assertEquals(unchanged.head.occurrences, Nil)
+      assert(after.isLeft)
+      assertEquals(rows.head.nextDueAt, Some(2000L))
+      assertEquals(rows.head.occurrences, List(occurrence))
+      assertEquals(retry, false)
 
   test("one-shot and weekly golden payloads survive store and fresh reader"):
     val dir = os.temp.dir(prefix = "todo-due-fixture-")

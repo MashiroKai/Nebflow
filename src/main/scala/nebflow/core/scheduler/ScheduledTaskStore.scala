@@ -286,6 +286,32 @@ class ScheduledTaskStore(
   def saveTasks(sessionId: String, tasks: List[ScheduledTask]): IO[Unit] =
     storeLock.lock.surround(saveUnlocked(sessionId, tasks))
 
+  /** Commit occurrence and series cursor in the same atomic session-file replacement. */
+  private[scheduler] def recordOccurrence(
+    sessionId: String,
+    occurrence: TodoOccurrence,
+    nextDueAt: Option[Long],
+    beforeCommit: () => Unit = () => (),
+    afterCommit: () => Unit = () => ()
+  ): IO[Boolean] =
+    storeLock.lock.surround {
+      loadUnlocked(sessionId).flatMap { rows =>
+        rows.find(_.id == occurrence.todoId) match
+          case None => IO.raiseError(new IllegalArgumentException("todo not found"))
+          case Some(task) if task.occurrences.exists(_.key == occurrence.key) => IO.pure(false)
+          case Some(task) if !task.nextDueAt.contains(occurrence.scheduledAt) =>
+            IO.raiseError(new IllegalArgumentException("occurrence does not match next due time"))
+          case Some(task) =>
+            val updated = task.copy(
+              occurrences = task.occurrences :+ occurrence,
+              nextDueAt = nextDueAt,
+              revision = Math.addExact(task.revision, 1L)
+            )
+            IO(beforeCommit()) *> saveUnlocked(sessionId, rows.map(t => if t.id == task.id then updated else t)) *>
+              IO(afterCommit()).as(true)
+      }
+    }
+
   def addTask(task: ScheduledTask): IO[Unit] =
     storeLock.lock.surround(addUnlocked(task))
 
