@@ -683,6 +683,11 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
     val rec = recWith("delegate-nebflow-ttl-j1", registeredDir.toString)
     // 三态快照：registered 目录登记在册；unregistered 目录不在清单里。
     val snap = DelegateWorktreeRegistry.Snapshot.of(Map(root -> Set(registeredDir.toString)))
+    assertEquals(
+      DelegateTerminalTtl.verdict(rec.copy(pinnedAt = Some(now)), Some(ancientRow), now, snap),
+      DelegateTerminalTtl.Pinned,
+      "pinned takes precedence over a live worktree"
+    )
     // ① 字段非空 + 目录在盘 + 已登记 ⇒ InFlight（保险丝语义：现场没拆，绝不清理）。
     assertEquals(
       DelegateWorktreeRegistry.presenceOf(rec, snap),
