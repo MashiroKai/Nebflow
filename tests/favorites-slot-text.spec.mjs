@@ -118,6 +118,11 @@ try {
         await negativeOverlap(s.page,root,`${root} .cfp-row-title`);
       }
       if(width===1280) {
+        const source=s.page.locator(`${root} .cfp-row-src`).first();
+        await source.evaluate(el=>{el.style.whiteSpace='nowrap';el.style.overflowWrap='normal';});
+        const brokenSource=await measure(s.page,root);
+        assert.throws(()=>assertText(brokenSource),/clipped/);
+        await source.evaluate(el=>el.removeAttribute('style'));
         await s.page.screenshot({path:join(shots,'desktop-1280-long-favorites.png'),animations:'disabled'});
         const title=s.page.locator(`${root} .cfp-row-title`).first();
         await title.evaluate(el=>{el.style.whiteSpace='nowrap';el.style.overflow='hidden';el.style.textOverflow='ellipsis';});
