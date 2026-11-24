@@ -1,7 +1,7 @@
 package nebflow.gateway.ws
 
 import cats.effect.{Deferred, IO, Ref}
-import cats.effect.std.Dispatcher
+import cats.effect.std.{Dispatcher, Queue}
 import cats.syntax.all.*
 import fs2.Stream
 import io.circe.{Json, JsonObject}
@@ -33,13 +33,14 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
     nebflow.core.LlmLogWriter.setEnabled(false)
     val program = Dispatcher.parallel[IO].use { dispatcher =>
       for
-        captured <- Deferred[IO, Option[String]]
+        captured <- Queue.unbounded[IO, Option[String]]
+        done <- Queue.unbounded[IO, Unit]
         calls <- Ref.of[IO, Int](0)
         llm = new LlmHandle[IO]:
           def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new Exception("unexpected send"))
           def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] =
             Stream.eval(calls.getAndUpdate(_ + 1)).flatMap { n =>
-              if n == 0 then Stream(StreamChunk.ToolCallChunk(ToolCall("zone-call", toolName, JsonObject.empty)), StreamChunk.Done(None, None))
+              if n % 2 == 0 then Stream(StreamChunk.ToolCallChunk(ToolCall(s"zone-call-$n", toolName, JsonObject.empty)), StreamChunk.Done(None, None))
               else Stream(StreamChunk.TextDelta("done"), StreamChunk.Done(None, None))
             }
         probe = new Tool:
@@ -49,7 +50,7 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
           def summarize(input: JsonObject) = "zone probe"
           def summarizeResult(input: JsonObject, result: String) = result
           def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-            captured.complete(ctx.deviceZone).as(Right("ok"))
+            captured.offer(ctx.deviceZone).as(Right("ok"))
         _ <- IO(ToolRegistry.registerTool(probe))
         rate <- RateLimiter.create()
         tracker <- FileChangeTracker.create(root.toString)
@@ -64,7 +65,8 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
           providerRegistry = null, healthMonitor = ProviderHealthMonitor(null), actorSystem = system,
           subAgentTaskStore = new SubAgentTaskStore(root / "subagent-tasks"), voiceMutedRef = Ref.unsafe[IO, Boolean](false)
         )
-        ref <- system.spawn(AgentActor(agentDef = agent, resources = resources, wsSend = _ => IO.unit,
+        ref <- system.spawn(AgentActor(agentDef = agent, resources = resources, wsSend = json =>
+          if json.hcursor.get[String]("type").toOption.contains("done") then done.offer(()) else IO.unit,
           depth = 0, sessionId = Some(sid), sessionName = Some(sid)), sid)
         _ <- resources.agentRegistry.set(Map(sid -> AgentRecord(sid, ref, AgentKind.Root, sid, status = AgentStatus.Idle)))
         routes = new WebSocketRoutes(
@@ -76,8 +78,15 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
         frame = Json.obj("type" -> "userMessage".asJson, "sessionId" -> sid.asJson,
           "content" -> "execute probe".asJson, "device" -> Json.obj("timeZone" -> "Asia/Tokyo".asJson))
         _ <- routes.handleMessagePublic(frame.noSpaces, _ => IO.unit)
-        zone <- captured.get.timeout(30.seconds)
+        zone <- captured.take.timeout(30.seconds)
         _ = assertEquals(zone, Some("Asia/Tokyo"))
+        _ <- done.take.timeout(30.seconds)
+        noZoneFrame = Json.obj("type" -> "userMessage".asJson, "sessionId" -> sid.asJson,
+          "content" -> "execute without device".asJson)
+        _ <- routes.handleMessagePublic(noZoneFrame.noSpaces, _ => IO.unit)
+        nextZone <- captured.take.timeout(30.seconds)
+        _ = assertEquals(nextZone, None)
+        _ <- done.take.timeout(30.seconds)
         _ <- store.flushPendingUiWrites
       yield ()
     }
