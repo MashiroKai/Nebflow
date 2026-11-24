@@ -245,6 +245,20 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       assert(result.isLeft)
       assertEquals(exists, false)
 
+  test("rearm refuses overwriting an unrelated destination row sharing the id"):
+    val dir = os.temp.dir(prefix = "rearm-target-id-")
+    val store = new ScheduledTaskStore(dir)
+    val original = legacy.as[ScheduledTask].toOption.get.copy(name = Some("first"), source = Some("engine"))
+    val unrelated = original.copy(sessionId = "s2", name = Some("second"), content = "unrelated", revision = 1L)
+    for
+      _ <- store.addTask(original)
+      _ <- IO(os.write(dir / "s2.json", List(unrelated).asJson.noSpaces))
+      result <- store.upsertTaskByName(original.copy(sessionId = "s2")).attempt
+      rows <- IO(io.circe.parser.decode[List[ScheduledTask]](os.read(dir / "s2.json")).toOption.get)
+    yield
+      assert(result.isLeft)
+      assertEquals(rows, List(unrelated))
+
   test("cross-session rearm retains and advances reminder rule history"):
     val dir = os.temp.dir(prefix = "due-rearm-history-")
     val store = new ScheduledTaskStore(dir)

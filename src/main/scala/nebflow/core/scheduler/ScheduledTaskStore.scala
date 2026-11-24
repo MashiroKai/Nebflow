@@ -721,7 +721,10 @@ class ScheduledTaskStore(
                           if old.due == task.due then old.dueRuleHistory
                           else old.dueRuleHistory ++ old.due.toList.map(TodoRuleSnapshot(old.dueRuleVersion, _))
                       )
-                    loadUnlocked(task.sessionId).flatMap { targetRows =>
+                    (loadUnlocked(task.sessionId), scanUnlocked(_.id == old.id, sort = false)).tupled.flatMap {
+                      (targetRows, allCopies) =>
+                      if allCopies.exists(copy => !owned.contains(copy)) then
+                        throw new IllegalStateException("task identity belongs to another named record")
                       val sameSessionIds = owned.filter(_.sessionId == task.sessionId).map(_.id).toSet
                       val target =
                         targetRows.filterNot(t => t.id == persisted.id || sameSessionIds.contains(t.id)) :+ persisted
