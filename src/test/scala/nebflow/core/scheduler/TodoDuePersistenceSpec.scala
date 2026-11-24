@@ -297,7 +297,7 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
     val latest = initial.copy(sessionId = "s2", revision = 1L, content = "newer")
     for
       _ <- store.addTask(initial)
-      _ <- store.addTask(latest)
+      _ <- IO(os.write(dir / "s2.json", List(latest).asJson.noSpaces))
       result <- store.saveTasks("s1", List(initial.copy(content = "stale"))).attempt
       rows <- IO(io.circe.parser.decode[List[ScheduledTask]](os.read(dir / "s1.json")).toOption.get)
     yield
@@ -339,6 +339,18 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       _ <- store.saveTasks("s2", List(newer))
       rows <- store.loadTasks("s2")
     yield assertEquals(rows, List(newer))
+
+  test("add task refuses duplicate identity in another session"):
+    val dir = os.temp.dir(prefix = "due-add-identity-")
+    val store = new ScheduledTaskStore(dir)
+    val original = legacy.as[ScheduledTask].toOption.get
+    for
+      _ <- store.addTask(original)
+      result <- store.addTask(original.copy(sessionId = "s2", content = "conflict")).attempt
+      exists <- IO(os.exists(dir / "s2.json"))
+    yield
+      assert(result.isLeft)
+      assertEquals(exists, false)
 
   test("direct save advances revision and rejects a second stale save"):
     val dir = os.temp.dir(prefix = "due-save-generation-")

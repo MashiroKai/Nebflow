@@ -244,8 +244,8 @@ class ScheduledTaskStore(
     }
 
   private def addUnlocked(task: ScheduledTask): IO[Unit] =
-    loadUnlocked(task.sessionId).flatMap { existing =>
-      if existing.exists(_.id == task.id) then IO.raiseError(new IllegalArgumentException("duplicate task id"))
+    (loadUnlocked(task.sessionId), scanUnlocked(_.id == task.id, sort = false)).tupled.flatMap { (existing, copies) =>
+      if copies.nonEmpty then IO.raiseError(new IllegalArgumentException("duplicate task id"))
       else saveUnlocked(task.sessionId, existing :+ task)
     }
 
