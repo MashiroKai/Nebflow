@@ -1,7 +1,6 @@
 package nebflow.core
 
-import cats.effect.IO
-import cats.effect.Ref
+import cats.effect.{IO, Ref}
 import nebflow.core.tools.DiffUtil
 
 /** How an agent-visible file changed (mirrors the delivery contract keys). */

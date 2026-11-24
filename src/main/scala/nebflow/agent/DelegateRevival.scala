@@ -1,20 +1,17 @@
 package nebflow.agent
 
-import cats.effect.IO
 import cats.effect.std.Semaphore
-import cats.effect.Ref
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import io.circe.Json
-import io.circe.JsonObject
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import nebflow.actor.{ActorRef, ActorSystem, AgentCommand, AgentDef, AgentEvent, AgentKind}
-import nebflow.core.SessionStore
-import nebflow.core.ResumeHandoff
 import nebflow.core.delegate.{ChainStore, DelegateRegistry}
 import nebflow.core.executor.ExecutorRegistry
 import nebflow.core.node.NodeRunner
 import nebflow.core.plugin.PluginRegistry
 import nebflow.core.project.DelegateFlowHosts
+import nebflow.core.{ResumeHandoff, SessionStore}
 import nebflow.shared.{Defaults, NebflowLogger, SubAgentTask}
 
 /**

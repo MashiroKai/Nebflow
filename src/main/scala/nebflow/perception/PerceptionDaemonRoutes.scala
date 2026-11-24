@@ -1,11 +1,11 @@
 package nebflow.perception
 
-import cats.effect.IO
 import cats.data.OptionT
+import cats.effect.IO
 import cats.syntax.all.*
-import io.circe.{Encoder, Decoder, Json}
-import io.circe.syntax.*
 import io.circe.generic.semiauto.*
+import io.circe.syntax.*
+import io.circe.{Decoder, Encoder, Json}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*

@@ -3,10 +3,9 @@ package nebflow.core
 import cats.effect.std.Semaphore
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import io.circe.parser
 import io.circe.parser.decode
 import io.circe.syntax.*
-import io.circe.{Decoder, Encoder, Json}
+import io.circe.{Decoder, Encoder, Json, parser}
 import nebflow.actor.{AgentCommand, RootAgentIdentity}
 import nebflow.core.flow.TurnStateStore
 import nebflow.core.{AtomicJson, SessionStorePort}

@@ -1,8 +1,8 @@
 package nebflow.cli
 
 import cats.effect.IO
-import nebflow.shared.Branding
 import io.circe.parser.parse
+import nebflow.shared.Branding
 
 import java.net.*
 

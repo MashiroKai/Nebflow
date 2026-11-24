@@ -1,12 +1,11 @@
 package nebflow.neblink.attachment
 
-import nebflow.neblink.core.*
-import nebflow.neblink.misc.*
-import nebflow.neblink.social.*
-
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
+import nebflow.neblink.core.*
+import nebflow.neblink.misc.*
+import nebflow.neblink.social.*
 
 /**
  * 附件上传的**唯一**分块驱动（attachcl 批，2026-09-16）。

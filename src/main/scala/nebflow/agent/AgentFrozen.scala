@@ -3,8 +3,8 @@ package nebflow.agent
 
 import cats.effect.IO
 import cats.syntax.all.*
-import io.circe.syntax.*
 import io.circe.Json
+import io.circe.syntax.*
 import nebflow.actor.*
 import nebflow.core.*
 import nebflow.core.ask.AskService

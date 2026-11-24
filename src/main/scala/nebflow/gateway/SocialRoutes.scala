@@ -1,17 +1,14 @@
 /* 从 RestApiRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
-import nebflow.neblink.social.ProfileSync
-
-import nebflow.neblink.attachment.*
-import nebflow.neblink.core.*
-import nebflow.neblink.social.*
-
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, parser}
+import nebflow.neblink.attachment.*
+import nebflow.neblink.core.*
 import nebflow.neblink.core.FriendCodecs.given
+import nebflow.neblink.social.{ProfileSync, *}
 import nebflow.shared.AttachContract
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*

@@ -1,6 +1,7 @@
 package nebflow.core
 
 import cats.effect.IO
+import io.circe.syntax.*
 import nebflow.shared.{
   ExecutionAdmission,
   ExecutionAdmissionObservation,
@@ -13,7 +14,6 @@ import nebflow.shared.{
   ProtectedRecoveryRequest,
   ProtectedRecoveryResult
 }
-import io.circe.syntax.*
 
 /** Admission-only authority surface. No execution permit is available yet. */
 trait ExecutionCommitPort:

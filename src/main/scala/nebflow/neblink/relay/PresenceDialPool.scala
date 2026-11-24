@@ -1,8 +1,7 @@
 package nebflow.neblink.relay
 
-import nebflow.neblink.relay.DialBudget
-
 import cats.effect.IO
+import nebflow.neblink.relay.DialBudget
 
 import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
 import java.util.concurrent.{CompletableFuture, SynchronousQueue, ThreadFactory, ThreadPoolExecutor, TimeUnit}

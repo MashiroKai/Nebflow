@@ -1,7 +1,7 @@
 package nebflow.core.project
 
-import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*

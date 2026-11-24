@@ -1,8 +1,7 @@
 package nebflow.shared
 
-import io.circe.Json
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
-import io.circe.{Decoder, Encoder}
+import io.circe.{Decoder, Encoder, Json}
 
 /** The first durable record binds a pre-existing task run to its initial input. */
 final case class ExecutionAdmission(

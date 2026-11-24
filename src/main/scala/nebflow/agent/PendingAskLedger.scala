@@ -2,14 +2,15 @@ package nebflow.agent
 
 import cats.effect.{Deferred, IO}
 import cats.syntax.all.*
-import io.circe.syntax.*
 import io.circe.Json
+import io.circe.syntax.*
 import nebflow.actor.{ActorRef, InteractionHubCommand, InteractionKind, InteractionReply, InteractionRequest}
 import nebflow.db.format.PendingRecord
 import nebflow.db.{DbHandle, DbHost, PendingStream}
 import nebflow.shared.{NebflowLogger, UiMessage}
 
 import java.nio.file.{Files, StandardCopyOption}
+
 import scala.util.Try
 
 /**

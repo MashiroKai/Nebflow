@@ -1,11 +1,11 @@
 package nebflow.agent
 
-import cats.effect.{Deferred, IO}
 import cats.effect.kernel.Outcome
+import cats.effect.{Deferred, IO}
 import cats.syntax.all.*
-import io.circe.{Decoder, Encoder, Json}
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.syntax.*
+import io.circe.{Decoder, Encoder, Json}
 import nebflow.actor.*
 import nebflow.core.ProtectedExecutionHandle
 import nebflow.shared.*
