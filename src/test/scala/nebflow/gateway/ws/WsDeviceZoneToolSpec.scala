@@ -7,7 +7,7 @@ import fs2.Stream
 import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.actor.{ActorPath, ActorRef, ActorSystem, AgentCommand, AgentDef, AgentKind, AgentRecord, AgentStatus}
+import nebflow.actor.{ActorSystem, AgentCommand, AgentDef, AgentKind, AgentRecord, AgentStatus}
 import nebflow.agent.{AgentActor, AgentLibrary, SharedResources, SubAgentTaskStore}
 import nebflow.core.{FileChangeTracker, RateLimiter, SessionStore}
 import nebflow.core.compact.HistoryArchiver
@@ -196,87 +196,7 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
         queuedBusy <- captured.take.timeout(30.seconds)
         _ = assertEquals(queuedBusy, Some("Europe/Paris"))
         _ <- done.take.timeout(30.seconds)
-        barrier <- Queue.unbounded[IO, List[String]]
-        barrierRef = new ActorRef[List[String]]:
-          def path: ActorPath = null
-          def !(msg: List[String]): IO[Unit] = barrier.offer(msg)
-          def ?[R](f: ActorRef[R] => List[String], timeout: Option[FiniteDuration] = Some(30.seconds)): IO[R] =
-            IO.raiseError(new Exception("not used"))
-        // Enter the real registered tool, queue the immediate while it is held,
-        // then use the actor's AskUser unavailable response as a FIFO barrier.
-        _ <- blockTool.set(true)
-        _ <- ref ! AgentCommand.UserInput("boundary start", clientMessageId = Some("boundary-start"),
-          fromUser = true, deviceZone = Some("Asia/Tokyo"))
-        boundaryFirst <- captured.take.timeout(30.seconds)
-        _ = assertEquals(boundaryFirst, Some("Asia/Tokyo"))
-        _ <- toolEntered.take.timeout(30.seconds)
-        _ <- ref ! AgentCommand.ImmediateInput("same-zone injection", fromUser = true, deviceZone = Some("Asia/Tokyo"))
-        _ <- ref ! AgentCommand.AskUser("boundary-fifo", Nil, Some(barrierRef))
-        barrierAnswer <- barrier.take.timeout(30.seconds)
-        _ = assert(nebflow.shared.AskUserDispatch.isFailure(barrierAnswer) && barrierAnswer.head.contains("boundary-fifo"))
-        _ <- overrideCall.set(Some(true))
-        _ <- toolRelease.offer(())
-        boundaryNext <- captured.take.timeout(30.seconds)
-        _ = assertEquals(boundaryNext, Some("Asia/Tokyo"))
-        _ <- overrideCall.set(Some(false))
-        _ <- done.take.timeout(30.seconds)
-        _ <- (for
-          _ <- overrideCall.set(Some(true))
-          _ <- blockTool.set(true)
-          _ <- ref ! AgentCommand.UserInput("different start", clientMessageId = Some("different-start"),
-            fromUser = true, deviceZone = Some("Asia/Tokyo"))
-          first <- captured.take.timeout(30.seconds)
-          _ = assertEquals(first, Some("Asia/Tokyo"))
-          _ <- toolEntered.take.timeout(30.seconds)
-          _ <- ref ! AgentCommand.ImmediateInput("different zone", fromUser = true, deviceZone = Some("Europe/Paris"))
-          _ <- ref ! AgentCommand.AskUser("different-fifo", Nil, Some(barrierRef))
-          ack <- barrier.take.timeout(30.seconds)
-          _ = assert(nebflow.shared.AskUserDispatch.isFailure(ack) && ack.head.contains("different-fifo"))
-          _ <- overrideCall.set(Some(true))
-          _ <- toolRelease.offer(())
-          second <- captured.take.timeout(30.seconds)
-          _ = assertEquals(second, None)
-          _ <- overrideCall.set(Some(false))
-          _ <- done.take.timeout(30.seconds)
-        yield ())
-        _ <- (for
-          _ <- overrideCall.set(Some(true))
-          _ <- blockTool.set(true)
-          _ <- ref ! AgentCommand.UserInput("missing start", clientMessageId = Some("missing-start"),
-            fromUser = true, deviceZone = Some("Asia/Tokyo"))
-          first <- captured.take.timeout(30.seconds)
-          _ = assertEquals(first, Some("Asia/Tokyo"))
-          _ <- toolEntered.take.timeout(30.seconds)
-          _ <- ref ! AgentCommand.ImmediateInput("missing zone", fromUser = true)
-          _ <- ref ! AgentCommand.AskUser("missing-fifo", Nil, Some(barrierRef))
-          ack <- barrier.take.timeout(30.seconds)
-          _ = assert(nebflow.shared.AskUserDispatch.isFailure(ack) && ack.head.contains("missing-fifo"))
-          _ <- overrideCall.set(Some(true))
-          _ <- toolRelease.offer(())
-          second <- captured.take.timeout(30.seconds)
-          _ = assertEquals(second, None)
-          _ <- overrideCall.set(Some(false))
-          _ <- done.take.timeout(30.seconds)
-        yield ())
-        _ <- (for
-          _ <- overrideCall.set(Some(true))
-          _ <- blockTool.set(true)
-          _ <- ref ! AgentCommand.UserInput("mail boundary start", clientMessageId = Some("mail-boundary-start"),
-            fromUser = true, deviceZone = Some("Asia/Tokyo"))
-          first <- captured.take.timeout(30.seconds)
-          _ = assertEquals(first, Some("Asia/Tokyo"))
-          _ <- toolEntered.take.timeout(30.seconds)
-          _ <- ref ! AgentCommand.UserInput("mail injected", source = Some("mail"))
-          _ <- ref ! AgentCommand.AskUser("mail-fifo", Nil, Some(barrierRef))
-          ack <- barrier.take.timeout(30.seconds)
-          _ = assert(nebflow.shared.AskUserDispatch.isFailure(ack) && ack.head.contains("mail-fifo"))
-          _ <- overrideCall.set(Some(true))
-          _ <- toolRelease.offer(())
-          second <- captured.take.timeout(30.seconds)
-          _ = assertEquals(second, None)
-          _ <- overrideCall.set(Some(false))
-          _ <- done.take.timeout(30.seconds)
-        yield ())
+        _ <- DeviceZoneBoundaryChecks.run(ref, captured, done, blockTool, overrideCall, toolEntered, toolRelease)
         _ <- store.flushPendingUiWrites
       yield ()
     }
