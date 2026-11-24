@@ -101,6 +101,28 @@ class ModelRuleApplySpec extends FunSuite:
     assert(ModelRuleStore.setMode(root, "bogus").isLeft)
   }
 
+  test("concurrent mode writes retain one complete legal value") {
+    val root = os.temp.dir(prefix = "mr-concurrent-")
+    try
+      for _ <- 1 to 100 do
+        val start = new java.util.concurrent.CountDownLatch(1)
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(2)
+        try
+          val writes = List("slots", "rules").map { mode =>
+            pool.submit(new java.util.concurrent.Callable[Either[String, Unit]] {
+              def call(): Either[String, Unit] =
+                start.await()
+                ModelRuleStore.setMode(root, mode)
+            })
+          }
+          start.countDown()
+          writes.foreach(f => assert(f.get().isRight))
+          assert(Set("slots\n", "rules\n").contains(os.read(ModelRuleStore.modeOf(root))))
+          assertEquals(os.list(root).map(_.last).toList, List("model-rules.mode"))
+        finally pool.shutdownNow()
+    finally os.remove.all(root)
+  }
+
   test("P6 保存期校验：不合格脚本返回行号错误且不落盘") {
     val root = os.temp.dir(prefix = "mr-save-")
     val cat = ModelRuleDsl.Catalog(Map("a" -> Set("m1")))
