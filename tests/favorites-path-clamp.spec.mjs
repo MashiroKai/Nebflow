@@ -52,7 +52,7 @@ try {
   }
   if (!before) {
     for (const width of [1280, 390]) for (const theme of ['light', 'dark']) {
-      const s = await createSession(browser, { width, height: width === 390 ? 844 : 800, colorScheme: theme, explorerEntries: [] });
+      const s = await createSession(browser, { width, height: width === 390 ? 844 : 800, colorScheme: theme, explorerEntries: [], hasTouch: width===390, isMobile: width===390 });
       try {
         await s.boot({ config: { llm: { providers: {} }, features: {} }, sessionId: 'tooltip-bottom', messages: [] });
         const path = '/' + 'p'.repeat(1020) + '.md';
@@ -78,7 +78,20 @@ try {
           console.log('BOTTOM',JSON.stringify({width,theme,mode,placement,tip:{...tip,text:undefined}}));
           await s.page.screenshot({path:join(shots,`bottom-${width}-${theme}-${mode}.png`),animations:'disabled'});
         }
-        await row.hover(); await check('hover');
+        if (width===390) {
+          assert(await s.page.evaluate(()=>matchMedia('(hover: none)').matches), 'touch context must not support hover');
+          const hit=await row.evaluate(el=>{const r=el.getBoundingClientRect(),hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return hit===el||el.contains(hit);});
+          assert(hit,'touch target must not be covered');
+          await row.evaluate(el=>el.addEventListener('click',()=>{window.__favoriteTap=true;},{once:true}));
+          await s.page.screenshot({path:join(shots,`touch-390-${theme}-before.png`),animations:'disabled'});
+          await row.tap(); assert(await s.page.evaluate(()=>window.__favoriteTap===true),'tap reaches row');
+          assert.equal(await s.page.locator('.cfp-path-tooltip:visible').count(),0,'touch must not show hover tooltip');
+          await s.page.screenshot({path:join(shots,`touch-390-${theme}-after.png`),animations:'disabled'});
+        } else {
+          await row.hover(); await check('hover');
+          const pass=await s.page.locator('.cfp-path-tooltip').evaluate(el=>{const r=el.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,hit=document.elementFromPoint(x,y);return {x,y,tag:hit?.tagName,cls:hit?.className};});
+          assert.notEqual(pass.cls,'cfp-path-tooltip','hover must pass pointer through');
+        }
         await s.page.mouse.move(width-5,5);
         await s.page.locator(`${root} .cfp-search-input`).focus();
         await s.page.keyboard.press('Tab');
