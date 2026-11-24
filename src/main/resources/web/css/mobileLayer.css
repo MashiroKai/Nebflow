@@ -2182,6 +2182,9 @@ body.mobile-layer .mf-strip-chip.on {
    `compare/noborder-*`（无面）两组，闸侧由 canvas-tab-reference 的 R12 兜底（钮的可见面
    零边框，含伪元素）。 */
 body.mobile-layer .mf-strip-quote {
+  border: 0;
+  background: transparent;
+  color: inherit;
   display: none;
   /* ① 命中层修复（本批）：定位 + z-index 1 ⇒ 居于签 ::before（z-index:auto）之上。 */
   position: relative;
@@ -2287,7 +2290,6 @@ body.mobile-layer .mf-cv-toolbar .g2-fab {
   pointer-events: auto;
 }
 body.mobile-layer .mf-cv-toolbar .mf-cv-close { left: var(--mchrome-top, 16px); }
-body.mobile-layer .mf-cv-toolbar .mf-cv-star { left: calc(var(--mchrome-top, 16px) + var(--band-d, var(--ds-space-12)) + var(--ds-space-2)); }
 body.mobile-layer .mf-cv-toolbar .mf-cv-stack { right: var(--mchrome-top, 16px); }
 body.mobile-layer .mf-cv-toolbar .g2-fab svg { width: var(--band-icon); height: var(--band-icon); }
 /* 禁用 opacity .35 档随统一按钮玻璃批迁 glass.css 圆钮禁用档（.g2-fab 共档）。 */

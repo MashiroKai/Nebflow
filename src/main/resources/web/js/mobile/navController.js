@@ -1144,14 +1144,14 @@ function syncCanvasPage() {
     setActiveTab(docs[0].id);
     return;
   }
-  const sig = docs.map((d) => d.id).join('|');
+  const sig = `${docs.map((d) => d.id).join('|')}::${activeId}`;
   if (canvasUI.strip.dataset.sig !== sig) {
     canvasUI.strip.dataset.sig = sig;
+    canvasUI.star.remove();
     canvasUI.strip.innerHTML = '';
-    for (const d of docs) {
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'mf-strip-chip';
+    for (const d of docs.filter((doc) => doc.id === activeId)) {
+      const chip = document.createElement('div');
+      chip.className = 'mf-strip-chip on is-expanded';
       chip.dataset.tabId = d.id;
       chip.setAttribute('role', 'tab');
       const label = document.createElement('span');
@@ -1176,10 +1176,11 @@ function syncCanvasPage() {
       // 同一条通路、同一枚 chip 组件（composer 附件条 `.att-ref`）。另一支
       // feat/todo-card-click-left 的「点待办卡片补 # 引用」走的是同一条
       // appendRefToActiveView；本批不改通路、只改入口的外观与命中层。
-      const quote = document.createElement('span');
-      quote.className = 'mf-strip-quote';
+      const quote = document.createElement('button');
+      quote.type = 'button';
       quote.setAttribute('role', 'button');
       quote.setAttribute('tabindex', '0');
+      quote.className = 'mf-strip-quote';
       quote.setAttribute('aria-label', tt('引用此看板', 'Quote this Canvas'));
       quote.title = tt('引用此看板', 'Quote this Canvas');
       // 钮面 = **一枚小图标**（作者令 · 2026-11-18 22:10 逐字「引用只需要一个小图标就行
@@ -1215,25 +1216,15 @@ function syncCanvasPage() {
         }
       });
       chip.appendChild(quote);
-      // 全名三处保留（对齐修正批：视觉上不再有「…」，但读屏/悬停仍拿得到全名）：
+      // 全名三处保留（对齐修正批：视觉上不再有「…」，但读屏/悬停仍拿得到全名）:
       //   ① label.textContent = 全名（读屏直接读 DOM 文本，mask 只影响绘制）；
       //   ② chip.title = 全名（桌面悬停 / 长按提示）；
       //   ③ 触屏展开腿 = 点活签 `.is-expanded`（宽度解一档，超宽继续 mask 淡出）。
       chip.title = d.label;
-      chip.addEventListener('click', () => {
-        if (chip.classList.contains('on')) {
-          // 活签再点 = 展开/收起全名（长标签专利；其余签点击一律换签）。
-          const open = !chip.classList.contains('is-expanded');
-          chip.classList.toggle('is-expanded', open);
-          fitRingLabels();          // 展开档另一档宽度 ⇒ 重新按整字收束（全名放得下就全显）
-          logEvent('tab-label-expand', { tab: d.id, open });
-          if (open) armLabelCollapse(chip);
-          return;
-        }
-        logEvent('card-switch', { via: 'strip', tab: d.id });
-        setActiveTab(d.id);
-      });
+      const star = canvasUI.star;
+      chip.insertBefore(star, label);
       canvasUI.strip.appendChild(chip);
+      if (typeof lucide !== 'undefined') createIconsIn(chip);
     }
   }
   // 活签的全名展开态不跨切签存活（换签即收，防宽签压邻签）。
@@ -1856,7 +1847,7 @@ function buildCanvasPage(body) {
   const star = document.createElement('button');
   star.type = 'button';
   // Author-approved r2 mobile favorite star: same g2-fab + canvas-button family as mf-cv-stack.
-  star.className = 'mf-cv-star g2-fab canvas-button';
+  star.className = 'mf-cv-star canvas-button';
   star.innerHTML = '<i data-lucide="star" class="canvas-fav-ic"></i>';
   const paintStar = () => {
     const tgt = activeFavoriteTarget();
@@ -1881,7 +1872,7 @@ function buildCanvasPage(body) {
   });
   window.addEventListener(FAV_SYNC_EVENT, paintStar);
   onFavoritesChange(paintStar);
-  toolbar.append(close, count, stack, star);
+  toolbar.append(close, count, stack);
   paintStar();
 
   const host = document.createElement('div');
@@ -1918,7 +1909,7 @@ function buildCanvasPage(body) {
   // 悬浮钮统一批：工具条 = 页面悬浮 chrome 带控件 —— 挂 section 根（与页头带同
   // 定位上下文，top:16+safe 落位），mf-canvas-page 只吃环带/文档区/小点/空态。
   body.parentElement?.appendChild(toolbar);
-  canvasUI = { strip, toolbar, host, empty, dots };
+  canvasUI = { strip, toolbar, host, empty, dots, star };
   // 标签栏重做批①：图标替换覆盖到 toolbobar 子树（根因修复 —— 修前只 createIconsIn(wrap)，
   // 而 ✕/堆叠两钮在 toolbar 内、wrap 之外 ⇒ 永远停在 <i data-lucide>）。
   if (typeof lucide !== 'undefined') {

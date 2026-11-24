@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { ROOT, loadPlaywright, launchBrowser, createSession, settle } from '../scripts/lib/visual-harness.mjs';
 
 const PRIMARY = ROOT.includes('/.stand/worktrees/') ? ROOT.split('/.stand/worktrees/')[0] : ROOT;
-const SHOT_DIR = process.env.FAV_FLOW_SHOT_DIR || join(PRIMARY, '.stand', 'tmp', 'canvas-favorites-r2', 'evidence', 'screenshots');
+const SHOT_DIR = process.env.FAV_FLOW_SHOT_DIR || join(PRIMARY, '.stand', 'tmp', 'fav-star-corner', 'evidence', 'screenshots');
 const BOOT = { config: { llm: { providers: {} }, features: {} }, sessionId: 'fav-flow', messages: [] };
 let PAGE = '#canvas-fav-page';
 // 1x1 透明 PNG：图片缩略图桩（真字节，避免破图干扰截图）。
@@ -83,10 +83,10 @@ async function starRoundTrip(page, tag, openPage) {
   if (tag === 'mobile') {
     const geometry = await page.evaluate(() => {
       const rect = sel => document.querySelector(sel).getBoundingClientRect();
-      const close = rect('.mf-cv-close'), star = rect('.mf-cv-star'), chip = rect('.mf-strip-chip.on');
-      return { closeRight: close.right, starLeft: star.left, starRight: star.right, chipLeft: chip.left };
+      const close = rect('.mf-cv-close'), star = rect('.mf-cv-star'), label = rect('.mf-strip-label'), quote = rect('.mf-strip-quote'), stack = rect('.mf-cv-stack');
+      return { closeRight: close.right, starLeft: star.left, starRight: star.right, labelLeft: label.left, labelRight: label.right, quoteLeft: quote.left, quoteRight: quote.right, stackLeft: stack.left, chips: document.querySelectorAll('.mf-strip-chip').length };
     });
-    check('mobile: close, star and chip do not overlap', geometry.closeRight < geometry.starLeft && geometry.starRight <= geometry.chipLeft, JSON.stringify(geometry));
+    check('mobile: close, star, title, quote and stack do not overlap', geometry.closeRight <= geometry.starLeft && geometry.starRight <= geometry.labelLeft && geometry.labelRight <= geometry.quoteLeft && geometry.quoteRight <= geometry.stackLeft && geometry.chips === 1, JSON.stringify(geometry));
     await shot(page, 'mobile-star-off.png', 'mobile star off and chip');
     await shot(page, 'mobile-star-off-close.png', 'mobile star off close-up', starSel);
   }
@@ -108,7 +108,7 @@ async function starRoundTrip(page, tag, openPage) {
   try {
     if (tag === 'mobile') {
       await page.locator('.mf-strip').waitFor({ state: 'visible' });
-      await page.screenshot({ path: join(SHOT_DIR, `${tag}-star-on-capsule.png`), clip: { x: 0, y: 0, width: 390, height: 160 }, timeout: 8000 });
+      await page.screenshot({ path: join(SHOT_DIR, `${tag}-star-on-capsule.png`), clip: { x: 0, y: 0, width: 375, height: 160 }, timeout: 8000 });
       await page.screenshot({ path: join(SHOT_DIR, 'mobile-star-on-page.png'), timeout: 8000 });
     } else {
       const box = await page.locator(headSel).first().boundingBox();
@@ -222,7 +222,7 @@ async function desktopCase(browser, failures) {
 
 async function mobileCase(browser, failures) {
   PAGE = '#canvas-fav-page';
-  const s = await createSession(browser, { width: 390, height: 844, colorScheme: 'light', clock: 0 });
+  const s = await createSession(browser, { width: 375, height: 812, colorScheme: 'light', clock: 0 });
   const page = s.page;
   page.on('pageerror', (e) => failures.push(`[mobile] pageerror ${e.message}`));
   await wireStubs(page);
