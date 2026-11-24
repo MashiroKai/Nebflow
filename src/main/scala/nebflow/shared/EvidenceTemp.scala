@@ -1,13 +1,15 @@
 package nebflow.shared
 
-import java.nio.file.{Files, LinkOption, Path, StandardCopyOption, StandardOpenOption}
-import java.security.MessageDigest
-import java.time.{Instant, LocalDate, ZoneOffset}
-import java.time.format.DateTimeFormatter
-import java.util.{HexFormat, UUID}
 import io.circe.Json
 import io.circe.parser.parse
 import io.circe.syntax.*
+
+import java.nio.file.*
+import java.security.MessageDigest
+import java.time.format.DateTimeFormatter
+import java.time.{Instant, LocalDate, ZoneOffset}
+import java.util.{HexFormat, UUID}
+
 import scala.jdk.CollectionConverters.*
 import scala.util.control.NonFatal
 

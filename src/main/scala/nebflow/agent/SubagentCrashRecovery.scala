@@ -3,7 +3,7 @@ package nebflow.agent
 import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.actor.AgentCommand
-import nebflow.shared.{Message, ContentBlock, MessageRole, NebflowLogger}
+import nebflow.shared.*
 
 /**
  * 子代理等待三缺口批（2026-10-25，缺口②）：**checkpoint 恢复的在飞工具调用终结面**。

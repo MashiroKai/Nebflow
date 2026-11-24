@@ -1,14 +1,12 @@
 package nebflow.agent
 
-import cats.effect.{Deferred, IO, Resource}
 import cats.effect.kernel.Outcome
 import cats.effect.std.Semaphore
+import cats.effect.{Deferred, IO, Resource}
 import cats.syntax.all.*
-
-import scala.concurrent.duration.*
-import io.circe.{Json, JsonObject}
 import io.circe.parser.parse
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import nebflow.core.ExecutionCommitPort
 import nebflow.shared.*
 import nebflow.shared.given
@@ -16,9 +14,11 @@ import nebflow.shared.given
 import java.nio.ByteBuffer
 import java.nio.channels.{FileChannel, FileLock}
 import java.nio.charset.StandardCharsets.UTF_8
-import java.nio.file.{Files, LinkOption, Path, StandardCopyOption, StandardOpenOption}
+import java.nio.file.*
 import java.security.MessageDigest
 import java.util.Base64
+
+import scala.concurrent.duration.*
 
 /** Serialized local commit authority and volatile attempt ownership. */
 final class ExecutionCommitStore private (

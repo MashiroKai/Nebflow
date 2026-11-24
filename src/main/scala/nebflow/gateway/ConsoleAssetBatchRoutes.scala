@@ -1,11 +1,10 @@
 package nebflow.gateway
 
-import nebflow.neblink.portal.*
-
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.neblink.portal.*
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*

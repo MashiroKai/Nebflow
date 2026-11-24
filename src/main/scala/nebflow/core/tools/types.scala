@@ -3,12 +3,11 @@ package nebflow.core.tools
 import cats.effect.std.Semaphore
 import cats.effect.{IO, Ref}
 import io.circe.{Json, JsonObject}
-import nebflow.actor.*
+import nebflow.actor.{RootAgentIdentity, *}
+import nebflow.core.*
 import nebflow.core.hooks.*
 import nebflow.core.task.TaskStore
-import nebflow.core.{AgentLibraryView, AgentRuntimePort, FileChangeLedger, FileChangeTracker}
 import nebflow.shared.*
-import nebflow.actor.RootAgentIdentity
 
 /** Runtime-only identity minted by AgentSessionExecution; not representable in tool input. */
 final class ToolExecutionIdentity private[tools] (val agentName: String, val role: String, private val seal: AnyRef)

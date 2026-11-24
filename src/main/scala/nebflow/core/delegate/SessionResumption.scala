@@ -2,12 +2,11 @@ package nebflow.core.delegate
 
 import cats.effect.IO
 import cats.syntax.all.*
-import io.circe.Json
-import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.actor.{ActorRef, ActorSystem, AgentEvent, AgentKind}
-import nebflow.core.executor.ExecutorRegistry
+import io.circe.{Json, JsonObject}
+import nebflow.actor.*
 import nebflow.core.ResumeHandoff
+import nebflow.core.executor.ExecutorRegistry
 import nebflow.core.node.NodeRunner
 import nebflow.core.project.DelegateFlowHosts
 import nebflow.shared.{ContentBlock, NebflowLogger, SubAgentTask}

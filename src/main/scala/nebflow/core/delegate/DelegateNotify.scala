@@ -1,7 +1,7 @@
 package nebflow.core.delegate
 
 import cats.effect.IO
-import nebflow.actor.{ActorRef, AgentCommand, AgentKind, AgentRecord}
+import nebflow.actor.*
 import nebflow.shared.NebflowLogger
 
 /**

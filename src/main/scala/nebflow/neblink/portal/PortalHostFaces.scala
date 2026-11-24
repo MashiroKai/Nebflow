@@ -1,8 +1,7 @@
 package nebflow.neblink.portal
 
-import nebflow.neblink.core.*
-
 import cats.effect.IO
+import nebflow.neblink.core.*
 import org.http4s.HttpApp
 
 import java.util.concurrent.atomic.AtomicReference

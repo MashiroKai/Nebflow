@@ -1,6 +1,6 @@
 package nebflow.agent
 
-import cats.effect.{Deferred, Fiber, IO, Ref, Resource}
+import cats.effect.*
 import cats.effect.kernel.Outcome
 import cats.effect.std.Semaphore
 import cats.syntax.all.*

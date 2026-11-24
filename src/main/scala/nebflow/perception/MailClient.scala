@@ -1,13 +1,14 @@
 package nebflow.perception
 
-import PerceptionModel.IncomingMail
+import nebflow.perception.PerceptionModel.IncomingMail
 
-import java.io.{BufferedReader, BufferedInputStream, InputStreamReader, OutputStream}
+import java.io.*
 import java.net.{InetSocketAddress, Socket}
 import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
 import java.util.Base64
-import javax.net.ssl.{SSLSocket, SSLSocketFactory, SSLContext, TrustManagerFactory}
+import javax.net.ssl.*
+
 import scala.util.matching.Regex
 
 /**

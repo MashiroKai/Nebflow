@@ -1,11 +1,10 @@
 package nebflow.neblink.relay
 
+import cats.effect.IO
 import nebflow.neblink.relay.DialBudget
 
-import cats.effect.IO
-
+import java.util.concurrent.*
 import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
-import java.util.concurrent.{CompletableFuture, SynchronousQueue, ThreadFactory, ThreadPoolExecutor, TimeUnit}
 
 /**
  * presence 拨号专用阻塞池（presence-dial-overhaul 批 2026-11-04，作者 13:05 批「可以派」）。

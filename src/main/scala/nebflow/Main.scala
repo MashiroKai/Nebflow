@@ -3,7 +3,7 @@ package nebflow
 import cats.effect.{ExitCode, IO, IOApp}
 import nebflow.cli.*
 import nebflow.gateway.GatewayConfig
-import nebflow.shared.{Branding, Config, Defaults, PathUtil}
+import nebflow.shared.*
 
 import scala.util.Try
 

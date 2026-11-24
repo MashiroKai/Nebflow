@@ -1,13 +1,9 @@
 package nebflow.gateway
 
-import nebflow.neblink.identity.*
-
-import nebflow.neblink.logto.*
-
 import cats.effect.IO
 import nebflow.bridge.OwnerAnchor
-import nebflow.neblink.identity.DeviceCredential
-import nebflow.neblink.logto.LogtoAuthCode
+import nebflow.neblink.identity.{DeviceCredential, *}
+import nebflow.neblink.logto.{LogtoAuthCode, *}
 
 /**
  * owner 等值判据的引擎侧锚（门户身份透传批，方案 A2/A4，2026-10-28）。

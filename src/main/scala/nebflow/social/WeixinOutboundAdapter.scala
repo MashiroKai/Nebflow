@@ -8,10 +8,11 @@ import nebflow.shared.{NebflowLogger, SharedBackend}
 import nebflow.social.outbound.{OutboundRetry, RetryPolicy}
 import sttp.client4.*
 
-import java.nio.file.{Files, StandardOpenOption}
 import java.nio.file.attribute.PosixFilePermissions
+import java.nio.file.{Files, StandardOpenOption}
 import java.security.SecureRandom
 import java.util.Base64
+
 import scala.concurrent.duration.*
 
 /**

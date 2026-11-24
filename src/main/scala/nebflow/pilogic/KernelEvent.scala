@@ -1,7 +1,7 @@
 package nebflow.pilogic
 
+import io.circe.*
 import io.circe.syntax.*
-import io.circe.{Decoder, Encoder, HCursor, Json}
 
 /**
  * 内核事件 envelope——全项目事件的最小统一形状（全项目等它对拍）。

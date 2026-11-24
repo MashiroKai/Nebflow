@@ -1,8 +1,8 @@
 package nebflow.core.tests
 
 import cats.effect.IO
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import nebflow.core.AtomicJson
 import nebflow.shared.PathUtil
 

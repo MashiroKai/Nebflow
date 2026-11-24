@@ -1,8 +1,7 @@
 package nebflow.neblink.attachment
 
-import nebflow.neblink.core.*
-
 import io.circe.{Json, JsonObject}
+import nebflow.neblink.core.*
 
 /**
  * 附件**预览字段**契约声明件 —— 好友/群图片预览传输批 · **字段方言双兼容批**（2026-09-22）。

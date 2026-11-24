@@ -5,22 +5,12 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.bridge.{AskAnswerReceipt, BridgeContext, BridgeManager, BridgePlugin}
+import nebflow.bridge.*
 import nebflow.shared.NebflowLogger
-import nebflow.social.outbound.{
-  AskPromptCodec,
-  FileLeg,
-  FileLongShot,
-  OutputBlock,
-  PromptAction,
-  PromptView,
-  RetryPolicy,
-  RichDegrade,
-  RichKind,
-  RichProduct
-}
+import nebflow.social.outbound.*
 
 import java.util.concurrent.atomic.AtomicBoolean
+
 import scala.concurrent.duration.*
 import scala.util.Try
 

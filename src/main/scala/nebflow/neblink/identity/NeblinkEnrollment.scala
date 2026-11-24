@@ -1,13 +1,12 @@
 package nebflow.neblink.identity
 
-import nebflow.neblink.core.*
-import nebflow.neblink.relay.*
-import nebflow.neblink.social.*
-
-import nebflow.neblink.logto.*
 import cats.effect.IO
 import io.circe.Json
-import nebflow.core.root.{AccountProfile, AccountRoot, ActiveAccount, RootLadder, RootLayer, RootLayout}
+import nebflow.core.root.*
+import nebflow.neblink.core.*
+import nebflow.neblink.logto.*
+import nebflow.neblink.relay.*
+import nebflow.neblink.social.*
 import nebflow.shared.{NebflowLogger, PathUtil}
 
 /**

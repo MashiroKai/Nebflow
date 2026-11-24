@@ -39,8 +39,7 @@ import cats.effect.IO
 import cats.effect.kernel.{Deferred, Ref}
 import cats.syntax.all.*
 import nebflow.gateway.NfFilePolicy.*
-import nebflow.shared.EvidenceTemp
-import nebflow.shared.PathUtil
+import nebflow.shared.{EvidenceTemp, PathUtil}
 import org.http4s.*
 import org.http4s.dsl.io.*
 import org.http4s.headers.`Content-Type`
@@ -48,6 +47,7 @@ import org.http4s.headers.`Content-Type`
 import java.nio.file.Path
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicReference
+
 import scala.concurrent.duration.*
 import scala.util.control.NonFatal
 

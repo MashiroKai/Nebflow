@@ -2,16 +2,7 @@ package nebflow.gateway
 
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.shared.{
-  AgentModelConfig,
-  ContentBlock,
-  LlmRequest,
-  LlmResponse,
-  Message,
-  MessageRole,
-  ToolCall,
-  TokenUsage
-}
+import nebflow.shared.*
 
 /**
  * OpenAI wire-format shim for the EXISTING inbound chat face (batch B2,

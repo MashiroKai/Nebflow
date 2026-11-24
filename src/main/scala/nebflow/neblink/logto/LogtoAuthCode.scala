@@ -1,11 +1,9 @@
 package nebflow.neblink.logto
 
-import nebflow.neblink.core.*
-
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, parser}
-import nebflow.neblink.core.Protocol
+import nebflow.neblink.core.{Protocol, *}
 
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest

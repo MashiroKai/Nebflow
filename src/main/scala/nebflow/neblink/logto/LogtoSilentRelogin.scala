@@ -1,17 +1,10 @@
 package nebflow.neblink.logto
 
-import nebflow.neblink.core.*
-import nebflow.neblink.identity.*
-import nebflow.neblink.relay.*
-
 import cats.effect.IO
 import cats.syntax.all.*
-import nebflow.neblink.identity.DeviceCredential
-import nebflow.neblink.core.DeviceIdentity
-import nebflow.neblink.identity.EnrollGuard
-import nebflow.neblink.identity.NeblinkEnrollment
-import nebflow.neblink.core.NeblinkService
-import nebflow.neblink.relay.NeblinkDiscovery
+import nebflow.neblink.core.{DeviceIdentity, NeblinkService, *}
+import nebflow.neblink.identity.*
+import nebflow.neblink.relay.{NeblinkDiscovery, *}
 
 /**
  * Logto silent re-login (stage 2, 2026-08-28): the server rejected the

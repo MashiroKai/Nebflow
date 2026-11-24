@@ -1,13 +1,13 @@
 package nebflow.core.tools
 
+import cats.effect.*
 import cats.effect.std.Dispatcher
-import cats.effect.{Deferred, Fiber, IO, Ref}
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.AgentCommand
 import nebflow.core.{NeblinkClientPort, NeblinkServicePort}
-import nebflow.shared.{AttachContract, ContentBlock, NebflowLogger, PeerInfo}
+import nebflow.shared.*
 import sttp.client4.*
 
 import scala.concurrent.duration.*

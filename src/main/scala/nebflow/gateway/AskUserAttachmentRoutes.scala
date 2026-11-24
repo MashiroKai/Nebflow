@@ -25,17 +25,16 @@
  */
 package nebflow.gateway
 
-import cats.effect.IO
-import cats.effect.Resource
+import cats.effect.{IO, Resource}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.actor.InteractionHubCommand
+import nebflow.shared.{AttachContract, NebflowLogger, PathUtil}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
 import org.http4s.multipart.{Multipart, Part}
-import nebflow.actor.InteractionHubCommand
-import nebflow.shared.{AttachContract, NebflowLogger, PathUtil}
 
 import java.security.MessageDigest
 

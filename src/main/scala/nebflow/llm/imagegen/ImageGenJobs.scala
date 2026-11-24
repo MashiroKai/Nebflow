@@ -1,6 +1,7 @@
 package nebflow.llm.imagegen
 
 import java.util.concurrent.ConcurrentHashMap
+
 import scala.jdk.CollectionConverters.*
 
 /**

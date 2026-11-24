@@ -1,9 +1,5 @@
 package nebflow.neblink.core
 
-import nebflow.neblink.attachment.*
-import nebflow.neblink.social.*
-
-import nebflow.neblink.logto.*
 import cats.effect.IO
 import io.circe.*
 import io.circe.generic.semiauto.*
@@ -11,6 +7,9 @@ import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.core.*
 import nebflow.core.root.{RootLadder, RootLayer}
+import nebflow.neblink.attachment.*
+import nebflow.neblink.logto.*
+import nebflow.neblink.social.*
 import nebflow.shared.*
 
 import java.util.UUID

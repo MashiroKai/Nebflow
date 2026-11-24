@@ -4,13 +4,13 @@ import cats.effect.{Deferred, IO}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.actor.*
+import nebflow.core.{AtomicJson, ModelRoles, SchemePolicy}
+import nebflow.shared.*
 import org.apache.pekko.actor.typed.ActorRef
 
-import nebflow.actor.{InteractionHubCommand, InteractionKind, InteractionReply, InteractionRequest}
-import nebflow.core.{AtomicJson, ModelRoles, SchemePolicy}
-import nebflow.shared.{AgentModelConfig, ModelUnavailableAction, ModelUnavailableAnswer, NebflowLogger, PathUtil}
-
 import java.util.concurrent.atomic.AtomicReference
+
 import scala.concurrent.duration.*
 
 /**

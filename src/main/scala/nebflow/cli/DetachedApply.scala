@@ -7,6 +7,7 @@ import nebflow.shared.{Branding, PathUtil}
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
+
 import scala.util.control.NonFatal
 
 /**

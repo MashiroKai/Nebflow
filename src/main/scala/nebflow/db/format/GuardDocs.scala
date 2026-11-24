@@ -1,7 +1,7 @@
 package nebflow.db.format
 
-import io.circe.{Decoder, Encoder, Json}
 import io.circe.syntax.*
+import io.circe.{Decoder, Encoder, Json}
 
 /**
  * 冷却/软避窗小档（设计 §3.4(f)，案 B 类⑥，D-10 采纳）：`guard/` 下锁内 RMW 整档

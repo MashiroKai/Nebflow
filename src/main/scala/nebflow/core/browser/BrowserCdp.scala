@@ -4,9 +4,9 @@ import io.circe.syntax.*
 import io.circe.{Json, parser}
 
 import java.net.URI
-import java.net.http.{HttpClient, HttpRequest, HttpResponse, WebSocket}
+import java.net.http.*
+import java.util.concurrent.*
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
-import java.util.concurrent.{CompletableFuture, CompletionStage, ConcurrentHashMap, ExecutionException, TimeUnit, TimeoutException}
 
 import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*

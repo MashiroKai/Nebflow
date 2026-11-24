@@ -1,14 +1,13 @@
 package nebflow.neblink.social
 
-import nebflow.neblink.core.*
-import nebflow.neblink.relay.*
-
 import cats.effect.{IO, Ref}
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.actor.{ActorRef, AgentCommand}
 import nebflow.core.AgentRuntimePort
 import nebflow.core.tools.{MailTool, RelayExecAudit}
+import nebflow.neblink.core.*
+import nebflow.neblink.relay.*
 import nebflow.shared.{DeviceMail, NebflowLogger, Retry}
 
 import scala.collection.immutable.Queue
