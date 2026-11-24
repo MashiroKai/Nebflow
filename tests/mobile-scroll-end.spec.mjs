@@ -89,12 +89,17 @@ async function bootApp(page) {
       users: [],
       friends: [{ userId: 'u-p', neblinkId: 'pagfriend', name: '分页君', avatarUrl: '', since: Date.now() - 86400e3 }],
       incoming: [], outgoing: [],
-      conversations: [{
+      conversations: Array.from({length: 30}, (_, i) => ({
+        conversationId: `c-${i}`,
+        friend: { userId: `u-${i}`, neblinkId: `friend-${i}`, name: `分页联系人 ${i}`, avatarUrl: '' },
+        lastMessage: { id: 220+i, senderId: `u-${i}`, kind: 'text', body: `历史消息 ${i} ${'long text '.repeat(15)}`, createdAt: Date.now() - i*1000 },
+        unreadCount: 0, pendingAskCount: 0,
+      })).concat([{
         conversationId: 'c-p',
         friend: { userId: 'u-p', neblinkId: 'pagfriend', name: '分页君', avatarUrl: '' },
         lastMessage: { id: 220, senderId: 'u-p', kind: 'text', body: '历史消息 #220', createdAt: Date.now() - 60e3 },
         unreadCount: 0, pendingAskCount: 0,
-      }],
+      }]),
       messages: {
         'c-p': Array.from({ length: n }, (_, i) => ({
           id: 200 + i, senderId: i % 2 ? 'me' : 'u-p', kind: 'text',
@@ -290,9 +295,17 @@ test('mobile social dock pages: real mounted rows and long content', async ({ pa
   expect(rowBox.x).toBeGreaterThanOrEqual(0); expect(rowBox.x+rowBox.width).toBeLessThanOrEqual(375);
   // Dock root pages deliberately have no header (navController.js); never substitute the panel top.
   await expect(page.locator('.mobile-page[data-page="messages"] .mobile-page-header')).toHaveCount(0);
+  await messages.evaluate(el=>{el.style.scrollBehavior='auto'});
+  const socialRows=messages.locator('.fm-conv-row'); await expect(socialRows).toHaveCount(31);
   for (const f of [0,0.5,1]) {
-    const b=await messages.evaluate((el,fraction)=>{el.scrollTop=(el.scrollHeight-el.clientHeight)*fraction; const r=el.getBoundingClientRect(); return {left:r.left,right:r.right};},f);
-    expect(b.left).toBeGreaterThanOrEqual(0); expect(b.right).toBeLessThanOrEqual(375);
+    const b=await messages.evaluate((el,fraction)=>{el.scrollTop=(el.scrollHeight-el.clientHeight)*fraction; const r=el.getBoundingClientRect(); return {left:r.left,right:r.right,scroll:el.scrollTop,max:el.scrollHeight-el.clientHeight};},f);
+    expect(b.left).toBeGreaterThanOrEqual(0); expect(b.right).toBeLessThanOrEqual(375); expect(b.max).toBeGreaterThan(0); expect(Math.abs(b.scroll-b.max*f)).toBeLessThan(2);
+    const dock=page.locator('#mobile-dock'); await expect(dock).toBeVisible();
+  }
+  for(let i=0;i<31;i++) {
+    const item=socialRows.nth(i); await item.evaluate(el=>el.scrollIntoView({block:'center',behavior:'instant'}));
+    const b=await item.boundingBox(), dock=await page.locator('#mobile-dock').boundingBox();
+    expect(b.x).toBeGreaterThanOrEqual(0); expect(b.x+b.width).toBeLessThanOrEqual(375); expect(b.y).toBeGreaterThanOrEqual(0); expect(b.y+b.height).toBeLessThanOrEqual(dock.y);
   }
   const out=process.env.MOBILE_AUDIT_EVIDENCE;
   if(out) { const {mkdirSync}=await import('node:fs'); mkdirSync(out,{recursive:true}); await page.screenshot({path:join(out,'社交.png'),animations:'disabled'}); }
