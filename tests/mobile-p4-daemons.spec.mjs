@@ -37,7 +37,7 @@ test.use({ viewport: { width: 375, height: 812 }, hasTouch: true, colorScheme: '
 
 function daemonFixture() {
   return [
-    { id: 'd1', name: 'dev-server', port: 8111, portOpen: true, status: 'running', autoStart: true, command: 'npm run dev', hasConfigPanel: false },
+    { id: 'd1', name: 'dev-server', port: 8111, portOpen: true, status: 'running', autoStart: true, command: 'npm run dev', hasConfigPanel: true },
     { id: 'd2', name: 'watcher', port: 9222, portOpen: false, status: 'starting', autoStart: false, command: 'node watch.js --verbose', hasConfigPanel: false },
     { id: 'd3', name: 'legacy', port: 0, portOpen: false, status: 'error', autoStart: false, command: '', hasConfigPanel: false },
   ];
@@ -54,6 +54,7 @@ async function bootApp(page) {
     const url = new URL(route.request().url());
     let p = decodeURIComponent(url.pathname);
     if (p === '/') p = '/index.html';
+    if (p === '/api/daemons/d1/config-panel') return route.fulfill({json:{title:'守护进程配置',fields:Array.from({length:16},(_,i)=>({key:`field${i}`,label:`Field ${i}`,type:'text'})),values:{}}});
     if (p === '/api/daemons' || p.startsWith('/api/daemons/')) {
       if (route.request().method() !== 'GET') {
         writes.push({ method: route.request().method(), path: p, body: route.request().postDataJSON() });
@@ -162,6 +163,15 @@ test('mobile daemon audit: containment, header, controls and long text', async (
     }, f);
     expect(geo.left).toBeGreaterThanOrEqual(0); expect(geo.right).toBeLessThanOrEqual(375);
     expect(geo.top).toBeGreaterThanOrEqual(geo.headerBottom - 1);
+  }
+  await scroll.evaluate(el => { el.scrollTop=0; });
+  await page.locator('#daemon-panel [data-act="config"][data-id="d1"]').click();
+  const overlay=page.locator('#daemon-config-overlay.open'); await expect(overlay).toBeVisible();
+  await expect(overlay.locator('.daemon-config-header')).toBeVisible();
+  const overlayBox=await overlay.boundingBox(); expect(overlayBox.x).toBeGreaterThanOrEqual(0); expect(overlayBox.x+overlayBox.width).toBeLessThanOrEqual(375);
+  for (const f of [0,0.5,1]) {
+    const box=await overlay.locator('.daemon-config-body').evaluate((el,fraction)=>{ el.scrollTop=(el.scrollHeight-el.clientHeight)*fraction; const r=el.getBoundingClientRect(),h=document.querySelector('.daemon-config-header').getBoundingClientRect(); return {left:r.left,right:r.right,top:r.top,headerBottom:h.bottom,scrollHeight:el.scrollHeight,clientHeight:el.clientHeight}; },f);
+    expect(box.scrollHeight).toBeGreaterThan(box.clientHeight); expect(box.left).toBeGreaterThanOrEqual(0); expect(box.right).toBeLessThanOrEqual(375); expect(box.top).toBeGreaterThanOrEqual(box.headerBottom-1);
   }
   const out = process.env.MOBILE_AUDIT_EVIDENCE;
   if (out) { mkdirSync(out, { recursive: true }); await page.screenshot({ path: join(out, '守护进程.png'), animations: 'disabled' }); }
