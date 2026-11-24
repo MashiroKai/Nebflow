@@ -25,8 +25,10 @@ function showPathTooltip(row, path) {
     pathTooltip = document.createElement('div');
     pathTooltip.className = 'cfp-path-tooltip';
     pathTooltip.setAttribute('role', 'tooltip');
+    pathTooltip.tabIndex = 0;
     pathTooltip.addEventListener('mouseenter', () => clearTimeout(tooltipHideTimer));
     pathTooltip.addEventListener('mouseleave', hidePathTooltip);
+    pathTooltip.addEventListener('blur', hidePathTooltip);
     document.body.appendChild(pathTooltip);
   }
   pathTooltip.textContent = path;
@@ -183,7 +185,8 @@ function buildPage(onClose, onOpened) {
       row.addEventListener('mouseenter', () => showPathTooltip(row, entry.path));
       row.addEventListener('mouseleave', deferHidePathTooltip);
       row.addEventListener('focus', () => { if (row.matches(':focus-visible')) showPathTooltip(row, entry.path); });
-      row.addEventListener('blur', hidePathTooltip);
+      row.addEventListener('keydown', (event) => { if (event.key === 'Tab' && !event.shiftKey && pathTooltip && !pathTooltip.hidden) { event.preventDefault(); pathTooltip.focus(); } });
+      row.addEventListener('blur', (event) => { if (event.relatedTarget !== pathTooltip) hidePathTooltip(); });
       const main = document.createElement('div');
       main.className = 'cfp-main';
       const h = document.createElement('div');

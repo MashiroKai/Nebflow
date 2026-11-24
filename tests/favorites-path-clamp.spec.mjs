@@ -62,6 +62,13 @@ try {
       const state = await tip.evaluate(el => { el.scrollTop = el.scrollHeight; const r=el.getBoundingClientRect(); return {text:el.textContent, top:r.top, bottom:r.bottom, left:r.left, right:r.right, width:innerWidth, height:innerHeight, scrollTop:el.scrollTop, scrollHeight:el.scrollHeight, clientHeight:el.clientHeight}; });
       assert.equal(state.text,path); assert(state.top>=0 && state.left>=0 && state.right<=state.width && state.bottom<=state.height);
       assert(state.scrollHeight>state.clientHeight && state.scrollTop>0 && state.scrollTop+state.clientHeight>=state.scrollHeight-1, JSON.stringify(state));
+      await s.page.locator('#panel-favorites .cfp-search-input').focus();
+      for (let i=0; i<5 && !(await row.evaluate(el=>document.activeElement===el)); i++) await s.page.keyboard.press('Tab');
+      assert(await row.evaluate(el=>document.activeElement===el));
+      await s.page.keyboard.press('Tab'); assert(await tip.evaluate(el=>document.activeElement===el),'tooltip receives keyboard focus');
+      await s.page.keyboard.press('End');
+      const keyboard = await tip.evaluate(el=>{const range=document.createRange();range.setStart(el.firstChild,el.firstChild.length-3);range.setEnd(el.firstChild,el.firstChild.length);const a=range.getBoundingClientRect(),r=el.getBoundingClientRect();return {top:a.top,bottom:a.bottom,tipTop:r.top,tipBottom:r.bottom,scroll:el.scrollTop};});
+      assert(keyboard.scroll>0 && keyboard.top>=keyboard.tipTop && keyboard.bottom<=keyboard.tipBottom, `keyboard cannot see end ${JSON.stringify(keyboard)}`);
       await s.page.screenshot({path:join(shots,'tooltip-4096-scroll-bottom.png'),animations:'disabled'});
     } finally { await s.close(); }
     const titleSession = await createSession(browser, { width: 1280, height: 800, colorScheme: 'light', explorerEntries: [] });
