@@ -220,7 +220,7 @@ export function buildAskQuestionCard(entry) {
     if (!allAnswered() || card.classList.contains('is-answered')) return;
     const answers = items.map((item, qi) => {
       if (isMulti(item)) return JSON.stringify(picked[qi]);
-      return picked[qi][0] || freeText[qi] || '';
+      return freeText[qi] || picked[qi][0] || '';
     });
     const res = submitAskAnswer({
       requestId: entry.requestId,

@@ -3447,7 +3447,7 @@ export default {
   'todoapple.createUnconfirmed': '尚未确认保存，请检查连接并重试。为避免重复，请回到原会话重试。',
   'todoapple.discardPending': '放弃重试',
   'todoapple.replyFailed': '回复未发送，请重试一次。',
-  'todoapple.answerFirst': '先作答再完成',
+  'todoapple.answerFirst': '先选一项',
   'todoapple.decisionPending': '待作答',
   'todoapple.decisionAnswered': '已作答',
   'todoapple.answerSubmit': '提交作答',

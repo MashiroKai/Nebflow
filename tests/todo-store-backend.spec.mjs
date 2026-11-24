@@ -278,6 +278,27 @@ async function bootApp(page) {
 
 const frames = (captured, type) => captured.filter((f) => f.type === type);
 
+test('Ask 待办自由文本覆盖先选预设', async ({ page }) => {
+  await bootApp(page);
+  const result = await page.evaluate(async () => {
+    const pending = await import('/js/askPending.js');
+    const { buildAskQuestionCard } = await import('/js/askTodoQuestion.js');
+    const frames = [];
+    pending.startPendingAskSync((frame) => frames.push(frame));
+    const entry = { requestId: 'ask-free-test', sessionId: 'todo-store-root', items: [{ question: '选择', options: [{ label: '甲' }], allowOther: true }] };
+    pending.notePendingAsk(entry);
+    const card = buildAskQuestionCard(entry);
+    document.body.append(card);
+    card.querySelector('.ask-todo-opt').click();
+    const input = card.querySelector('.ask-todo-other');
+    input.value = '自由答案';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    card.querySelector('.ask-todo-submit').click();
+    return frames.find((f) => f.type === 'askUserAnswer');
+  });
+  expect(result.answers).toEqual(['自由答案']);
+});
+
 test('桌面决策选项作答后完成并移除', async ({ page }) => {
   const h = await bootApp(page);
   await h.waitRows(4);
@@ -294,6 +315,38 @@ test('桌面决策选项作答后完成并移除', async ({ page }) => {
   expect(frames(h.captured, 'answerTodoDecision').find((f) => f.id === 't4').selectedOptionIds).toEqual(['yes']);
   await expect(row).toHaveCount(0);
   expect(h.backend.rows[0].completed).toBe(true);
+});
+
+test('直接完成普通待办会发送帧并移除行', async ({ page }) => {
+  const h = await bootApp(page);
+  await h.waitRows(4);
+  await page.evaluate(async (sid) => (await import('/js/todoFace.js')).renderTodoTaskList(sid), SID);
+  await page.locator('.tfl-capsule').click();
+  const row = page.locator('.tfl-row[data-id="t4"]');
+  await row.locator('.tfl-complete').click();
+  await expect.poll(() => frames(h.captured, 'completeTodo').some((f) => f.id === 't4')).toBe(true);
+  await expect(row).toHaveCount(0);
+  expect(h.backend.rows[0].completed).toBe(true);
+});
+
+test('未作答决策禁止完成且后端拒绝后恢复待办', async ({ page }) => {
+  const h = await bootApp(page);
+  await h.waitRows(4);
+  h.backend.rows[0].decision = { question: '选择方案', options: [{ id: 'yes', title: '选甲' }], multiSelect: false };
+  h.sendFrame({ type: 'scheduledTaskList', sessionId: SID, scope: 'all', tasks: h.backend.rows.map(rowJson) });
+  await page.evaluate(async (sid) => (await import('/js/todoFace.js')).renderTodoTaskList(sid), SID);
+  await page.locator('.tfl-capsule').click();
+  const row = page.locator('.tfl-row[data-id="t4"]');
+  await expect(row.locator('.tfl-complete')).toBeDisabled();
+  await expect(row.locator('.tfl-complete')).toHaveAttribute('title', '先选一项');
+  expect(frames(h.captured, 'completeTodo')).toHaveLength(0);
+  // Simulate a stale client bypassing the UI gate; the fixture rejects and store refreshes.
+  await page.evaluate(async () => (await import('/js/todoStore.js')).todoStore.completeItem('t4'));
+  await expect.poll(() => frames(h.captured, 'completeTodo').length).toBe(1);
+  await expect(row).toBeVisible();
+  await expect(row.locator('.tfl-complete')).toBeDisabled();
+  await expect(row.locator('.tfl-complete')).toHaveAttribute('title', '先选一项');
+  expect(h.backend.rows[0].completed).toBe(false);
 });
 
 test('移动列表决策选项作答后完成并移除', async ({ page }) => {
@@ -316,10 +369,11 @@ test('移动列表决策选项作答后完成并移除', async ({ page }) => {
 test('旧待办隐藏决策卡结构化内容，普通待办仍显示', async ({ page }) => {
   const h = await bootApp(page);
   await h.waitRows(4);
-  h.sendFrame({ type: 'scheduledTaskList', sessionId: SID, scope: 'all', tasks: [
+  h.backend.rows = [
     { id: 'decision', kind: 'todo', sessionId: SID, project: '__decision_card_mvp__', name: '卡', detail: '{"summary":"secret-json"}', content: '{"summary":"secret-json"}' },
     { id: 'normal', kind: 'todo', sessionId: SID, content: '普通待办' },
-  ] });
+  ];
+  h.sendFrame({ type: 'scheduledTaskList', sessionId: SID, scope: 'all', tasks: h.backend.rows });
   await h.waitRows(1);
   const rows = await page.evaluate(async () => (await import('/js/todoStore.js')).todoStore.allItems());
   expect(rows.map(row => row.id)).toEqual(['normal']);
