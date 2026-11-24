@@ -5,10 +5,13 @@ const assert = require('node:assert/strict');
 (async () => {
   const browser = await chromium.launch({ headless: true });
   try {
-    const page = await browser.newPage();
+    const capture = async (page, state) => {
+      if (process.env.TERM_SCREENSHOTS) await page.screenshot({ path: process.env.TERM_SCREENSHOTS + '/' + state + '.png' });
+    };
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await page.route('http://fixture.test/**', async (route) => {
       const url = new URL(route.request().url());
-      if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: '<a id="term" href="#">Alias</a>' });
+      if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: '<link rel="stylesheet" href="/split.css"><a id="term" href="#">Alias</a>' });
       if (url.pathname === '/termTip.js') return route.fulfill({ contentType: 'text/javascript', body: readFileSync('src/main/resources/web/js/termTip.js', 'utf8') });
       if (url.pathname === '/split.css') return route.fulfill({ contentType: 'text/css', body: readFileSync('src/main/resources/web/css/split.css', 'utf8') });
       if (url.pathname === '/flowHelpers.js') return route.fulfill({ contentType: 'text/javascript', body: 'export const authHeaders = () => ({})' });
@@ -25,9 +28,11 @@ const assert = require('node:assert/strict');
       tip.attachTermFace(a, null, { term: true });
       a.addEventListener('click', (event) => { event.preventDefault(); tip.termTapExpand(a, null); });
     });
+    await capture(page, '390x844-empty');
     await page.locator('#term').click();
     await page.waitForFunction(() => document.querySelector('.nf-term-tip .ts').textContent === 'derived definition');
     assert.equal(await page.locator('.nf-term-tip .ts').textContent(), 'derived definition');
+    await capture(page, '390x844-normal');
     console.log('PASS: derived alias lookup precedes resolved payload');
     await page.evaluate(async () => {
       const tip = await import('/termTip.js');
@@ -44,6 +49,7 @@ const assert = require('node:assert/strict');
       tip.termTapExpand(a, null);
     });
     await page.waitForFunction(() => document.querySelector('#term') && window.aborted === false);
+    await capture(page, '390x844-loading');
     await page.waitForTimeout(50);
     await page.evaluate(async () => (await import('/termTip.js')).hideTermTip());
     assert.equal(await page.evaluate(() => window.aborted), true);
@@ -266,10 +272,11 @@ const assert = require('node:assert/strict');
     assert.equal(await sourcePage.evaluate(() => window.navReceived), true);
     await sourcePage.close();
     console.log('PASS: source delegates navigation and hides absolute path');
-    const missingSourcePage = await browser.newPage();
+    const missingSourcePage = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await missingSourcePage.route('http://fixture.test/**', async (route) => {
       const url = new URL(route.request().url());
-      if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: '<a id="missing-source" href="#">missing-source</a>' });
+      if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: '<link rel="stylesheet" href="/split.css"><a id="missing-source" href="#">missing-source</a>' });
+      if (url.pathname === '/split.css') return route.fulfill({ contentType: 'text/css', body: readFileSync('src/main/resources/web/css/split.css', 'utf8') });
       if (url.pathname === '/termTip.js') return route.fulfill({ contentType: 'text/javascript', body: readFileSync('src/main/resources/web/js/termTip.js', 'utf8') });
       if (url.pathname === '/flowHelpers.js') return route.fulfill({ contentType: 'text/javascript', body: 'export const authHeaders = () => ({})' });
       if (url.pathname === '/i18n.js') return route.fulfill({ contentType: 'text/javascript', body: 'export const t = (key) => key' });
@@ -287,6 +294,7 @@ const assert = require('node:assert/strict');
       tip.termTapExpand(a, document.body);
     });
     await missingSourcePage.waitForFunction(() => document.querySelector('.nf-term-tip .ts').textContent === 'definition');
+    await capture(missingSourcePage, '390x844-missing-source');
     assert.equal(await missingSourcePage.locator('.nf-term-tip .td').textContent(), '', 'missing source has no source text');
     assert.equal(await missingSourcePage.locator('.nf-term-tip .term-tip-source').isHidden(), true, 'unresolved source has no navigation action');
     assert.equal(await missingSourcePage.evaluate(() => !!window.missingSourceNavigated), false, 'unresolved source never navigated');
@@ -320,6 +328,7 @@ const assert = require('node:assert/strict');
       window.testTip.termTapExpand(a, null);
     });
     await page.waitForFunction(() => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'offline fallback'));
+    await capture(page, '390x844-fallback');
     console.log('PASS: network failure falls back to resolved payload');
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
