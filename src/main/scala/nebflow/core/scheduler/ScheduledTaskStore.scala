@@ -703,11 +703,7 @@ class ScheduledTaskStore(
                   case None if owned.nonEmpty =>
                     IO.raiseError(new IllegalStateException("conflicting task replicas; rearm refused"))
                   case None =>
-                    loadUnlocked(task.sessionId).flatMap { existing =>
-                      if existing.exists(_.id == task.id) then
-                        IO.raiseError(new IllegalArgumentException("duplicate task id"))
-                      else saveUnlocked(task.sessionId, existing :+ task).as(Rearm(task, Nil))
-                    }
+                    addUnlocked(task).as(Rearm(task, Nil))
                   case Some(old) =>
                     // Stable identity: keep the id and creation time the record already has;
                     // the request only supplies the new fields and the destination session.
