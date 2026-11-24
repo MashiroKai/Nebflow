@@ -47,6 +47,12 @@
    共用本文件，手机层只在 mobileLayer.css / 本文件移动档里换尺寸档。
    ═══════════════════════════════════════════════════════════════════════════ */
 
+.mr-mode {
+  border: 1px solid var(--glass-etched-border);
+  background: var(--glass-etched-bg);
+  color: var(--color-text);
+}
+
 #settings-content {
   display: flex;
   flex-direction: column;
