@@ -48,6 +48,8 @@ async function bootApp(page, mode) {
     const url = new URL(route.request().url());
     let p = decodeURIComponent(url.pathname);
     if (p === '/') p = '/index.html';
+    if (p === '/api/model-rules') return route.fulfill({ status: 200, contentType: 'application/json', body: '{"mode":"follow","source":""}' });
+    if (p === '/api/model-rules/mode') return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
     if (p.startsWith('/api/agents/') && p.endsWith('/model')) {
       const role = decodeURIComponent(p.split('/')[3]);
       const status = mode === 'partial' && role === 'kernel' ? 401 : (mode === 401 ? 401 : 200);
