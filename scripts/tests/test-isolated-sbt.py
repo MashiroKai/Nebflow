@@ -248,7 +248,7 @@ def case_d(battery, tmp):
     other = (f'2026-11-24 15:00:00.000 Df Sandbox: Python({other_pid}) deny(1) '
              f'network-outbound remote:*:{PORT}')
     judged = mod.judge_deny(ours + '\n' + other, {tree_pid}, PORT)
-    ok = len(judged['failures']) == 1 and judged['failures'][0]['pid'] == tree_pid
+    ok = len(judged['failures']) == 2 and judged['failures'][0]['pid'] == tree_pid
     battery.check('D', ok, f'tree pid {tree_pid} on denied port => guard failure')
     judged = mod.judge_deny(other, {tree_pid}, PORT)
     battery.check('D-neg', len(judged['failures']) == 1 and not judged['info'],
