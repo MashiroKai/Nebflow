@@ -145,5 +145,26 @@ const assert = require('node:assert/strict');
     await page.waitForFunction(() => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'recovered'));
     assert.equal(await page.evaluate(() => window.retryCalls), 2);
     console.log('PASS: failed retry remains available and subsequent retry succeeds');
+    const fallbackCases = [
+      ['down', { available: false, results: [] }],
+      ['ambiguous', { available: true, results: [{ name: 'ambiguous' }, { name: 'ambiguous' }] }],
+      ['malformed', 'not-json'],
+      ['missing', null],
+    ];
+    for (const [name, response] of fallbackCases) {
+      await page.evaluate(({ name, response }) => {
+        window.testTip.hideTermTip();
+        const a = document.querySelector('#term');
+        a.dataset.wikiTarget = name;
+        a.dataset.wikiResolved = JSON.stringify({ term: { name, definition: 'fallback ' + name } });
+        window.fetch = async (url) => {
+          if (String(url).includes('/lookup?')) return response === null ? new Response('', { status: 404 }) : new Response(typeof response === 'string' ? response : JSON.stringify(response));
+          return new Response('{}', { status: 404 });
+        };
+        window.testTip.termTapExpand(a, null);
+      }, { name, response });
+      await page.waitForFunction((name) => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'fallback ' + name), name);
+    }
+    console.log('PASS: unavailable, ambiguity, malformed JSON and 404 fall back to resolved payload');
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
