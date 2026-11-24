@@ -288,6 +288,8 @@ try {
       await s.page.locator('#sidebar').evaluate((el,w)=>{el.style.transition='none';el.style.flex=`0 0 ${w}px`;},sidebarWidth);
       for(const [index,position] of [[0,'start'],[9,'middle'],[17,'end']]) {
         const row=s.page.locator('#panel-favorites .cfp-row').nth(index);
+        for(const [title,path] of [['i'.repeat(255),'/short.md'],['Name','/'+ 'i'.repeat(127)],['Name','/'+ 'i'.repeat(255)]]) {
+        const original=await row.evaluate((el,values)=>{const a=el.querySelector('.cfp-row-title'),b=el.querySelector('.cfp-row-src'),old=[a.textContent,b.textContent];a.textContent=values[0];b.textContent=values[1];return old;},[title,path]);
         await row.evaluate(el=>el.scrollIntoView({block:'center'}));
         const state=await row.evaluate(el=>{const p=el.closest('.cfp-body'),v=p.getBoundingClientRect(),rows=[...p.querySelectorAll('.cfp-row')],i=rows.indexOf(el),r=el.getBoundingClientRect();const complete=rows.map((e,n)=>({n,r:e.getBoundingClientRect()})).filter(x=>x.r.top>=v.top&&x.r.bottom<=v.bottom).map(x=>x.n);return {scrollTop:p.scrollTop,scrollHeight:p.scrollHeight,clientHeight:p.clientHeight,rowHeight:r.height,viewportHeight:v.height,index:i,complete,inside:[...el.querySelectorAll('.cfp-row-title,.cfp-row-src')].every(e=>{const x=e.getBoundingClientRect();return x.top>=v.top&&x.bottom<=v.bottom&&x.left>=v.left&&x.right<=v.right;}),titleBytes:new TextEncoder().encode(el.querySelector('.cfp-row-title').textContent).length,pathBytes:new TextEncoder().encode(el.querySelector('.cfp-row-src').textContent).length};});
         assert(state.inside && state.rowHeight<=state.viewportHeight);
@@ -295,6 +297,8 @@ try {
         if(position==='end') assert.equal(state.complete.at(-1),index);
         if(position==='middle') { console.log('MIDDLE-DIAG',JSON.stringify(state)); assert(state.index>0 && state.index<17 && state.scrollTop>0 && state.scrollTop+state.clientHeight<state.scrollHeight, 'middle index and scroll offset'); }
         console.log('INDEPENDENT-REGULAR',JSON.stringify({sidebarWidth,position,...state}));
+        await row.evaluate((el,values)=>{el.querySelector('.cfp-row-title').textContent=values[0];el.querySelector('.cfp-row-src').textContent=values[1];},original);
+        }
       }
     } finally {await s.close();}
   }
