@@ -333,15 +333,18 @@ class ScheduledTaskStore(
     withStoreLock {
       loadUnlocked(sessionId).flatMap { existing =>
         val byId = existing.map(t => t.id -> t).toMap
-        val adjusted = tasks.map { task =>
-          byId.get(task.id) match
-            case Some(old) if old.due != task.due =>
-              task.copy(dueRuleVersion = Math.addExact(old.dueRuleVersion, 1L),
-                dueRuleHistory = old.dueRuleHistory ++ old.due.toList.map(TodoRuleSnapshot(old.dueRuleVersion, _)))
-            case Some(old) => task.copy(dueRuleVersion = old.dueRuleVersion, dueRuleHistory = old.dueRuleHistory)
-            case None => task
-        }
-        saveUnlocked(sessionId, adjusted)
+        val stale = tasks.exists(t => byId.get(t.id).exists(_.revision != t.revision))
+        if stale then IO.raiseError(new IllegalStateException("stale task revision"))
+        else
+          val adjusted = tasks.map { task =>
+            byId.get(task.id) match
+              case Some(old) if old.due != task.due =>
+                task.copy(dueRuleVersion = Math.addExact(old.dueRuleVersion, 1L),
+                  dueRuleHistory = old.dueRuleHistory ++ old.due.toList.map(TodoRuleSnapshot(old.dueRuleVersion, _)))
+              case Some(old) => task.copy(dueRuleVersion = old.dueRuleVersion, dueRuleHistory = old.dueRuleHistory)
+              case None => task
+          }
+          saveUnlocked(sessionId, adjusted)
       }
     }
 
