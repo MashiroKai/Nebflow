@@ -285,7 +285,7 @@ async function goto(page, id) {
   await page.waitForTimeout(900);
 }
 
-test('mobile social dock pages: real mounted rows and long content', async ({ page }) => {
+test('mobile social dock pages: real mounted rows and long content', async ({ page }, testInfo) => {
   await page.locator('#mobile-dock .dock-key[data-dock="messages"]').click();
   await expect(page.locator('.mobile-page[data-page="messages"]')).toHaveClass(/live/);
   const messages = page.locator('.mobile-page[data-page="messages"] #fm-conversations');
@@ -321,8 +321,31 @@ test('mobile social dock pages: real mounted rows and long content', async ({ pa
     const hit=await dock.evaluate(el=>{const r=el.getBoundingClientRect(),n=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return n===el||el.contains(n)}); expect(hit).toBe(true);
   }
   for(let i=0;i<31;i++) {
-    const friend=friends.nth(i); await friend.evaluate(el=>el.scrollIntoView({block:'center',behavior:'instant'}));
+    const friend=friends.nth(i), probe=`friend-${i}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    await friend.evaluate((el, marker)=>{el.dataset.nfProbe=marker; el.scrollIntoView({block:'center',behavior:'instant'});}, probe);
     const r=await friend.boundingBox(), dock=await page.locator('#mobile-dock').boundingBox();
+    if (r === null) {
+      const diagnostic = await page.evaluate(({ marker, index }) => {
+        const list = document.querySelector('.mobile-page[data-page="contacts"] #fm-contacts-body');
+        const matches = list ? list.querySelectorAll('.fm-friend-row') : [];
+        const marked = document.querySelector(`[data-nf-probe="${marker}"]`);
+        const describe = el => {
+          if (!el) return null;
+          const style = getComputedStyle(el), rect = el.getBoundingClientRect();
+          return { connected: el.isConnected, display: style.display, visibility: style.visibility,
+            rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } };
+        };
+        return { probe: marker, probePresent: !!marked, locatorCount: matches.length,
+          target: describe(marked), currentMatch: describe(matches[index]), list: describe(list),
+          scrollContainer: describe(list), scrollTop: list?.scrollTop ?? null,
+          viewport: { width: innerWidth, height: innerHeight } };
+      }, { marker: probe, index: i });
+      await testInfo.attach('contacts-null-geometry.json', { body: JSON.stringify(diagnostic, null, 2), contentType: 'application/json' });
+      await testInfo.attach('contacts-null-geometry.png', { body: await page.screenshot(), contentType: 'image/png' });
+      const summary = 'CONTACTS_NULL_GEOMETRY ' + JSON.stringify(diagnostic);
+      console.error(summary);
+      try { void r.x; } catch (error) { error.message += '\n' + summary; throw error; }
+    }
     expect(r.x).toBeGreaterThanOrEqual(0); expect(r.x+r.width).toBeLessThanOrEqual(375); expect(r.y).toBeGreaterThanOrEqual(0); expect(r.y+r.height).toBeLessThanOrEqual(dock.y);
   }
 });
