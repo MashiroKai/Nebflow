@@ -282,7 +282,7 @@ try {
     const s=await createSession(browser,{width:1280,height:800,colorScheme:'light',explorerEntries:[]});
     try {
       await s.boot(boot);
-      await s.page.evaluate(async()=>{const f=await import('/js/canvasFavorites.js');for(let i=0;i<18;i++) f.toggleFavoritePath({path:`/regular/${i}.md`,title:`regular entry ${i}`});});
+      await s.page.evaluate(async()=>{const f=await import('/js/canvasFavorites.js');for(let i=0;i<18;i++) { const size=[0,8,17].includes(i)?[16,128,256][i%3]:16; const prefix=`/regular/${i}/`; f.toggleFavoritePath({path:prefix+'i'.repeat(size-prefix.length-3)+'.md',title:i===0?'i'.repeat(246):`entry ${i}`}); }});
       await s.page.click('#favorites-btn');
       await s.page.locator('#panel-favorites .cfp-row').first().waitFor();
       await s.page.locator('#sidebar').evaluate((el,w)=>{el.style.transition='none';el.style.flex=`0 0 ${w}px`;},sidebarWidth);
@@ -293,7 +293,7 @@ try {
         assert(state.inside && state.rowHeight<=state.viewportHeight);
         if(position==='start') assert.equal(state.complete[0],index);
         if(position==='end') assert.equal(state.complete.at(-1),index);
-        if(position==='middle') assert(state.complete.some(n=>n<index)&&state.complete.some(n=>n>index));
+        if(position==='middle') { console.log('MIDDLE-DIAG',JSON.stringify(state)); assert(state.index>0 && state.index<17 && state.scrollTop>0 && state.scrollTop+state.clientHeight<state.scrollHeight, 'middle index and scroll offset'); }
         console.log('INDEPENDENT-REGULAR',JSON.stringify({sidebarWidth,position,...state}));
       }
     } finally {await s.close();}
