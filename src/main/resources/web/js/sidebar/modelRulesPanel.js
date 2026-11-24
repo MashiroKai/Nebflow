@@ -99,10 +99,6 @@ export function mountModelRulesSection(host) {
       `<pre class="mr-source">${escapeHtml(saved)}</pre>`;
     host.innerHTML = `
       <div class="mr-root" data-mode="${mode}">
-        <div class="mr-topbar" role="radiogroup" aria-label="${escapeHtml(t('modelRules.modeLabel'))}">
-          ${MODES.map((m) => `<button type="button" role="radio" aria-checked="${m === mode}"
-            class="mr-mode${m === mode ? ' is-on' : ''}" data-mode-set="${m}">${escapeHtml(t('modelRules.mode.' + m))}</button>`).join('')}
-        </div>
         ${loadError ? `<div class="mr-error">${escapeHtml(loadError)}</div>` : ''}
         <div class="mr-cols">
           <section class="mr-left">
