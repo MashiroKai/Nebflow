@@ -18,6 +18,9 @@ async function measure(page, root) {
     // Compare visible, non-ancestor leaf elements clipped by each overflow ancestor.
     // Ancestor/descendant pairs are intentional containment, not overlap.
     // SVG paths form a single icon; compare its SVG bounding box, not its strokes.
+    // Hidden/unopened overlays and skeletons have no visible painted leaf; zero-area
+    // leaves are excluded after clipping. Borders, scrollbars and CSS pseudo-elements
+    // are decoration rather than independent content leaves.
     const leaves=[...root.querySelectorAll('*')].filter(el => (el.tagName.toLowerCase()==='svg' || (!el.children.length && !el.closest('svg'))) && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none');
     function visibleRect(el) {
       const r=el.getBoundingClientRect(); let left=r.left, top=r.top, right=r.right, bottom=r.bottom;
@@ -111,6 +114,13 @@ try {
           assert.equal(details.title,details.text); assert.equal(details.aria,details.text);
           if(i!==6) assert(details.overflow==='ellipsis' && details.sw>details.cw, `expected documented ellipsis ${JSON.stringify(details)}`);
         }
+        await rows.first().focus(); await s.page.keyboard.type('VeryLong');
+        const fileSearch=s.page.locator('#explorer-search'); await fileSearch.waitFor({state:'visible'});
+        assertNoOverlap(await measure(s.page,'#panel-sessions'));
+        await fileSearch.fill('no-match-987654321');
+        assertNoOverlap(await measure(s.page,'#panel-sessions'));
+        assert.equal(await rows.evaluateAll(els=>els.filter(el=>!el.hidden).length), 0);
+        await fileSearch.press('Escape');
         await s.page.screenshot({path:join(shots,`desktop-${width}-long-files.png`),animations:'disabled'});
         console.log(`EXCEPTION file labels single-line ellipsis with full title/aria ${width}`);
       }
