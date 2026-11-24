@@ -153,7 +153,9 @@ try {
             await s.page.locator(`${root} .cfp-body`).evaluate((el,p)=>{el.scrollTop=(el.scrollHeight-el.clientHeight)*p;},position);
             const measured=await measure(s.page,root); assertText(measured); assertNoOverlap(measured);
             for(const sample of samples.slice(0,3)) {
-              const row=s.page.locator(`${root} .cfp-row`).first();
+              const visibleIndex=await s.page.locator(`${root} .cfp-row`).evaluateAll(els=>els.findIndex(el=>{const r=el.getBoundingClientRect(), p=el.closest('.cfp-body').getBoundingClientRect();return r.bottom>p.top && r.top<p.bottom;}));
+              assert(visibleIndex>=0,'visible complete row at scroll offset');
+              const row=s.page.locator(`${root} .cfp-row`).nth(visibleIndex);
               for(const part of ['.cfp-row-title','.cfp-row-src']) {
                 const text=row.locator(part), original=await text.textContent();
                 await text.evaluate((el,value)=>{el.textContent=value;},sample);
