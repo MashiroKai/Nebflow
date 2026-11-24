@@ -63,6 +63,18 @@ try {
         await thumb.evaluate(el=>el.removeAttribute('style'));
         console.log('PASS independent clipping and overlap negative controls');
       }
+      // Single-line search is an explicitly approved exception: keyboard navigation
+      // must retain the complete value without widening the surrounding panel.
+      const search=s.page.locator(`${root} .cfp-search-input`);
+      const query='SearchLongValue0123456789'.repeat(12);
+      await search.fill(query);
+      await search.press('Home'); await search.press('End');
+      const inputState=await search.evaluate(el=>({value:el.value, start:el.selectionStart, end:el.selectionEnd, scrollLeft:el.scrollLeft, panelScroll:el.closest('.cfp-page').scrollWidth, panelWidth:el.closest('.cfp-page').clientWidth, rect:el.getBoundingClientRect().toJSON()}));
+      assert.equal(inputState.value,query); assert.equal(inputState.start,query.length); assert.equal(inputState.end,query.length); assert(inputState.scrollLeft>0);
+      assert(inputState.panelScroll<=inputState.panelWidth+1);
+      assert(await search.evaluate(el=>{const r=el.getBoundingClientRect();const hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return hit===el||el.contains(hit);}), 'search not obscured');
+      if(width===1280||width===375) await s.page.screenshot({path:join(shots,`search-long-${width}.png`),animations:'disabled'});
+      await search.fill('');
       console.log(`PASS favorites text and siblings ${width}`);
       if (width >= 1000) {
         await s.page.click('#files-btn');
