@@ -172,8 +172,9 @@ test('mobile daemon audit: containment, header, controls and long text', async (
   await expect(overlay.locator('.daemon-config-header')).toBeVisible();
   const overlayBox=await overlay.boundingBox(); expect(overlayBox.x).toBeGreaterThanOrEqual(0); expect(overlayBox.x+overlayBox.width).toBeLessThanOrEqual(375);
   for (const f of [0,0.5,1]) {
-    const box=await overlay.locator('.daemon-config-body').evaluate((el,fraction)=>{ el.scrollTop=(el.scrollHeight-el.clientHeight)*fraction; const r=el.getBoundingClientRect(),h=document.querySelector('.daemon-config-header').getBoundingClientRect(); return {left:r.left,right:r.right,top:r.top,headerBottom:h.bottom,scrollHeight:el.scrollHeight,clientHeight:el.clientHeight}; },f);
-    expect(box.scrollHeight).toBeGreaterThan(box.clientHeight); expect(box.left).toBeGreaterThanOrEqual(0); expect(box.right).toBeLessThanOrEqual(375); expect(box.top).toBeGreaterThanOrEqual(box.headerBottom-1);
+    const box=await overlay.locator('.daemon-config-body').evaluate((el,fraction)=>{ el.scrollTop=(el.scrollHeight-el.clientHeight)*fraction; const r=el.getBoundingClientRect(),h=document.querySelector('.daemon-config-header').getBoundingClientRect(); const fields=[...el.querySelectorAll('.daemon-config-field')].map(n=>n.getBoundingClientRect()).filter(n=>n.bottom>r.top && n.top<r.bottom).map(n=>({left:n.left,right:n.right,top:n.top})); return {left:r.left,right:r.right,top:r.top,headerBottom:h.bottom,scroll:el.scrollTop,scrollHeight:el.scrollHeight,clientHeight:el.clientHeight,fields}; },f);
+    expect(box.scrollHeight).toBeGreaterThan(box.clientHeight); expect(Math.abs(box.scroll-(box.scrollHeight-box.clientHeight)*f)).toBeLessThan(2); expect(box.left).toBeGreaterThanOrEqual(0); expect(box.right).toBeLessThanOrEqual(375); expect(box.top).toBeGreaterThanOrEqual(box.headerBottom-1);
+    expect(box.fields.length).toBeGreaterThan(0); for(const field of box.fields) { expect(field.left).toBeGreaterThanOrEqual(0); expect(field.right).toBeLessThanOrEqual(375); if(field.top>=box.top) expect(field.top).toBeGreaterThanOrEqual(box.headerBottom-1); }
   }
   const out = process.env.MOBILE_AUDIT_EVIDENCE;
   if (out) { mkdirSync(out, { recursive: true }); await page.screenshot({ path: join(out, '守护进程.png'), animations: 'disabled' }); }

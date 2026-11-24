@@ -45,12 +45,13 @@ test('model rules mobile mounting and scroll geometry', async ({page}) => {
       el.scrollTop = (el.scrollHeight - el.clientHeight) * f;
       const r = el.getBoundingClientRect(); const h = document.querySelector('.secrets-modal-header').getBoundingClientRect();
       const items=[...el.querySelectorAll('.secrets-row')].map(item=>item.getBoundingClientRect()).filter(b=>b.bottom>r.top && b.top<r.bottom);
-      return {left:r.left,right:r.right,top:r.top,headerBottom:h.bottom,items:items.map(b=>({left:b.left,right:b.right,top:b.top,bottom:b.bottom}))};
+      return {left:r.left,right:r.right,top:r.top,headerBottom:h.bottom,scroll:el.scrollTop,max:el.scrollHeight-el.clientHeight,items:items.map(b=>({left:b.left,right:b.right,top:b.top,bottom:b.bottom}))};
     }, fraction);
     expect(geo.left).toBeGreaterThanOrEqual(-1); expect(geo.right).toBeLessThanOrEqual(376);
     expect(geo.top).toBeGreaterThanOrEqual(geo.headerBottom - 1);
+    expect(geo.max).toBeGreaterThan(0); expect(Math.abs(geo.scroll-geo.max*fraction)).toBeLessThan(2);
     expect(geo.items.length).toBeGreaterThan(0);
-    for(const item of geo.items) { expect(item.left).toBeGreaterThanOrEqual(0); expect(item.right).toBeLessThanOrEqual(375); }
+    for(const item of geo.items) { expect(item.left).toBeGreaterThanOrEqual(0); expect(item.right).toBeLessThanOrEqual(375); if(item.top>=geo.top) expect(item.top).toBeGreaterThanOrEqual(geo.headerBottom-1); }
   }
   if(process.env.MOBILE_AUDIT_EVIDENCE) { mkdirSync(process.env.MOBILE_AUDIT_EVIDENCE,{recursive:true}); await page.screenshot({path:join(process.env.MOBILE_AUDIT_EVIDENCE,'密钥.png')}); }
   await page.locator('#secrets-modal-close').click();
