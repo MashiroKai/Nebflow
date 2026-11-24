@@ -87,6 +87,18 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
         nextZone <- captured.take.timeout(30.seconds)
         _ = assertEquals(nextZone, None)
         _ <- done.take.timeout(30.seconds)
+        immediateFrame = Json.obj("type" -> "immediateInput".asJson, "sessionId" -> sid.asJson,
+          "content" -> "immediate probe".asJson, "device" -> Json.obj("timeZone" -> "Europe/Paris".asJson))
+        _ <- routes.handleMessagePublic(immediateFrame.noSpaces, _ => IO.unit)
+        immediateZone <- captured.take.timeout(30.seconds)
+        _ = assertEquals(immediateZone, Some("Europe/Paris"))
+        _ <- done.take.timeout(30.seconds)
+        immediateWithoutZone = Json.obj("type" -> "immediateInput".asJson, "sessionId" -> sid.asJson,
+          "content" -> "immediate without device".asJson)
+        _ <- routes.handleMessagePublic(immediateWithoutZone.noSpaces, _ => IO.unit)
+        immediateNoZone <- captured.take.timeout(30.seconds)
+        _ = assertEquals(immediateNoZone, None)
+        _ <- done.take.timeout(30.seconds)
         _ <- store.flushPendingUiWrites
       yield ()
     }
