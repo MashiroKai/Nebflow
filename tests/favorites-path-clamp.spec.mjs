@@ -51,6 +51,40 @@ try {
     } finally { await s.close(); }
   }
   if (!before) {
+    for (const width of [1280, 390]) for (const theme of ['light', 'dark']) {
+      const s = await createSession(browser, { width, height: width === 390 ? 844 : 800, colorScheme: theme, explorerEntries: [] });
+      try {
+        await s.boot({ config: { llm: { providers: {} }, features: {} }, sessionId: 'tooltip-bottom', messages: [] });
+        const path = '/' + 'p'.repeat(1020) + '.md';
+        await s.page.evaluate(async ({path, mobile}) => {
+          const f = await import('/js/canvasFavorites.js');
+          f.toggleFavoritePath({path, title:'Bottom target'});
+          for (let i=0;i<12;i++) f.toggleFavoritePath({path:`/filler-${i}.md`,title:`Filler ${i}`});
+          if (mobile) (await import('/js/mobile/navController.js')).dockTo('workbench');
+        }, {path, mobile: width===390});
+        if(width===390) await s.page.locator('.mobile-page[data-page="workbench"].live .mf-hub-row[data-hub-page="favorites"]').click();
+        else { await s.page.click('#favorites-btn'); await s.page.locator('#sidebar').evaluate(el=>{el.style.transition='none';el.style.flex='0 0 180px';}); }
+        const root=width===390?'#canvas-fav-page':'#panel-favorites';
+        const row=s.page.locator(`${root} .cfp-row`).filter({hasText:'Bottom target'}); await row.waitFor();
+        await row.evaluate(el=>{const body=el.closest('.cfp-body');body.scrollTop=body.scrollHeight;}); await settle(s.page,100);
+        const placement=await row.evaluate(el=>{const body=el.closest('.cfp-body'), r=el.getBoundingClientRect(),b=body.getBoundingClientRect();return {scrollTop:body.scrollTop, max:body.scrollHeight-body.clientHeight, rowTop:r.top,rowBottom:r.bottom,bodyBottom:b.bottom};});
+        assert(placement.max>0 && Math.abs(placement.max-placement.scrollTop)<=1, `not at bottom ${JSON.stringify(placement)}`);
+        async function check(mode) {
+          const tip=await s.page.locator('.cfp-path-tooltip').evaluate(el=>{const r=el.getBoundingClientRect();return {left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:innerWidth,height:innerHeight,hit:document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)===el,text:el.textContent};});
+          assert.equal(tip.text,path); assert(tip.left>=0 && tip.top>=0 && tip.right<=tip.width && tip.bottom<=tip.height, `out of viewport ${JSON.stringify(tip)}`);
+          assert(tip.hit,'tooltip center covered'); assert(tip.bottom<=placement.rowTop+1, `tooltip not above row ${JSON.stringify({tip,placement})}`);
+          console.log('BOTTOM',JSON.stringify({width,theme,mode,placement,tip:{...tip,text:undefined}}));
+          await s.page.screenshot({path:join(shots,`bottom-${width}-${theme}-${mode}.png`),animations:'disabled'});
+        }
+        await row.hover(); await check('hover');
+        await s.page.mouse.move(width-5,5);
+        await s.page.locator(`${root} .cfp-search-input`).focus();
+        await s.page.keyboard.press('Tab');
+        await row.focus();
+        assert(await row.evaluate(el=>document.activeElement===el && el.matches(':focus-visible')),'bottom row has keyboard-visible focus');
+        await check('focus');
+      } finally { await s.close(); }
+    }
     const s = await createSession(browser, { width: 1280, height: 800, colorScheme: 'light', explorerEntries: [] });
     try {
       await s.boot({ config: { llm: { providers: {} }, features: {} }, sessionId: 'overflow-tooltip', messages: [] });
