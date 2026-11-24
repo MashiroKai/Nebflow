@@ -253,6 +253,16 @@
   background: rgba(128, 128, 128, 0.12);
 }
 
+/* ── 定位高亮（S2 · canvas-doc-terms 批 2026-11-24）────────────────────
+   文档名词条点击后文件浏览器定位到的目标行。视觉 = 键盘焦点环同 token
+   （keyboard.css :focus-visible 是唯一色源/几何源）——程序化 focus() 在鼠标
+   手势链之后不必然命中 :focus-visible（UA 判定差异），显式类把「这一行就是
+   定位目标」钉成跨引擎确定可见；行失焦即自摘（JS once 监听），不留常驻环。 */
+.explorer-item.reveal-target {
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
+}
+
 /* ── Floating selection action bar (tree top, ≥2 items selected) ── */
 .explorer-selection-bar {
   position: absolute;

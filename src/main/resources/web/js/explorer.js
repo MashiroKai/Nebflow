@@ -53,6 +53,13 @@ const EXPLORER_ROOT_DEVICE_KEY = key('explorer_root_device');
  *  （不跨窗口重开——重启后回落缺省项目目录，无数据丢失：根只是视图偏好）。 */
 let localRootMemory = null;
 
+/** 根目录的服务端规范绝对路径（S2 文档词条定位批 2026-11-24 · #2936）：explorerRoot
+ *  为 null（缺省项目根）时前端本无从得知根的真实绝对路径，而「目标是否在当前根内」
+ *  的判定必须有根的绝对形态。根列（path=''）的 dirListing 应答本就携带
+ *  resolvedPath（服务端规范化路径），在此记忆为唯一基点；显式根在场时不用它，
+ *  换根/刷新即失效、由下一次根列应答重记。 */
+let rootResolvedPath = null;
+
 function loadPersistedRoot() {
   try {
     const saved = localStorage.getItem(EXPLORER_ROOT_KEY);
@@ -1761,6 +1768,12 @@ onMessage('dirListing', (msg) => {
 
   if (!pending) return;
 
+  // 根列应答携带服务端规范绝对路径（S2 定位批）：显式根不在场时记忆唯一基点，
+  // 供 revealExplorerPath 判「目标在根内 / 根外」。此处之后的所有出口（本机/
+  // 远端错误腿、成功腿）都视为该目录的渲染终态——唤醒等待中的定位走查。
+  if (!msg.path && msg.resolvedPath && !explorerRoot) rootResolvedPath = String(msg.resolvedPath);
+  notifyRevealWaiters(msg.path || '');
+
   if (msg.error) {
     // 面B B3（ui-device-faces 批）：远端目录失败 = **显式错误行 + 重试链**，且已列
     // 元数据行保留（最后已知清单，不假装不存在）。本机腿维持现状（整容器错误行）。
@@ -2456,6 +2469,8 @@ export function openExplorerAt(path, device) {
 /** 换根公共体（openExplorerAt / 头部设备切换钮共用）：落根 + 清树态 + 重渲染。 */
 function rerootExplorer(path, device) {
   persistRoot(path, device || null);
+  rootResolvedPath = null;
+  clearRevealWaiters(); // 树已拆：等待中的定位走查立刻醒（醒后 absent 自行终止）
   expandedDirs.clear();
   loadingDirs.clear();
   pendingLoads.clear();
@@ -2467,6 +2482,8 @@ function rerootExplorer(path, device) {
 }
 
 export function refreshExplorer(sessionId) {
+  rootResolvedPath = null;
+  clearRevealWaiters();
   expandedDirs.clear();
   loadingDirs.clear();
   pendingLoads.clear();
@@ -2481,6 +2498,209 @@ export function refreshExplorer(sessionId) {
   // Session switch: re-subscribe to the new session's project root (renderTree
   // path) or drop the subscription entirely (no session → empty tree).
   syncWatch();
+}
+
+// ── 文档词条 → 文件浏览器定位（S2 · canvas-doc-terms 批 2026-11-24）──────
+// #2936 阶段二：正文文档名词条（markdown.js 的 a.nf-term[data-wiki-mention]）
+// 点击后，文件浏览器**就地定位**该文件。四态已裁定（照此实现）：
+//   ① 目标在当前根内：根不变 → 逐级等目录加载结果再展下一级 → 滚动到行 →
+//      高亮（沿用焦点环 token）→ 焦点落行（键盘可达）；
+//   ② 目标在根外：绝不静默换根（openExplorerAt 会重置+持久化根——那是用户
+//      显式「切换到该目录」动作的专属腿）——先短提示 + 动作钮，用户点钮才换根；
+//   ③ 目标不存在：不导航、短提示、不抛错；
+//   ④ 侧栏折叠：先展开面板（showSidePanel 非翻转语义）再定位。
+// 目录加载完全复用既有 listDir 管线（pendingLoads / 有界等待 / 错误行 / 重试
+// 钮），本段零第二套实现：逐级等待 = 在既有 dirListing 应答终点挂通知钩子，
+// 不预取目录。路径按不可信字符串处理：永不拼裸选择器（一律 CSS.escape）、
+// 永不 innerHTML。
+
+/** path（'' = 根）→ 等待该目录渲染终态的唤醒集。 */
+const revealWaiters = new Map();
+
+/** dirListing 应答终点通知（成功/错误同样唤醒——唤醒 ≠ 成功，醒来后由 DOM
+ *  真值再裁定）。调用点在应答处理器同步段内：Promise 唤醒是微任务，届时 DOM
+ *  已是终态。 */
+function notifyRevealWaiters(path) {
+  const waiters = revealWaiters.get(path);
+  if (!waiters) return;
+  revealWaiters.delete(path);
+  for (const wake of waiters) wake();
+}
+
+/** 换根/刷新清场：树已拆，等待者必须立刻醒（醒后 state=absent 自行终止）。 */
+function clearRevealWaiters() {
+  for (const waiters of revealWaiters.values()) for (const wake of waiters) wake();
+  revealWaiters.clear();
+}
+
+/** 上一轮定位高亮的收尾（新一轮开始时摘环；行失焦另有 once 监听自摘）。 */
+function clearRevealHighlight() {
+  document.querySelectorAll('.explorer-item.reveal-target')
+    .forEach((el) => el.classList.remove('reveal-target'));
+}
+
+/** 目录子容器（'' = 根；树内相对路径定位 wrapper）。 @returns {HTMLElement|null} */
+function dirChildrenContainer(path) {
+  const el = path
+    ? document.querySelector(`.explorer-dir-wrapper[data-path="${CSS.escape(path)}"] > .explorer-children`)
+    : document.querySelector('.explorer-root > .explorer-children');
+  return el instanceof HTMLElement ? el : null;
+}
+
+/**
+ * 目录渲染态：'done' = 条目或空目录已落（.explorer-empty 也是完成的事实——
+ * 空目录就是渲染完成的真相，不是失败）。
+ * @returns {'absent'|'loading'|'error'|'done'}
+ */
+function dirChildrenState(path) {
+  const container = dirChildrenContainer(path);
+  if (!container || !container.isConnected) return 'absent';
+  if (container.querySelector('.explorer-loading')) return 'loading';
+  if (container.querySelector('.explorer-error')) return 'error';
+  return 'done';
+}
+
+/** 挂一轮唤醒（应答终点通知 + 有界兜底定时器——应答彻底丢失时也能醒，
+ *  与既有 listDir 有界等待同语义：绝不无限等）。 */
+function waitDirWake(path) {
+  return new Promise((wake) => {
+    const waiters = revealWaiters.get(path) || new Set();
+    waiters.add(wake);
+    revealWaiters.set(path, waiters);
+    setTimeout(wake, LOAD_TIMEOUT_MS * (LOAD_MAX_ATTEMPTS + 1));
+  });
+}
+
+/**
+ * 等一个目录到渲染终态（'done' | 'error' | 'absent'；loading 绝不返回）。
+ * 兜底轮数 = LOAD_MAX_ATTEMPTS + 1（原始发 + 静默重发 + 余量，与 loadDir 的
+ * 有界等待同数量级）；超限后返回当下真值（仍 loading ⇒ 调用方按未完成终止）。
+ * @param {string} path
+ * @returns {Promise<'done'|'error'|'absent'>}
+ */
+async function awaitDirChildren(path) {
+  const rounds = LOAD_MAX_ATTEMPTS + 1;
+  for (let i = 0; i < rounds; i++) {
+    const state = dirChildrenState(path);
+    if (state !== 'loading') return state;
+    await waitDirWake(path);
+  }
+  // 有界轮数用尽仍 loading ⇒ 未得手（与 loadDir 超时同处置：绝不无限等）。
+  const final = dirChildrenState(path);
+  return final === 'loading' ? 'error' : final;
+}
+
+/** 展开一个目录行（复用 toggleDir 的展腿原语；已展开零操作——toggle 是翻转
+ *  语义，对已展开目录再调会收起它）。 */
+function revealExpandDir(dir) {
+  if (expandedDirs.has(dir)) return;
+  const wrapper = document.querySelector(`.explorer-dir-wrapper[data-path="${CSS.escape(dir)}"]`);
+  if (!wrapper) return;
+  const chevron = wrapper.querySelector('.explorer-chevron');
+  const kids = wrapper.querySelector(':scope > .explorer-children');
+  const row = wrapper.querySelector(':scope > .explorer-folder');
+  if (!(chevron instanceof Element) || !(kids instanceof HTMLElement)) return;
+  toggleDir(dir, chevron, kids, dir.split('/').length, row instanceof HTMLElement ? row : null);
+}
+
+/**
+ * 定位主走查：rel（树内相对路径）逐级展开到目标行。每级都是「上一级渲染
+ * 完成 → 才展下一级」，不并发预取。
+ * @param {string} rel
+ * @returns {Promise<'row'|'missing'|'error'>} 'row' = 高亮 + 焦点已落定
+ */
+async function revealWalk(rel) {
+  // 先等根列终态：app 刚开 / 刚换根时根仍在载，此时任何目录行都不存在，
+  // 直接找行会误报 missing。
+  if ((await awaitDirChildren('')) !== 'done') return 'error';
+  const segs = rel.split('/').filter(Boolean);
+  for (let i = 1; i < segs.length; i++) {
+    const dir = segs.slice(0, i).join('/');
+    // 上一级已渲染完成却没有该目录行 ⇒ 路径不存在。
+    if (!document.querySelector(`.explorer-dir-wrapper[data-path="${CSS.escape(dir)}"]`)) return 'missing';
+    revealExpandDir(dir);
+    // 错误行 / 换根：既有展示（错误行 + 重试钮）就是报告，不再叠噪声。
+    if ((await awaitDirChildren(dir)) !== 'done') return 'error';
+  }
+  const row = document.querySelector(`.explorer-item[data-path="${CSS.escape(rel)}"]`);
+  if (!(row instanceof HTMLElement)) return 'missing';
+  clearRevealHighlight();
+  row.classList.add('reveal-target');
+  row.addEventListener('blur', () => row.classList.remove('reveal-target'), { once: true });
+  // 滚动到行 + 高亮 + 焦点落行（roving tabindex 同步 ⇒ 键盘可达）。
+  focusTreeRow(row);
+  return 'row';
+}
+
+/** 定位路径归一：分隔符统一 + 去尾斜杠 + 小写（markdown.js normVaultPath 同式）。 */
+function normRevealPath(p) {
+  return String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+/** 定位根基点（绝对形态）：显式根优先，缺省根用根列应答记下的服务端规范路径。
+ *  @returns {string|null} null = 前端尚无从判定（无根列应答）。 */
+function revealRootBasis() {
+  const raw = explorerRoot || rootResolvedPath;
+  return raw ? normRevealPath(raw) : null;
+}
+
+/** 目标是否在根内：在 ⇒ 树内相对路径（保留原大小写，行匹配用原形态）；
+ *  不在 ⇒ null。整段前缀比较（'/a/bc' 不会被 '/a/b' 误吞）。 */
+function revealRelativeWithin(absPath, basis) {
+  const orig = String(absPath || '').replace(/\\/g, '/').replace(/\/+$/, '');
+  if (!orig) return null;
+  return normRevealPath(orig).startsWith(basis + '/') ? orig.slice(basis.length + 1) : null;
+}
+
+/** 根外动作腿的目标目录（目标文件的父目录——换根后目标就在根列表里）。 */
+function parentRevealDir(absPath) {
+  const norm = String(absPath || '').replace(/\\/g, '/').replace(/\/+$/, '');
+  const idx = norm.lastIndexOf('/');
+  return idx > 0 ? norm.slice(0, idx) : null;
+}
+
+/**
+ * 定位入口（markdown.js 文档名词条点击腿调用）。
+ * @param {string} absPath 目标文件绝对路径（不可信字符串：只做归一比较与
+ *   CSS.escape 后的属性选择，永不 innerHTML）
+ */
+export function revealExplorerPath(absPath) {
+  try {
+    const target = String(absPath || '').trim();
+    if (!target) return;
+    // ④ 侧栏折叠/他板：先展开 Files 面板（showSidePanel 非翻转语义，重复安全）。
+    showSidePanel('files');
+    void revealLocate(target);
+  } catch (_) {
+    // 定位是阅读的旁路动作：任何意外不得打断主流程，也不抛错（状态③裁定）。
+  }
+}
+
+/** 定位主体（revealExplorerPath 的异步腿；异常自吞——入口的 try 只护同步段）。 */
+async function revealLocate(target) {
+  try {
+    let basis = revealRootBasis();
+    if (!basis) {
+      // 缺省根的基点来自根列应答：树仍在载就先等它（有界），再取一次基点。
+      await awaitDirChildren('');
+      basis = revealRootBasis();
+    }
+    const rel = basis ? revealRelativeWithin(target, basis) : null;
+    if (rel === null) {
+      // ② 根外：不静默换根。短提示 + 动作钮；只有用户点钮才走 openExplorerAt
+      //（换根 + 持久化是用户显式动作的专属腿，定位绝不动用户的根）。
+      const dir = parentRevealDir(target);
+      if (dir) {
+        window.__showToast?.(t('explorer.revealOutsideRoot'), 'info', {
+          action: { label: t('explorer.revealSwitchRoot'), onClick: () => openExplorerAt(dir) },
+        });
+      }
+      return;
+    }
+    const outcome = await revealWalk(rel);
+    // ③ 目标不存在：不导航、短提示、不抛错。
+    if (outcome === 'missing') window.__showToast?.(t('explorer.revealMissing'), 'info');
+  } catch (_) { /* 旁路动作：静默终止 */ }
 }
 
 // ── Focus refresh ─────────────────────────────────────────────────────

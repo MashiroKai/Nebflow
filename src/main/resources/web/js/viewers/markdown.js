@@ -492,6 +492,100 @@ function renderAutoTerms(mdViewer, data, projectName, absPath) {
   return made;
 }
 
+// ── 文档名词条 → 文件浏览器定位（S2 · canvas-doc-terms 批 2026-11-24）─────
+// #2936 阶段二触发腿：S1 已把唯一文档名链成 a.nf-term（点击显释义气泡），
+// S2 在同一次点击上旁路触发文件浏览器定位（四态行为全在 explorer.js 的
+// reveal 族——根内逐级展开定位 / 根外提示+动作钮 / 不存在短提示 / 折叠先展）。
+// 仅 renderDocumentMentions 生产的链接带 data-wiki-mention 标记：裸词词条
+// （renderAutoTerms）与 wikilink 不触发定位。
+
+/** 词条点击腿的定位目标（resolved.absPath；相对形态按本文档目录归一成绝对——
+ *  与图片/链接路由同一个 baseDir，不同 pass 不会对「相对路径指哪」各说各话）。 */
+function mentionRevealTarget(a, baseDir) {
+  let raw = '';
+  try {
+    const resolved = a.dataset.wikiResolved ? JSON.parse(a.dataset.wikiResolved) : null;
+    if (resolved && typeof resolved.absPath === 'string') raw = resolved.absPath;
+  } catch (_) { return ''; }
+  if (!raw) return '';
+  const norm = raw.replace(/\\/g, '/').replace(/\/+$/, '');
+  if (norm.startsWith('/') || /^[A-Za-z]:\//.test(norm)) return norm;
+  const base = String(baseDir || '').replace(/\\/g, '/').replace(/\/+$/, '');
+  return base ? base + '/' + norm : norm;
+}
+
+/** 点击旁路腿：定位失败不得影响阅读主流程（explorer 侧已自吞一切异常）。 */
+function revealMentionInExplorer(a, baseDir) {
+  const target = mentionRevealTarget(a, baseDir);
+  if (!target) return;
+  import('../explorer.js').then(({ revealExplorerPath }) => revealExplorerPath(target)).catch(() => {});
+}
+
+// Document names are candidates only inside the current project, and only when
+// the exact name identifies one document. Never use wikilink's preference rules.
+export function renderDocumentMentions(host, data, projectName, absPath = '') {
+  if (!host || !projectName || !Array.isArray(data?.nodes)) return 0;
+  const project = (data.projects || []).find(p => p.name === projectName);
+  if (!project) return 0;
+  const candidates = new Map();
+  for (const node of data.nodes) {
+    if (!node || node.stub || node.project !== projectName || !node.rel) continue;
+    const names = new Set([String(node.title || '').trim(), String(node.rel).split('/').pop()].filter(Boolean));
+    for (const name of names) {
+      const key = name.toLowerCase();
+      if (!candidates.has(key)) candidates.set(key, []);
+      candidates.get(key).push({ node, name });
+    }
+  }
+  const unique = [...candidates.values()].filter(items => items.length === 1)
+    .map(([item]) => ({ name: item.name, node: item.node }))
+    .filter(item => {
+      const resolved = resolvedForNode(item.node, project);
+      return resolved && (!resolved.absPath || normVaultPath(resolved.absPath) !== normVaultPath(absPath));
+    });
+  const matcher = buildTermMatcher(unique);
+  if (!matcher.size) return 0;
+  const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const p = node.parentElement;
+      if (!p || p.closest('pre,code,a,button,script,style,.katex,.nf-term,h1,h2,h3,h4,h5,h6')) return NodeFilter.FILTER_REJECT;
+      return node.nodeValue?.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    },
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  let count = 0;
+  for (const node of nodes) {
+    const text = node.nodeValue || '';
+    const hits = matcher.find(text);
+    if (!hits.length) continue;
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    for (const hit of hits) {
+      const doc = hit.term.node;
+      const resolved = resolvedForNode(doc, project);
+      if (!resolved) continue;
+      resolved.term = { name: hit.text, definition: String(doc.summary || ''), rel: String(doc.rel), doc: String(doc.title || '') };
+      frag.appendChild(document.createTextNode(text.slice(last, hit.start)));
+      const link = document.createElement('a');
+      link.className = 'nf-term';
+      link.href = '#';
+      link.textContent = hit.text;
+      link.dataset.wikiResolved = JSON.stringify(resolved);
+      link.dataset.wikiProject = projectName;
+      link.dataset.wikiTarget = hit.text;
+      link.dataset.wikiMention = 'doc'; // S2 定位腿标记：仅文档名词条触发文件浏览器定位
+      attachTermFace(link, host, { term: resolved.term });
+      frag.appendChild(link);
+      last = hit.end;
+      count++;
+    }
+    frag.appendChild(document.createTextNode(text.slice(last)));
+    node.parentNode?.replaceChild(frag, node);
+  }
+  return count;
+}
+
 /**
  * 任意 DOM 宿主的词条化落面（Ask 回答词条化批 2026-11-23；设计正本 §5 G4/G5
  * 「在 createAskDialog 增加 termLinks 钩子，复用 termLexicon.js 同源」）。
@@ -611,7 +705,10 @@ async function renderWikilinks(mdViewer, baseDir, absPath) {
   // 正文裸词识别（B5-1）：显式 `[[词条]]` 全部就位后再跑（walker 已拒 A 子树，
   // 这里是顺序兜底：绝不把刚生成的 wikilink 文本再链一次）。无词条 ⇒ 零开销、
   // 输出与改造前逐字节相同。
-  if (data) renderAutoTerms(mdViewer, data, currentProject, absPath);
+  if (data) {
+    renderAutoTerms(mdViewer, data, currentProject, absPath);
+    renderDocumentMentions(mdViewer, data, currentProject, absPath);
+  }
   // 词条索引块（term-system-v2 词条视觉面批 2026-11-05）：渲染管线尾部自动生成，
   // 必须在两条词条腿（显式引用 + 正文裸词）都挂完面之后才扫得出引用集合。
   renderTermIndex(mdViewer);
@@ -1548,6 +1645,9 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
         if (termTapExpand(/** @type {HTMLAnchorElement} */ (wikilink), mdViewer)) {
           e.preventDefault();
           e.stopPropagation();
+          // S2 定位腿（#2936）：文档名词条点击旁路定位文件浏览器里的目标文件
+          //（与释义气泡同一次点击，两动作互不阻塞——定位是纯旁路）。
+          if (wikilink.dataset.wikiMention) revealMentionInExplorer(/** @type {HTMLAnchorElement} */ (wikilink), baseDir);
           return;
         }
         e.preventDefault();
