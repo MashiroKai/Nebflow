@@ -46,5 +46,20 @@ const assert = require('node:assert/strict');
     await page.evaluate(async () => (await import('/termTip.js')).hideTermTip());
     assert.equal(await page.evaluate(() => window.aborted), true);
     console.log('PASS: closing aborts pending lookup');
+    await page.evaluate(async () => {
+      const tip = await import('/termTip.js');
+      const a = document.querySelector('#term');
+      a.dataset.wikiTarget = 'shared';
+      a.dataset.wikiProject = 'one';
+      a.dataset.wikiResolved = JSON.stringify({ term: { name: 'shared', rel: 'one.md', definition: 'fallback' } });
+      window.fetch = async (url) => String(url).includes('/lookup?')
+        ? new Response(JSON.stringify({ available: true, results: [
+          { name: 'shared', definition: 'correct project', doc: { project: 'one', rel: 'one.md' } },
+          { name: 'shared', definition: 'wrong project', doc: { project: 'two', rel: 'two.md' } },
+        ] }), { status: 200 }) : new Response('{}', { status: 200 });
+      tip.termTapExpand(a, null);
+    });
+    await page.waitForFunction(() => document.querySelector('.nf-term-tip .ts').textContent === 'correct project');
+    console.log('PASS: duplicate name matches project and document identity');
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
