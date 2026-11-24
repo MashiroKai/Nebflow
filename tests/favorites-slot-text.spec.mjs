@@ -98,6 +98,18 @@ try {
       if(width<500) await s.page.locator('.mobile-page[data-page="workbench"].live .mf-hub-row[data-hub-page="favorites"]').click(); else await s.page.click('#favorites-btn');
       const root=width<500?'#canvas-fav-page':'#panel-favorites';
       await s.page.waitForSelector(`${root} .cfp-row`); await settle(s.page,100);
+      const tab=s.page.locator(`${root} .cfp-tab`).first();
+      const originalTab=await tab.textContent();
+      for(const sample of samples.slice(0,3)) {
+        await tab.evaluate((el,text)=>{el.textContent=text;},sample);
+        const dimensions=await tab.evaluate(el=>({sw:el.scrollWidth,cw:el.clientWidth,parent:el.parentElement.scrollWidth,parentWidth:el.parentElement.clientWidth}));
+        assert(dimensions.sw<=dimensions.cw && dimensions.parent<=dimensions.parentWidth,'button label overflow');
+        assertNoOverlap(await measure(s.page,root));
+      }
+      await tab.evaluate(el=>{el.style.whiteSpace='nowrap';el.style.overflowWrap='normal';});
+      const brokenTab=await tab.evaluate(el=>({sw:el.scrollWidth,cw:el.clientWidth,parent:el.parentElement.scrollWidth,parentWidth:el.parentElement.clientWidth}));
+      assert.throws(()=>assert(brokenTab.sw<=brokenTab.cw && brokenTab.parent<=brokenTab.parentWidth,'button label overflow'),/button label overflow/);
+      await tab.evaluate((el,text)=>{el.removeAttribute('style');el.textContent=text;},originalTab);
       const pageTitle=s.page.locator(`${root} .cfp-title`);
       const originalTitle=await pageTitle.textContent();
       for(const sample of samples.slice(0,3)) {

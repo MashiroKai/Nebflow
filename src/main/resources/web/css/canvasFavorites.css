@@ -140,6 +140,7 @@ body.mobile-layer .mf-strip-chip .mf-cv-star svg { width: 18px; height: 18px; }
 /* 搜索框造型 + 焦点环 = 共享输入面 .nf-field（inputSurface.css 单源，I2/F1 口径）。 */
 .cfp-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 18px;
   padding: 6px 16px 10px;
   overflow-x: auto;
@@ -147,7 +148,7 @@ body.mobile-layer .mf-strip-chip .mf-cv-star svg { width: 18px; height: 18px; }
 }
 .cfp-tabs[hidden] { display: none; }
 .cfp-tab {
-  flex: none; border: 0; background: transparent; color: var(--color-text-muted);
+  flex: 0 1 auto; min-width: 0; max-width: 100%; overflow-wrap: anywhere; border: 0; background: transparent; color: var(--color-text-muted);
   font-size: 15px; padding: 4px 0; cursor: pointer; position: relative;
 }
 .cfp-tab.is-on { color: var(--color-text); font-weight: 600; }
