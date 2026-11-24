@@ -240,6 +240,45 @@ class WeixinIlinkScanBindSpec extends CatsEffectSuite:
     yield ()
   }
 
+  test("sidecar login terminal responses return without polling again") {
+    val server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0)
+    val root = tmpRoot()
+    val response = new java.util.concurrent.atomic.AtomicReference[String]("")
+    val requests = new java.util.concurrent.atomic.AtomicInteger(0)
+    server.createContext("/login/begin", exchange => {
+      val body = "{}".getBytes("UTF-8")
+      exchange.sendResponseHeaders(200, body.length.toLong)
+      val out = exchange.getResponseBody
+      try out.write(body) finally out.close()
+    })
+    server.createContext("/login/status", exchange => {
+      requests.incrementAndGet()
+      val body = response.get().getBytes("UTF-8")
+      exchange.sendResponseHeaders(200, body.length.toLong)
+      val out = exchange.getResponseBody
+      try out.write(body) finally out.close()
+    })
+    server.start()
+    try
+      val base = s"http://127.0.0.1:${server.getAddress.getPort}"
+      assert(SocialChannels.save(root, "weixin-ilink", Json.obj("enabled" -> false.asJson, "fields" -> Json.obj("sidecar_url" -> base.asJson))).isRight)
+      val run = WeixinIlinkScanBind.sidecarLogin(root)
+      val cases = List(
+        (Json.obj("state" -> "done".asJson, "credentials" -> Json.obj("botToken" -> Token.asJson, "botId" -> BotId.asJson, "userId" -> UserId.asJson)), WeixinIlinkScanBind.LoginResult.Done(creds)),
+        (Json.obj("state" -> "done".asJson), WeixinIlinkScanBind.LoginResult.Failed("done-without-credentials")),
+        (Json.obj("state" -> "failed".asJson, "error" -> "denied".asJson), WeixinIlinkScanBind.LoginResult.Failed("denied")),
+        (Json.obj("state" -> "failed".asJson), WeixinIlinkScanBind.LoginResult.Failed("login_failed"))
+      )
+      cases.zipWithIndex.foreach { case ((body, expected), i) =>
+        response.set(body.noSpaces)
+        assertEquals(run(WeixinIlinkScanBind.LoginOptions(_ => ())), expected)
+        assertEquals(requests.get(), i + 1)
+      }
+    finally
+      server.stop(0)
+      os.remove.all(root)
+  }
+
   test("terminal sidecar statuses preserve credentials and failure reasons") {
     val status = WeixinIlinkScanBind.terminalStatus
     val json = Json.obj("credentials" -> Json.obj("botToken" -> Token.asJson, "botId" -> BotId.asJson, "userId" -> UserId.asJson))
