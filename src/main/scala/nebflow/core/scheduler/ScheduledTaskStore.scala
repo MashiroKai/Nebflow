@@ -46,7 +46,7 @@ class ScheduledTaskStore(
    * 全库读写互斥：任何文件读/改/写都必须持有（见类注）。CE 3.5 的 Mutex 无
    * unsafe 直构 —— lazy + global runtime 物化一次（先例：DeviceProfile.scala）。
    */
-  private[scheduler] def withStoreLock[A](action: IO[A]): IO[A] =
+  private[scheduler] def withStoreLock[A](action: IO[A], onOsWait: IO[Unit] = IO.unit): IO[A] =
     for
       canonical <- IO.blocking {
         java.nio.file.Files.createDirectories(baseDir.toNIO)
@@ -63,7 +63,7 @@ class ScheduledTaskStore(
           def acquire: IO[java.nio.channels.FileLock] =
             IO.blocking(Option(channel.tryLock())).flatMap {
               case Some(lock) => IO.pure(lock)
-              case None => IO.sleep(scala.concurrent.duration.DurationInt(25).millis) *> acquire
+              case None => onOsWait *> IO.sleep(scala.concurrent.duration.DurationInt(25).millis) *> acquire
             }
           Resource.makeFull[IO, java.nio.channels.FileLock](poll => poll(acquire))(
             lock => IO.blocking(lock.release()).handleError(_ => ())

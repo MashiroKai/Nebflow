@@ -225,15 +225,23 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       ready <- IO.blocking(reader.readLine())
       _ <- IO(assertEquals(ready, "LOCKED"))
       ran <- cats.effect.Ref.of[IO, Boolean](false)
-      started <- cats.effect.Deferred[IO, Unit]
-      waiter <- (started.complete(()) *> store.withStoreLock(ran.set(true))).start
-      _ <- started.get
-      _ <- IO.sleep(scala.concurrent.duration.DurationInt(150).millis)
+      waiting <- cats.effect.Deferred[IO, Unit]
+      gate <- cats.effect.Deferred[IO, Unit]
+      competing <- cats.effect.Ref.of[IO, Boolean](false)
+      waiter <- store.withStoreLock(ran.set(true), waiting.complete(()).void *> gate.get).start
+      _ <- waiting.get.timeout(scala.concurrent.duration.DurationInt(5).seconds)
+      rival <- new ScheduledTaskStore(dir).withStoreLock(competing.set(true)).start
+      _ <- rival.cancel
+      rivalRan <- competing.get
+      _ <- IO(assertEquals(rivalRan, false))
       _ <- waiter.cancel.timeout(scala.concurrent.duration.DurationInt(5).seconds)
       value <- ran.get
       _ <- IO(assertEquals(value, false))
       _ <- IO.blocking { process.getOutputStream.write(1); process.getOutputStream.flush(); process.waitFor() }
-      _ <- new ScheduledTaskStore(dir).withStoreLock(IO.unit).timeout(scala.concurrent.duration.DurationInt(5).seconds)
+      uncontended <- cats.effect.Ref.of[IO, Boolean](false)
+      _ <- new ScheduledTaskStore(dir).withStoreLock(IO.unit, uncontended.set(true)).timeout(scala.concurrent.duration.DurationInt(5).seconds)
+      observed <- uncontended.get
+      _ <- IO(assertEquals(observed, false))
     yield ()).guarantee(IO.blocking { process.getOutputStream.close(); () })
 
   test("two independent JVMs serialize occurrence writes"):
