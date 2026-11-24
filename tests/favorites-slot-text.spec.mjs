@@ -55,16 +55,20 @@ function assertText(result) { for (const e of result.text) assert(e.sw <= e.cw+1
 function assertNoOverlap(result) { assert.deepEqual(result.pairs, [], 'independent visible siblings overlap'); }
 async function checkSearch(page, selector, panel, query) {
   const input=page.locator(selector);
-  await input.fill(query); await input.press('Home'); await input.press('End');
+  await input.evaluate(el=>{el.value='';});
+  await input.focus();
+  await page.keyboard.press('Shift+Tab'); await page.keyboard.press('Tab');
+  assert(await input.evaluate(el=>document.activeElement===el),'search keyboard focus');
+  await page.keyboard.type(query); await page.keyboard.press('Home'); await page.keyboard.press('End');
   const state=await input.evaluate((el,sel)=>{const p=document.querySelector(sel),r=el.getBoundingClientRect();return {value:el.value,start:el.selectionStart,end:el.selectionEnd,scroll:el.scrollLeft,ro:el.readOnly,pw:p.clientWidth,ps:p.scrollWidth,hits:[.05,.5,.95].flatMap(x=>[.05,.5,.95].map(y=>{const hit=document.elementFromPoint(r.left+r.width*x,r.top+r.height*y);return hit===el||el.contains(hit);}))};},panel);
-  assert(!state.ro && state.value===query && state.start===query.length && state.end===query.length && state.scroll>0, 'search keyboard');
+  assert(state.value===query && state.start===query.length && state.end===query.length && state.scroll>0, 'search keyboard value');
   assert(state.ps<=state.pw,'search panel overflow');
   assert(state.hits.every(Boolean),'search obscured');
 }
 async function negativeSearch(page, selector, panel, query) {
   const input=page.locator(selector);
   await input.evaluate(el=>{el.readOnly=true;});
-  await assert.rejects(checkSearch(page,selector,panel,query),/search keyboard|read.?only|Timeout/i);
+  await assert.rejects(checkSearch(page,selector,panel,query),/search keyboard value/);
   await input.evaluate(el=>{el.readOnly=false;});
   await page.evaluate(sel=>{let r=document.querySelector(sel).getBoundingClientRect(),e=document.createElement('div');e.id='injected-obstruction';Object.assign(e.style,{position:'fixed',left:r.left+'px',top:r.top+'px',width:r.width+'px',height:r.height+'px',zIndex:'999999'});document.body.append(e);},selector);
   await assert.rejects(checkSearch(page,selector,panel,query),/search obscured/);
