@@ -103,8 +103,8 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       assertEquals(rows.head.occurrences, List(occurrence))
       assertEquals(retry, false)
 
-  test("hard process termination before and after commit preserves atomic occurrence state"):
-    List("before", "after").traverse_ { point =>
+  private def checkHardCrash(point: String): IO[Unit] =
+    {
       val dir = os.temp.dir(prefix = "occurrence-halt-")
       val initial = legacy.as[ScheduledTask].toOption.get.copy(nextDueAt = Some(1000L))
       val occurrence = TodoOccurrence.create("old", 1000L, 7L)
@@ -140,6 +140,28 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
         assertEquals(finalRows.head.occurrences, List(occurrence))
         assertEquals(finalRows.head.nextDueAt, Some(2000L))
     }
+
+  test("hard halt before atomic replacement preserves unadvanced series"):
+    checkHardCrash("before")
+
+  test("hard halt after atomic replacement preserves advanced series"):
+    checkHardCrash("after")
+
+  test("two store instances concurrently record one occurrence once"):
+    val dir = os.temp.dir(prefix = "occurrence-race-")
+    val first = new ScheduledTaskStore(dir)
+    val second = new ScheduledTaskStore(dir)
+    val initial = legacy.as[ScheduledTask].toOption.get.copy(nextDueAt = Some(1000L))
+    val occurrence = TodoOccurrence.create("old", 1000L, 7L)
+    for
+      _ <- first.addTask(initial)
+      outcomes <- (first.recordOccurrence("s1", occurrence, Some(2000L)),
+        second.recordOccurrence("s1", occurrence, Some(2000L))).parTupled
+      rows <- new ScheduledTaskStore(dir).loadTasks("s1")
+    yield
+      assertEquals(List(outcomes._1, outcomes._2).count(identity), 1)
+      assertEquals(rows.head.occurrences, List(occurrence))
+      assertEquals(rows.head.nextDueAt, Some(2000L))
 
   test("one-shot and weekly golden payloads survive store and fresh reader"):
     val dir = os.temp.dir(prefix = "todo-due-fixture-")
