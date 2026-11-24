@@ -204,7 +204,7 @@ function paintTermTip(a, info) {
   // 正文尾部自动生成的「词条索引」块（viewers/markdown.js renderTermIndex），
   // 气泡内不再作为显示文本出现。剩下的跳转提示只在真有导航承载时给（docs
   // viewer 注入了 termTipNav；聊天气泡 / human 卡没有，那里说「点击跳转」是假话）。
-  el.querySelector('.td').textContent = info.doc || info.rel || '';
+  el.querySelector('.td').textContent = info.rel && !/^(?:[\\/]|[a-z]:)/i.test(info.rel) ? info.rel : '';
   el.querySelector('.term-tip-source').hidden = !(info.name && termTipNav && termTipHost && a.dataset.wikiResolved);
   el.style.display = 'block';
   // Viewport-clamped placement: above the link when there is room, else below.
