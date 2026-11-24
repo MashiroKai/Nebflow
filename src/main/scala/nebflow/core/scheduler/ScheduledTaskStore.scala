@@ -209,12 +209,15 @@ class ScheduledTaskStore(
           IO.raiseError(new IllegalStateException(s"scheduled task $taskId has conflicting revisions; update refused"))
         case None => IO.pure(None)
         case Some(current) =>
-          val changed = f(current).copy(
+          val requested = f(current)
+          val changed = requested.copy(
             id = current.id,
             sessionId = current.sessionId,
             createdAt = current.createdAt,
             source = current.source,
-            revision = current.revision
+            revision = current.revision,
+            dueRuleVersion = if requested.due == current.due then current.dueRuleVersion
+                             else Math.addExact(current.dueRuleVersion, 1L)
           )
           val updated =
             if changed == current then current
@@ -375,7 +378,7 @@ class ScheduledTaskStore(
       (task.due, task.nextDueAt) match
         case (Some(rule), Some(at)) if at <= now =>
           val following = next(rule, at)
-          val occurrence = TodoOccurrence.create(task.id, at, task.revision)
+          val occurrence = TodoOccurrence.create(task.id, at, task.dueRuleVersion)
           val updated = task.copy(
             occurrences = task.occurrences :+ occurrence,
             nextDueAt = following,

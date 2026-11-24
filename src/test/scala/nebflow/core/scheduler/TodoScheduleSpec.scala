@@ -257,6 +257,19 @@ class TodoScheduleSpec extends CatsEffectSuite:
       assertEquals(stored.head.occurrences.map(_.scheduledAt), List(first, second))
       assertEquals(stored.head.nextDueAt, Some(java.time.Instant.parse("2024-03-17T06:30:00Z").toEpochMilli))
 
+  test("weekly occurrences bind the same schedule rule version across cursor updates"):
+    val first = java.time.Instant.parse("2024-03-03T07:30:00Z").toEpochMilli
+    val now = java.time.Instant.parse("2024-03-10T08:00:00Z").toEpochMilli
+    for
+      _ <- reset()
+      task <- IO(ScheduledTask.create("s1", "weekly", future, kind = Some(ScheduledTask.KindTodo)).copy(
+        due = Some(TodoDue.Weekly(7, "02:30", "America/New_York", "2024-03-03T02:30")),
+        nextDueAt = Some(first)))
+      _ <- taskStore.addTask(task)
+      _ <- taskStore.materializeDueOccurrences(now)
+      stored <- taskStore.loadTasks("s1")
+    yield assertEquals(stored.head.occurrences.map(_.ruleVersion), List(0L, 0L))
+
   test("unfinished due todo re-surfaces: ONE digest ExternalEvent with ids + done guidance, then bumped to next 09:00"):
     for
       _ <- reset()

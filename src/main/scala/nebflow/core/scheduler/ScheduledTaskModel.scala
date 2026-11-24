@@ -212,7 +212,8 @@ case class ScheduledTask(
   /** Independent human reminder schedule; absent on legacy records. */
   due: Option[TodoDue] = None,
   nextDueAt: Option[Long] = None,
-  occurrences: List[TodoOccurrence] = Nil
+  occurrences: List[TodoOccurrence] = Nil,
+  dueRuleVersion: Long = 0L
 ):
   /** true = 待办面（周期浮出直至销账），false = 定时任务面（现状）。 */
   def isTodo: Boolean = kind.contains(ScheduledTask.KindTodo)
@@ -271,7 +272,8 @@ object ScheduledTask:
       derivedCodec(t).mapObject { obj =>
         val noDue = if t.due.isEmpty then obj.remove("due") else obj
         val noNext = if t.nextDueAt.isEmpty then noDue.remove("nextDueAt") else noDue
-        if t.occurrences.isEmpty then noNext.remove("occurrences") else noNext
+        val noOccurrences = if t.occurrences.isEmpty then noNext.remove("occurrences") else noNext
+        if t.dueRuleVersion == 0L then noOccurrences.remove("dueRuleVersion") else noOccurrences
       }
     }
   )
