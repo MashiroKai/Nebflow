@@ -11,6 +11,7 @@ import nebflow.actor.{ActorSystem, AgentCommand, AgentDef, AgentKind, AgentRecor
 import nebflow.agent.{AgentActor, AgentLibrary, SharedResources, SubAgentTaskStore}
 import nebflow.core.{FileChangeTracker, RateLimiter, SessionStore}
 import nebflow.core.compact.HistoryArchiver
+import nebflow.core.schedule.{FreezeScheduleConfig, FreezeSegment}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, Tool, ToolContext, ToolError, ToolRegistry}
 import nebflow.gateway.{GatewaySessionStore, WebSocketRoutes}
@@ -35,6 +36,8 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
       for
         captured <- Queue.unbounded[IO, Option[String]]
         done <- Queue.unbounded[IO, Unit]
+        frozen <- Queue.unbounded[IO, Unit]
+        schedule <- Ref.of[IO, FreezeScheduleConfig](FreezeScheduleConfig(enabled = false))
         calls <- Ref.of[IO, Int](0)
         llm = new LlmHandle[IO]:
           def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new Exception("unexpected send"))
@@ -63,10 +66,14 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
           taskStore = FileTaskStore, historyArchiver = HistoryArchiver.fileSystem(root / "archives"),
           fileLockManager = locks, sessionModelOverrides = Ref.unsafe[IO, Map[String, ModelCandidate]](Map.empty),
           providerRegistry = null, healthMonitor = ProviderHealthMonitor(null), actorSystem = system,
-          subAgentTaskStore = new SubAgentTaskStore(root / "subagent-tasks"), voiceMutedRef = Ref.unsafe[IO, Boolean](false)
+          subAgentTaskStore = new SubAgentTaskStore(root / "subagent-tasks"), voiceMutedRef = Ref.unsafe[IO, Boolean](false),
+          freezeScheduleRef = schedule
         )
         ref <- system.spawn(AgentActor(agentDef = agent, resources = resources, wsSend = json =>
-          if json.hcursor.get[String]("type").toOption.contains("done") then done.offer(()) else IO.unit,
+          json.hcursor.get[String]("type").toOption match
+            case Some("done") => done.offer(())
+            case Some("frozen") => frozen.offer(())
+            case _ => IO.unit,
           depth = 0, sessionId = Some(sid), sessionName = Some(sid)), sid)
         _ <- resources.agentRegistry.set(Map(sid -> AgentRecord(sid, ref, AgentKind.Root, sid, status = AgentStatus.Idle)))
         routes = new WebSocketRoutes(
@@ -125,6 +132,19 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
         _ <- ref ! AgentCommand.ExternalEvent("schedule", "trigger", "scheduled event")
         eventZone <- captured.take.timeout(30.seconds)
         _ = assertEquals(eventZone, None)
+        _ <- done.take.timeout(30.seconds)
+        now = java.time.LocalTime.now()
+        minute = now.getHour * 60 + now.getMinute
+        start = (minute + 1410) % 1440
+        end = (minute + 30) % 1440
+        format = (m: Int) => f"${m / 60}%02d:${m % 60}%02d"
+        _ <- schedule.set(FreezeScheduleConfig(enabled = true, segments = List(FreezeSegment(format(start), format(end)))))
+        _ <- ref ! AgentCommand.UserInput("system triggers freeze")
+        _ <- frozen.take.timeout(30.seconds)
+        _ <- ref ! AgentCommand.UserInput("wake with device", clientMessageId = Some("wake-with-zone"), deviceZone = Some("Asia/Tokyo"))
+        wakeZone <- captured.take.timeout(30.seconds)
+        _ = assertEquals(wakeZone, Some("Asia/Tokyo"))
+        _ <- schedule.set(FreezeScheduleConfig(enabled = false))
         _ <- done.take.timeout(30.seconds)
         _ <- store.flushPendingUiWrites
       yield ()
