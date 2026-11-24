@@ -563,6 +563,8 @@ class ScheduledTaskStore(
    * 第二份；只更新一份会让另一份继续浮出/触发）。id 全局唯一，`sessionId` 仅为
    * 兼容既有调用签名。
    */
+  // Time-zone edits must pass through a future explicit series-edit operation which resolves
+  // already-generated, not-yet-fired instances. Its policy awaits the author's decision.
   def updateTask(sessionId: String, taskId: String)(f: ScheduledTask => ScheduledTask): IO[Boolean] =
     withStoreLock {
       updateByIdUnlocked(taskId)(f).map(_.isDefined)
