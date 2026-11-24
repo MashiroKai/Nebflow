@@ -251,7 +251,9 @@ test.describe('injected turn opens its OWN badge group (16:54 追加令)', () =>
       } else {
         expect(observed.animation).toBe('nf-injection-count-roll');
         expect(observed.running).toBeGreaterThan(0);
-        await page.locator('.nf-injection-stack-digit').evaluate(async el => Promise.all(el.getAnimations().map(a => a.finished)));
+        await page.locator('.nf-injection-stack-digit').evaluate(el => { const a = el.getAnimations()[0]; a.pause(); a.currentTime = 100; });
+        await page.screenshot({ path: path.join(SHOT_DIR, 'injection-animation-mid.png') });
+        await page.locator('.nf-injection-stack-digit').evaluate(async el => { const a = el.getAnimations()[0]; a.play(); await a.finished; });
         await expect(page.locator('.nf-injection-stack-digit')).toHaveText('2');
       }
       await context.close();

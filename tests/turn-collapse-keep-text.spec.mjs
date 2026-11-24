@@ -185,6 +185,7 @@ for (const width of [900, 390, 375]) {
     const baseline = await rows.evaluateAll(els => els.map(el => el.textContent));
     const button = page.locator('[data-nf-injection-stack] button');
     await expect(button).toContainText('2');
+    await page.locator('.nf-injection-stack-digit').evaluate(async el => Promise.all(el.getAnimations().map(a => a.finished)));
     const geometry = await page.evaluate(() => {
       const rect = el => { const r = el.getBoundingClientRect(); return { left:r.left, right:r.right, top:r.top, bottom:r.bottom }; };
       const stack = document.querySelector('[data-nf-injection-stack]');
@@ -195,12 +196,22 @@ for (const width of [900, 390, 375]) {
         return text.left >= box.left - 1 && text.right <= box.right + 1 && text.top >= box.top - 1 && text.bottom <= box.bottom + 1;
       });
       const nextUser = [...document.querySelectorAll('#chat > .row.user')].find(el => el.textContent.includes('下一轮用户消息'));
-      return { viewport: innerWidth, stack: rect(stack), button: rect(button), face: rect(stack.querySelector('.nf-injection-stack-face')), header: rect(document.querySelector('.turn-header')), chat: rect(document.querySelector('#chat')), user: rect(document.querySelector('#chat > .row.user')), nextUser: rect(nextUser), textFits };
+      const digit = stack.querySelector('.nf-injection-stack-digit');
+      const range = document.createRange(); range.selectNodeContents(digit);
+      const dr = range.getBoundingClientRect();
+      const clip = stack.querySelector('.nf-injection-stack-count').getBoundingClientRect();
+      return { viewport: innerWidth, stack: rect(stack), button: rect(button), face: rect(stack.querySelector('.nf-injection-stack-face')), header: rect(document.querySelector('.turn-header')), chat: rect(document.querySelector('#chat')), user: rect(document.querySelector('#chat > .row.user')), nextUser: rect(nextUser), textFits, digit: {left:dr.left,right:dr.right,top:dr.top,bottom:dr.bottom}, clip: {left:clip.left,right:clip.right,top:clip.top,bottom:clip.bottom} };
     });
     expect(geometry.stack.top).toBeGreaterThanOrEqual(geometry.header.bottom - 1);
     expect(geometry.stack.top).toBeGreaterThanOrEqual(geometry.user.bottom - 1);
     expect(geometry.stack.bottom).toBeLessThanOrEqual(geometry.nextUser.top + 1);
+    console.log(`STABLE_GEOMETRY ${width} ${JSON.stringify({digit: geometry.digit, clip: geometry.clip})}`);
     expect(geometry.textFits).toBe(true);
+    expect(geometry.digit.left).toBeGreaterThanOrEqual(geometry.clip.left - 1);
+    expect(geometry.digit.right).toBeLessThanOrEqual(geometry.clip.right + 1);
+    expect(geometry.digit.top).toBeGreaterThanOrEqual(geometry.clip.top - 1);
+    expect(geometry.digit.bottom).toBeLessThanOrEqual(geometry.clip.bottom + 1);
+    await page.screenshot({ path: path.join(SHOT_DIR, `injection-stable-${width}.png`) });
     expect(geometry.button.right).toBeLessThanOrEqual(geometry.face.left + 1);
     expect(Math.abs((geometry.button.top + geometry.button.bottom - geometry.face.top - geometry.face.bottom) / 2)).toBeLessThanOrEqual(1);
     expect(geometry.button.left).toBeGreaterThanOrEqual(Math.max(0, geometry.chat.left) - 1);
