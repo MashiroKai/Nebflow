@@ -660,9 +660,7 @@ class ScheduledTaskStore(
                 )
               else
                 val canonical =
-                  owned
-                    .find(_.sessionId == task.sessionId)
-                    .orElse(owned.sortBy(t => (t.createdAt, t.id)).headOption)
+                  distinctById(owned).sortBy(t => (-t.revision, t.createdAt, t.id)).headOption
                 canonical match
                   case None =>
                     loadUnlocked(task.sessionId).flatMap { existing =>
@@ -679,7 +677,10 @@ class ScheduledTaskStore(
                         sessionId = task.sessionId,
                         createdAt = old.createdAt,
                         source = owner,
-                        revision = Math.addExact(owned.map(_.revision).max, 1L)
+                        revision = Math.addExact(owned.map(_.revision).max, 1L),
+                        dueRuleVersion = if old.due == task.due then old.dueRuleVersion else Math.addExact(old.dueRuleVersion, 1L),
+                        dueRuleHistory = if old.due == task.due then old.dueRuleHistory else
+                          old.dueRuleHistory ++ old.due.toList.map(TodoRuleSnapshot(old.dueRuleVersion, _))
                       )
                     loadUnlocked(task.sessionId).flatMap { targetRows =>
                       val sameSessionIds = owned.filter(_.sessionId == task.sessionId).map(_.id).toSet
