@@ -81,5 +81,33 @@ const assert = require('node:assert/strict');
     await page.waitForFunction(() => document.querySelector('.nf-term-tip .ts').textContent === 'legacy');
     assert.match(await page.evaluate(() => window.legacyUrl), /project=one/);
     console.log('PASS: lookup miss falls back to project-scoped registry');
+    await page.evaluate(async () => {
+      const tip = await import('/termTip.js?epoch-test');
+      const a = document.querySelector('#term');
+      delete a.dataset.wikiResolved;
+      a.dataset.wikiTarget = 'race';
+      let now = 100000;
+      Date.now = () => now;
+      let lookups = 0;
+      window.fetch = async (url) => {
+        if (String(url).includes('/stats')) return new Response(JSON.stringify({ last_rebuild: now === 100000 ? 'one' : 'two' }));
+        if (String(url).includes('/lookup?')) {
+          lookups++;
+          if (lookups === 2) await new Promise((resolve) => { window.releaseLookup = resolve; });
+          return new Response(JSON.stringify({ available: true, results: [{ name: 'race', definition: 'lookup ' + lookups, doc: {} }] }));
+        }
+        return new Response('{}', { status: 404 });
+      };
+      window.testTip = tip;
+      window.advanceClock = () => { now += 301000; };
+      window.lookupCount = () => lookups;
+      tip.termTapExpand(a, null);
+    });
+    await page.waitForFunction(() => window.lookupCount() === 1 && [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'lookup 1'));
+    await page.evaluate(() => { window.testTip.hideTermTip(); window.advanceClock(); window.testTip.termTapExpand(document.querySelector('#term'), null); });
+    await page.waitForFunction(() => typeof window.releaseLookup === 'function');
+    await page.evaluate(() => window.releaseLookup());
+    await page.waitForFunction(() => window.lookupCount() === 2);
+    console.log('PASS: version check runs alongside lookup');
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

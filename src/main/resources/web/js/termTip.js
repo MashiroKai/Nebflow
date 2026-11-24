@@ -80,6 +80,7 @@ const termIndexCache = new Map();
 let termIndexVersion = null;
 let termIndexStatsAt = 0;
 let termIndexStatsPending = false;
+let termIndexEpoch = 0;
 
 async function checkTermIndexVersion(headers) {
   const now = Date.now();
@@ -90,7 +91,10 @@ async function checkTermIndexVersion(headers) {
     const res = await fetch('/api/wiki/terms/stats', { headers });
     const data = res.ok ? await res.json() : null;
     if (data && typeof data.last_rebuild === 'string') {
-      if (termIndexVersion !== null && termIndexVersion !== data.last_rebuild) termIndexCache.clear();
+      if (termIndexVersion !== null && termIndexVersion !== data.last_rebuild) {
+        termIndexEpoch++;
+        termIndexCache.clear();
+      }
       termIndexVersion = data.last_rebuild;
     }
   } catch (e) { /* TTL remains the fallback when stats is unavailable. */ }
@@ -112,6 +116,7 @@ async function termInfoFor(a, signal) {
       const cached = termIndexCache.get(key);
       if (cached && Date.now() - cached.time < 300000) return cached.info;
       termIndexCache.delete(key);
+      const epoch = termIndexEpoch;
       const res = await fetch('/api/wiki/terms/lookup?name=' + encodeURIComponent(name), {
         headers, signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
       });
@@ -128,7 +133,7 @@ async function termInfoFor(a, signal) {
         if (scoped.length === 1) {
           const hit = scoped[0];
           const info = { name: hit.name, definition: hit.definition || '', rel: hit.doc?.rel || '', doc: hit.source || '' };
-          termIndexCache.set(key, { time: Date.now(), info });
+          if (epoch === termIndexEpoch && !signal.aborted) termIndexCache.set(key, { time: Date.now(), info });
           return info;
         }
       }
