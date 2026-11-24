@@ -102,9 +102,11 @@ try {
         await s.page.locator(`${root} .cfp-body`).evaluate((el,p)=>{el.scrollTop=(el.scrollHeight-el.clientHeight)*p;},position);
         const result=await measure(s.page,root); assertText(result); assertNoOverlap(result);
       }
-      if(width===1280) {
+      if(width===1280 || width===375) {
         await s.page.locator(`${root} .cfp-body`).evaluate(el=>{el.scrollTop=0;});
         await negativeOverlap(s.page,root,`${root} .cfp-row-title`);
+      }
+      if(width===1280) {
         await s.page.screenshot({path:join(shots,'desktop-1280-long-favorites.png'),animations:'disabled'});
         const title=s.page.locator(`${root} .cfp-row-title`).first();
         await title.evaluate(el=>{el.style.whiteSpace='nowrap';el.style.overflow='hidden';el.style.textOverflow='ellipsis';});
@@ -131,7 +133,7 @@ try {
       assert(inputState.panelScroll<=inputState.panelWidth+1);
       assert(await search.evaluate(el=>{const r=el.getBoundingClientRect();return [0.05,0.5,0.95].every(x=>[0.05,0.5,0.95].every(y=>{const hit=document.elementFromPoint(r.left+r.width*x,r.top+r.height*y);return hit===el||el.contains(hit);}));}), 'search not obscured at all nine points');
       const filtered=await measure(s.page,root); assertNoOverlap(filtered);
-      if(width===1280) await negativeOverlap(s.page,root,`${root} .cfp-empty`);
+      if(width===1280 || width===375) await negativeOverlap(s.page,root,`${root} .cfp-empty`);
       if(width===1280||width===375) await s.page.screenshot({path:join(shots,`search-long-${width}.png`),animations:'disabled'});
       await search.fill('');
       console.log(`PASS favorites text and siblings ${width}`);
