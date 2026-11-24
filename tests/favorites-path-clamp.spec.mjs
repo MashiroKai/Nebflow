@@ -53,6 +53,21 @@ try {
   if (!before) {
     const s = await createSession(browser, { width: 1280, height: 800, colorScheme: 'light', explorerEntries: [] });
     try {
+      await s.boot({ config: { llm: { providers: {} }, features: {} }, sessionId: 'overflow-tooltip', messages: [] });
+      const path = '/' + 'p'.repeat(4092) + '.md';
+      await s.page.evaluate(async path => (await import('/js/canvasFavorites.js')).toggleFavoritePath({path, title:'Overflow tooltip'}), path);
+      await s.page.click('#favorites-btn');
+      const row = s.page.locator('#panel-favorites .cfp-row').first(); await row.waitFor(); await row.hover();
+      const tip = s.page.locator('.cfp-path-tooltip');
+      const state = await tip.evaluate(el => { el.scrollTop = el.scrollHeight; const r=el.getBoundingClientRect(); return {text:el.textContent, top:r.top, bottom:r.bottom, left:r.left, right:r.right, width:innerWidth, height:innerHeight, scrollTop:el.scrollTop, scrollHeight:el.scrollHeight, clientHeight:el.clientHeight}; });
+      assert.equal(state.text,path); assert(state.top>=0 && state.left>=0 && state.right<=state.width && state.bottom<=state.height);
+      assert(state.scrollHeight>state.clientHeight && state.scrollTop>0 && state.scrollTop+state.clientHeight>=state.scrollHeight-1, JSON.stringify(state));
+      await s.page.screenshot({path:join(shots,'tooltip-4096-scroll-bottom.png'),animations:'disabled'});
+    } finally { await s.close(); }
+    const titleSession = await createSession(browser, { width: 1280, height: 800, colorScheme: 'light', explorerEntries: [] });
+    {
+    const s = titleSession;
+    try {
       await s.boot({ config: { llm: { providers: {} }, features: {} }, sessionId: 'long-title', messages: [] });
       const title = 'LongTitle'.repeat(20);
       await s.page.evaluate(async title => (await import('/js/canvasFavorites.js')).toggleFavoritePath({ path: '/short.md', title }), title);
@@ -64,6 +79,7 @@ try {
       console.log('LONG-TITLE', JSON.stringify({ ...metrics, text: undefined }));
       await s.page.screenshot({ path: join(shots, 'after-long-title.png'), animations: 'disabled' });
     } finally { await s.close(); }
+    }
   }
   console.log('favorites-path-clamp: PASS');
 } finally { await browser.close(); }

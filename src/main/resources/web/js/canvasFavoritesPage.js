@@ -16,12 +16,17 @@ const PAGE_ID = 'canvas-fav-page';
 /** 无限滚动：每批渲染条数。 */
 const BATCH = 30;
 let pathTooltip;
-function hidePathTooltip() { if (pathTooltip) pathTooltip.hidden = true; }
+let tooltipHideTimer;
+function hidePathTooltip() { clearTimeout(tooltipHideTimer); if (pathTooltip) pathTooltip.hidden = true; }
+function deferHidePathTooltip() { clearTimeout(tooltipHideTimer); tooltipHideTimer = setTimeout(hidePathTooltip, 250); }
 function showPathTooltip(row, path) {
+  clearTimeout(tooltipHideTimer);
   if (!pathTooltip) {
     pathTooltip = document.createElement('div');
     pathTooltip.className = 'cfp-path-tooltip';
     pathTooltip.setAttribute('role', 'tooltip');
+    pathTooltip.addEventListener('mouseenter', () => clearTimeout(tooltipHideTimer));
+    pathTooltip.addEventListener('mouseleave', hidePathTooltip);
     document.body.appendChild(pathTooltip);
   }
   pathTooltip.textContent = path;
@@ -176,7 +181,7 @@ function buildPage(onClose, onOpened) {
       row.dataset.favPath = entry.path;
       row.dataset.kind = favKind(entry.path);
       row.addEventListener('mouseenter', () => showPathTooltip(row, entry.path));
-      row.addEventListener('mouseleave', hidePathTooltip);
+      row.addEventListener('mouseleave', deferHidePathTooltip);
       row.addEventListener('focus', () => { if (row.matches(':focus-visible')) showPathTooltip(row, entry.path); });
       row.addEventListener('blur', hidePathTooltip);
       const main = document.createElement('div');

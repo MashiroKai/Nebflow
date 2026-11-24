@@ -181,6 +181,8 @@ body.mobile-layer .mf-strip-chip .mf-cv-star svg { width: 18px; height: 18px; }
   z-index: 10000;
   box-sizing: border-box;
   width: min(calc(100vw - 16px), 600px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   padding: var(--ds-space-3);
   border-radius: var(--ds-radius-input);
   background: var(--color-surface);
