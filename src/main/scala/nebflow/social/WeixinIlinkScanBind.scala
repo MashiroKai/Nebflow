@@ -331,10 +331,7 @@ object WeixinIlinkScanBind:
   def sidecarLogin(root: os.Path): LoginFn =
     opts => driveLogin(sidecarBase(root).stripSuffix("/"), opts)
 
-  /**
-   * The blocking poll loop (own method so the terminal `return`s return the
-   * [[LoginResult]], not the enclosing lambda).
-   */
+  /** The blocking sidecar poll loop. */
   private def driveLogin(base: String, opts: LoginOptions): LoginResult =
     val client = java.net.http.HttpClient.newHttpClient()
     def get(path: String): Json =
@@ -372,7 +369,8 @@ object WeixinIlinkScanBind:
     }
     val deadline = System.currentTimeMillis() + MaxLoginMs
     var lastUrl = ""
-    while true do
+    var result: Option[LoginResult] = None
+    while result.isEmpty do
       val st = get("/login/status")
       val state = strField(st, "state").getOrElse("")
       strField(st, "qrUrl", "qr_url").filter(_ != lastUrl).foreach { url =>
@@ -386,17 +384,12 @@ object WeixinIlinkScanBind:
         )
       }
       if state == "polling" then opts.emit(LoginEvent.Polling)
-      if state == "done" then
-        credentials(st) match
-          case Some(c) => return LoginResult.Done(c)
-          case None => return LoginResult.Failed("done-without-credentials")
-      if state == "failed" then
-        return LoginResult.Failed(strField(st, "error").filter(_.nonEmpty).getOrElse("login_failed"))
-      if System.currentTimeMillis() > deadline then throw LoginExpiredException()
-      Thread.sleep(PollIntervalMs)
+      result = terminalStatus(state, st)
+      if result.isEmpty then
+        if System.currentTimeMillis() > deadline then throw LoginExpiredException()
+        Thread.sleep(PollIntervalMs)
     end while
-    // unreachable: the loop above only exits through a return or a throw
-    LoginResult.Failed("internal_error")
+    result.get
 
   end driveLogin
 
@@ -422,6 +415,15 @@ object WeixinIlinkScanBind:
    * The credential triple off a `done` status. Any missing member = no
    * credentials (the login cannot complete half-handed).
    */
+  private[social] def terminalStatus(state: String, st: Json): Option[LoginResult] =
+    if state == "done" then
+      Some(credentials(st) match
+        case Some(c) => LoginResult.Done(c)
+        case None => LoginResult.Failed("done-without-credentials"))
+    else if state == "failed" then
+      Some(LoginResult.Failed(strField(st, "error").filter(_.nonEmpty).getOrElse("login_failed")))
+    else None
+
   private def credentials(st: Json): Option[WeixinCredentials] =
     for
       c <- st.hcursor.downField("credentials").focus

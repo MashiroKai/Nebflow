@@ -240,6 +240,16 @@ class WeixinIlinkScanBindSpec extends CatsEffectSuite:
     yield ()
   }
 
+  test("terminal sidecar statuses preserve credentials and failure reasons") {
+    val status = WeixinIlinkScanBind.terminalStatus
+    val json = Json.obj("credentials" -> Json.obj("botToken" -> Token.asJson, "botId" -> BotId.asJson, "userId" -> UserId.asJson))
+    assertEquals(status("done", json), Some(WeixinIlinkScanBind.LoginResult.Done(creds)))
+    assertEquals(status("done", Json.obj()), Some(WeixinIlinkScanBind.LoginResult.Failed("done-without-credentials")))
+    assertEquals(status("failed", Json.obj("error" -> "denied".asJson)), Some(WeixinIlinkScanBind.LoginResult.Failed("denied")))
+    assertEquals(status("failed", Json.obj()), Some(WeixinIlinkScanBind.LoginResult.Failed("login_failed")))
+    assertEquals(status("polling", Json.obj()), None)
+  }
+
   // ───────────────────────── failure families ─────────────────────────
 
   test("WSB-5 the failure families land in Failed with clean, secret-free reasons") {
