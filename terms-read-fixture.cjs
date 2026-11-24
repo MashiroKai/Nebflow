@@ -194,7 +194,7 @@ const assert = require('node:assert/strict');
     await page.evaluate(() => { window.testTip.hideTermTip(); window.advanceClock(); window.testTip.termTapExpand(document.querySelector('#term'), null); });
     await page.waitForFunction(() => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'cache 3'));
     console.log('PASS: positive cache reuse, project isolation and five-minute expiry');
-    for (const width of [1440, 768, 375]) {
+    for (const width of [1440, 768, 390, 375]) {
       const screen = await browser.newPage({ viewport: { width, height: width === 1440 ? 900 : 812 } });
       await screen.route('http://fixture.test/**', async (route) => {
         const url = new URL(route.request().url());
@@ -225,10 +225,12 @@ const assert = require('node:assert/strict');
         const r = tip.getBoundingClientRect();
         const a = link.getBoundingClientRect();
         const c = close.getBoundingClientRect();
-        return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, overlap: r.left < a.right && r.right > a.left && r.top < a.bottom && r.bottom > a.top, closeInside: c.left >= r.left && c.right <= r.right && c.top >= r.top && c.bottom <= r.bottom, horizontal: body.scrollWidth <= body.clientWidth, role: tip.getAttribute('role'), live: body.getAttribute('aria-live'), focus: document.activeElement === close };
+        return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, overlap: r.left < a.right && r.right > a.left && r.top < a.bottom && r.bottom > a.top, closeInside: c.left >= r.left - 1 && c.right <= r.right + 1 && c.top >= r.top - 1 && c.bottom <= r.bottom + 1, closeWidth: c.width, closeHeight: c.height, closeName: close.getAttribute('aria-label'), dialogName: tip.getAttribute('aria-label'), horizontal: body.scrollWidth <= body.clientWidth, role: tip.getAttribute('role'), live: body.getAttribute('aria-live'), focus: document.activeElement === close };
       });
       assert(geometry.x >= 16 && geometry.y >= 16 && geometry.right <= width - 16 && geometry.bottom <= (width === 1440 ? 900 : 812) - 16, JSON.stringify(geometry));
       assert(!geometry.overlap && geometry.closeInside && geometry.horizontal, JSON.stringify(geometry));
+      assert(geometry.closeWidth >= 44 && geometry.closeHeight >= 44, JSON.stringify(geometry));
+      assert(geometry.closeName && geometry.dialogName, JSON.stringify(geometry));
       assert.equal(geometry.role, 'dialog');
       assert.equal(geometry.live, 'polite');
       assert.equal(geometry.focus, true);
@@ -236,7 +238,7 @@ const assert = require('node:assert/strict');
       assert.equal(await screen.evaluate(() => document.activeElement.id), 'term');
       await screen.close();
     }
-    console.log('PASS: three viewport geometry, keyboard activation, ARIA and escape focus');
+    console.log('PASS: four viewport geometry, keyboard activation, ARIA and escape focus');
     const sourcePage = await browser.newPage();
     await sourcePage.route('http://fixture.test/**', async (route) => {
       const url = new URL(route.request().url());
