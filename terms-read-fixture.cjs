@@ -112,7 +112,8 @@ const assert = require('node:assert/strict');
     await page.evaluate(() => { window.testTip.hideTermTip(); window.testTip.termTapExpand(document.querySelector('#term'), null); });
     await page.waitForFunction(() => window.lookupCount() === 3);
     console.log('PASS: late lookup after version change does not repopulate cache');
-    await page.evaluate(() => {
+    await page.evaluate(async () => {
+      (await import('/termTip.js')).hideTermTip();
       window.testTip.hideTermTip();
       const a = document.querySelector('#term');
       a.dataset.wikiTarget = 'unavailable';
@@ -124,5 +125,25 @@ const assert = require('node:assert/strict');
     await page.waitForFunction(() => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'termPreview.unavailable'));
     assert.equal(await page.locator('.nf-term-tip .term-tip-retry:not([hidden])').count(), 1);
     console.log('PASS: loading then unavailable with retry');
+    await page.evaluate(() => {
+      window.retryCalls = 0;
+      window.fetch = async (url) => {
+        if (String(url).includes('/lookup?')) {
+          window.retryCalls++;
+          if (window.retryCalls === 1) return new Response('{}', { status: 404 });
+          return new Response(JSON.stringify({ available: true, results: [{ name: 'unavailable', definition: 'recovered', doc: {} }] }));
+        }
+        return new Response('{}', { status: 404 });
+      };
+      document.querySelector('.term-tip-retry:not([hidden])').click();
+      window.retryLoading = [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'termPreview.loading');
+    });
+    assert.equal(await page.evaluate(() => window.retryLoading), true);
+    await page.waitForFunction(() => window.retryCalls === 1 && [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'termPreview.unavailable'));
+    assert.equal(await page.locator('.nf-term-tip .term-tip-retry:not([hidden])').count(), 1);
+    await page.locator('.nf-term-tip .term-tip-retry:not([hidden])').click();
+    await page.waitForFunction(() => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'recovered'));
+    assert.equal(await page.evaluate(() => window.retryCalls), 2);
+    console.log('PASS: failed retry remains available and subsequent retry succeeds');
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
