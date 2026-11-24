@@ -332,9 +332,18 @@ class ScheduledTaskStore(
 
   def saveTasks(sessionId: String, tasks: List[ScheduledTask]): IO[Unit] =
     withStoreLock {
-      loadUnlocked(sessionId).flatMap { existing =>
+      (loadUnlocked(sessionId), scanUnlocked(_ => true, sort = false)).tupled.flatMap { (existing, all) =>
         val byId = existing.map(t => t.id -> t).toMap
-        val stale = tasks.exists(t => byId.get(t.id).exists(_.revision != t.revision))
+        val stale = tasks.exists { t =>
+          val copies = all.filter(_.id == t.id)
+          val localStale = byId.get(t.id).exists(_.revision != t.revision)
+          val newer = copies.exists(_.revision > t.revision)
+          val equalConflict = copies.exists(c =>
+            c.revision == t.revision && c.copy(sessionId = "") != t.copy(sessionId = "") &&
+              !byId.get(t.id).contains(c)
+          )
+          localStale || newer || equalConflict
+        }
         val rewritesInstances = tasks.exists(t =>
           byId.get(t.id).exists(old => old.due != t.due && old.occurrences != t.occurrences)
         )

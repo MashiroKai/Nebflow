@@ -210,7 +210,7 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
     val conflict = initial.copy(sessionId = "s2", content = "conflict")
     for
       _ <- store.saveTasks("s1", List(initial))
-      _ <- store.saveTasks("s2", List(conflict))
+      _ <- IO(os.write(dir / "s2.json", List(conflict).asJson.noSpaces))
       result <- store.upsertTaskByName(initial.copy(sessionId = "s3")).attempt
       exists <- IO(os.exists(dir / "s3.json"))
     yield
@@ -259,6 +259,31 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       assert(result.isLeft)
       assertEquals(rows.head.occurrences, List(occurrence))
 
+  test("direct save rejects older cross-session copy even when local revision matches"):
+    val dir = os.temp.dir(prefix = "due-save-authority-")
+    val store = new ScheduledTaskStore(dir)
+    val initial = legacy.as[ScheduledTask].toOption.get
+    val latest = initial.copy(sessionId = "s2", revision = 1L, content = "newer")
+    for
+      _ <- store.addTask(initial)
+      _ <- store.addTask(latest)
+      result <- store.saveTasks("s1", List(initial.copy(content = "stale"))).attempt
+      rows <- IO(io.circe.parser.decode[List[ScheduledTask]](os.read(dir / "s1.json")).toOption.get)
+    yield
+      assert(result.isLeft)
+      assertEquals(rows, List(initial))
+
+  test("direct save accepts a newer cross-session revision"):
+    val dir = os.temp.dir(prefix = "due-save-newer-")
+    val store = new ScheduledTaskStore(dir)
+    val old = legacy.as[ScheduledTask].toOption.get
+    val newer = old.copy(sessionId = "s2", revision = 1L, content = "newer")
+    for
+      _ <- store.addTask(old)
+      _ <- store.saveTasks("s2", List(newer))
+      rows <- store.loadTasks("s2")
+    yield assertEquals(rows, List(newer))
+
   test("direct save rejects a stale revision instead of overwriting newer state"):
     val dir = os.temp.dir(prefix = "due-save-stale-")
     val store = new ScheduledTaskStore(dir)
@@ -292,7 +317,7 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
     val latest = stale.copy(revision = 1L, content = "latest")
     for
       _ <- store.saveTasks("s1", List(latest))
-      _ <- store.saveTasks("s2", List(stale))
+      _ <- IO(os.write(dir / "s2.json", List(stale).asJson.noSpaces))
       result <- store.materializeDueOccurrences(1000L).attempt
       unchanged <- IO(io.circe.parser.decode[List[ScheduledTask]](os.read(dir / "s2.json")).toOption.get)
     yield
@@ -327,7 +352,7 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
     val occurrence = TodoOccurrence.create("old", 1000L, 0L)
     for
       _ <- store.saveTasks("s1", List(old))
-      _ <- store.saveTasks("s2", List(newer))
+      _ <- IO(os.write(dir / "s2.json", List(newer).asJson.noSpaces))
       result <- store.recordOccurrence("s1", occurrence, Some(2000L)).attempt
       stale <- store.loadTasks("s1")
       latest <- store.loadTasks("s2")
