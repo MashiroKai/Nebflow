@@ -75,6 +75,15 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       assertEquals(TodoDue.deviceZoneFromFrame(frame(s)), None)
     }
 
+  test("merged input time zone is present only when all sources agree"):
+    val tokyo = Some("Asia/Tokyo")
+    val paris = Some("Europe/Paris")
+    assertEquals(TodoDue.mergedDeviceZone(List(tokyo, tokyo)), tokyo)
+    assertEquals(TodoDue.mergedDeviceZone(List(tokyo, paris)), None)
+    assertEquals(TodoDue.mergedDeviceZone(List(tokyo, None)), None)
+    assertEquals(TodoDue.mergedDeviceZone(List(None, None)), None)
+    assertEquals(TodoDue.mergedDeviceZone(Nil), None)
+
   test("legacy record has no due setting and old encoded fields retain their values"):
     val task = legacy.as[ScheduledTask].toOption.get
     val encoded = task.asJson

@@ -19,6 +19,13 @@ object TodoDue:
   def deviceZone(value: Option[String]): Option[String] =
     value.filter(ZoneId.getAvailableZoneIds.contains)
 
+  // A tool call cannot be attributed to one input in a merged LLM request;
+  // retain the zone only when every merged message has the same valid source.
+  def mergedDeviceZone(zones: List[Option[String]]): Option[String] =
+    zones match
+      case Some(first) :: rest if deviceZone(Some(first)).isDefined && rest.forall(_.contains(first)) => Some(first)
+      case _ => None
+
   def deviceZoneFromFrame(frame: Json): Option[String] =
     val cursor = frame.hcursor
     val raw = cursor.downField("timeZone").as[String].toOption.orElse(
