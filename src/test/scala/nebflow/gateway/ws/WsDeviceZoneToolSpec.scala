@@ -220,6 +220,25 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
         _ = assertEquals(boundaryNext, Some("Asia/Tokyo"))
         _ <- overrideCall.set(Some(false))
         _ <- done.take.timeout(30.seconds)
+        _ <- (for
+          _ <- overrideCall.set(Some(true))
+          _ <- blockTool.set(true)
+          _ <- ref ! AgentCommand.UserInput("different start", clientMessageId = Some("different-start"),
+            fromUser = true, deviceZone = Some("Asia/Tokyo"))
+          first <- captured.take.timeout(30.seconds)
+          _ = assertEquals(first, Some("Asia/Tokyo"))
+          _ <- toolEntered.take.timeout(30.seconds)
+          _ <- ref ! AgentCommand.ImmediateInput("different zone", fromUser = true, deviceZone = Some("Europe/Paris"))
+          _ <- ref ! AgentCommand.AskUser("different-fifo", Nil, Some(barrierRef))
+          ack <- barrier.take.timeout(30.seconds)
+          _ = assert(nebflow.shared.AskUserDispatch.isFailure(ack) && ack.head.contains("different-fifo"))
+          _ <- overrideCall.set(Some(true))
+          _ <- toolRelease.offer(())
+          second <- captured.take.timeout(30.seconds)
+          _ = assertEquals(second, None)
+          _ <- overrideCall.set(Some(false))
+          _ <- done.take.timeout(30.seconds)
+        yield ())
         _ <- store.flushPendingUiWrites
       yield ()
     }
