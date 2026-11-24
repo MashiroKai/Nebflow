@@ -87,7 +87,6 @@ class ModelRuleApplySpec extends FunSuite:
     assertEquals(refs(out), List("a/m1", "b/m1"))
   }
 
-
   test("P6 三态门：仅 rules 态暴露脚本；缺失/非法模式回落 follow") {
     val root = os.temp.dir(prefix = "mr-gate-")
     val l = loadedOf("rule 冻结 { when time 09:00..18:00 freeze model a/* }")
@@ -109,11 +108,12 @@ class ModelRuleApplySpec extends FunSuite:
         val pool = java.util.concurrent.Executors.newFixedThreadPool(2)
         try
           val writes = List("slots", "rules").map { mode =>
-            pool.submit(new java.util.concurrent.Callable[Either[String, Unit]] {
-              def call(): Either[String, Unit] =
-                start.await()
-                ModelRuleStore.setMode(root, mode)
-            })
+            pool.submit(
+              new java.util.concurrent.Callable[Either[String, Unit]]:
+                def call(): Either[String, Unit] =
+                  start.await()
+                  ModelRuleStore.setMode(root, mode)
+            )
           }
           start.countDown()
           writes.foreach(f => assert(f.get().isRight))

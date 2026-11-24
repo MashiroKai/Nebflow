@@ -301,7 +301,7 @@ check('⑥ recovery publishes delegateWoken; Mail releases the gate in place', (
   assert(/if nebflow\.core\.delegate\.SessionResumption\.requiresManual\(\s*Some\(current\),\s*task,\s*live\s*\)\s*=>\s*releaseGateByMail\(id, message, blocks, ctx, system, resources, current, live\)/.test(delivery),
     'Recovery-held Mail must release the gate through the dedicated leg');
   const release = mail.slice(mail.indexOf('private def releaseGateByMail('), mail.indexOf('end releaseGateByMail'));
-  assert(/res\.wakeDelegateByMail\(ctx\.wsSend, id, message\)/.test(release), 'Live session must wake with the supplement through the runtime port');
+  assert(/res\s*\.wakeDelegateByMail\(ctx\.wsSend, id, message\)/.test(release), 'Live session must wake with the supplement through the runtime port');
   const resources = readFileSync(join(ROOT, 'src/main/scala/nebflow/agent/SharedResources.scala'), 'utf8');
   assert(/DelegateWakeLeg\.wake\(this, wsSend, delegateId, instruction, "mail"\)/.test(resources),
     'Runtime port must delegate the same instruction and sender to the live wake leg');

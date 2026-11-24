@@ -752,129 +752,128 @@ object SubAgentStartupRecovery:
           t.executor.contains("nebflow") && t.runId.nonEmpty && t.notificationId.nonEmpty &&
             // 周期腿只消费**真挂账**行（notificationPending=true）；boot 腿保持全量形态。
             (!onlyPending || t.notificationPending.contains(true))
-        ).traverse_ {
-          task =>
-            rs.executionProtection(task.taskId).flatMap {
-              case nebflow.shared.ExecutionProtection.Unprotected if task.notificationPending.contains(true) =>
-                sessionStore.loadTerminalEnvelope(task.taskId, task.runId.get).flatMap { saved =>
-                  val fallback = Option.when(
-                    task.executionStatus.exists(Set("failed", "cancelled").contains) &&
-                      task.resultRef.isEmpty && task.terminalReason.nonEmpty
-                  )(
-                    AgentCommand.ExternalEvent(
-                      task.source,
-                      task.status,
-                      task.terminalReason.get,
-                      JsonObject("taskId" -> task.taskId.asJson, "runId" -> task.runId.asJson),
-                      Some(task.taskId)
-                    )
+        ).traverse_ { task =>
+          rs.executionProtection(task.taskId).flatMap {
+            case nebflow.shared.ExecutionProtection.Unprotected if task.notificationPending.contains(true) =>
+              sessionStore.loadTerminalEnvelope(task.taskId, task.runId.get).flatMap { saved =>
+                val fallback = Option.when(
+                  task.executionStatus.exists(Set("failed", "cancelled").contains) &&
+                    task.resultRef.isEmpty && task.terminalReason.nonEmpty
+                )(
+                  AgentCommand.ExternalEvent(
+                    task.source,
+                    task.status,
+                    task.terminalReason.get,
+                    JsonObject("taskId" -> task.taskId.asJson, "runId" -> task.runId.asJson),
+                    Some(task.taskId)
                   )
-                  saved
-                    .filter(validTerminalEnvelope(task, task.runId.get, _))
-                    .orElse(Option.when(saved.isEmpty)(fallback).flatten)
-                    .fold(IO.unit) { event =>
-                      val identity = task.notificationId.get
-                      MailboxProducer
-                        .deliver(
-                          rs,
-                          task.parentSessionId,
-                          event,
-                          identity,
-                          "delegate-terminal",
-                          coalesce = false,
-                          producer = "task-lifecycle-recovery"
-                        )
-                        .flatMap {
-                          case nebflow.core.mail.SessionMailbox.MailResult.Failed(_) => IO.unit
-                          case _ =>
-                            store
-                              .acknowledgeNotification(task.parentSessionId, task.taskId, task.runId.get, identity)
-                              .void
-                        }
-                    }
-                }
-              case nebflow.shared.ExecutionProtection.Protected(List(run))
-                  if task.runId.contains(run) &&
-                    task.executionStatus.contains("finished") && task.notificationId.contains(s"${task.taskId}#$run") =>
-                val encoded = java.util.Base64.getUrlEncoder
-                  .withoutPadding()
-                  .encodeToString(run.getBytes(java.nio.charset.StandardCharsets.UTF_8))
-                val expected = sessionStore.executionAuthorityRoot.toAbsolutePath
-                  .normalize()
-                  .resolve(task.taskId)
-                  .resolve(s"terminal-$encoded.json")
-                  .toString
-                if !task.resultRef.contains(expected) then IO.unit
-                else
-                  rs.executionCommitPort.committedTerminal(task.taskId, run).flatMap {
-                    case Left(_) => IO.unit
-                    case Right(confirmed) =>
-                      sessionStore.loadTerminalEnvelope(task.taskId, run).flatMap {
-                        case Some(event)
-                            if validTerminalEnvelope(task, run, event) && Json.obj(
-                              "source" -> event.source.asJson,
-                              "eventType" -> event.eventType.asJson,
-                              "payload" -> event.payload.asJson,
-                              "metadata" -> Json.fromJsonObject(event.metadata),
-                              "correlationId" -> event.correlationId.asJson,
-                              "blocks" -> event.blocks.asJson
-                            ) == confirmed =>
-                          MailboxProducer
-                            .deliver(
-                              rs,
-                              task.parentSessionId,
-                              event,
-                              task.notificationId.get,
-                              "delegate-terminal",
-                              coalesce = false,
-                              producer = "task-lifecycle-recovery"
-                            )
-                            .flatMap {
-                              case nebflow.core.mail.SessionMailbox.MailResult.Failed(_) => IO.unit
-                              case nebflow.core.mail.SessionMailbox.MailResult.AlreadyPresent =>
-                                val identity = task.notificationId.get
-                                (
-                                  nebflow.core.mail.SessionMailbox.scanPending(task.parentSessionId),
-                                  nebflow.core.mail.SessionMailbox.scanTaken(task.parentSessionId),
-                                  nebflow.core.mail.SessionMailbox
-                                    .deliveredContains(task.parentSessionId, Set(identity))
-                                ).tupled.flatMap { case (pending, taken, delivered) =>
-                                  val matches = (pending ++ taken).filter(_.identity == identity)
-                                  if matches.exists(_.event != event) then
-                                    logger.warn(
-                                      s"[startup-recovery] conflicting protected terminal mailbox identity for ${task.taskId}"
-                                    )
-                                  else if matches.nonEmpty || delivered.contains(identity) then
-                                    store.acknowledgeNotification(task.parentSessionId, task.taskId, run, identity).void
-                                  else
-                                    logger.warn(
-                                      s"[startup-recovery] protected terminal mailbox receipt unavailable for ${task.taskId}"
-                                    )
-                                }
-                              case _ =>
-                                store
-                                  .acknowledgeNotification(
-                                    task.parentSessionId,
-                                    task.taskId,
-                                    run,
-                                    task.notificationId.get
-                                  )
-                                  .void
-                            }
-                        case Some(event) if !validTerminalEnvelope(task, run, event) =>
-                          store.markInvalidTerminalEnvelope(task).flatMap { marked =>
-                            if marked then
-                              logger.warn(
-                                s"[startup-recovery] invalid protected terminal identity for ${task.taskId}; manual review required"
-                              )
-                            else IO.unit
-                          }
-                        case _ => IO.unit
+                )
+                saved
+                  .filter(validTerminalEnvelope(task, task.runId.get, _))
+                  .orElse(Option.when(saved.isEmpty)(fallback).flatten)
+                  .fold(IO.unit) { event =>
+                    val identity = task.notificationId.get
+                    MailboxProducer
+                      .deliver(
+                        rs,
+                        task.parentSessionId,
+                        event,
+                        identity,
+                        "delegate-terminal",
+                        coalesce = false,
+                        producer = "task-lifecycle-recovery"
+                      )
+                      .flatMap {
+                        case nebflow.core.mail.SessionMailbox.MailResult.Failed(_) => IO.unit
+                        case _ =>
+                          store
+                            .acknowledgeNotification(task.parentSessionId, task.taskId, task.runId.get, identity)
+                            .void
                       }
                   }
-                end if
-              case _ => IO.unit
-            }
+              }
+            case nebflow.shared.ExecutionProtection.Protected(List(run))
+                if task.runId.contains(run) &&
+                  task.executionStatus.contains("finished") && task.notificationId.contains(s"${task.taskId}#$run") =>
+              val encoded = java.util.Base64.getUrlEncoder
+                .withoutPadding()
+                .encodeToString(run.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+              val expected = sessionStore.executionAuthorityRoot.toAbsolutePath
+                .normalize()
+                .resolve(task.taskId)
+                .resolve(s"terminal-$encoded.json")
+                .toString
+              if !task.resultRef.contains(expected) then IO.unit
+              else
+                rs.executionCommitPort.committedTerminal(task.taskId, run).flatMap {
+                  case Left(_) => IO.unit
+                  case Right(confirmed) =>
+                    sessionStore.loadTerminalEnvelope(task.taskId, run).flatMap {
+                      case Some(event)
+                          if validTerminalEnvelope(task, run, event) && Json.obj(
+                            "source" -> event.source.asJson,
+                            "eventType" -> event.eventType.asJson,
+                            "payload" -> event.payload.asJson,
+                            "metadata" -> Json.fromJsonObject(event.metadata),
+                            "correlationId" -> event.correlationId.asJson,
+                            "blocks" -> event.blocks.asJson
+                          ) == confirmed =>
+                        MailboxProducer
+                          .deliver(
+                            rs,
+                            task.parentSessionId,
+                            event,
+                            task.notificationId.get,
+                            "delegate-terminal",
+                            coalesce = false,
+                            producer = "task-lifecycle-recovery"
+                          )
+                          .flatMap {
+                            case nebflow.core.mail.SessionMailbox.MailResult.Failed(_) => IO.unit
+                            case nebflow.core.mail.SessionMailbox.MailResult.AlreadyPresent =>
+                              val identity = task.notificationId.get
+                              (
+                                nebflow.core.mail.SessionMailbox.scanPending(task.parentSessionId),
+                                nebflow.core.mail.SessionMailbox.scanTaken(task.parentSessionId),
+                                nebflow.core.mail.SessionMailbox
+                                  .deliveredContains(task.parentSessionId, Set(identity))
+                              ).tupled.flatMap { case (pending, taken, delivered) =>
+                                val matches = (pending ++ taken).filter(_.identity == identity)
+                                if matches.exists(_.event != event) then
+                                  logger.warn(
+                                    s"[startup-recovery] conflicting protected terminal mailbox identity for ${task.taskId}"
+                                  )
+                                else if matches.nonEmpty || delivered.contains(identity) then
+                                  store.acknowledgeNotification(task.parentSessionId, task.taskId, run, identity).void
+                                else
+                                  logger.warn(
+                                    s"[startup-recovery] protected terminal mailbox receipt unavailable for ${task.taskId}"
+                                  )
+                              }
+                            case _ =>
+                              store
+                                .acknowledgeNotification(
+                                  task.parentSessionId,
+                                  task.taskId,
+                                  run,
+                                  task.notificationId.get
+                                )
+                                .void
+                          }
+                      case Some(event) if !validTerminalEnvelope(task, run, event) =>
+                        store.markInvalidTerminalEnvelope(task).flatMap { marked =>
+                          if marked then
+                            logger.warn(
+                              s"[startup-recovery] invalid protected terminal identity for ${task.taskId}; manual review required"
+                            )
+                          else IO.unit
+                        }
+                      case _ => IO.unit
+                    }
+                }
+              end if
+            case _ => IO.unit
+          }
         }
       )
 
@@ -1218,7 +1217,9 @@ object SubAgentStartupRecovery:
           onlyPending = true
         )
           .handleErrorWith(e =>
-            logger.warn(s"[startup-recovery] pending-notification reconcile failed (will retry next cycle): ${e.getMessage}")
+            logger.warn(
+              s"[startup-recovery] pending-notification reconcile failed (will retry next cycle): ${e.getMessage}"
+            )
           ) *> IO.sleep(interval) >> loop
     loop
 

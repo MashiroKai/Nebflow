@@ -758,7 +758,8 @@ case class SharedResources(
 
   /** 共享 spawn:readTracker/fileHistory 创建 + AgentActor spawn(NodeRunner 原体)。 */
   def spawnAgentActor(system: ActorSystem, p: NodeRunner.SpawnParams): IO[ActorRef[AgentCommand]] =
-    if p.protectedExecution.nonEmpty || protectedExecutions.contains(p.sessionId) || !p.admissionGuard then spawnActor(system, p)
+    if p.protectedExecution.nonEmpty || protectedExecutions.contains(p.sessionId) || !p.admissionGuard then
+      spawnActor(system, p)
     else executionCommitPort.withUnprotectedSession(p.sessionId)(spawnActor(system, p))
 
   private def spawnActor(system: ActorSystem, p: NodeRunner.SpawnParams): IO[ActorRef[AgentCommand]] =

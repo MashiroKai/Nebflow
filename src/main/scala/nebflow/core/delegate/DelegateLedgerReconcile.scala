@@ -177,7 +177,8 @@ object DelegateLedgerReconcile:
           val cancelOk = Right(())
           val restartLoss = t.lastError.exists(_.startsWith(RestartLossFingerprint))
           val restartOk =
-            if rec.restartInterruptedAt.isDefined && !restartLoss then DelegateRegistry.clearRestartInterrupted(rec.id) else Right(())
+            if rec.restartInterruptedAt.isDefined && !restartLoss then DelegateRegistry.clearRestartInterrupted(rec.id)
+            else Right(())
           (cancelOk, restartOk)
         }.flatMap {
           case (Right(_), Right(_)) =>
