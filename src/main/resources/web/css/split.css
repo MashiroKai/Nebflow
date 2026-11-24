@@ -4148,17 +4148,8 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
    表面在上面的族块里（同表给两面），本块只留词条面自己的显示态。 */
 .nf-term-tip {
   display: none;
-  width: min(360px, calc(100vw - 32px));
-  max-width: calc(100vw - 32px);
-  max-height: calc(100vh - 32px);
-  overflow-y: auto;
 }
 .nf-term-tip.interactive { pointer-events: auto; }
-.nf-term-tip .term-tip-close,
-.nf-term-tip .term-tip-source,
-.nf-term-tip .term-tip-retry { min-width: 44px; min-height: 44px; }
-.nf-term-tip .term-tip-close { float: right; }
-.nf-term-tip button:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 /* 悬浮提示（tip 形态）三段字档（canvas-hint-text 批 2026-11-05）：
    标题 = S 档 strong（12/600/1.45）· 正文 = H 档（12/400/1.45/muted，修前
    `line-height: 1.55` 是裸值 = 第六把行高尺，收进 --cv-hint-lh-h）·
@@ -4171,10 +4162,7 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   font-size: var(--cv-hint-fs-h);
   font-weight: var(--cv-hint-fw);
   line-height: var(--cv-hint-lh-h);
-  display: block;
-  overflow: auto;
-  max-height: min(50vh, 28rem);
-  overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: var(--cv-hint-lines-tip); -webkit-box-orient: vertical; overflow: hidden;
 }
 .nf-term-tip .td { color: var(--cv-hint-color-dim); font-size: var(--cv-hint-fs-m); font-weight: var(--cv-hint-fw); line-height: var(--cv-hint-lh-m); margin-top: var(--ds-space-1h); }
 /* 第三行（来源文档 / 跳转提示）撤掉后不占位（term-system-v2 词条视觉面批

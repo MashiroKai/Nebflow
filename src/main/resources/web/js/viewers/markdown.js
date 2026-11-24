@@ -484,7 +484,6 @@ function renderAutoTerms(mdViewer, data, projectName, absPath) {
       return;
     }
     a.dataset.wikiResolved = JSON.stringify(hit);
-    if (projectName) a.dataset.wikiProject = projectName;
     a.dataset.wikiTarget = String(a.dataset.term || '');   // 非空 ⇒ 点击腿走 resolved.absPath 深链（不是本文自锚）
     if (hit.anchor && hit.anchor.kind === 'block' && hit.anchor.id) a.dataset.wikiAnchor = '^' + hit.anchor.id;
     if (hit.term) attachTermFace(a, mdViewer, { term: hit.term });
@@ -587,7 +586,6 @@ async function renderWikilinks(mdViewer, baseDir, absPath) {
     : null;
   mdViewer.querySelectorAll('a.nf-wikilink').forEach((el) => {
     const a = /** @type {HTMLAnchorElement} */ (el);
-    if (currentProject) a.dataset.wikiProject = currentProject;
     const target = a.dataset.wikiTarget || '';
     if (!target) { a.classList.add('nf-wikilink-self'); return; }
     const anchorRaw = a.dataset.wikiAnchor || '';

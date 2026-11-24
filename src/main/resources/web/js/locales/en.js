@@ -2891,11 +2891,6 @@ export default {
   'wiki.kindAttachment': 'attachment',
   'wiki.unresolved': 'Unresolved reference — no document with this name in any project vault',
   'wiki.backlinks': 'Backlinks',
-  'termPreview.loading': 'Loading…',
-  'termPreview.unavailable': 'Term temporarily unavailable',
-  'termPreview.retry': 'Retry',
-  'termPreview.close': 'Close',
-  'termPreview.openSource': 'Open source',
   // Term citation batch 2 (hover bubble + back-to-source button)
   'wiki.termSource': 'Source: ',
   'wiki.termJumpHint': 'Click to jump',
