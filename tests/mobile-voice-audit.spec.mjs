@@ -13,7 +13,13 @@ test('mobile voice overlay mounts through voice gesture',async({page})=>{
  await page.waitForFunction(()=>{const overlay=document.querySelector('#voice-mode-overlay'); return overlay && !overlay.hasAttribute('hidden')});
  const button=page.locator('#voice-btn'); await expect(button).toBeVisible();
  await page.waitForFunction(()=>!!document.querySelector('#input')?.placeholder);
- const box=await button.boundingBox(); await page.mouse.move(box.x+box.width/2,box.y+box.height/2); await page.mouse.down(); await page.mouse.move(box.x+box.width/2+80,box.y+box.height/2,{steps:10}); await page.mouse.up();
+ await expect(button).toBeEnabled();
+ await page.waitForFunction(() => { const b=document.querySelector('#voice-btn'); if(!b)return false; const r=b.getBoundingClientRect(), hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2); return b.contains(hit); });
+ const box=await button.boundingBox(); const x=box.x+box.width/2, y=box.y+box.height/2;
+ const cdp=await page.context().newCDPSession(page);
+ await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y}]});
+ for(let dx=10;dx<=80;dx+=10) { await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:x+dx,y}]}); await page.evaluate(() => new Promise(requestAnimationFrame)); }
+ await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
  const overlay=page.locator('#voice-mode-overlay.on'); await expect(overlay).toBeVisible({timeout:10000});
  const bounds=await overlay.boundingBox(); expect(bounds.x).toBeGreaterThanOrEqual(0); expect(bounds.x+bounds.width).toBeLessThanOrEqual(375); expect(bounds.y).toBeGreaterThanOrEqual(0); expect(bounds.y+bounds.height).toBeLessThanOrEqual(812);
  const exit=page.locator('#vmo-exit'); await expect(exit).toBeVisible();
