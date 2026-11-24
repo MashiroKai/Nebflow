@@ -40,6 +40,8 @@ import nebflow.shared.NebflowLogger
  */
 object DelegateLedgerReconcile:
 
+  val RestartLossFingerprint = "process restart during in-flight task"
+
   private val logger = NebflowLogger.forName("nebflow.delegate.ledger-reconcile")
 
   /** 任务行终态集（ready-to-merge 不算——合并轮在飞，不算收口）。 */
@@ -173,7 +175,7 @@ object DelegateLedgerReconcile:
         IO.blocking {
           // Cancellation and restart-loss are durable recovery semantics, not transient UI marks.
           val cancelOk = Right(())
-          val restartLoss = t.lastError.exists(_.startsWith(nebflow.agent.SubAgentStartupRecovery.RestartLossFingerprint))
+          val restartLoss = t.lastError.exists(_.startsWith(RestartLossFingerprint))
           val restartOk =
             if rec.restartInterruptedAt.isDefined && !restartLoss then DelegateRegistry.clearRestartInterrupted(rec.id) else Right(())
           (cancelOk, restartOk)

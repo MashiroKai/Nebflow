@@ -88,7 +88,7 @@ object SubAgentStartupRecovery:
   private val logger = NebflowLogger.forName("nebflow.agent.startup-recovery")
 
   /** 重启打断指纹（[[recoverOne]] 终态化写下的 lastError 前缀；回溯标记腿的判据）。 */
-  val RestartLossFingerprint = "process restart during in-flight task"
+  val RestartLossFingerprint = nebflow.core.delegate.DelegateLedgerReconcile.RestartLossFingerprint
 
   /**
    * 失效/待恢复态（重启手动恢复批，作者令 2026-11-06 20:36「保存状态后，由用户手动

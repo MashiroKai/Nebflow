@@ -1471,8 +1471,7 @@ Delivery follows recipient state (there is no delivery parameter to set):
       .fold(IO.pure(false))(entry => system.isAlive(entry.ref.path))
       .flatMap {
         case true =>
-          nebflow.agent.DelegateWakeLeg
-            .wake(res, ctx.wsSend, id, message, "mail")
+          res.wakeDelegateByMail(ctx.wsSend, id, message)
             .flatMap {
               case Right(mode) =>
                 IO.pure[Either[ToolError, String]](

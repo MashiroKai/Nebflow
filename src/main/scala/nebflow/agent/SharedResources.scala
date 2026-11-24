@@ -265,6 +265,12 @@ case class SharedResources(
 ) extends AgentRuntimePort,
       SubAgentTaskPort:
 
+  override def wakeDelegateByMail(
+    wsSend: Option[Json => IO[Unit]],
+    delegateId: String,
+    instruction: String
+  ): IO[Either[String, String]] = DelegateWakeLeg.wake(this, wsSend, delegateId, instruction, "mail")
+
   override def externalThinkingConfig: IO[ThinkingConfig] = thinkingConfigRef.get
 
   override def isProtectedExecution(sessionId: String): Boolean = protectedExecutions.contains(sessionId)
