@@ -27,8 +27,11 @@
 // 夹具纪律：vault 在 /tmp 自建（`/tmp/ask-image-ticket/qa/.stand/docs/`），
 // 图片为本仓最小 PNG 字节——不读生产数据根；/sw.js 静态 404（SW 活体化会绕过
 // page.route，pop-optimistic 同款纪律）；所有等待有界。
-// WebKit 已知基点缺陷（非本批红）：vendor/mermaid/mermaid.min.js 顶层
-// SyntaxError 会进 pageerror——按文件名过滤后在断言里说明（任务书口径：另案）。
+// WebKit mermaid SyntaxError 已定性为**夹具 charset 假象**（2026-11-24 核证令：
+// mermaid.min.js tip/基点字节同一；夹具带 charset（本 spec 服务器对 .html/.js 一律
+// charset=utf-8）⇒ WebKit 零异常；摘掉 charset+meta ⇒ gb18030 解码把 ASCII 破坏成
+// 「Invalid regular expression: unmatched parentheses」@mermaid.min.js:258）。本
+// 夹具恒带 charset ⇒ 「页面零 JS 异常」按全部 pageerror 硬断言，无过滤。
 //
 // 用法：node tests/ask-image-ticket.spec.mjs [--web-root=<dir>] [--engines=chromium,webkit]
 //   --web-root：指向基点树（红控）或本批树（绿控）的 src/main/resources/web。
@@ -190,10 +193,10 @@ async function bootPage(engine, { files = {}, delayMs = 0, delayPath = '', viewp
     localStorage.setItem('nebflow_locale', 'zh-CN'); localStorage.setItem('neblink_locale', 'zh-CN');
   });
   const page = await ctx.newPage();
-  /** 全部 pageerror（断言处再过滤 WebKit 基点 mermaid SyntaxError——另案，非本批红）。 */
+  /** 全部 pageerror（零过滤——mermaid 假象已定性为夹具 charset 问题，本夹具恒带 charset）。 */
   const errors = [];
   page.on('pageerror', (e) => {
-    // 记 message + 栈首行：WebKit 基点 mermaid SyntaxError 的归属文件只在栈里。
+    // 记 message + 栈首行：真实异常的归属文件定位用。
     const msg = String((e && e.message) || e).slice(0, 200);
     const stack = String((e && e.stack) || '').split('\n').slice(0, 4).join(' | ');
     errors.push(msg + (stack ? ` @ ${stack}` : ''));
@@ -259,12 +262,8 @@ async function askClickFillEnter(page, text) {
   await page.waitForFunction(() => !!document.querySelector('.ask-dock .ask-col .ask-bub.user'), null, { timeout: 8000 });
 }
 
-/** WebKit 基点 mermaid SyntaxError 过滤后的页面异常表（另案，非本批红）。 */
-const realErrors = (errors) => errors.filter((e) => !/mermaid(\.min)?\.js/i.test(e));
-const errNote = (errors) => {
-  const dropped = errors.length - realErrors(errors).length;
-  return dropped ? `${realErrors(errors).join(' | ')}（另过滤 WebKit 基点 mermaid SyntaxError×${dropped}，非本批红）` : errors.join(' | ');
-};
+/** 页面异常表（零过滤：任何 pageerror 都是红）。 */
+const errNote = (errors) => errors.join(' | ');
 
 /** 等气泡列里成图数达到 n（有界；到不了返回现值）。 */
 const waitImgs = (page, scopeSel, n, timeout = 10000) =>
@@ -314,7 +313,7 @@ for (const engineName of ENGINE_NAMES) {
       figHits.length >= 2 && figHits[0].status === 403 && figHits[figHits.length - 1].status === 200 && figHits.every((h) => h.ticket),
       JSON.stringify(figHits));
     t(`${E}S1 零页面相对图片请求`, pageRelative.length === 0, JSON.stringify(pageRelative));
-    t(`${E}S1 页面零 JS 异常`, realErrors(errors).length === 0, errNote(errors));
+    t(`${E}S1 页面零 JS 异常`, errors.length === 0, errNote(errors));
     await browser.close();
   }
 
@@ -345,7 +344,7 @@ for (const engineName of ENGINE_NAMES) {
     t(`${E}S2a /api/nf-file 带票 200`, figA.length >= 1 && figA.every((h) => h.ticket && h.status === 200), JSON.stringify(figA));
     t(`${E}S2b /api/nf-file 带票 200`, figB.length >= 1 && figB.every((h) => h.ticket && h.status === 200), JSON.stringify(figB));
     t(`${E}S2a/b 零页面相对图片请求（修前缺陷面）`, pageRelative.length === 0, JSON.stringify(pageRelative));
-    t(`${E}S2a/b 页面零 JS 异常`, realErrors(errors).length === 0, errNote(errors));
+    t(`${E}S2a/b 页面零 JS 异常`, errors.length === 0, errNote(errors));
 
     // (c) 无文档上下文：门面直造（选区档形态——cfg 无 docPath）。try 包住：
     // 基点树若构造面不兼容（抛错）也只记红，不掀翻本站后续断言。
@@ -375,7 +374,7 @@ for (const engineName of ENGINE_NAMES) {
     t(`${E}S2c 无文档上下文 ⇒ 明确占位（不抛错、不留白）`, !nodocErr && nodocState.placeholder && !nodocState.imgLeft,
       nodocErr ? `factory threw: ${nodocErr}` : JSON.stringify(nodocState));
     t(`${E}S2c 零网络（不发注定 404 的页面相对请求）`, relReqs.length === 0, JSON.stringify(relReqs));
-    t(`${E}S2c 页面零 JS 异常`, realErrors(errors).length === 0, errNote(errors));
+    t(`${E}S2c 页面零 JS 异常`, errors.length === 0, errNote(errors));
     await browser.close();
   }
 
@@ -409,7 +408,7 @@ for (const engineName of ENGINE_NAMES) {
       JSON.stringify(finalState));
     t(`${E}S3i 旧轮弃写 ⇒ 不对已弃图取字节（fig_b nf-file = 0）`, figB.length === 0, JSON.stringify(figB));
     t(`${E}S3i 零页面相对图片请求`, pageRelative.length === 0, JSON.stringify(pageRelative));
-    t(`${E}S3i 页面零 JS 异常`, realErrors(errors).length === 0, errNote(errors));
+    t(`${E}S3i 页面零 JS 异常`, errors.length === 0, errNote(errors));
     await browser.close();
   }
 
@@ -451,7 +450,7 @@ for (const engineName of ENGINE_NAMES) {
       finalImgs.length === 1 && finalImgs[0] > 0 && figC.length >= 1 && figC.every((h) => h.ticket && h.status === 200),
       JSON.stringify({ finalImgs, figC }));
     t(`${E}S3ii 零页面相对图片请求`, pageRelative.length === 0, JSON.stringify(pageRelative));
-    t(`${E}S3ii 页面零 JS 异常`, realErrors(errors).length === 0, errNote(errors));
+    t(`${E}S3ii 页面零 JS 异常`, errors.length === 0, errNote(errors));
     await browser.close();
   }
 }
