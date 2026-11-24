@@ -21,6 +21,7 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
+const shot = async (page, name) => { if (process.env.TODO_SHOTS) await page.screenshot({ path: join(process.env.TODO_SHOTS, name + '.png') }); };
 import { fileURLToPath } from 'node:url';
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
@@ -280,7 +281,7 @@ const frames = (captured, type) => captured.filter((f) => f.type === type);
 
 test('Ask 待办自由文本覆盖先选预设', async ({ page }) => {
   await bootApp(page);
-  const result = await page.evaluate(async () => {
+  await page.evaluate(async () => {
     const pending = await import('/js/askPending.js');
     const { buildAskQuestionCard } = await import('/js/askTodoQuestion.js');
     const frames = [];
@@ -293,10 +294,13 @@ test('Ask 待办自由文本覆盖先选预设', async ({ page }) => {
     const input = card.querySelector('.ask-todo-other');
     input.value = '自由答案';
     input.dispatchEvent(new Event('input', { bubbles: true }));
-    card.querySelector('.ask-todo-submit').click();
-    return frames.find((f) => f.type === 'askUserAnswer');
+    window.__askEvidenceFrames = frames;
   });
+  await shot(page, 'ask-other-before-submit');
+  await page.locator('.ask-todo-submit').click();
+  const result = await page.evaluate(() => window.__askEvidenceFrames.find((f) => f.type === 'askUserAnswer'));
   expect(result.answers).toEqual(['自由答案']);
+  await shot(page, 'ask-other-submitted');
 });
 
 test('桌面决策选项作答后完成并移除', async ({ page }) => {
@@ -309,11 +313,14 @@ test('桌面决策选项作答后完成并移除', async ({ page }) => {
   const row = page.locator('.tfl-row[data-id="t4"]');
   await expect(row.locator('.tfl-complete')).toBeDisabled();
   await row.locator('.tfl-row-title').click();
+  await shot(page, 'desktop-unanswered');
   await row.locator('.ta-qd-opt').first().click();
+  await shot(page, 'desktop-selected');
   await row.locator('.ta-decision-submit').click();
   await expect.poll(() => frames(h.captured, 'completeTodo').some((f) => f.id === 't4')).toBe(true);
   expect(frames(h.captured, 'answerTodoDecision').find((f) => f.id === 't4').selectedOptionIds).toEqual(['yes']);
   await expect(row).toHaveCount(0);
+  await shot(page, 'desktop-completed');
   expect(h.backend.rows[0].completed).toBe(true);
 });
 
@@ -358,11 +365,17 @@ test('移动列表决策选项作答后完成并移除', async ({ page }) => {
   await page.evaluate(async () => (await import('/js/mobile/navController.js')).pushPage('todo-apple-list'));
   const panel = page.locator('.mobile-page[data-page="todo-apple-list"]');
   await panel.locator('.ta-item-body', { hasText: '待办四' }).click();
+  const mobileRow = panel.locator('.ta-item').filter({ hasText: '待办四' });
+  await expect(mobileRow.locator('.ta-check')).toBeDisabled();
+  await expect(mobileRow.locator('.ta-check')).toHaveAttribute('aria-label', '先选一项');
+  await shot(page, 'mobile-unanswered');
   await panel.locator('.ta-decision-option').first().click();
+  await shot(page, 'mobile-selected');
   await panel.locator('.ta-decision-submit').click();
   await expect.poll(() => frames(h.captured, 'completeTodo').some((f) => f.id === 't4')).toBe(true);
   expect(frames(h.captured, 'answerTodoDecision').find((f) => f.id === 't4').selectedOptionIds).toEqual(['yes']);
   await expect(panel.locator('.ta-item-body', { hasText: '待办四' })).toHaveCount(0);
+  await shot(page, 'mobile-completed');
   expect(h.backend.rows[0].completed).toBe(true);
 });
 
