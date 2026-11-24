@@ -187,6 +187,8 @@ try {
     if (!warm.ok || hits === 0) throw Error('warmup did not reach loopback model');
     await page.waitForFunction(() => window.__frames.some(f => f.type === 'historyPage'), null, { timeout: 30000 });
     // 两条真实行：我方 user（右气泡）→ 对方 ai（左气泡），连续相邻 ⇒ 跨气泡连续选区。
+    // Warmup is persisted in the shared session across viewports; select the fixture AI,
+    // never the first historical AI (which may be hidden or covered by the mobile panel).
     await page.evaluate(async () => {
       const chat = await import('/js/chat.js');
       chat.renderUserBubble('first user line for multi select', [], Date.now(), { msgId: 'multi-fixture-user' });
@@ -194,7 +196,7 @@ try {
       persist.restoreFromBackendHistory([{ type: 'ai', text: 'second ai line for multi select' }], { scrollToBottom: false, busyTail: false });
     });
     await page.waitForTimeout(400);
-    const aiId = await page.evaluate(() => document.querySelector('#chat .row.ai')?.dataset.msgId || null);
+    const aiId = await page.evaluate(() => [...document.querySelectorAll('#chat .row.ai')].find(row => row.textContent.includes('second ai line for multi select'))?.dataset.msgId || null);
     if (!aiId) throw Error('no ai row');
     // 选区：从 user 行首到 ai 行第 6 字（跨两条气泡）。
     await page.evaluate(() => document.querySelector('#chat .row[data-msg-id="multi-fixture-user"]').scrollIntoView({ block: 'center' }));

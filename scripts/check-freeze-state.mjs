@@ -301,7 +301,10 @@ check('⑥ recovery publishes delegateWoken; Mail releases the gate in place', (
   assert(/if nebflow\.core\.delegate\.SessionResumption\.requiresManual\(\s*Some\(current\),\s*task,\s*live\s*\)\s*=>\s*releaseGateByMail\(id, message, blocks, ctx, system, resources, current, live\)/.test(delivery),
     'Recovery-held Mail must release the gate through the dedicated leg');
   const release = mail.slice(mail.indexOf('private def releaseGateByMail('), mail.indexOf('end releaseGateByMail'));
-  assert(/DelegateWakeLeg\s*\.wake\(res, ctx\.wsSend, id, message, "mail"\)/.test(release), 'Live session must wake with the supplement');
+  assert(/res\s*\.wakeDelegateByMail\(ctx\.wsSend, id, message\)/.test(release), 'Live session must wake with the supplement through the runtime port');
+  const resources = readFileSync(join(ROOT, 'src/main/scala/nebflow/agent/SharedResources.scala'), 'utf8');
+  assert(/DelegateWakeLeg\.wake\(this, wsSend, delegateId, instruction, "mail"\)/.test(resources),
+    'Runtime port must delegate the same instruction and sender to the live wake leg');
   assert(/resumeDelegateInPlace\([\s\S]*gateReleased = true/.test(release), 'Non-live session must resume in place with the gate released');
   assert(/case Left\(reason\)\s*=>\s*queueRecoverySupplement/.test(release), 'Refused wake must retain the supplement');
   assert(/current\.cancelRequestedAt\.nonEmpty/.test(delivery), 'Cancelled delegates must remain refused');

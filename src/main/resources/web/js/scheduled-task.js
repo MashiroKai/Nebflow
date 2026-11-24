@@ -1827,7 +1827,7 @@ onMessage('error', (msg) => {
     const row = document.querySelector(`.reminder-row[data-id="${msg.id}"]`);
     const err = row && row.querySelector('.reminder-decision-err');
     if (err) err.textContent = `${t('todoapple.answerRejected')}：${msg.message || msg.code || ''}`;
-    const btn = row && row.querySelector('.reminder-decision-submit');
+    const btn = /** @type {HTMLButtonElement|null} */ (row && row.querySelector('.reminder-decision-submit'));
     if (btn && !(msg.code === 'decision_completed' || msg.code === 'decision_not_found')) btn.disabled = false;
     return;
   }

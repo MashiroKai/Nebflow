@@ -1,14 +1,13 @@
 package nebflow.gateway.ws
 
-import nebflow.gateway.*
-
-import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
+import cats.effect.{IO, Ref}
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.{SharedResources, SpecResources, StubLlm}
 import nebflow.core.scheduler.{DoneRecord, ScheduledTask, ScheduledTaskStore}
+import nebflow.gateway.*
 import nebflow.service.ConfigService
 import nebflow.shared.{NebflowLogger, PathUtil}
 
@@ -236,6 +235,32 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
         assertEquals(task.hcursor.get[Long]("completedAt").toOption, Some(1234L))
         assertEquals(rows.head.completedAt, Some(1234L), "the durable row is unchanged by the retry")
       end for
+    }
+  }
+
+  test("recurring task fires and list serializes its real last-fired timestamp") {
+    withRig { (c, res) =>
+      val task = ScheduledTask.create("s1", "recurring", System.currentTimeMillis() - 60000L, None, Some("daily"), None)
+      val service = new nebflow.core.scheduler.ScheduledTaskService(
+        dispatcher = null,
+        taskStore = res.scheduledTaskStore,
+        routeToAgent = (_, _) => IO.unit,
+        broadcast = _ => IO.unit,
+        sessionStore = res.sessionStore
+      )
+      for
+        _ <- res.scheduledTaskStore.addTask(task)
+        fiber <- service.start().start
+        _ <- fiber.joinWithNever.timeout(scala.concurrent.duration.DurationInt(2).seconds).attempt
+        _ <- fiber.cancel
+        rows <- res.scheduledTaskStore.loadTasks("s1")
+        frames <- send(c, "listScheduledTasks", """{"type":"listScheduledTasks","sessionId":"s1"}""")
+      yield
+        val fired = rows.find(_.id == task.id).flatMap(_.lastFiredAt)
+        assert(fired.isDefined, "scheduler must fire and persist the recurring task")
+        val listed = frames.head.hcursor.downField("tasks").as[List[Json]].toOption.get
+        val row = listed.find(_.hcursor.get[String]("id").toOption.contains(task.id)).get
+        assertEquals(row.hcursor.get[Long]("lastTriggered").toOption, fired)
     }
   }
 

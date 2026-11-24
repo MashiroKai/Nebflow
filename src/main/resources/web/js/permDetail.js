@@ -114,7 +114,7 @@ export function permDetailFrom(msg) {
  *   · 其余       → 参数 JSON（路径键剥掉 —— 作用域行已经给了一次）
  * @param {string} toolName
  * @param {Record<string, unknown>|null} input
- * @param {{ command?: string, scope?: any }} [detail]
+ * @param {{ command?: string, scope?: any, tool?: string }} [detail]
  * @returns {{ text: string, note: string }}
  */
 export function callBodyOf(toolName, input, detail) {

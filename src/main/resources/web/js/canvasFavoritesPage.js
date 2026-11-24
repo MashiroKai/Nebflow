@@ -83,7 +83,7 @@ function buildPage(onClose, onOpened) {
   bar.className = 'cfp-bar';
   const back = document.createElement('button');
   back.type = 'button';
-  back.className = 'cfp-back';
+  back.className = 'cfp-back page-back';
   back.setAttribute('aria-label', t('canvas.favPage.back'));
   back.title = t('canvas.favPage.back');
   back.textContent = '‹';

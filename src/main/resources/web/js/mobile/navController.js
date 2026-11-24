@@ -2810,9 +2810,16 @@ function paintDockCenterAvatar() {
   }
   holder.classList.remove('has-avatar');
   if (holder.querySelector('.dock-center-logo')) return; // logo 已就位（幂等零重建）
-  holder.innerHTML =
-    `<picture><source media="(prefers-color-scheme: dark)" srcset="${brand.logoDarkUrl}">` +
-    `<img class="dock-center-logo" src="${brand.logoUrl}" alt=""></picture>`;
+  const picture = document.createElement('picture');
+  const source = document.createElement('source');
+  source.media = '(prefers-color-scheme: dark)';
+  source.srcset = brand.logoDarkUrl;
+  const logo = document.createElement('img');
+  logo.className = 'dock-center-logo';
+  logo.src = brand.logoUrl;
+  logo.alt = '';
+  picture.append(source, logo);
+  holder.replaceChildren(picture);
 }
 
 /** 徽标镜像：桌面徽标读数（#messages-badge/#contacts-badge，手机层按钮不可见

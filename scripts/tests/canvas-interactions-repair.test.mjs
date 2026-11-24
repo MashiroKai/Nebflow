@@ -9,7 +9,7 @@ test('FCI-SCN-001 stale term responses are invalidated', async () => {
   const fragment = code.slice(code.indexOf('function requestTermTip('), code.indexOf('/** Mark existing term'));
   const pending = []; const painted = [];
   const ctx = { ensureTermTipEl() {}, setTimeout: fn => { pending.push(fn); return pending.length; }, clearTimeout() {}, termTipLink: null, termTipHost: null, termTipTimer: 0, termTipGeneration: 0, termInfoFor: () => new Promise(resolve => pending.push(resolve)), paintTermTip: (_a, info) => painted.push(info), hideTermTip() { ctx.termTipGeneration++; ctx.termTipLink = null; } };
-  vm.runInNewContext(fragment.replace('export function', 'function') + '\nthis.tap = termTapExpand;', ctx);
+  vm.runInNewContext(fragment.replaceAll('export function', 'function') + '\nthis.tap = termTapExpand;', ctx);
   const a = {dataset: {wikiTermKind: 'term'}};
   ctx.tap(a); const first = pending.shift(); const p1 = first(); const resolve1 = pending.shift();
   ctx.tap(a); ctx.tap(a); const second = pending.shift(); const p2 = second(); const resolve2 = pending.shift();

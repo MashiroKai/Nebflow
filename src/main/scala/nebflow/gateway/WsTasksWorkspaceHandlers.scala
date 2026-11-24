@@ -634,6 +634,7 @@ private[gateway] object WsTasksWorkspaceHandlers:
       "createdAt" -> t.createdAt.asJson,
       "triggered" -> t.triggered.asJson,
       "triggeredAt" -> t.triggeredAt.asJson,
+      "lastTriggered" -> t.lastFiredAt.asJson,
       "referencePath" -> t.referencePath.asJson,
       "repeat" -> t.repeat.asJson,
       "enabled" -> t.enabled.asJson,
@@ -958,8 +959,7 @@ private[gateway] object WsTasksWorkspaceHandlers:
           // secret 题本期不可作答 ⇒ 给出专属码，客户端据码禁用而非弹串。
           val d = t.decision.get
           val (code, msg) =
-            if d.secret then
-              nebflow.core.scheduler.DecisionAnswerRules.CodeSecret -> "这是敏感决策题，本期不能在待办里完成；请走原始会话。"
+            if d.secret then nebflow.core.scheduler.DecisionAnswerRules.CodeSecret -> "这是敏感决策题，本期不能在待办里完成；请走原始会话。"
             else nebflow.core.scheduler.DecisionAnswerRules.CodeUnanswered -> "先作答再完成：这是决策待办，请先选择或填写答案。"
           wsSend(
             io.circe.Json.obj(
@@ -1082,8 +1082,7 @@ private[gateway] object WsTasksWorkspaceHandlers:
           "message" -> msg.asJson
         )
       )
-    if ansSessionId.isEmpty || ansId.isEmpty then
-      fail("decision_bad_request", "作答帧缺 sessionId 或 id。")
+    if ansSessionId.isEmpty || ansId.isEmpty then fail("decision_bad_request", "作答帧缺 sessionId 或 id。")
     else
       sharedResources.scheduledTaskStore.findTaskById(ansId).flatMap {
         case Some(t) if t.isTodo && t.decision.nonEmpty && t.isCompleted =>

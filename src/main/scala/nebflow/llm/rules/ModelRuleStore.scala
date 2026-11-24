@@ -62,9 +62,11 @@ object ModelRuleStore:
   /** 原子写（同目录临时文件 + move）。 */
   def atomicWrite(f: os.Path, content: String): Unit =
     os.makeDir.all(f / os.up)
-    val tmp = f / os.up / s".${f.last}.tmp"
-    os.write.over(tmp, content)
-    os.move(tmp, f, replaceExisting = true, atomicMove = true)
+    val tmp = f / os.up / s".${f.last}.${java.util.UUID.randomUUID()}.tmp"
+    try
+      os.write(tmp, content)
+      os.move(tmp, f, replaceExisting = true, atomicMove = true)
+    finally if os.exists(tmp) then os.remove(tmp)
 
   /** 保存校验 + 落盘。Left = 行号化错误列表（不写盘）。 */
   def save(root: os.Path, source: String, catalog: ModelRuleDsl.Catalog): Either[List[ModelRuleDsl.RuleError], Unit] =

@@ -58,6 +58,7 @@ import { bindComposerKeys, growComposerInput, setComposerText, composerPlacehold
  *   input: HTMLInputElement,
  *   sendBtn: HTMLButtonElement,
  *   stopVoice: () => void,
+ *   dispose: () => void,
  * }} 宿主挂 `modalEls.{input,sendBtn,stopVoice}` + 收窗时调 `stopVoice()`。
  */
 export function buildFmComposer(opts) {
