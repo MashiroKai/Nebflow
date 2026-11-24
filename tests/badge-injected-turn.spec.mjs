@@ -203,6 +203,7 @@ test.describe('injected turn opens its OWN badge group (16:54 追加令)', () =>
       return headers.map(header => {
         const rows = [];
         for (let el = header.nextElementSibling; el && !el.classList.contains('turn-header'); el = el.nextElementSibling) {
+          if (el.classList.contains('row') && el.classList.contains('user') && !el.querySelector('.bubble.injected') && !el.hasAttribute('data-nf-mid-turn')) break;
           if (el.classList.contains('row')) rows.push(el.textContent);
         }
         return rows;
@@ -213,16 +214,18 @@ test.describe('injected turn opens its OWN badge group (16:54 追加令)', () =>
     expect(await groups()).toEqual(initial);
     await page.locator('[data-nf-injection-stack] button').first().click();
     expect(await groups()).toEqual(initial);
-    await page.evaluate(() => window.__tdInject('第二轮注入', 'nodeMessage'));
+    await page.evaluate(() => window.__tdUser('第二轮'));
     await page.evaluate(() => window.__tdCallStart('Read'));
+    await page.evaluate(() => window.__tdInject('第二轮注入', 'nodeMessage'));
     await page.evaluate(() => window.__tdDone('Read', 'ok', 'y', false, '{}'));
     await page.evaluate(() => window.__tdFinishTurn());
     const after = await groups();
-    // The new turn's opening injection is before its header and must not be
-    // mistaken for a change to the original closed turn's membership.
     expect(after).toHaveLength(2);
-    expect(after[0].slice(0, initial[0].length)).toEqual(initial[0]);
-    await page.locator('[data-nf-injection-stack] button').first().click();
+    expect(after[0]).toEqual(initial[0]);
+    expect(after[1].some(text => text.includes('第二轮注入'))).toBe(true);
+    for (const button of await page.locator('[data-nf-injection-stack] button').all()) await button.click();
+    expect(await groups()).toEqual(after);
+    for (const button of await page.locator('[data-nf-injection-stack] button').all()) await button.click();
     expect(await groups()).toEqual(after);
     await context.close();
   });

@@ -178,6 +178,7 @@ for (const width of [900, 390, 375]) {
       { type: 'user', text: '中途用户插话', midTurn: true, timestamp: T + 2 },
       { type: 'user', injected: true, source: 'deviceMail', text: '第二条蓝色', timestamp: T + 3 },
       { type: 'ai', text: '完成', durationMs: 3000, model: 'test-model', timestamp: T + 4 },
+      { type: 'user', text: '下一轮用户消息', timestamp: T + 5 },
     ];
     await page.evaluate(m => window.__history(m, { busyTail: false }), msgs);
     const rows = page.locator('#chat > .row');
@@ -187,10 +188,19 @@ for (const width of [900, 390, 375]) {
     const geometry = await page.evaluate(() => {
       const rect = el => { const r = el.getBoundingClientRect(); return { left:r.left, right:r.right, top:r.top, bottom:r.bottom }; };
       const stack = document.querySelector('[data-nf-injection-stack]');
-      return { viewport: innerWidth, stack: rect(stack), button: rect(stack.querySelector('button')), face: rect(stack.querySelector('.nf-injection-stack-face')), header: rect(document.querySelector('.turn-header')), chat: rect(document.querySelector('#chat')), user: rect(document.querySelector('#chat > .row.user')) };
+      const button = stack.querySelector('button');
+      const textFits = [...button.querySelectorAll('.nf-injection-stack-label, .nf-injection-stack-digit')].every(el => {
+        const range = document.createRange(); range.selectNodeContents(el);
+        const text = range.getBoundingClientRect(), box = button.getBoundingClientRect();
+        return text.left >= box.left - 1 && text.right <= box.right + 1 && text.top >= box.top - 1 && text.bottom <= box.bottom + 1;
+      });
+      const nextUser = [...document.querySelectorAll('#chat > .row.user')].find(el => el.textContent.includes('下一轮用户消息'));
+      return { viewport: innerWidth, stack: rect(stack), button: rect(button), face: rect(stack.querySelector('.nf-injection-stack-face')), header: rect(document.querySelector('.turn-header')), chat: rect(document.querySelector('#chat')), user: rect(document.querySelector('#chat > .row.user')), nextUser: rect(nextUser), textFits };
     });
     expect(geometry.stack.top).toBeGreaterThanOrEqual(geometry.header.bottom - 1);
     expect(geometry.stack.top).toBeGreaterThanOrEqual(geometry.user.bottom - 1);
+    expect(geometry.stack.bottom).toBeLessThanOrEqual(geometry.nextUser.top + 1);
+    expect(geometry.textFits).toBe(true);
     expect(geometry.button.right).toBeLessThanOrEqual(geometry.face.left + 1);
     expect(Math.abs((geometry.button.top + geometry.button.bottom - geometry.face.top - geometry.face.bottom) / 2)).toBeLessThanOrEqual(1);
     expect(geometry.button.left).toBeGreaterThanOrEqual(Math.max(0, geometry.chat.left) - 1);
