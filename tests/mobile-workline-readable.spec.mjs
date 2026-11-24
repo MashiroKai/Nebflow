@@ -44,3 +44,19 @@ test('mobile live thinking wraps without clipping', async ({ page }) => {
   const settled=page.locator('.turn-header').last(); await expect(settled).toBeVisible(); await settled.click();
   await expect(settled).toBeVisible();
 });
+
+test('mobile workline full shell stays clear of composer and expands', async ({page}) => {
+  const web=join(root,'src/main/resources/web'), sid='workline-full-shell'; let live;
+  await page.addInitScript(()=>{localStorage.setItem('nebflow_token','t'); localStorage.setItem('nebflow_locale','zh-CN');});
+  await page.route('**/*',route=>{let path=decodeURIComponent(new URL(route.request().url()).pathname); if(path==='/')path='/index.html'; if(path==='/api/sessions')return route.fulfill({json:{sessions:[{id:sid,name:'test'}],activeId:sid}}); if(path.startsWith('/api/'))return route.fulfill({json:{}}); const file=normalize(join(web,path)); if(!file.startsWith(web+'/'))return route.fulfill({status:403}); try{return route.fulfill({body:readFileSync(file),contentType:types[extname(file)]||'application/octet-stream'});}catch{return route.fulfill({status:404});}});
+  await page.routeWebSocket(/\/ws/,ws=>{live=ws; ws.send(JSON.stringify({type:'configData',config:'{}',configured:true,onboarding:'done'})); ws.send(JSON.stringify({type:'sessionList',sessions:[{id:sid,name:'test'}],activeId:sid,folders:[]})); ws.onMessage(raw=>{let m;try{m=JSON.parse(raw)}catch{return} if(m.type==='getHistory')ws.send(JSON.stringify({type:'historyPage',sessionId:m.sessionId,messages:[],hasMore:false,offset:0}));});});
+  await page.goto('http://localhost:1/'); await page.waitForFunction(async id=>{const s=(await import('/js/state.js')).default;return s.activeSessionId===id && s.ws?.readyState===1},sid);
+  await page.locator('#input').fill('mobile full shell'); await page.locator('#input').press('Enter');
+  for(const frame of [{type:'sessionBusy',sessionId:sid,busy:true},{type:'thinking',sessionId:sid},{type:'thinkingDelta',sessionId:sid,delta:'Long mobile thinking content '.repeat(20)}]) live.send(JSON.stringify(frame));
+  const text=page.locator('#chat .nf-workline .nf-wl-think'); await expect(text).toBeVisible();
+  const geom=await text.evaluate(el=>{const r=el.getBoundingClientRect(),input=document.querySelector('#input-area').getBoundingClientRect(); return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,inputTop:input.top,scroll:el.scrollWidth,width:el.clientWidth}});
+  expect(geom.left).toBeGreaterThanOrEqual(0); expect(geom.right).toBeLessThanOrEqual(375); expect(geom.top).toBeGreaterThanOrEqual(0); expect(geom.bottom).toBeLessThanOrEqual(geom.inputTop); expect(geom.scroll).toBeLessThanOrEqual(geom.width+1);
+  for(const frame of [{type:'textDelta',sessionId:sid,delta:'Answer.'},{type:'textDone',sessionId:sid},{type:'done',sessionId:sid,model:'test',durationMs:47000}]) live.send(JSON.stringify(frame));
+  const header=page.locator('#chat .turn-header').last(); await expect(header).toBeVisible(); await header.click(); await expect(header).toHaveAttribute('aria-expanded','true');
+  await expect(page.locator('#chat .thinking-row:not(.nf-tucked)').last()).toBeVisible();
+});

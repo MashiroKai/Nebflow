@@ -87,7 +87,7 @@ async function bootApp(page) {
     localStorage.setItem('fm_api_mock_seed', JSON.stringify({
       self: { userId: 'me', neblinkId: 'me@example.com', name: 'Me', avatarUrl: '' },
       users: [],
-      friends: [{ userId: 'u-p', neblinkId: 'pagfriend', name: '分页君', avatarUrl: '', since: Date.now() - 86400e3 }],
+      friends: Array.from({length: 30}, (_,i)=>({userId:`u-${i}`,neblinkId:`friend-${i}`,name:`联系人${String(i).padStart(2,'0')}`,avatarUrl:'',since:Date.now()-86400e3})).concat([{ userId: 'u-p', neblinkId: 'pagfriend', name: '分页君', avatarUrl: '', since: Date.now() - 86400e3 }]),
       incoming: [], outgoing: [],
       conversations: Array.from({length: 30}, (_, i) => ({
         conversationId: `c-${i}`,
@@ -311,7 +311,20 @@ test('mobile social dock pages: real mounted rows and long content', async ({ pa
   if(out) { const {mkdirSync}=await import('node:fs'); mkdirSync(out,{recursive:true}); await page.screenshot({path:join(out,'社交.png'),animations:'disabled'}); }
   await page.locator('#mobile-dock .dock-key[data-dock="contacts"]').click();
   await expect(page.locator('.mobile-page[data-page="contacts"]')).toHaveClass(/live/);
-  await expect(page.locator('.mobile-page[data-page="contacts"] #fm-contacts-body')).toBeVisible();
+  const contacts=page.locator('.mobile-page[data-page="contacts"] #fm-contacts-body'); await expect(contacts).toBeVisible();
+  const friends=contacts.locator('.fm-friend-row'); await expect(friends).toHaveCount(31);
+  await contacts.evaluate(el=>{el.style.scrollBehavior='auto'});
+  for(const f of [0,0.5,1]) {
+    const geo=await contacts.evaluate((el,fraction)=>{el.scrollTop=(el.scrollHeight-el.clientHeight)*fraction;return {top:el.scrollTop,max:el.scrollHeight-el.clientHeight}},f);
+    expect(geo.max).toBeGreaterThan(0); expect(Math.abs(geo.top-geo.max*f)).toBeLessThan(2);
+    const dock=page.locator('#mobile-dock .dock-key[data-dock="contacts"]');
+    const hit=await dock.evaluate(el=>{const r=el.getBoundingClientRect(),n=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return n===el||el.contains(n)}); expect(hit).toBe(true);
+  }
+  for(let i=0;i<31;i++) {
+    const friend=friends.nth(i); await friend.evaluate(el=>el.scrollIntoView({block:'center',behavior:'instant'}));
+    const r=await friend.boundingBox(), dock=await page.locator('#mobile-dock').boundingBox();
+    expect(r.x).toBeGreaterThanOrEqual(0); expect(r.x+r.width).toBeLessThanOrEqual(375); expect(r.y).toBeGreaterThanOrEqual(0); expect(r.y+r.height).toBeLessThanOrEqual(dock.y);
+  }
 });
 
 test('E1/E2/E3/E4/E5 per-page scroll-end reserve and dock pass-under (375x812)', async ({ page }) => {
