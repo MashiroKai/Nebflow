@@ -8,6 +8,7 @@ import nebflow.actor.*
 import nebflow.pilogic.*
 import nebflow.pilogic.{ToolCall as PiCall, ToolExecutionResult as PiResult}
 import nebflow.shared.*
+import nebflow.shared.ToolCall
 
 /**
  * pi-logic 接线层（轮 A，L-6=逐位点织入；计划件 [[PiLoopWiring-PLAN]] / docs 计划全文）。
