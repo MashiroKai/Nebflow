@@ -3181,6 +3181,10 @@ export default {
   'explorer.loadingRemote': 'Loading directories on {device}…',
   'explorer.listTimeout': 'Directory listing timed out (network congestion or reconnect) — retry to reload',
   'explorer.retry': 'Retry',
+  // === canvas-doc-terms batch S2 (2026-11-24): document mention → file browser reveal ===
+  'explorer.revealOutsideRoot': 'This path is outside the current explorer root',
+  'explorer.revealSwitchRoot': 'Switch to that directory',
+  'explorer.revealMissing': 'File not found',
   'explorer.pickupLoading': 'Fetching…',
   'explorer.pickupFailed': 'Fetch failed',
   'explorer.pickupClose': 'Close',

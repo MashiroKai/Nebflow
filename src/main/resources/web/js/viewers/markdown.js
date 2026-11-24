@@ -492,6 +492,35 @@ function renderAutoTerms(mdViewer, data, projectName, absPath) {
   return made;
 }
 
+// ── 文档名词条 → 文件浏览器定位（S2 · canvas-doc-terms 批 2026-11-24）─────
+// #2936 阶段二触发腿：S1 已把唯一文档名链成 a.nf-term（点击显释义气泡），
+// S2 在同一次点击上旁路触发文件浏览器定位（四态行为全在 explorer.js 的
+// reveal 族——根内逐级展开定位 / 根外提示+动作钮 / 不存在短提示 / 折叠先展）。
+// 仅 renderDocumentMentions 生产的链接带 data-wiki-mention 标记：裸词词条
+// （renderAutoTerms）与 wikilink 不触发定位。
+
+/** 词条点击腿的定位目标（resolved.absPath；相对形态按本文档目录归一成绝对——
+ *  与图片/链接路由同一个 baseDir，不同 pass 不会对「相对路径指哪」各说各话）。 */
+function mentionRevealTarget(a, baseDir) {
+  let raw = '';
+  try {
+    const resolved = a.dataset.wikiResolved ? JSON.parse(a.dataset.wikiResolved) : null;
+    if (resolved && typeof resolved.absPath === 'string') raw = resolved.absPath;
+  } catch (_) { return ''; }
+  if (!raw) return '';
+  const norm = raw.replace(/\\/g, '/').replace(/\/+$/, '');
+  if (norm.startsWith('/') || /^[A-Za-z]:\//.test(norm)) return norm;
+  const base = String(baseDir || '').replace(/\\/g, '/').replace(/\/+$/, '');
+  return base ? base + '/' + norm : norm;
+}
+
+/** 点击旁路腿：定位失败不得影响阅读主流程（explorer 侧已自吞一切异常）。 */
+function revealMentionInExplorer(a, baseDir) {
+  const target = mentionRevealTarget(a, baseDir);
+  if (!target) return;
+  import('../explorer.js').then(({ revealExplorerPath }) => revealExplorerPath(target)).catch(() => {});
+}
+
 // Document names are candidates only inside the current project, and only when
 // the exact name identifies one document. Never use wikilink's preference rules.
 export function renderDocumentMentions(host, data, projectName, absPath = '') {
@@ -545,6 +574,7 @@ export function renderDocumentMentions(host, data, projectName, absPath = '') {
       link.dataset.wikiResolved = JSON.stringify(resolved);
       link.dataset.wikiProject = projectName;
       link.dataset.wikiTarget = hit.text;
+      link.dataset.wikiMention = 'doc'; // S2 定位腿标记：仅文档名词条触发文件浏览器定位
       attachTermFace(link, host, { term: resolved.term });
       frag.appendChild(link);
       last = hit.end;
@@ -1620,6 +1650,9 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
         if (termTapExpand(/** @type {HTMLAnchorElement} */ (wikilink), mdViewer)) {
           e.preventDefault();
           e.stopPropagation();
+          // S2 定位腿（#2936）：文档名词条点击旁路定位文件浏览器里的目标文件
+          //（与释义气泡同一次点击，两动作互不阻塞——定位是纯旁路）。
+          if (wikilink.dataset.wikiMention) revealMentionInExplorer(/** @type {HTMLAnchorElement} */ (wikilink), baseDir);
           return;
         }
         e.preventDefault();

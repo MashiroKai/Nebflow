@@ -17,10 +17,10 @@ const root = process.env.WEB_ROOT || require('node:path').join(__dirname, '../sr
       const names = ['UniqueDoc','DuplicateDoc','DuplicateDoc','HeaderDoc','CodeDoc','LinkDoc','BlockDoc'];
       const graph = {projects:[{name:'p',vault:'/p'}],nodes:names.map((title,i)=>({title,rel:'dir'+i+'/'+title+'.md',project:'p',device:'self'}))};
       api(document.body,graph,'p','/p/current.md');
-      return {links:[...document.querySelectorAll('a.nf-term')].map(a=>({text:a.textContent,face:a.dataset.face})), text:document.body.textContent};
+      return {links:[...document.querySelectorAll('a.nf-term')].map(a=>({text:a.textContent,face:a.dataset.face,mention:a.dataset.wikiMention})), text:document.body.textContent};
     }, {matcher, implementation: match[0]});
-    assert.deepEqual(result.links,[{text:'UniqueDoc',face:'yes'}]);
+    assert.deepEqual(result.links,[{text:'UniqueDoc',face:'yes',mention:'doc'}]);
     assert.match(result.text,/DuplicateDoc/);
-    console.log('PASS unique, duplicate, code, existing link, heading');
+    console.log('PASS unique, duplicate, code, existing link, heading, mention marker');
   } finally { await browser.close(); }
 })().catch(e=>{console.error(e);process.exitCode=1});

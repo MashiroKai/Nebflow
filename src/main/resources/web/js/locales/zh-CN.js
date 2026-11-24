@@ -3100,6 +3100,10 @@ export default {
   'explorer.loadingRemote': '正在加载 {device} 的目录…',
   'explorer.listTimeout': '目录列表超时（网络拥塞或连接中断），点击重试',
   'explorer.retry': '重试',
+  // === canvas-doc-terms 批 S2（2026-11-24）：文档名词条 → 文件浏览器定位 ===
+  'explorer.revealOutsideRoot': '该路径在当前根目录之外',
+  'explorer.revealSwitchRoot': '切换到该目录',
+  'explorer.revealMissing': '未找到该文件',
   'explorer.pickupLoading': '取件中…',
   'explorer.pickupFailed': '取件失败',
   'explorer.pickupClose': '关闭',

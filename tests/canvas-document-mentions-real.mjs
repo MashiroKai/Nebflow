@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { webRoot } from '../scripts/lib/visual-harness.mjs';
 const require = createRequire(import.meta.url);
 const pw = require('/Users/kaiyu/Claude code/Stand/node_modules/playwright');
-const engine = process.env.ENGINE || 'chromium';
+const engine = process.argv[2] || process.env.ENGINE || 'chromium';
 const browser = await pw[engine].launch();
 const vault='/fixture';
 const titles=['UniqueDoc','DuplicateDoc','DuplicateDoc','HeaderDoc','CodeDoc','LinkDoc','BlockDoc','IndentDoc'];
