@@ -4171,33 +4171,19 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   max-height: calc(100vh - 32px);
   overflow-y: auto;
 }
-/* Match the image lightbox status card while keeping the anchored placement. */
-.nf-term-tip {
-  padding: var(--ds-space-block-y) var(--ds-space-5);
-  border: 1px solid var(--color-border);
-  border-radius: var(--ds-radius-input);
-  background: var(--color-surface);
-  box-shadow: var(--ds-shadow-media-card);
-  color: var(--color-text);
-  font-size: var(--ds-fs-body);
-}
-.nf-term-tip .term-tip-close,
-.nf-term-tip .term-tip-source,
-.nf-term-tip .term-tip-retry {
-  border: 0;
-  border-radius: var(--ds-radius-chip);
-  background: var(--glass-control-bg);
-  color: var(--color-text);
-  cursor: pointer;
-}
-.nf-term-tip .term-tip-close:hover,
-.nf-term-tip .term-tip-source:hover,
-.nf-term-tip .term-tip-retry:hover { background: var(--glass-control-bg-hover); }
 .nf-term-tip.interactive { pointer-events: auto; }
 .nf-term-tip .term-tip-close,
 .nf-term-tip .term-tip-source,
 .nf-term-tip .term-tip-retry { min-width: 44px; min-height: 44px; }
 .nf-term-tip .term-tip-close { float: right; }
+.nf-term-tip .term-tip-source,
+.nf-term-tip .term-tip-retry {
+  width: auto;
+  padding: var(--ds-space-2) var(--ds-space-3);
+  border-radius: var(--ds-radius-button);
+  font-size: var(--ds-fs-btn);
+  white-space: normal;
+}
 .nf-term-tip button:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 /* 悬浮提示（tip 形态）三段字档（canvas-hint-text 批 2026-11-05）：
    标题 = S 档 strong（12/600/1.45）· 正文 = H 档（12/400/1.45/muted，修前
