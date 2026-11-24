@@ -2891,6 +2891,9 @@ export default {
   'lightbox.zoomIn': '放大',
   'lightbox.zoomOut': '缩小',
   'lightbox.zoomFit': '适应视图',
+  'lightbox.downloadSvg': '下载 SVG',
+  'lightbox.downloadPng': '下载 PNG',
+  'lightbox.downloadError': '图表下载失败',
 
   // === Usage dashboard（Token 消耗看板，spec token-dashboard-spec.md §7.5） ===
   'usage.title': '用量看板',
