@@ -1407,7 +1407,7 @@ export default {
   'settings.modelChainDisclosureTitle': '模型（按会话类别）',
   'settings.modelChainSectionHint': '各会话类别的模型与 /model 同步。',
   'settings.modelRulesTitle': '模型规则',
-  'settings.modelRulesHint': '脚本化的模型选择（按时段、层级、槽、调用点）。仅「规则」态生效；其余两态与原有配置一致。',
+  'settings.modelRulesHint': '按时段、层级、槽和调用点选择模型。仅规则态生效，其余两态沿用原配置。',
   'modelRules.mode.follow': '全部跟随',
   'modelRules.mode.slots': '分开配置（槽）',
   'modelRules.mode.rules': '规则（接管）',
