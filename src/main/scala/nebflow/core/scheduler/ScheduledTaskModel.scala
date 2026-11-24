@@ -19,6 +19,13 @@ object TodoDue:
   def deviceZone(value: Option[String]): Option[String] =
     value.filter(ZoneId.getAvailableZoneIds.contains)
 
+  def deviceZoneFromFrame(frame: Json): Option[String] =
+    val cursor = frame.hcursor
+    val raw = cursor.downField("timeZone").as[String].toOption.orElse(
+      cursor.downField("device").downField("timeZone").as[String].toOption
+    )
+    deviceZone(raw)
+
   def requireCreationZone(explicit: Option[String], device: Option[String]): Either[String, String] =
     explicit match
       case Some(zone) => deviceZone(Some(zone)).toRight("Please clarify a valid IANA time zone")

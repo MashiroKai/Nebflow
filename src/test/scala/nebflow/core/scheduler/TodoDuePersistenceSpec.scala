@@ -67,6 +67,14 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
     }
     assertEquals(TodoDue.requireCreationZone(None, Some("Asia/Tokyo")), Right("Asia/Tokyo"))
 
+  test("gateway device zone comes only from a valid frame declaration"):
+    def frame(s: String) = parse(s).toOption.get
+    assertEquals(TodoDue.deviceZoneFromFrame(frame("""{"device":{"timeZone":"Asia/Tokyo"}}""")), Some("Asia/Tokyo"))
+    assertEquals(TodoDue.deviceZoneFromFrame(frame("""{"timeZone":"Europe/Paris"}""")), Some("Europe/Paris"))
+    List("{}", """{"timeZone":""}""", """{"device":{"timeZone":"Invalid/Zone"}}""").foreach { s =>
+      assertEquals(TodoDue.deviceZoneFromFrame(frame(s)), None)
+    }
+
   test("legacy record has no due setting and old encoded fields retain their values"):
     val task = legacy.as[ScheduledTask].toOption.get
     val encoded = task.asJson
