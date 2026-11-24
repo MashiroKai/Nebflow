@@ -10,6 +10,7 @@ import { t } from './../i18n.js';
 import { escapeHtml, highlightCode } from './../utils.js';
 import { getAuthToken } from './../neblink.js';
 import { emit, EVENTS } from './../events.js';
+import { setHtmlTree } from './../dom.js';
 
 const MODES = ['follow', 'slots', 'rules'];
 
@@ -98,7 +99,7 @@ export function mountModelRulesSection(host) {
       : '';
     const srcHtml = highlightCode(saved, 'model-rules.dsl') ||
       `<pre class="mr-source">${escapeHtml(saved)}</pre>`;
-    host.innerHTML = `
+    setHtmlTree(host, `
       <div class="mr-root" data-mode="${mode}">
         ${loadError ? `<div class="mr-error">${escapeHtml(loadError)}</div>` : ''}
         <div class="mr-cols">
@@ -121,7 +122,7 @@ export function mountModelRulesSection(host) {
             ${diffHtml}
           </section>
         </div>
-      </div>`;
+      </div>`);
     bind();
   };
 
@@ -207,11 +208,11 @@ export function mountModelRulesSection(host) {
   };
 
   host.addEventListener('click', onClick);
-  host.innerHTML = `<div class="mr-empty">${escapeHtml(t('modelRules.loading'))}</div>`;
+  setHtmlTree(host, `<div class="mr-empty">${escapeHtml(t('modelRules.loading'))}</div>`);
   void load();
 
   return () => {
     host.removeEventListener('click', onClick);
-    host.innerHTML = '';
+    host.replaceChildren();
   };
 }
