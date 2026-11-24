@@ -328,7 +328,19 @@ class ScheduledTaskStore(
     }
 
   def saveTasks(sessionId: String, tasks: List[ScheduledTask]): IO[Unit] =
-    withStoreLock(saveUnlocked(sessionId, tasks))
+    withStoreLock {
+      loadUnlocked(sessionId).flatMap { existing =>
+        val byId = existing.map(t => t.id -> t).toMap
+        val adjusted = tasks.map { task =>
+          byId.get(task.id) match
+            case Some(old) if old.due != task.due =>
+              task.copy(dueRuleVersion = Math.addExact(old.dueRuleVersion, 1L))
+            case Some(old) => task.copy(dueRuleVersion = old.dueRuleVersion)
+            case None => task
+        }
+        saveUnlocked(sessionId, adjusted)
+      }
+    }
 
   /** Commit occurrence and series cursor in the same atomic session-file replacement. */
   private[scheduler] def recordOccurrence(
