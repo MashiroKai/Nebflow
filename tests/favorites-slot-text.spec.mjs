@@ -138,6 +138,7 @@ try {
         const rows=s.page.locator('#explorer-tree .explorer-file');
         await rows.first().waitFor();
         assertNoOverlap(await measure(s.page,'#panel-sessions'));
+        if(width===1280) await negativeOverlap(s.page,'#panel-sessions','#explorer-tree .explorer-label');
         const fileTree=s.page.locator('#explorer-tree');
         for(const position of [0,0.5,1]) {
           await fileTree.evaluate((el,p)=>{el.scrollTop=(el.scrollHeight-el.clientHeight)*p;},position);
@@ -158,6 +159,7 @@ try {
         if(width===1280) await negativeOverlap(s.page,'#panel-sessions','#explorer-search');
         await fileSearch.fill('no-match-987654321');
         assertNoOverlap(await measure(s.page,'#panel-sessions'));
+        if(width===1280) await negativeOverlap(s.page,'#panel-sessions','#explorer-search');
         assert.equal(await rows.evaluateAll(els=>els.filter(el=>!el.hidden).length), 0);
         const hiddenState=await rows.first().evaluate(el=>({display:getComputedStyle(el).display,hidden:el.hidden,rect:el.getBoundingClientRect().toJSON(),rules:[...document.styleSheets].flatMap(s=>{try{return [...s.cssRules].filter(r=>r.selectorText && el.matches(r.selectorText) && r.style.display).map(r=>`${r.selectorText}: ${r.style.display}`);}catch{return [];}})}));
         console.log('FILTER-CSS',JSON.stringify(hiddenState));
