@@ -10,6 +10,7 @@ const assert = require('node:assert/strict');
       const url = new URL(route.request().url());
       if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: '<a id="term" href="#">Alias</a>' });
       if (url.pathname === '/termTip.js') return route.fulfill({ contentType: 'text/javascript', body: readFileSync('src/main/resources/web/js/termTip.js', 'utf8') });
+      if (url.pathname === '/split.css') return route.fulfill({ contentType: 'text/css', body: readFileSync('src/main/resources/web/css/split.css', 'utf8') });
       if (url.pathname === '/flowHelpers.js') return route.fulfill({ contentType: 'text/javascript', body: 'export const authHeaders = () => ({})' });
       if (url.pathname === '/i18n.js') return route.fulfill({ contentType: 'text/javascript', body: 'export const t = (key) => key' });
       if (url.pathname === '/api/wiki/terms/stats') return route.fulfill({ json: { last_rebuild: 'one' } });
@@ -191,5 +192,48 @@ const assert = require('node:assert/strict');
     await page.evaluate(() => { window.testTip.hideTermTip(); window.advanceClock(); window.testTip.termTapExpand(document.querySelector('#term'), null); });
     await page.waitForFunction(() => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'cache 3'));
     console.log('PASS: positive cache reuse, project isolation and five-minute expiry');
+    for (const width of [1440, 768, 375]) {
+      const screen = await browser.newPage({ viewport: { width, height: width === 1440 ? 900 : 812 } });
+      await screen.route('http://fixture.test/**', async (route) => {
+        const url = new URL(route.request().url());
+        if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: '<link rel="stylesheet" href="/split.css"><style>body{margin:0}#term{position:absolute;top:200px;left:30px}.nf-term-tip{background:white;padding:12px;border:1px solid #555;box-sizing:border-box}</style><a id="term" href="#">term</a>' });
+        if (url.pathname === '/split.css') return route.fulfill({ contentType: 'text/css', body: readFileSync('src/main/resources/web/css/split.css', 'utf8') });
+        if (url.pathname === '/termTip.js') return route.fulfill({ contentType: 'text/javascript', body: readFileSync('src/main/resources/web/js/termTip.js', 'utf8') });
+        if (url.pathname === '/flowHelpers.js') return route.fulfill({ contentType: 'text/javascript', body: 'export const authHeaders = () => ({})' });
+        if (url.pathname === '/i18n.js') return route.fulfill({ contentType: 'text/javascript', body: 'export const t = (key) => key' });
+        if (url.pathname === '/api/wiki/terms/stats') return route.fulfill({ json: { last_rebuild: 'one' } });
+        if (url.pathname === '/api/wiki/terms/lookup') return route.fulfill({ json: { available: true, results: [{ name: 'term', definition: 'LongEnglishText'.repeat(100), doc: {} }] } });
+        throw new Error('Unexpected request: ' + url.pathname);
+      });
+      await screen.goto('http://fixture.test/');
+      await screen.evaluate(async () => {
+        const tip = await import('/termTip.js');
+        const a = document.querySelector('#term');
+        tip.attachTermFace(a, null, { fallbackName: 'term' });
+        a.addEventListener('click', (event) => { event.preventDefault(); tip.termTapExpand(a, null); });
+      });
+      await screen.locator('#term').focus();
+      await screen.keyboard.press('Enter');
+      await screen.waitForFunction(() => document.querySelector('.nf-term-tip .ts').textContent.startsWith('LongEnglishText'));
+      const geometry = await screen.evaluate(() => {
+        const tip = document.querySelector('.nf-term-tip');
+        const link = document.querySelector('#term');
+        const body = tip.querySelector('.ts');
+        const close = tip.querySelector('.term-tip-close');
+        const r = tip.getBoundingClientRect();
+        const a = link.getBoundingClientRect();
+        const c = close.getBoundingClientRect();
+        return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, overlap: r.left < a.right && r.right > a.left && r.top < a.bottom && r.bottom > a.top, closeInside: c.left >= r.left && c.right <= r.right && c.top >= r.top && c.bottom <= r.bottom, horizontal: body.scrollWidth <= body.clientWidth, role: tip.getAttribute('role'), live: body.getAttribute('aria-live'), focus: document.activeElement === close };
+      });
+      assert(geometry.x >= 16 && geometry.y >= 16 && geometry.right <= width - 16 && geometry.bottom <= (width === 1440 ? 900 : 812) - 16, JSON.stringify(geometry));
+      assert(!geometry.overlap && geometry.closeInside && geometry.horizontal, JSON.stringify(geometry));
+      assert.equal(geometry.role, 'dialog');
+      assert.equal(geometry.live, 'polite');
+      assert.equal(geometry.focus, true);
+      await screen.keyboard.press('Escape');
+      assert.equal(await screen.evaluate(() => document.activeElement.id), 'term');
+      await screen.close();
+    }
+    console.log('PASS: three viewport geometry, keyboard activation, ARIA and escape focus');
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
