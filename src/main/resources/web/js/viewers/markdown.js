@@ -1161,6 +1161,13 @@ function showMdImageFailure(img) {
   }
 }
 
+// Only a single parsed Mermaid block can give up the shared file title. Mixed
+// documents keep it: hiding their header would discard their document identity.
+function isSingleMermaidBlock(host) {
+  const blocks = [...host.childNodes].filter((node) => node.nodeType !== Node.TEXT_NODE || node.textContent.trim());
+  return blocks.length === 1 && blocks[0].nodeType === Node.ELEMENT_NODE && blocks[0].classList.contains('nf-mermaid');
+}
+
 async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnchor, readOnly }) {
   // Content-unchanged guard. Focus/visibility refreshes re-fetch the same
   // file and re-render every open tab; rebuilding .canvas-md-scroll via
@@ -1440,6 +1447,8 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
   const mdHost = document.createElement('div');
   mdHost.className = 'canvas-md-viewer';
   mdHost.innerHTML = html;
+  if (isSingleMermaidBlock(mdHost)) pane.dataset.canvasKind = 'mermaid';
+  else delete pane.dataset.canvasKind;
   // 作者 2026-11-24 令文档首行缩进「都去掉」。剥除直接子段落开头的 em space /
   // 全角空格，避免源码中已有空格造成视觉缩进；不改变源文件或列表等结构内容。
   mdHost.querySelectorAll(':scope > p').forEach((p) => {
