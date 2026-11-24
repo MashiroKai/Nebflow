@@ -176,6 +176,8 @@ test('mobile daemon audit: containment, header, controls and long text', async (
     expect(box.scrollHeight).toBeGreaterThan(box.clientHeight); expect(Math.abs(box.scroll-(box.scrollHeight-box.clientHeight)*f)).toBeLessThan(2); expect(box.left).toBeGreaterThanOrEqual(0); expect(box.right).toBeLessThanOrEqual(375); expect(box.top).toBeGreaterThanOrEqual(box.headerBottom-1);
     expect(box.fields.length).toBeGreaterThan(0); for(const field of box.fields) { expect(field.left).toBeGreaterThanOrEqual(0); expect(field.right).toBeLessThanOrEqual(375); if(field.top>=box.top) expect(field.top).toBeGreaterThanOrEqual(box.headerBottom-1); }
   }
+  const fields=overlay.locator('.daemon-config-field');
+  for(let i=0;i<await fields.count();i++) {const item=fields.nth(i); await item.evaluate(el=>el.scrollIntoView({block:'center',behavior:'instant'})); const b=await item.boundingBox(),h=await overlay.locator('.daemon-config-header').boundingBox(),foot=await overlay.locator('.daemon-config-footer').boundingBox(); expect(b.y).toBeGreaterThanOrEqual(h.y+h.height-1); expect(b.y+b.height).toBeLessThanOrEqual(foot.y+1);}
   const out = process.env.MOBILE_AUDIT_EVIDENCE;
   if (out) { mkdirSync(out, { recursive: true }); await page.screenshot({ path: join(out, '守护进程.png'), animations: 'disabled' }); }
 });

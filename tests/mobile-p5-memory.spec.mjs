@@ -157,6 +157,8 @@ test('mobile memory audit: card geometry and long title', async ({ page }) => {
     expect(r.max).toBeGreaterThan(0); expect(Math.abs(r.scroll-r.max*f)).toBeLessThan(2);
     expect(r.items.length).toBeGreaterThan(0); for(const item of r.items) {expect(item.left).toBeGreaterThanOrEqual(0); expect(item.right).toBeLessThanOrEqual(375); if(item.top>=r.top) expect(item.top).toBeGreaterThanOrEqual(r.headerBottom-1);}
   }
+  const cards=page.locator('.mh-memory-card');
+  for(let i=0;i<await cards.count();i++) {const item=cards.nth(i); await item.evaluate(el=>el.scrollIntoView({block:'center',behavior:'instant'})); const b=await item.boundingBox(),h=await header.boundingBox(),d=await page.locator('#mobile-dock').boundingBox(); expect(b.y).toBeGreaterThanOrEqual(h.y+h.height); expect(b.y+b.height).toBeLessThanOrEqual(d.y);}
   await page.locator('.mh-memory-edit').click();
   await expect(page.locator('#memory-modal-body')).toBeVisible();
   const edit = await page.locator('#memory-modal-body').boundingBox();

@@ -158,6 +158,7 @@ test('mobile search audit: mounted results, three scroll positions and long line
     expect(geometry.items.length).toBeGreaterThan(0);
     for(const item of geometry.items) { expect(item.left).toBeGreaterThanOrEqual(0); expect(item.right).toBeLessThanOrEqual(375); if(item.top>=geometry.top) expect(item.top).toBeGreaterThanOrEqual(geometry.headerBottom-1); }
   }
+  for(let i=0;i<30;i++) {const item=rows.nth(i); await item.evaluate(el=>el.scrollIntoView({block:'center',behavior:'instant'})); const b=await item.boundingBox(),h=await header.boundingBox(),d=await page.locator('#mobile-dock').boundingBox(); expect(b.y).toBeGreaterThanOrEqual(h.y+h.height); expect(b.y+b.height).toBeLessThanOrEqual(d.y);}
   const out = process.env.MOBILE_AUDIT_EVIDENCE;
   if(out) { const { mkdirSync } = await import('node:fs'); mkdirSync(out,{recursive:true}); await page.screenshot({path:join(out,'搜索.png'),animations:'disabled'}); }
 });

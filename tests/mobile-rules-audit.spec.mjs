@@ -53,6 +53,8 @@ test('model rules mobile mounting and scroll geometry', async ({page}) => {
     expect(geo.items.length).toBeGreaterThan(0);
     for(const item of geo.items) { expect(item.left).toBeGreaterThanOrEqual(0); expect(item.right).toBeLessThanOrEqual(375); if(item.top>=geo.top) expect(item.top).toBeGreaterThanOrEqual(geo.headerBottom-1); }
   }
+  const rows=page.locator('.secrets-row');
+  for(let i=0;i<await rows.count();i++) {const item=rows.nth(i); await item.evaluate(el=>el.scrollIntoView({block:'center',behavior:'instant'})); const b=await item.boundingBox(),h=await page.locator('.secrets-modal-header').boundingBox(); expect(b.y).toBeGreaterThanOrEqual(h.y+h.height-1); expect(b.y+b.height).toBeLessThanOrEqual(812);}
   if(process.env.MOBILE_AUDIT_EVIDENCE) { mkdirSync(process.env.MOBILE_AUDIT_EVIDENCE,{recursive:true}); await page.screenshot({path:join(process.env.MOBILE_AUDIT_EVIDENCE,'密钥.png')}); }
   await page.locator('#secrets-modal-close').click();
   await expect(page.locator('#secrets-modal')).toBeHidden();
