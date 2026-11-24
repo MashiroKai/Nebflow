@@ -107,7 +107,9 @@ const assert = require('node:assert/strict');
     await page.evaluate(() => { window.testTip.hideTermTip(); window.advanceClock(); window.testTip.termTapExpand(document.querySelector('#term'), null); });
     await page.waitForFunction(() => typeof window.releaseLookup === 'function');
     await page.evaluate(() => window.releaseLookup());
-    await page.waitForFunction(() => window.lookupCount() === 2);
-    console.log('PASS: version check runs alongside lookup');
+    await page.waitForFunction(() => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'lookup 2'));
+    await page.evaluate(() => { window.testTip.hideTermTip(); window.testTip.termTapExpand(document.querySelector('#term'), null); });
+    await page.waitForFunction(() => window.lookupCount() === 3);
+    console.log('PASS: late lookup after version change does not repopulate cache');
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
