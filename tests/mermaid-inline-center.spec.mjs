@@ -393,37 +393,28 @@ try {
       `V5a 打开的是真矢量 SVG（text/tspan ${tallLb && tallLb.svgTexts} 个，非位图）`);
     ok(!!tallLb && tallLb.a11y.role === 'dialog' && tallLb.a11y.modal === 'true' && !!tallLb.a11y.closeLabel,
       `V5b 浮层无障碍面在位（role=${tallLb && tallLb.a11y.role} aria-modal=${tallLb && tallLb.a11y.modal}）`);
-    ok(!!tallLb && tallLb.a11y.ctls.length >= 3 && tallLb.a11y.ctls.every(Boolean),
+    ok(!!tallLb && tallLb.a11y.ctls.length >= 1 && tallLb.a11y.ctls.every(Boolean),
       `V5c 缩放控件是真按钮且都有 aria-label（${tallLb && JSON.stringify(tallLb.a11y.ctls)}）`);
     await page.screenshot({ path: join(SHOTS_DIR, 'viewer-desktop-tall.png') });
 
-    for (let k = 0; k < 2; k++) {
-      await page.evaluate(() => {
-        const b = [...document.querySelectorAll('.nf-lightbox-bar .nf-lightbox-ctl')];
-        const zin = b.find((x) => /zoom-in/.test(String((x.getAttribute('aria-label') || '') + (x.dataset.lucide || '')) + (x.title || '')));
-        (zin || b[1]).click();
-      });
-      await page.waitForTimeout(140);
-    }
+    await page.mouse.move(640, 450);
+    await page.mouse.wheel(0, -240);
+    await page.waitForTimeout(250);
     const tallZoom = await page.evaluate(LB_READ);
     summary.viewer.desktopTallZoom = tallZoom;
-    ok(!!tallZoom && tallZoom.pct !== '100%' && tallZoom.pct !== (tallLb && tallLb.pct),
-      `V5d 缩放生效（${tallLb && tallLb.pct} → ${tallZoom && tallZoom.pct}）`);
+    ok(!!tallZoom && !!tallLb && tallZoom.canvas[2] > tallLb.canvas[2] * 1.05,
+      `V5d 滚轮缩放几何（${tallLb && tallLb.canvas[2]} → ${tallZoom && tallZoom.canvas[2]}）`);
     ok(!!tallZoom && Math.abs(tallZoom.canvasOff[0]) <= 1 && Math.abs(tallZoom.canvasOff[1]) <= 1,
       `V2c 放大后仍相对屏幕居中（偏差 ${tallZoom && JSON.stringify(tallZoom.canvasOff)}px）`);
     ok(!!tallZoom && tallZoom.svgIsVector, 'V5e 放大后仍是矢量（零位图替换）');
     await page.screenshot({ path: join(SHOTS_DIR, 'viewer-desktop-tall-zoom.png') });
 
     // 复位 + 关闭（ESC）+ 焦点回位
-    await page.evaluate(() => {
-      const b = [...document.querySelectorAll('.nf-lightbox-bar .nf-lightbox-ctl')];
-      const fit = b.find((x) => /maximize|适应|复位/.test(String(x.title || '') + String(x.getAttribute('aria-label') || '')));
-      (fit || b[2]).click();
-    });
+    await page.locator('.nf-lightbox-bar [data-action="fit"]').click();
     await page.waitForTimeout(180);
     const reset = await page.evaluate(LB_READ);
-    ok(!!reset && reset.pct === '100%' && Math.abs(reset.canvasOff[0]) <= 1 && Math.abs(reset.canvasOff[1]) <= 1,
-      `V2d 复位回到 100% 且仍居中（${reset && reset.pct} / ${reset && JSON.stringify(reset.canvasOff)}）`);
+    ok(!!reset && !!tallLb && Math.abs(reset.canvas[2] - tallLb.canvas[2]) <= 1 && Math.abs(reset.canvasOff[0]) <= 1 && Math.abs(reset.canvasOff[1]) <= 1,
+      `V2d 适应视图恢复几何（${reset && reset.canvas[2]} / ${tallLb && tallLb.canvas[2]}）`);
     await page.keyboard.press('Escape');
     await page.waitForTimeout(250);
     const afterEsc = await page.evaluate(() => {
@@ -611,21 +602,15 @@ try {
     ok(!!mNorm && mNorm.pinned === '0', `V4b ${vp.tag}：可视视口与布局视口一致时不加内联盒（pinned=${mNorm && mNorm.pinned}）`);
     await page.screenshot({ path: join(SHOTS_DIR, `viewer-${vp.tag}-open.png`) });
 
-    // 触摸放大两级
-    for (let k = 0; k < 2; k++) {
-      const c = await page.evaluate(() => {
-        const b = [...document.querySelectorAll('.nf-lightbox-bar .nf-lightbox-ctl')];
-        const zin = b.find((x) => /zoom-in/.test(String(x.getAttribute('aria-label') || '') + String(x.title || '')));
-        const r = (zin || b[1]).getBoundingClientRect();
-        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-      });
-      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: c.x, y: c.y }] });
-      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-      await page.waitForTimeout(200);
-    }
+    // Pinch apart around the viewport center; the viewer has no zoom buttons.
+    const cx = vp.width / 2, cy = vp.height / 2;
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: cx - 30, y: cy }, { x: cx + 30, y: cy }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: cx - 70, y: cy }, { x: cx + 70, y: cy }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await page.waitForTimeout(200);
     const mZoom = await page.evaluate(LB_READ);
     summary.viewer[`mobile_${vp.tag}_zoom`] = mZoom;
-    ok(!!mZoom && mZoom.pct !== '100%', `V3d ${vp.tag}：触摸放大生效（${mZoom && mZoom.pct}）`);
+    ok(!!mZoom && !!mNorm && mZoom.canvas[2] > mNorm.canvas[2] * 1.05, `V3d ${vp.tag}：触摸放大几何（${mNorm && mNorm.canvas[2]} → ${mZoom && mZoom.canvas[2]}）`);
     ok(!!mZoom && Math.abs(mZoom.canvasOff[0]) <= 1 && Math.abs(mZoom.canvasOff[1]) <= 1,
       `V3e ${vp.tag}：放大后仍居中（偏差 ${mZoom && JSON.stringify(mZoom.canvasOff)}px）`);
     await page.screenshot({ path: join(SHOTS_DIR, `viewer-${vp.tag}-zoom.png`) });
