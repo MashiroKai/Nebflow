@@ -102,4 +102,31 @@ class DynamicToolLoadWiringSpec extends FunSuite:
       )
     finally ToolRegistry.unregisterTool(probe)
 
+  test("plugin engine grant is dynamic and preserves the cacheable prefix"):
+    val before = AgentDef(name = "general", description = "", tools = Nil, category = "standalone")
+      .copy(model = Some(AgentModelConfig(preferred = Some("deepseek/deepseek-v4-flash"))))
+    val after = before.copy(pluginMcpServers = List("plugin_browser-use_engine"))
+    val grant = nebflow.core.plugin.PluginRegistry.engineGrantFor(after.pluginMcpServers)
+    val base = CoreProbe.planFor(before)
+    val loaded = CoreProbe.planFor(after)
+    assert(grant.nonEmpty)
+    assert(grant.subsetOf(CoreProbe.allowed(after)))
+    assertEquals(loaded.wireTools, base.wireTools)
+    def prefix(plan: nebflow.llm.DynamicToolLoad.Plan): String =
+      val tools = plan.wireTools.map { t =>
+        io.circe.Json.obj(
+          "name" -> io.circe.Json.fromString(t.name),
+          "description" -> io.circe.Json.fromString(t.description),
+          "input_schema" -> io.circe.Json.fromJsonObject(t.inputSchema)
+        )
+      }
+      nebflow.llm.DynamicToolLoad.cacheablePrefixFingerprint(
+        io.circe.Json.obj("tools" -> io.circe.Json.fromValues(tools))
+      )
+    assertEquals(prefix(loaded), prefix(base))
+    assertEquals(loaded.advertisedTools.map(_.name).toSet, grant)
+    assert(grant.forall(nebflow.llm.DynamicToolLoad.advertisementText(loaded.advertisedTools).contains))
+    val deferred = CoreProbe.planFor(after.copy(model = Some(AgentModelConfig(preferred = Some("claude-sonnet-5-5")))))
+    assert(grant.forall(n => deferred.wireTools.exists(t => t.name == n && t.deferLoading)))
+
 end DynamicToolLoadWiringSpec
