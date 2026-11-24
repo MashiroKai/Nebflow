@@ -257,6 +257,25 @@ class TodoScheduleSpec extends CatsEffectSuite:
       assertEquals(stored.head.occurrences.map(_.scheduledAt), List(first, second))
       assertEquals(stored.head.nextDueAt, Some(java.time.Instant.parse("2024-03-17T06:30:00Z").toEpochMilli))
 
+  test("tick generates new occurrences using current series rule after edit"):
+    val first = java.time.Instant.parse("2024-03-03T07:30:00Z").toEpochMilli
+    val next = java.time.Instant.parse("2024-03-10T07:00:00Z").toEpochMilli
+    val now = java.time.Instant.parse("2024-03-03T08:00:00Z").toEpochMilli
+    val oldRule = TodoDue.Weekly(7, "01:00", "America/New_York", "2024-03-03T01:00")
+    val newRule = TodoDue.Weekly(7, "02:30", "America/New_York", "2024-03-03T02:30")
+    for
+      _ <- reset()
+      task <- IO(ScheduledTask.create("s1", "weekly", future, kind = Some(ScheduledTask.KindTodo)).copy(
+        due = Some(oldRule), nextDueAt = Some(first)
+      ))
+      _ <- taskStore.addTask(task)
+      _ <- taskStore.updateTask("s1", task.id)(_.copy(due = Some(newRule)))
+      _ <- taskStore.materializeDueOccurrences(now)
+      stored <- taskStore.loadTasks("s1")
+    yield
+      assertEquals(stored.head.occurrences.map(_.ruleVersion), List(1L))
+      assertEquals(stored.head.nextDueAt, Some(next))
+
   test("weekly occurrences bind the same schedule rule version across cursor updates"):
     val first = java.time.Instant.parse("2024-03-03T07:30:00Z").toEpochMilli
     val now = java.time.Instant.parse("2024-03-10T08:00:00Z").toEpochMilli
@@ -537,6 +556,7 @@ class TodoScheduleSpec extends CatsEffectSuite:
       assert(text.contains("will not surface again"), text)
       assertEquals(pending, Nil)
 
+  // 冲突副本是保护上线前的历史状态，生产写口已拒绝产生，故 setup 直写。
   test("FDC-SCN-025 tool cancel removes conflicting copies without selecting an authority"):
     for
       _ <- reset()
@@ -544,7 +564,7 @@ class TodoScheduleSpec extends CatsEffectSuite:
       other = old.copy(sessionId = "new-session", content = "future payload", triggerAt = future)
       unrelated = ScheduledTask.create("old-session", "keep me", future).copy(id = "unrelated")
       _ <- taskStore.addTask(old)
-      _ <- taskStore.addTask(other)
+      _ <- IO(os.write(tempRoot / "scheduled-tasks" / "new-session.json", List(other).asJson.noSpaces))
       _ <- taskStore.addTask(unrelated)
       visible <- taskStore.findTaskById(old.id)
       due <- taskStore.getAllDueTasks
