@@ -359,7 +359,9 @@ class ScheduledTaskStore(
           byId.get(t.id).exists(old => old.due != t.due && old.occurrences != t.occurrences)
         )
         val deletesRows = existing.exists(old => !tasks.exists(_.id == old.id))
-        if stale then IO.raiseError(new IllegalStateException("stale task revision"))
+        if tasks.map(_.id).distinct.size != tasks.size then
+          IO.raiseError(new IllegalArgumentException("duplicate task id"))
+        else if stale then IO.raiseError(new IllegalStateException("stale task revision"))
         else if deletesRows then IO.raiseError(new IllegalStateException("direct save cannot delete tasks"))
         else if rewritesInstances then IO.raiseError(new IllegalStateException("rule change cannot rewrite occurrences"))
         else

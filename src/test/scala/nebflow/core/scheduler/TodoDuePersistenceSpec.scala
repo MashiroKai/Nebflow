@@ -316,6 +316,17 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       assert(result.isLeft)
       assertEquals(rows.head.occurrences, List(occurrence))
 
+  test("direct save rejects duplicate task IDs in the same payload"):
+    val dir = os.temp.dir(prefix = "due-save-duplicate-")
+    val store = new ScheduledTaskStore(dir)
+    val row = legacy.as[ScheduledTask].toOption.get
+    for
+      result <- store.saveTasks("s1", List(row, row.copy(content = "conflict"))).attempt
+      exists <- IO(os.exists(dir / "s1.json"))
+    yield
+      assert(result.isLeft)
+      assertEquals(exists, false)
+
   test("direct save rejects removing a generated occurrence during rule change"):
     val dir = os.temp.dir(prefix = "due-save-occurrence-")
     val store = new ScheduledTaskStore(dir)
