@@ -40,6 +40,18 @@ class SearchIndexServiceSpec extends CatsEffectSuite:
       source.close()
   }
 
+  test("snapshot main dispatch writes an empty snapshot database") {
+    val tmpRoot = java.nio.file.Paths.get("/tmp").toRealPath()
+    val dir = java.nio.file.Files.createTempDirectory(tmpRoot, "snapshot-dispatch-")
+    val sessions = java.nio.file.Files.createDirectory(dir.resolve("sessions"))
+    val output = dir.resolve("snapshot.sqlite")
+    try
+      SearchIndexMigration.main(Array("--snapshot", output.toString, sessions.toString))
+      assert(java.nio.file.Files.exists(output), "snapshot dispatch must create its output")
+    finally
+      os.remove.all(os.Path(dir))
+  }
+
   test("migration main rejects invalid argument shapes") {
     intercept[IllegalArgumentException] { SearchIndexMigration.main(Array.empty[String]) }
     intercept[IllegalArgumentException] { SearchIndexMigration.main(Array("a", "b", "--snapshot")) }
