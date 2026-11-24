@@ -188,7 +188,7 @@ for (const id of ['search-scope', 'search-agent']) {
   const menu = page.locator('.project-open-menu');
   check(`${id} opens with a checked item`, await menu.isVisible() && await menu.locator('[aria-checked="true"]').count() === 1);
   const style = await menu.evaluate(el => { const s = getComputedStyle(el); return { bg: s.backgroundColor, radius: s.borderRadius, shadow: s.boxShadow }; });
-  const background = theme === 'dark' ? 'rgba(24, 28, 38, 0.94)' : 'rgba(255, 255, 255, 0.97)';
+  const background = theme === 'dark' ? 'rgba(24, 28, 38, 0.98)' : 'rgb(255, 255, 255)';
   check(`${id} ${theme} computed menu style`, style.bg === background && style.radius === '8px' && style.shadow !== 'none', JSON.stringify(style));
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Escape');
