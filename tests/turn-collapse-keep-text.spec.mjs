@@ -167,6 +167,30 @@ const T_B = '找到关键线索了：收起分组在turnGroup.js，继续核对�
 const T_FINAL = '这是最终回复：中间过程已收起，回复与卡片照常可见。';
 const T_FINAL2 = '新回合的最终回复。';
 
+for (const zoom of [0.9, 1, 1.1, 1.25, 1.5]) {
+  test(`count ink remains within expanded clipping window at zoom ${zoom}`, async ({ browser }) => {
+    const { context, page } = await newPage(browser, { reducedMotion: 'reduce' });
+    await page.evaluate(() => window.__liveTurn());
+    const result = await page.locator('.nf-injection-stack-digit').evaluate((el, scale) => {
+      document.body.style.zoom = String(scale);
+      const style = getComputedStyle(el);
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      ctx.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+      const m = ctx.measureText(el.textContent);
+      const range = document.createRange(); range.selectNodeContents(el);
+      const r = range.getBoundingClientRect();
+      const clip = el.parentElement.getBoundingClientRect();
+      const line = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.2;
+      const baseline = r.top + (line - parseFloat(style.fontSize)) * scale / 2 + parseFloat(style.fontSize) * scale * 0.8;
+      return { top: baseline - m.actualBoundingBoxAscent * scale, bottom: baseline + m.actualBoundingBoxDescent * scale, clipTop: clip.top - 2 * scale, clipBottom: clip.bottom + 2 * scale };
+    }, zoom);
+    expect(result.top).toBeGreaterThanOrEqual(result.clipTop);
+    expect(result.bottom).toBeLessThanOrEqual(result.clipBottom);
+    await context.close();
+  });
+}
+
 for (const width of [900, 390, 375]) {
   test(`injection stack preserves mid-turn user order and four states at ${width}px`, async ({ browser }) => {
     const { context, page } = await newPage(browser, { viewport: { width, height: 900 } });
