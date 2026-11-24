@@ -481,10 +481,8 @@ test.describe('AC-S1 复验 — whole-card Canvas open under REAL mouse clicks',
     await context.close();
   });
 
-  test.fixme('KNOWN-DEFECT-2944: (b2) swipe to the middle card, then a real click opens THAT shown card', async ({ browser }) => {
+  test('(b2) swipe to the middle card, then a real click opens THAT shown card', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
-    const consoleErrors = [];
-    page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
     await renderStack(page, 3);
 
     // A-1 defect form (19:43 作者实录): the swipe advanced the painted front,
@@ -505,24 +503,14 @@ test.describe('AC-S1 复验 — whole-card Canvas open under REAL mouse clicks',
     await page.mouse.down();
     for (let i = 1; i <= 4; i++) await page.mouse.move(cx + (-60 * i) / 4, cy, { steps: 2 });
     await page.mouse.up();
-    await page.waitForTimeout(300); // applyLayers + the suppressClick window (60ms) to lapse
+    await expect(view).not.toHaveClass(/is-switching/, { timeout: 5000 }); // Wait for the actual switch to finish.
 
     const frontAfter = await page.evaluate(() =>
       document.querySelector('#chat .pop-stack-view .media-layer.layer-front .pop-img')?.dataset.nfName || '');
     expect(frontAfter, 'the swipe advanced the painted front to shot-2.png').toBe('shot-2.png');
 
-    // Capture the original, unchanged hit point and its geometry for #2944.
-    const beforeBox = await view.boundingBox();
-    const hitDetail = await page.evaluate(({ x, y }) => {
-      const el = document.elementFromPoint(x, y);
-      const r = el?.getBoundingClientRect();
-      return { x, y, element: el?.outerHTML?.slice(0, 600), rect: r && { x: r.x, y: r.y, width: r.width, height: r.height } };
-    }, { x: beforeBox.x + beforeBox.width / 2, y: beforeBox.y + beforeBox.height / 2 });
-    console.log('2944 geometry', JSON.stringify({ box: beforeBox, hitDetail, pageErrors }));
-    await page.screenshot({ path: '/Users/kaiyu/Claude code/Stand/.stand/tmp/pop-canvas-diagnosis/evidence/2944-before.png' });
+    // The unchanged center point must open the newly settled front card.
     const probe = await realCenterClick(page, view);
-    console.log('2944 click', JSON.stringify({ probe, pageErrors, consoleErrors }));
-    await page.screenshot({ path: '/Users/kaiyu/Claude code/Stand/.stand/tmp/pop-canvas-diagnosis/evidence/2944-after.png' });
     expect(probe.hit, `the click point hit-tests to the shown card's body (got ${probe.hit})`).toContain('img.pop-img');
     expect(probe.opens).toHaveLength(0);
     expect(probe.lightbox).toBe(true);
