@@ -14,6 +14,9 @@ object TodoOccurrenceCrashChild:
     val store = new ScheduledTaskStore(os.Path(args(0)))
     val occurrence = TodoOccurrence.create("old", 1000L, 7L)
     val halt = () => Runtime.getRuntime.halt(71)
+    if args(1) == "race" then
+      val recorded = store.recordOccurrence("s1", occurrence, Some(2000L)).unsafeRunSync()
+      sys.exit(if recorded then 0 else 3)
     val before = if args(1) == "before" then halt else () => ()
     val after = if args(1) == "after" then halt else () => ()
     store.recordOccurrence("s1", occurrence, Some(2000L), before, after).unsafeRunSync()
@@ -161,6 +164,38 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
     yield
       assertEquals(List(outcomes._1, outcomes._2).count(identity), 1)
       assertEquals(rows.head.occurrences, List(occurrence))
+      assertEquals(rows.head.nextDueAt, Some(2000L))
+
+  test("two independent JVMs serialize occurrence writes"):
+    val dir = os.temp.dir(prefix = "occurrence-process-race-")
+    val initial = legacy.as[ScheduledTask].toOption.get.copy(nextDueAt = Some(1000L))
+    val cp = List.newBuilder[String]
+    var loader = Thread.currentThread().getContextClassLoader
+    while loader != null do
+      loader match
+        case urls: java.net.URLClassLoader =>
+          cp ++= urls.getURLs.toList.filter(_.getProtocol == "file").map(u => Paths.get(u.toURI).toString)
+        case _ => ()
+      loader = loader.getParent
+    cp += System.getProperty("java.class.path")
+    val classpath = cp.result().distinct.mkString(java.io.File.pathSeparator)
+    def child(n: Int): Process =
+      new ProcessBuilder(Paths.get(System.getProperty("java.home"), "bin", "java").toString,
+        "-cp", classpath, "nebflow.core.scheduler.TodoOccurrenceCrashChild", dir.toString, "race")
+        .redirectErrorStream(true).redirectOutput((dir / s"child-$n.log").toIO).start()
+    for
+      _ <- new ScheduledTaskStore(dir).addTask(initial)
+      statuses <- IO.blocking {
+        val a = child(1)
+        val b = child(2)
+        assert(a.waitFor(90, java.util.concurrent.TimeUnit.SECONDS))
+        assert(b.waitFor(90, java.util.concurrent.TimeUnit.SECONDS))
+        List(a.exitValue(), b.exitValue()).sorted
+      }
+      rows <- new ScheduledTaskStore(dir).loadTasks("s1")
+    yield
+      assertEquals(statuses, List(0, 3))
+      assertEquals(rows.head.occurrences, List(TodoOccurrence.create("old", 1000L, 7L)))
       assertEquals(rows.head.nextDueAt, Some(2000L))
 
   test("one-shot and weekly golden payloads survive store and fresh reader"):

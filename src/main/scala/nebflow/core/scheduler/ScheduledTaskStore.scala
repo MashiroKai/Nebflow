@@ -1,6 +1,6 @@
 package nebflow.core.scheduler
 
-import cats.effect.IO
+import cats.effect.{IO, Resource}
 import cats.effect.std.Mutex
 import cats.syntax.all.*
 import io.circe.parser.decode
@@ -46,9 +46,25 @@ class ScheduledTaskStore(
    * 全库读写互斥：任何文件读/改/写都必须持有（见类注）。CE 3.5 的 Mutex 无
    * unsafe 直构 —— lazy + global runtime 物化一次（先例：DeviceProfile.scala）。
    */
-  private lazy val storeLock: Mutex[IO] =
-    import cats.effect.unsafe.implicits.global
-    Mutex[IO].unsafeRunSync()
+  private def withStoreLock[A](action: IO[A]): IO[A] =
+    for
+      canonical <- IO.blocking {
+        java.nio.file.Files.createDirectories(baseDir.toNIO)
+        baseDir.toNIO.toRealPath()
+      }
+      result <- ScheduledTaskStore.mutexFor(canonical).lock.surround {
+        val fileLock = Resource.make {
+          IO.blocking(java.nio.channels.FileChannel.open(
+            canonical.resolve(".scheduled-tasks.lock"),
+            java.nio.file.StandardOpenOption.CREATE,
+            java.nio.file.StandardOpenOption.WRITE
+          ))
+        }(channel => IO.blocking(channel.close()).handleError(_ => ())).flatMap { channel =>
+          Resource.make(IO.interruptibleMany(channel.lock()))(lock => IO.blocking(lock.release()).handleError(_ => ()))
+        }
+        fileLock.use(_ => action)
+      }
+    yield result
 
   private def sessionFile(sessionId: String): os.Path =
     baseDir / s"$sessionId.json"
@@ -275,7 +291,7 @@ class ScheduledTaskStore(
   // ------------------------------------------------------------------
 
   def loadTasks(sessionId: String): IO[List[ScheduledTask]] =
-    storeLock.lock.surround {
+    withStoreLock {
       // Keep this read's quarantine/DB recovery, but do not expose a stale session copy.
       loadUnlocked(sessionId).flatMap { local =>
         scanUnlocked(_.sessionId != sessionId, sort = false)
@@ -284,7 +300,7 @@ class ScheduledTaskStore(
     }
 
   def saveTasks(sessionId: String, tasks: List[ScheduledTask]): IO[Unit] =
-    storeLock.lock.surround(saveUnlocked(sessionId, tasks))
+    withStoreLock(saveUnlocked(sessionId, tasks))
 
   /** Commit occurrence and series cursor in the same atomic session-file replacement. */
   private[scheduler] def recordOccurrence(
@@ -294,7 +310,7 @@ class ScheduledTaskStore(
     beforeCommit: () => Unit = () => (),
     afterCommit: () => Unit = () => ()
   ): IO[Boolean] =
-    storeLock.lock.surround {
+    withStoreLock {
       loadUnlocked(sessionId).flatMap { rows =>
         rows.find(_.id == occurrence.todoId) match
           case None => IO.raiseError(new IllegalArgumentException("todo not found"))
@@ -313,7 +329,7 @@ class ScheduledTaskStore(
     }
 
   def addTask(task: ScheduledTask): IO[Unit] =
-    storeLock.lock.surround(addUnlocked(task))
+    withStoreLock(addUnlocked(task))
 
   /**
    * Idempotent user-create retry, scoped to one session and exact requested fields.
@@ -324,7 +340,7 @@ class ScheduledTaskStore(
    * The created frame reports the durable row (`saved`) so the client sees the real state.
    */
   def addUserTodoOnce(task: ScheduledTask): IO[ScheduledTask] =
-    storeLock.lock.surround {
+    withStoreLock {
       loadUnlocked(task.sessionId).flatMap { existing =>
         existing.find(_.id == task.id) match
           case Some(old)
@@ -351,7 +367,7 @@ class ScheduledTaskStore(
    * callers can distinguish absence and notify every affected session without guessing.
    */
   def cancelTask(taskId: String): IO[List[ScheduledTask]] =
-    storeLock.lock.surround {
+    withStoreLock {
       sessionIdsUnlocked.flatMap(_.traverse(sid => loadUnlocked(sid).map(sid -> _))).flatMap { sessions =>
         val copies = sessions.flatMap(_._2).filter(_.id == taskId)
         // Remove stale rows first. A failed cleanup must not leave only an obsolete due row.
@@ -364,7 +380,7 @@ class ScheduledTaskStore(
     }
 
   def markTriggered(sessionId: String, taskId: String): IO[Unit] =
-    storeLock.lock.surround {
+    withStoreLock {
       updateByIdUnlocked(taskId)(_.copy(triggered = true, triggeredAt = Some(System.currentTimeMillis()))).void
     }
 
@@ -405,7 +421,7 @@ class ScheduledTaskStore(
    * 由 getAllDueTodos / ScheduledTaskService.surfaceTodos 的周期浮出面接管。
    */
   def getAllDueTasks: IO[List[ScheduledTask]] =
-    storeLock.lock.surround {
+    withStoreLock {
       val now = System.currentTimeMillis()
       readUnlocked(t => !t.triggered && t.triggerAt <= now && t.enabled && !t.isTodo, sort = true)
     }
@@ -418,10 +434,10 @@ class ScheduledTaskStore(
    * 行留在库里，但「下一次浮出」与 list 面都不许再看到它。
    */
   def getAllPendingTasks: IO[List[ScheduledTask]] =
-    storeLock.lock.surround(readUnlocked(t => !t.triggered && !t.isCompleted, sort = false))
+    withStoreLock(readUnlocked(t => !t.triggered && !t.isCompleted, sort = false))
 
   private def todosUnlocked(includeCompleted: Boolean): IO[List[ScheduledTask]] =
-    storeLock.lock.surround {
+    withStoreLock {
       readUnlocked(t => t.isTodo && !t.triggered && t.enabled && (includeCompleted || !t.isCompleted), sort = false)
         .map(_.sortBy(t => (t.triggerAt, t.createdAt)))
     }
@@ -451,7 +467,7 @@ class ScheduledTaskStore(
    * 顺延（spec 钉）。
    */
   def getAllDueTodos: IO[List[ScheduledTask]] =
-    storeLock.lock.surround {
+    withStoreLock {
       val now = System.currentTimeMillis()
       readUnlocked(t => t.isTodo && !t.triggered && t.enabled && !t.isCompleted && t.triggerAt <= now, sort = false)
         .map(_.sortBy(t => (t.triggerAt, t.createdAt)))
@@ -463,7 +479,7 @@ class ScheduledTaskStore(
 
   /** Toggle the enabled state of a task. Returns the updated enabled value. */
   def toggleTask(sessionId: String, taskId: String): IO[Boolean] =
-    storeLock.lock.surround {
+    withStoreLock {
       updateByIdUnlocked(taskId)(t => t.copy(enabled = !t.enabled)).map(_.map(_.enabled).getOrElse(true))
     }
 
@@ -477,7 +493,7 @@ class ScheduledTaskStore(
    * 兼容既有调用签名。
    */
   def updateTask(sessionId: String, taskId: String)(f: ScheduledTask => ScheduledTask): IO[Boolean] =
-    storeLock.lock.surround {
+    withStoreLock {
       updateByIdUnlocked(taskId)(f).map(_.isDefined)
     }
 
@@ -487,7 +503,7 @@ class ScheduledTaskStore(
    * re-arm 去重的目标正是它们）。
    */
   def findTaskById(taskId: String): IO[Option[ScheduledTask]] =
-    storeLock.lock.surround {
+    withStoreLock {
       readUnlocked(_.id == taskId, sort = false).map(_.headOption)
     }
 
@@ -503,7 +519,7 @@ class ScheduledTaskStore(
     kind: Option[String] = Some(ScheduledTask.KindTask),
     legacyOwner: ScheduledTask => Boolean = _ => false
   ): IO[List[ScheduledTask]] =
-    storeLock.lock.surround(removeByNameUnlocked(name, kind, Some("engine"), legacyOwner))
+    withStoreLock(removeByNameUnlocked(name, kind, Some("engine"), legacyOwner))
 
   /**
    * Upsert（2026-09-06 事故根因修复，2026-11-14 收尾：稳定身份 + 可恢复跨会话迁移）：
@@ -535,7 +551,7 @@ class ScheduledTaskStore(
     task.name match
       case None => addTask(task).as(Rearm(task, Nil))
       case Some(n) =>
-        storeLock.lock.surround {
+        withStoreLock {
           scanUnlocked(t => t.name.contains(n) && ScheduledTask.sameKind(t.kind, task.kind), sort = false).flatMap {
             candidates =>
               val owner = task.source
@@ -612,6 +628,11 @@ class ScheduledTaskStore(
 end ScheduledTaskStore
 
 object ScheduledTaskStore:
+  private val directoryLocks = new java.util.concurrent.ConcurrentHashMap[java.nio.file.Path, Mutex[IO]]()
+  private def mutexFor(path: java.nio.file.Path): Mutex[IO] =
+    import cats.effect.unsafe.implicits.global
+    directoryLocks.computeIfAbsent(path, _ => Mutex[IO].unsafeRunSync())
+
   /**
    * Production default storage directory (SharedResources assembly point; the default-root
    *  discriminator baseline). `def` rather than `val`: PathUtil.dataRoot is the test root seam,
