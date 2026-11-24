@@ -220,11 +220,11 @@ async function doRefresh() {
     // §3.1③ 惰性标记：**这一拍没取到**且面板未激活 ⇒ 置位，面板激活时强制重取。
     if (!panelActive()) relationStateDirty = true;
   }
-  const focusedRow = document.activeElement?.closest?.('#fm-contacts-body .fm-friend-row');
+  const focusedRow = /** @type {HTMLElement | null | undefined} */ (document.activeElement?.closest?.('#fm-contacts-body .fm-friend-row'));
   const focusedId = focusedRow?.dataset.friendId;
   render();
   if (focusedId) {
-    const replacement = [...document.querySelectorAll('#fm-contacts-body .fm-friend-row')]
+    const replacement = [.../** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('#fm-contacts-body .fm-friend-row'))]
       .find(row => row.dataset.friendId === focusedId);
     replacement?.focus({ preventScroll: true });
   }
