@@ -346,6 +346,8 @@ class ScheduledTaskStore(
             IO.raiseError(new IllegalStateException("stale or conflicting task revision"))
           case None => IO.raiseError(new IllegalArgumentException("todo not found"))
           case Some(task) if task.occurrences.exists(_.key == occurrence.key) => IO.pure(false)
+          case Some(task) if task.due.isDefined && task.dueRuleVersion != occurrence.ruleVersion =>
+            IO.raiseError(new IllegalStateException("stale reminder rule version"))
           case Some(task) if !task.nextDueAt.contains(occurrence.scheduledAt) =>
             IO.raiseError(new IllegalArgumentException("occurrence does not match next due time"))
           case Some(task) =>
@@ -384,9 +386,11 @@ class ScheduledTaskStore(
             nextDueAt = following,
             revision = Math.addExact(task.revision, 1L)
           )
-          loadUnlocked(sessionId).flatMap(rows =>
-            saveUnlocked(sessionId, rows.map(t => if t.id == task.id then updated else t))
-          ) *>
+          loadUnlocked(sessionId).flatMap { rows =>
+            if !rows.find(_.id == task.id).contains(task) then
+              IO.raiseError(new IllegalStateException("stale task revision or cursor"))
+            else saveUnlocked(sessionId, rows.map(t => if t.id == task.id then updated else t))
+          } *>
             advance(sessionId, updated)
         case _ => IO.unit
     withStoreLock {

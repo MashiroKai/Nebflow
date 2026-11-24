@@ -175,6 +175,20 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
   test("hard halt after atomic replacement preserves advanced series"):
     checkHardCrash("after")
 
+  test("occurrence recording rejects stale rule versions"):
+    val dir = os.temp.dir(prefix = "occurrence-stale-rule-")
+    val store = new ScheduledTaskStore(dir)
+    val initial = legacy.as[ScheduledTask].toOption.get.copy(
+      due = Some(TodoDue.Once(1000L, "Europe/London", "1970-01-01T00:00:01", "Z")),
+      dueRuleVersion = 2L, nextDueAt = Some(1000L))
+    for
+      _ <- store.addTask(initial)
+      result <- store.recordOccurrence("s1", TodoOccurrence.create("old", 1000L, 1L), None).attempt
+      rows <- store.loadTasks("s1")
+    yield
+      assert(result.isLeft)
+      assertEquals(rows, List(initial))
+
   test("occurrence recording rejects a stale session copy when another revision is authoritative"):
     val dir = os.temp.dir(prefix = "occurrence-stale-session-")
     val store = new ScheduledTaskStore(dir)
