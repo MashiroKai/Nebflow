@@ -273,6 +273,18 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       assert(result.isLeft)
       assertEquals(rows, List(initial))
 
+  test("direct save cannot delete a row without an explicit baseline"):
+    val dir = os.temp.dir(prefix = "due-save-delete-")
+    val store = new ScheduledTaskStore(dir)
+    val row = legacy.as[ScheduledTask].toOption.get
+    for
+      _ <- store.addTask(row)
+      result <- store.saveTasks("s1", Nil).attempt
+      rows <- store.loadTasks("s1")
+    yield
+      assert(result.isLeft)
+      assertEquals(rows, List(row))
+
   test("direct save accepts a newer cross-session revision"):
     val dir = os.temp.dir(prefix = "due-save-newer-")
     val store = new ScheduledTaskStore(dir)

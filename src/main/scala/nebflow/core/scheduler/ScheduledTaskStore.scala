@@ -347,7 +347,9 @@ class ScheduledTaskStore(
         val rewritesInstances = tasks.exists(t =>
           byId.get(t.id).exists(old => old.due != t.due && old.occurrences != t.occurrences)
         )
+        val deletesRows = existing.exists(old => !tasks.exists(_.id == old.id))
         if stale then IO.raiseError(new IllegalStateException("stale task revision"))
+        else if deletesRows then IO.raiseError(new IllegalStateException("direct save cannot delete tasks"))
         else if rewritesInstances then IO.raiseError(new IllegalStateException("rule change cannot rewrite occurrences"))
         else
           val adjusted = tasks.map { task =>
