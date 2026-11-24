@@ -100,4 +100,48 @@ object DeviceZoneBoundaryChecks:
         _ <- overrideCall.set(Some(false))
         _ <- done.take.timeout(30.seconds)
       yield ())
+      _ <- stickyAndNext(ref, captured, done, blockTool, overrideCall, toolEntered, toolRelease, barrier, barrierRef)
+    yield ()
+
+  private def stickyAndNext(
+    ref: ActorRef[AgentCommand], captured: Queue[IO, Option[String]], done: Queue[IO, Unit],
+    blockTool: Ref[IO, Boolean], overrideCall: Ref[IO, Option[Boolean]],
+    entered: Queue[IO, Unit], release: Queue[IO, Unit], barrier: Queue[IO, List[String]],
+    barrierRef: ActorRef[List[String]]
+  ): IO[Unit] =
+    for
+      _ <- overrideCall.set(Some(true))
+      _ <- blockTool.set(true)
+      _ <- ref ! AgentCommand.UserInput("sticky start", clientMessageId = Some("sticky-start"),
+        fromUser = true, deviceZone = Some("Asia/Tokyo"))
+      first <- captured.take.timeout(30.seconds)
+      _ = assertEquals(first, Some("Asia/Tokyo"))
+      _ <- entered.take.timeout(30.seconds)
+      _ <- ref ! AgentCommand.UserInput("sticky mail", source = Some("mail"))
+      _ <- ref ! AgentCommand.AskUser("sticky-first", Nil, Some(barrierRef))
+      ack <- barrier.take.timeout(30.seconds)
+      _ = assert(nebflow.shared.AskUserDispatch.isFailure(ack) && ack.head.contains("sticky-first"))
+      _ <- overrideCall.set(Some(true))
+      _ <- blockTool.set(true)
+      _ <- release.offer(())
+      second <- captured.take.timeout(30.seconds)
+      _ = assertEquals(second, None)
+      _ <- entered.take.timeout(30.seconds)
+      _ <- ref ! AgentCommand.ImmediateInput("sticky same zone", fromUser = true, deviceZone = Some("Asia/Tokyo"))
+      _ <- ref ! AgentCommand.AskUser("sticky-second", Nil, Some(barrierRef))
+      ack2 <- barrier.take.timeout(30.seconds)
+      _ = assert(nebflow.shared.AskUserDispatch.isFailure(ack2) && ack2.head.contains("sticky-second"))
+      _ <- overrideCall.set(Some(true))
+      _ <- release.offer(())
+      third <- captured.take.timeout(30.seconds)
+      _ = assertEquals(third, None)
+      _ <- overrideCall.set(Some(false))
+      _ <- done.take.timeout(30.seconds)
+      _ <- overrideCall.set(Some(true))
+      _ <- ref ! AgentCommand.UserInput("next turn source", clientMessageId = Some("sticky-next"),
+        fromUser = true, deviceZone = Some("Europe/Paris"))
+      next <- captured.take.timeout(30.seconds)
+      _ = assertEquals(next, Some("Europe/Paris"))
+      _ <- overrideCall.set(Some(false))
+      _ <- done.take.timeout(30.seconds)
     yield ()

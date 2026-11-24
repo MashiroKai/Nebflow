@@ -196,6 +196,7 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
         queuedBusy <- captured.take.timeout(30.seconds)
         _ = assertEquals(queuedBusy, Some("Europe/Paris"))
         _ <- done.take.timeout(30.seconds)
+        _ <- done.take.timeout(30.seconds)
         _ <- DeviceZoneBoundaryChecks.run(ref, captured, done, blockTool, overrideCall, toolEntered, toolRelease)
         _ <- store.flushPendingUiWrites
       yield ()
