@@ -54,6 +54,9 @@ try {
     for (const width of [1280, 390]) for (const theme of ['light', 'dark']) {
       const s = await createSession(browser, { width, height: width === 390 ? 844 : 800, colorScheme: theme, explorerEntries: [], hasTouch: width===390, isMobile: width===390 });
       try {
+        const requests=[];
+        await s.page.route('**/api/nf-ticket', route => {const body=JSON.parse(route.request().postData()||'{}'),tickets={};for(const p of body.paths||[]) tickets[p]={t:`tok${p.length}`,exp:Date.now()+1800000,size:1};return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({tickets})});});
+        await s.page.route(/\/api\/nf-file/, route => {requests.push(new URL(route.request().url()).searchParams.get('path'));return route.fulfill({status:200,contentType:'text/markdown',body:'# doc'});});
         await s.boot({ config: { llm: { providers: {} }, features: {} }, sessionId: 'tooltip-bottom', messages: [] });
         const path = '/' + 'p'.repeat(1020) + '.md';
         await s.page.evaluate(async ({path, mobile}) => {
@@ -82,11 +85,15 @@ try {
           assert(await s.page.evaluate(()=>matchMedia('(hover: none)').matches), 'touch context must not support hover');
           const hit=await row.evaluate(el=>{const r=el.getBoundingClientRect(),hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return hit===el||el.contains(hit);});
           assert(hit,'touch target must not be covered');
-          await row.evaluate(el=>el.addEventListener('click',()=>{window.__favoriteTap=true;},{once:true}));
+          await s.page.waitForFunction(path=>document.querySelector(`.cfp-row[data-fav-path="${path}"]`)?.getAttribute('aria-disabled') !== 'true',path);
+          assert.notEqual(await row.getAttribute('aria-disabled'),'true');
           await s.page.screenshot({path:join(shots,`touch-390-${theme}-before.png`),animations:'disabled'});
-          await row.tap(); assert(await s.page.evaluate(()=>window.__favoriteTap===true),'tap reaches row');
+          const count=requests.filter(p=>p===path).length;
+          await row.tap(); await s.page.waitForFunction(()=>!document.querySelector('#canvas-fav-page'),null,{timeout:10000});
+          assert(requests.filter(p=>p===path).length>count,'tap must request selected path');
           assert.equal(await s.page.locator('.cfp-path-tooltip:visible').count(),0,'touch must not show hover tooltip');
           await s.page.screenshot({path:join(shots,`touch-390-${theme}-after.png`),animations:'disabled'});
+          continue;
         } else {
           await row.hover(); await check('hover');
           const pass=await s.page.locator('.cfp-path-tooltip').evaluate(el=>{const r=el.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,hit=document.elementFromPoint(x,y);return {x,y,tag:hit?.tagName,cls:hit?.className};});
