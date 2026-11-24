@@ -61,6 +61,9 @@ test('model rules mobile mounting and scroll geometry', async ({page}) => {
   await page.locator('#model-chain-modes [data-rule-mode="rules"]').click();
   const draft=page.locator('.mr-draft'); await expect(draft).toBeVisible({timeout:15000});
   const header=page.locator('.mobile-page[data-page="settings"] .mobile-back-btn'); await expect(header).toBeVisible();
+  const draftBox = await draft.boundingBox(); const headerBox = await header.boundingBox();
+  expect(draftBox.x).toBeGreaterThanOrEqual(0); expect(draftBox.x+draftBox.width).toBeLessThanOrEqual(375);
+  expect(draftBox.y).toBeGreaterThanOrEqual(headerBox.y+headerBox.height-1);
   const face=page.locator('.mobile-page[data-page="settings"] #settings-content');
   for (const fraction of [0,0.5,1]) {
     await face.evaluate((el,f) => {el.scrollTop=(el.scrollHeight-el.clientHeight)*f},fraction);

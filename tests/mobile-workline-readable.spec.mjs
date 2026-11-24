@@ -27,6 +27,10 @@ test('mobile live thinking wraps without clipping', async ({ page }) => {
   expect(metrics.left).toBe(0);
   expect(metrics.wrap).not.toBe('nowrap');
   expect(metrics.scroll).toBeLessThanOrEqual(metrics.width + 1);
+  const rect = await think.boundingBox();
+  expect(rect.x).toBeGreaterThanOrEqual(0); expect(rect.x+rect.width).toBeLessThanOrEqual(375);
+  const collision = await think.evaluate(el => {const a=el.getBoundingClientRect(), s=el.closest('.nf-wl-slot').getBoundingClientRect(); return {height:a.height,slotHeight:s.height,top:a.top,slotTop:s.top,bottom:a.bottom,slotBottom:s.bottom};});
+  expect(collision.height).toBeGreaterThan(18); expect(collision.top).toBeGreaterThanOrEqual(collision.slotTop-1); expect(collision.bottom).toBeLessThanOrEqual(collision.slotBottom+1);
   const out=process.env.MOBILE_AUDIT_EVIDENCE;
   if(out) {mkdirSync(out,{recursive:true}); await page.screenshot({path:join(out,'聚焦条.png'),animations:'disabled'});}
 });

@@ -288,6 +288,8 @@ test('mobile social dock pages: real mounted rows and long content', async ({ pa
   await expect(row).toBeVisible({timeout:10000});
   const rowBox = await row.boundingBox();
   expect(rowBox.x).toBeGreaterThanOrEqual(0); expect(rowBox.x+rowBox.width).toBeLessThanOrEqual(375);
+  // Dock root pages deliberately have no header (navController.js); never substitute the panel top.
+  await expect(page.locator('.mobile-page[data-page="messages"] .mobile-page-header')).toHaveCount(0);
   for (const f of [0,0.5,1]) {
     const b=await messages.evaluate((el,fraction)=>{el.scrollTop=(el.scrollHeight-el.clientHeight)*fraction; const r=el.getBoundingClientRect(); return {left:r.left,right:r.right};},f);
     expect(b.left).toBeGreaterThanOrEqual(0); expect(b.right).toBeLessThanOrEqual(375);
