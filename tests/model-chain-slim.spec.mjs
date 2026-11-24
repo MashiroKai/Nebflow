@@ -102,6 +102,8 @@ async function boot(browser, { viewport, colorScheme, locale = 'zh-CN', touch = 
   await page.route('**/api/**', (r) => {
     const p = decodeURIComponent(new URL(r.request().url()).pathname);
     if (p === '/api/model-rules/mode') {
+      sim.modePuts = (sim.modePuts || 0) + 1;
+      if (sim.failMode) return r.fulfill({ status: 500, json: { error: 'save failed' } });
       sim.mode = r.request().postDataJSON().mode;
       return r.fulfill({ json: { mode: sim.mode } });
     }
@@ -214,6 +216,27 @@ async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = fals
   const viewport = mobile ? { width: 375, height: 812 } : { width: 1280, height: 800 };
   const { ctx, page, errors, sim } = await boot(browser, { viewport, colorScheme: theme, locale, touch: mobile });
   await openSettings(page, { mobile });
+  if (engineName === 'chromium' && theme === 'light' && locale === 'zh-CN') {
+    const modes = page.locator('#model-chain-modes');
+    const section = page.locator('#model-chain-section');
+    await section.screenshot({ path: join(SHOTS_DIR, `tri-follow-${mobile ? 'mobile' : 'desktop'}.png`) });
+    ok(tag, '跟随态不渲染编辑器', await page.locator('.mr-draft').count() === 0);
+    await modes.locator('[data-rule-mode="slots"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-rule-mode="slots"]')?.getAttribute('aria-checked') === 'true');
+    await section.screenshot({ path: join(SHOTS_DIR, `tri-slots-${mobile ? 'mobile' : 'desktop'}.png`) });
+    ok(tag, '分槽态不渲染编辑器', await page.locator('.mr-draft').count() === 0);
+    await modes.locator('[data-rule-mode="rules"]').click();
+    await page.locator('.mr-draft').waitFor({ state: 'visible' });
+    await section.screenshot({ path: join(SHOTS_DIR, `tri-rules-${mobile ? 'mobile' : 'desktop'}.png`) });
+    ok(tag, '规则摘要和编辑器在场', await page.locator('#model-rules-section-body .set-row-hint').innerText() === '暂无规则。');
+    await modes.locator('[data-rule-mode="follow"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-rule-mode="follow"]')?.getAttribute('aria-checked') === 'true');
+    sim.failMode = true;
+    await modes.locator('[data-rule-mode="slots"]').click();
+    await page.waitForFunction(() => document.querySelector('#model-chain-mode-state')?.textContent.includes('保存失败'));
+    ok(tag, '失败切换回滚到跟随', await modes.locator('[data-rule-mode="follow"]').getAttribute('aria-checked') === 'true');
+    sim.failMode = false;
+  }
 
   // ① 模式开关（switch 批）：全站唯一开关组件，一个 role=switch 的按钮 + 一行当前态。
   const modeSwitch = page.locator('#model-chain-modes [data-rule-mode="follow"]');

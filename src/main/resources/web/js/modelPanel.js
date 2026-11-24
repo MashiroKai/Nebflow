@@ -207,6 +207,7 @@ let panelMode = readStoredMode(); // derived view cache, never the authoritative
 let ruleMode = null;
 let modeBusy = false;
 let modeError = '';
+let ruleSummary = '';
 let rulesUnmount = null;
 /** @type {Set<() => void>} */
 const modeListeners = new Set();
@@ -1012,8 +1013,11 @@ function renderChainSectionBody(container) {
       rules.id = 'model-rules-section-body';
       const heading = document.createElement('h3');
       heading.textContent = t('settings.modelRulesTitle');
+      const summary = document.createElement('div');
+      summary.className = 'set-row-hint';
+      summary.textContent = ruleSummary;
       const host = document.createElement('div');
-      rules.append(heading, host);
+      rules.append(heading, summary, host);
       container.appendChild(rules);
       rulesUnmount = mountModelRulesSection(host);
     }
@@ -1459,6 +1463,7 @@ async function loadRuleMode() {
     const data = await response.json();
     if (!['follow', 'slots', 'rules'].includes(data.mode)) throw new Error('Invalid mode');
     ruleMode = data.mode;
+    ruleSummary = data.error ? `${t('modelRules.loadError')}: ${data.error}` : (data.source ? t('modelRules.source') : t('modelRules.diagramEmpty'));
     modeError = '';
     applyViewMode(ruleMode === 'follow' ? 'unified' : 'separate');
   } catch (error) {
