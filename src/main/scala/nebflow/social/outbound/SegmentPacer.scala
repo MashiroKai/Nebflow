@@ -1,6 +1,7 @@
 package nebflow.social.outbound
 
-import cats.effect.{Deferred, IO, Ref}
+import cats.effect.{Deferred, IO}
+import cats.effect.Ref
 
 import scala.concurrent.duration.*
 

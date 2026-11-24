@@ -1,14 +1,14 @@
 package nebflow.neblink.misc
 
-import cats.effect.IO
 import nebflow.neblink.core.*
+
 import nebflow.neblink.logto.*
+import cats.effect.IO
 import nebflow.shared.Branding
 
 import java.net.URI
 import java.net.http.{HttpRequest, HttpResponse}
 import java.time.Duration
-
 import scala.annotation.tailrec
 
 /**

@@ -1,12 +1,13 @@
 package nebflow.agent
 
+import nebflow.neblink.core.*
+import nebflow.neblink.social.*
+
 import cats.effect.unsafe.implicits.global
 import cats.effect.{Deferred, IO, IOLocal}
 import nebflow.actor.*
 import nebflow.core.AgentRuntimePort
 import nebflow.core.tools.ToolContext
-import nebflow.neblink.core.*
-import nebflow.neblink.social.*
 import nebflow.shared.*
 
 import scala.concurrent.duration.*

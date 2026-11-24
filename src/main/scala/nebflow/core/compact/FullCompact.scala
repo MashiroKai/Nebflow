@@ -2,9 +2,9 @@ package nebflow.core.compact
 
 import cats.effect.IO
 import io.circe.syntax.*
-import nebflow.prompts.PromptCatalog
 import nebflow.shared.given
 import nebflow.shared.{NebflowLogger, ReadTracker, *}
+import nebflow.prompts.PromptCatalog
 
 import java.nio.file.{Files, Paths}
 

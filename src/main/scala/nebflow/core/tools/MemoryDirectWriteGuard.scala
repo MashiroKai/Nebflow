@@ -1,11 +1,14 @@
 package nebflow.core.tools
 
-import nebflow.shared.{MemoryBudget, MemoryPaths, MemoryWriteGate}
+import nebflow.shared.MemoryBudget
+import nebflow.shared.MemoryPaths
+import nebflow.shared.MemoryWriteGate
 
 import java.nio.charset.StandardCharsets
-import java.nio.file.{Files, Path, Paths}
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.Paths
 import java.util.concurrent.ConcurrentHashMap
-
 import scala.util.Try
 
 /**

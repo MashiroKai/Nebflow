@@ -10,8 +10,8 @@ import nebflow.actor.AgentCommand.*
 import nebflow.core.*
 import nebflow.core.compact.*
 import nebflow.llm.*
-import nebflow.shared.given
 import nebflow.shared.{NebflowLogger, *}
+import nebflow.shared.given
 
 import scala.concurrent.duration.*
 

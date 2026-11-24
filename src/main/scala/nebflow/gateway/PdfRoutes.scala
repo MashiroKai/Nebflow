@@ -20,7 +20,7 @@ package nebflow.gateway
 import cats.effect.IO
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.core.pdf.*
+import nebflow.core.pdf.{PdfAsk, PdfCache, PdfManifest, PdfNotes, PdfParser}
 import nebflow.shared.NebflowLogger
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*

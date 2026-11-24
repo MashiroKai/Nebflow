@@ -1,7 +1,8 @@
 package nebflow.db
 
+import cats.effect.Fiber
+import cats.effect.IO
 import cats.effect.unsafe.implicits.global
-import cats.effect.{Fiber, IO}
 import org.slf4j.LoggerFactory
 
 import java.nio.file.Path

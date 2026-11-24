@@ -1,7 +1,7 @@
 package nebflow.core
 
-import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
+import io.circe.syntax.*
 import nebflow.core.tools.BashTool
 import nebflow.shared.ToolCall
 

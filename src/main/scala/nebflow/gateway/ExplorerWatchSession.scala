@@ -1,10 +1,11 @@
 package nebflow.gateway
 
+import nebflow.neblink.core.*
+
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.neblink.core.*
 import nebflow.shared.NebflowLogger
 
 import java.nio.file.*

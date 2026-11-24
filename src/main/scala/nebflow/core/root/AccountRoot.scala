@@ -3,11 +3,11 @@ package nebflow.core.root
 import io.circe.Json
 import io.circe.parser.parse
 import io.circe.syntax.*
-import nebflow.core.{AtomicJson, CredentialFileAcl}
-import nebflow.shared.NebflowLogger
-
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+
+import nebflow.core.{AtomicJson, CredentialFileAcl}
+import nebflow.shared.NebflowLogger
 
 /**
  * 三层数据根 · 账号层本体（B1，契约 `reports-evidence/20261104_b1-dataroot/design-api.md` §3）。

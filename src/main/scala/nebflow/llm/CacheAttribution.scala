@@ -1,8 +1,9 @@
 package nebflow.llm
 
-import cats.syntax.functor.*
 import io.circe.Json
-import nebflow.shared.{NebflowLogger, StreamChunk, TokenUsage}
+import nebflow.shared.NebflowLogger
+import nebflow.shared.{TokenUsage, StreamChunk}
+import cats.syntax.functor.*
 
 import scala.collection.mutable
 

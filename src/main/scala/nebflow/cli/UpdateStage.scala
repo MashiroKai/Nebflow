@@ -4,9 +4,9 @@ import cats.effect.IO
 import nebflow.core.hotrestart.InstallPointer
 import nebflow.shared.Branding
 
-import java.nio.file.{Files, StandardCopyOption}
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
-
 import scala.util.control.NonFatal
 
 /**

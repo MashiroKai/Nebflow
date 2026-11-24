@@ -1,7 +1,6 @@
 package nebflow.core.index
 
 import cats.effect.IO
-
 import java.util.concurrent.atomic.AtomicReference
 
 /**

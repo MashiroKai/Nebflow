@@ -2,10 +2,16 @@ package nebflow.agent
 
 import cats.effect.IO
 import cats.syntax.all.*
-import io.circe.syntax.*
 import nebflow.actor.AgentCommand
 import nebflow.core.mail.{InputMailbox, InputPayload}
-import nebflow.shared.*
+import nebflow.shared.{
+  ExecutionChainObservation,
+  ExecutionCommitResult,
+  ExecutionEvent,
+  ExecutionTransition,
+  NebflowLogger
+}
+import io.circe.syntax.*
 
 /**
  * InputLanding —— **idle 直达腿的落盘门**（P3 磁盘邮箱批 · 节点 3 最小闭环）。

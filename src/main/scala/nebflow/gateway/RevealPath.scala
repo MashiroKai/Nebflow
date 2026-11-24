@@ -22,9 +22,8 @@
 package nebflow.gateway
 
 import cats.effect.IO
-import org.http4s.Status
-
 import java.nio.file.{Files, Path, Paths}
+import org.http4s.Status
 
 private[gateway] object RevealPath:
 

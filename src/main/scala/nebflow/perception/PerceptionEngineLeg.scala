@@ -1,17 +1,17 @@
 package nebflow.perception
 
+import nebflow.neblink.core.*
+
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.neblink.core.*
-import nebflow.perception.PerceptionModel.*
 import nebflow.shared.NebflowLogger
+import PerceptionModel.*
 
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.time.Duration
-
 import scala.concurrent.duration.*
 
 /**

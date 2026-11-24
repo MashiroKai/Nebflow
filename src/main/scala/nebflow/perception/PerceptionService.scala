@@ -1,15 +1,16 @@
 package nebflow.perception
 
+import PerceptionModel.*
 import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.perception.PerceptionModel.*
 import nebflow.shared.{NebflowLogger, PathUtil}
 import os.Path
 
-import java.time.{LocalDate, LocalDateTime, LocalTime}
-
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
 import scala.concurrent.duration.*
 
 /**

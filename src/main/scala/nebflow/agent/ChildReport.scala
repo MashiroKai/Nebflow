@@ -1,9 +1,9 @@
 package nebflow.agent
 
-import io.circe.JsonObject
-import io.circe.syntax.*
 import nebflow.actor.AgentCommand
 import nebflow.social.outbound.OutputBlock
+import io.circe.JsonObject
+import io.circe.syntax.*
 
 /**
  * Nonterminal child progress; final answers continue exclusively through the result channel.

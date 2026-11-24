@@ -3,7 +3,6 @@ package nebflow.social.outbound
 import cats.effect.IO
 
 import java.nio.file.Files
-
 import scala.util.Try
 
 /**

@@ -1,6 +1,7 @@
 package nebflow.agent
 
-import cats.effect.{IO, Ref}
+import cats.effect.IO
+import cats.effect.Ref
 import cats.syntax.all.*
 import nebflow.shared.NebflowLogger
 

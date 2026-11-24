@@ -1,11 +1,12 @@
 package nebflow.neblink.social
 
+import nebflow.neblink.core.NeblinkService
+
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.device.{DeviceHmac, DeviceRegistry}
-import nebflow.neblink.core.NeblinkService
 import nebflow.shared.{NebflowLogger, PathUtil}
 
 /**

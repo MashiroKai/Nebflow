@@ -7,7 +7,7 @@ import nebflow.core.delegate.DelegateJudge
 import nebflow.core.delegate.DelegateJudge.{DelegateJudgePort, TerminalInput, Verdict}
 import nebflow.llm.kernel.{KernelCallSites, LlmKernel}
 import nebflow.llm.{CacheBreakpoints, ModelCandidate, ProviderRegistry}
-import nebflow.shared.*
+import nebflow.shared.{Config, Defaults, Message, MessageRole, NebflowLogger}
 
 import scala.concurrent.duration.*
 

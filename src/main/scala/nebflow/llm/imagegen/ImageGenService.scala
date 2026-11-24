@@ -4,11 +4,10 @@ import cats.effect.IO
 import io.circe.parser.parse
 import nebflow.llm.imagegen.ImageGenTypes.*
 import nebflow.llm.imagegen.ImageGenTypes.ImageGenError as E
-import nebflow.shared.*
+import nebflow.shared.{Config, NebflowLogger, PathUtil, SharedBackend}
 import sttp.client4.*
 
 import java.util.Base64
-
 import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 

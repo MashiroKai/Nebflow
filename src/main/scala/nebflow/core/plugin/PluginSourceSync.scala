@@ -4,8 +4,8 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.plugin.PluginSourceLedger.{Kind, Pin, Via}
 import nebflow.shared.{NebflowLogger, PathUtil}
+import PluginSourceLedger.{Kind, Pin, Via}
 
 import scala.util.control.NonFatal
 

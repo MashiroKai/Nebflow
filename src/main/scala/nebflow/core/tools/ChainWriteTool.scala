@@ -2,8 +2,10 @@ package nebflow.core.tools
 
 import cats.effect.IO
 import cats.syntax.all.*
+import io.circe.JsonObject
 import io.circe.syntax.*
-import io.circe.{Json, JsonObject}
+import io.circe.Json
+
 import nebflow.core.entity.BuiltinAgents
 import nebflow.core.project.*
 

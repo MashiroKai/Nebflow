@@ -6,7 +6,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.actor.AgentCommand
 import nebflow.core.AskHandoffPort
-import nebflow.core.ask.*
+import nebflow.core.ask.{AskCooldown, AskGatewayServices, AskNoteSnapshot, AskNoteStore, AskNoteWrite, AskSessions}
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Canvas ask mode · WS 域（机制稿 §2/§3.3/§4/§7，实施批 2026-10-28）

@@ -1,7 +1,7 @@
 package nebflow.llm
 
 import nebflow.actor.{LoopDetectedError, ToolPipelineError}
-import nebflow.shared.*
+import nebflow.shared.{ErrorPermanence, FailoverReason, FallbackExhaustedError, ModelScheduleRestrictedError, StreamInactivityTimeout}
 
 /**
  * LlmFailureSignal —— 「LLM 类失败」的**唯一判据**（LLM 失败卡片批，2026-11-21）。

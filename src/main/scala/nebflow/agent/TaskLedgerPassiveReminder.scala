@@ -1,14 +1,13 @@
 package nebflow.agent
 
+import io.circe.{Decoder, Encoder}
 import io.circe.generic.semiauto.*
 import io.circe.parser.decode
-import io.circe.syntax.*
-import io.circe.{Decoder, Encoder}
-import nebflow.shared.PathUtil
-
 import java.nio.channels.FileChannel
 import java.nio.file.{Files, StandardCopyOption, StandardOpenOption}
 import java.util.UUID
+import io.circe.syntax.*
+import nebflow.shared.PathUtil
 
 /** Passive task-ledger reminder: evaluated only from the real-user-turn reminder path. */
 private[agent] object TaskLedgerPassiveReminder:

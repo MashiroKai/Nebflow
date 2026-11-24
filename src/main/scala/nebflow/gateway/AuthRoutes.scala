@@ -1,13 +1,14 @@
 /* 从 RestApiRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
+import nebflow.neblink.core.*
+import nebflow.neblink.identity.*
+
 import cats.effect.IO
 import cats.syntax.all.*
 import fs2.Stream
-import nebflow.core.root.{AccountRoot, ActiveAccount}
-import nebflow.neblink.core.*
-import nebflow.neblink.identity.*
 import nebflow.neblink.logto.*
+import nebflow.core.root.{AccountRoot, ActiveAccount}
 import nebflow.shared.{Branding, NebflowLogger, PathUtil}
 import org.http4s.*
 import org.http4s.dsl.io.*

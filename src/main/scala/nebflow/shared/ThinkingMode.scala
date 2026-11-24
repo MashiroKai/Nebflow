@@ -1,7 +1,8 @@
 package nebflow.shared
 
-import io.circe.*
+import io.circe.Encoder
 import io.circe.syntax.*
+import io.circe.{Decoder, HCursor, Json}
 
 /**
  * 思考模式能力域类型（thinking-config 实施批，2026-10-28；设计

@@ -1,6 +1,7 @@
 package nebflow.actor
 
-import cats.effect.{IO, Ref}
+import cats.effect.IO
+import cats.effect.Ref
 
 /**
  * 外部 CLI 执行器在**统一注册表**里的登记面（作者裁定4「登记 AgentKind.External」，

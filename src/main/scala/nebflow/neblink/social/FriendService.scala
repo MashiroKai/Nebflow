@@ -1,16 +1,22 @@
 package nebflow.neblink.social
 
+import nebflow.neblink.social.ProfileDescriptionStore
+
+import nebflow.neblink.social.ProfileSync
+
+import nebflow.neblink.social.ProfileDescriptions
+
+import nebflow.neblink.attachment.*
+import nebflow.neblink.core.*
+import nebflow.neblink.relay.*
+
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.FriendServicePort
-import nebflow.neblink.attachment.*
-import nebflow.neblink.core.*
 import nebflow.neblink.core.FriendCodecs.given
-import nebflow.neblink.relay.*
-import nebflow.neblink.social.{ProfileDescriptionStore, ProfileDescriptions, ProfileSync}
 import nebflow.shared.*
 
 import scala.collection.immutable.Queue

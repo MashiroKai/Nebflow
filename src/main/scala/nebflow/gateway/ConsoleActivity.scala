@@ -4,7 +4,7 @@ import cats.effect.IO
 import nebflow.shared.{Branding, PathUtil}
 
 import java.nio.charset.StandardCharsets
-import java.nio.file.*
+import java.nio.file.{Files, Path, Paths, StandardOpenOption}
 
 /**
  * 控制台在用判据（「工作过程中被开新标签页」批 2026-11-05 · 作者令）。

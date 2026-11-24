@@ -1,14 +1,15 @@
 package nebflow.neblink.identity
 
+import nebflow.neblink.core.*
+
+import nebflow.neblink.logto.*
 import cats.effect.IO
 import io.circe.*
 import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.core.*
-import nebflow.neblink.core.*
 import nebflow.neblink.identity.CredentialDiagnostics.{CredentialStoreError, Diagnostic, Op}
-import nebflow.neblink.logto.*
 import nebflow.shared.{NebflowLogger, PathUtil}
 
 /**

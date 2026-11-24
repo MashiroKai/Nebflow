@@ -5,7 +5,7 @@ import cats.effect.kernel.Ref
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.shared.*
+import nebflow.shared.{CandidateSkipCause, NebflowLogger, NebflowServiceConfig, ProviderConfig}
 
 /**
  * provider 并发上限 · 派发时刻 fallback 链快照（provider-concurrency 批，作者令

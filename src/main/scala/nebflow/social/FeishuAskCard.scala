@@ -1,7 +1,8 @@
 package nebflow.social
 
 import io.circe.Json
-import nebflow.social.outbound.*
+
+import nebflow.social.outbound.{PromptAction, PromptView, PromptOption, AskPromptCodec}
 
 /**
  * Feishu card face for AskUser prompts (askuser batch, 2026-10-01).

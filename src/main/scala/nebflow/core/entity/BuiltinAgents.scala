@@ -1,7 +1,7 @@
 package nebflow.core.entity
 
-import nebflow.prompts.PromptCatalog
 import nebflow.shared.{Config, PathUtil}
+import nebflow.prompts.PromptCatalog
 
 /**
  * BuiltinAgents —— 四个收敛 agent 的**代码级唯一定义源**（builtin-def batch

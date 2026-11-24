@@ -2,6 +2,7 @@ package nebflow.neblink.identity
 
 import io.circe.Json
 import io.circe.syntax.*
+
 import nebflow.shared.Branding
 
 /**

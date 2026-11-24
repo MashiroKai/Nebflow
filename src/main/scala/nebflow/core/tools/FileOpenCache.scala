@@ -1,14 +1,15 @@
 package nebflow.core.tools
 
-import io.circe.Json
-import io.circe.parser.decode
-import io.circe.syntax.*
-import nebflow.shared.{NebflowLogger, PathUtil}
-
 import java.util.concurrent.atomic.AtomicLong
 
 import scala.collection.mutable
 import scala.util.Try
+
+import io.circe.Json
+import io.circe.parser.decode
+import io.circe.syntax.*
+
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 /** 索引条目（持久层账面；`last` 变量字段供 LRU touch 原地更新）。 */
 private[tools] final case class FileOpenCacheMeta(

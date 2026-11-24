@@ -30,7 +30,6 @@ import nebflow.shared.{EvidenceTemp, SharedBackend}
 import sttp.client4.*
 
 import java.util.Base64
-
 import scala.concurrent.duration.*
 
 object ImageGenProbe:

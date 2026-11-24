@@ -5,12 +5,10 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.core.AtomicJson
 import nebflow.shared.PathUtil
-
 import java.nio.charset.StandardCharsets.UTF_8
-import java.security.spec.X509EncodedKeySpec
 import java.security.{KeyFactory, Signature}
+import java.security.spec.X509EncodedKeySpec
 import java.util.Base64
-
 import scala.util.control.NonFatal
 
 /** Signed distribution catalog. Catalog trust roots are independent of publisher keys. */

@@ -1,14 +1,13 @@
 package nebflow.social
 
+import cats.effect.{IO, Ref}
 import cats.effect.kernel.Fiber
 import cats.effect.unsafe.implicits.global
-import cats.effect.{IO, Ref}
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.shared.NebflowLogger
 
 import java.util.UUID
-
 import scala.collection.immutable.ListMap
 
 /**

@@ -1,16 +1,19 @@
 package nebflow.neblink.logto
 
+import nebflow.neblink.core.*
+
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, parser}
-import nebflow.neblink.core.{OutboundHttpClients, Protocol, *}
-import nebflow.neblink.logto.LogtoTransport.Request
+import nebflow.neblink.core.OutboundHttpClients
+import nebflow.neblink.core.Protocol
 
 import java.net.http.{HttpRequest, HttpResponse}
 import java.net.{URI, URLDecoder}
-
 import scala.jdk.CollectionConverters.*
+
+import LogtoTransport.Request
 
 /**
  * Headless FIRST-PARTY password login against the deployed Logto tenant —

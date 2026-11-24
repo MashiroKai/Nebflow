@@ -3,9 +3,8 @@ package nebflow.gateway
 import cats.effect.IO
 
 import java.io.InputStream
-import java.nio.file.*
+import java.nio.file.{Files, LinkOption, Path, StandardCopyOption}
 import java.nio.file.attribute.PosixFilePermission
-
 import scala.jdk.CollectionConverters.*
 import scala.util.control.NonFatal
 

@@ -1,8 +1,8 @@
 package nebflow.perception
 
+import PerceptionModel.*
 import cats.effect.IO
 import io.circe.syntax.*
-import nebflow.perception.PerceptionModel.*
 import nebflow.shared.{LlmRequest, Message, MessageRole}
 
 import scala.concurrent.duration.*

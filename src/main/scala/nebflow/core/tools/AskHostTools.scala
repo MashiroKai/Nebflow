@@ -2,13 +2,12 @@ package nebflow.core.tools
 
 import cats.effect.{Deferred, IO}
 import cats.syntax.all.*
-import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
+import io.circe.syntax.*
 import nebflow.actor.{AgentCommand, RootAgentIdentity}
 import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.util.UUID
-
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.duration.*
 import scala.util.control.NonFatal

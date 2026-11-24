@@ -7,7 +7,6 @@ import io.circe.{Decoder, Encoder, Json}
 import java.io.BufferedWriter
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Paths, StandardOpenOption}
-
 import scala.util.Using
 
 /**

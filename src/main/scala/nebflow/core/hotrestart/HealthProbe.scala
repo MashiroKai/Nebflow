@@ -6,7 +6,8 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.core.ProviderHealthPort
-import nebflow.shared.{Branding, NebflowLogger}
+import nebflow.shared.Branding
+import nebflow.shared.NebflowLogger
 
 import java.net.*
 import java.nio.charset.StandardCharsets

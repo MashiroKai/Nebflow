@@ -1,9 +1,14 @@
 /* 从 RestApiRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
+import nebflow.neblink.core.*
+import nebflow.neblink.misc.*
+import nebflow.neblink.relay.*
+import nebflow.neblink.sync.*
+
+import cats.effect.{IO, Ref}
 import cats.effect.std.Queue
 import cats.effect.unsafe.implicits.global
-import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import fs2.{Pipe, Stream}
 import io.circe.syntax.*
@@ -22,11 +27,7 @@ import nebflow.core.tools.NodeTools
 import nebflow.llm.*
 import nebflow.llm.imagegen.{ImageGenAdapters, ImageGenProbe}
 import nebflow.llm.providers.ModelListFaces
-import nebflow.neblink.core.*
 import nebflow.neblink.core.FriendCodecs.given
-import nebflow.neblink.misc.*
-import nebflow.neblink.relay.*
-import nebflow.neblink.sync.*
 import nebflow.service.ConfigService
 import nebflow.shared.{LlmProtocol, NebflowServiceConfig, PathUtil}
 import org.http4s.*

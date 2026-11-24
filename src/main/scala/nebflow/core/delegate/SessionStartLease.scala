@@ -2,7 +2,6 @@ package nebflow.core.delegate
 
 import cats.effect.{IO, Resource}
 import nebflow.shared.PathUtil
-
 import java.nio.channels.{FileChannel, OverlappingFileLockException}
 import java.nio.file.StandardOpenOption
 

@@ -3,7 +3,7 @@ package nebflow.core
 import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.actor.{ActorRef, AgentCommand, AgentEvent}
-import nebflow.shared.*
+import nebflow.shared.{ContentBlock, Message, MessageRole, NebflowLogger}
 
 /**
  * ResumeHandoff —— **中断续跑的唯一交接单点**（无感恢复批 2026-11-07，作者令逐字：

@@ -1,13 +1,14 @@
 /* 从 RestApiRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
+import nebflow.neblink.core.*
+
 import cats.effect.IO
 import cats.syntax.all.*
 import fs2.Stream
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.core.hotrestart.HealthPayload
-import nebflow.neblink.core.*
 import nebflow.shared.{Branding, NebflowLogger}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*

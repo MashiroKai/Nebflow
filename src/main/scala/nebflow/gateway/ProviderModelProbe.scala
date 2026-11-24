@@ -1,9 +1,11 @@
 /* settings-panel-jev-imagegen 批（2026-10-28）——模型连接性测试探针（B 件）。 */
 package nebflow.gateway
 
+import nebflow.neblink.core.*
+
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.neblink.core.{OutboundHttpClients, *}
+import nebflow.neblink.core.OutboundHttpClients
 import nebflow.shared.LlmProtocol
 
 import java.util.concurrent.atomic.AtomicBoolean

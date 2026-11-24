@@ -2,8 +2,9 @@ package nebflow.core
 
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.shared.AgentModelConfig
 import nebflow.core.presets.{ModelChainRegistry, ModelPreset}
-import nebflow.shared.{AgentModelConfig, NebflowLogger, PathUtil}
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 /**
  * One-time migration from named model presets to per-role model chains.

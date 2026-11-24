@@ -1,7 +1,7 @@
 package nebflow.agent
 
 import cats.effect.IO
-import nebflow.shared.*
+import nebflow.shared.{ContentBlock, Message, MessageRole, NebflowLogger, PathUtil}
 
 /**
  * RevivalCheckpoint —— 复活断点台账（9.19 版中断恢复批 · 2026-11-04 · 审计 D6 的机械封口）。

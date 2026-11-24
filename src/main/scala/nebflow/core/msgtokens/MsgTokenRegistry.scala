@@ -43,14 +43,13 @@
 package nebflow.core.msgtokens
 
 import cats.effect.IO
+import io.circe.{Decoder, Encoder}
 import io.circe.parser.decode
 import io.circe.syntax.*
-import io.circe.{Decoder, Encoder}
 import nebflow.shared.{NebflowLogger, PathUtil, SystemReminder}
 
 import java.security.MessageDigest
 import java.util.concurrent.locks.ReentrantLock
-
 import scala.collection.concurrent.TrieMap
 import scala.util.matching.Regex
 

@@ -1,7 +1,6 @@
 package nebflow.gateway
 
 import java.nio.file.{Files, Path, Paths}
-
 import scala.util.Try
 
 /** Host-local application discovery and shell-free project opening. */

@@ -1,8 +1,7 @@
 package nebflow.shared
 
-import nebflow.prompts.PromptCatalog
-
 import scala.concurrent.duration.*
+import nebflow.prompts.PromptCatalog
 
 /**
  * Default configuration values used across the codebase.

@@ -8,7 +8,6 @@ import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.nio.file.attribute.PosixFilePermissions
 import java.security.SecureRandom
-
 import scala.concurrent.duration.*
 
 /**

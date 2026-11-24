@@ -1,7 +1,7 @@
 package nebflow.core.presets
 
-import io.circe.Json
 import io.circe.syntax.*
+import io.circe.Json
 import nebflow.core.AtomicJson
 import nebflow.shared.*
 

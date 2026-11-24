@@ -1,9 +1,12 @@
 package nebflow.neblink.logto
 
+import nebflow.neblink.core.*
+
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, parser}
-import nebflow.neblink.core.{OutboundHttpClients, Protocol, *}
+import nebflow.neblink.core.OutboundHttpClients
+import nebflow.neblink.core.Protocol
 
 import java.net.http.{HttpRequest, HttpResponse}
 import java.net.{URI, URLEncoder}

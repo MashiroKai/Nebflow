@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.core.tools.ImageInject
-import nebflow.shared.*
+import nebflow.shared.{AttachContract, ContentBlock, Config, NebflowLogger}
 
 import java.io.ByteArrayInputStream
 import java.util.Base64

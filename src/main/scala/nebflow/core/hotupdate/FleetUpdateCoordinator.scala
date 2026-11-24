@@ -2,12 +2,11 @@ package nebflow.core.hotupdate
 
 import cats.effect.{Fiber, IO, Ref}
 import cats.syntax.all.*
-import io.circe.syntax.*
 import io.circe.{Json, parser}
+import io.circe.syntax.*
 import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.util.concurrent.atomic.AtomicReference
-
 import scala.concurrent.duration.*
 
 /**

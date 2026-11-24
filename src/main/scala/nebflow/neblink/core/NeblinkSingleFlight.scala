@@ -1,7 +1,8 @@
 package nebflow.neblink.core
 
-import cats.effect.{Deferred, IO, Outcome}
 import nebflow.neblink.identity.*
+
+import cats.effect.{Deferred, IO, Outcome}
 import nebflow.shared.NebflowLogger
 
 import java.util.concurrent.{CancellationException, ConcurrentHashMap}

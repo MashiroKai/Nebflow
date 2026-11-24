@@ -1,8 +1,8 @@
 package nebflow.neblink.core
 
+import nebflow.neblink.logto.*
 import cats.effect.IO
 import cats.effect.kernel.Ref
-import nebflow.neblink.logto.*
 
 /**
  * Switch-account **single-window handoff** marker (one-window switch batch,

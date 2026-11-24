@@ -1,7 +1,7 @@
 package nebflow.gateway
 
 import java.io.ByteArrayInputStream
-import java.net.*
+import java.net.{Inet4Address, Inet6Address, InetAddress, URI}
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
 import java.security.MessageDigest

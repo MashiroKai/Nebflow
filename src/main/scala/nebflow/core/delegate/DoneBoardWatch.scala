@@ -2,10 +2,11 @@ package nebflow.core.delegate
 
 import cats.effect.IO
 import cats.syntax.all.*
+import io.circe.{Json, JsonObject}
 import io.circe.parser.parse
 import io.circe.syntax.*
-import io.circe.{Json, JsonObject}
-import nebflow.core.{AgentRuntimePort, GitWorktrees}
+import nebflow.core.AgentRuntimePort
+import nebflow.core.GitWorktrees
 import nebflow.shared.{NebflowLogger, PathUtil}
 
 /**

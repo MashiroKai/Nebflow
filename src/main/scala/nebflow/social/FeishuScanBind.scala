@@ -1,15 +1,24 @@
 package nebflow.social
 
+import cats.effect.{IO, Ref}
 import cats.effect.kernel.Fiber
 import cats.effect.unsafe.implicits.global
-import cats.effect.{IO, Ref}
-import com.lark.oapi.scene.registration.*
+import com.lark.oapi.scene.registration.{
+  AccessDeniedException,
+  AppPreset,
+  ExpiredException,
+  QRCodeInfo,
+  RegisterApp,
+  RegisterAppException,
+  RegisterAppOptions,
+  RegisterAppResult,
+  StatusChangeInfo
+}
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.shared.NebflowLogger
 
 import java.util.UUID
-
 import scala.collection.immutable.ListMap
 
 /**

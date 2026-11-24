@@ -3,13 +3,11 @@ package nebflow.gateway
 import cats.effect.IO
 import io.circe.Json
 import io.circe.syntax.*
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import nebflow.shared.NebflowLogger
 import org.http4s.*
 import org.http4s.dsl.io.*
-
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
-
 import scala.jdk.CollectionConverters.*
 
 /**

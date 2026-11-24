@@ -3,7 +3,7 @@ package nebflow.core.delegate
 import cats.effect.IO
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.actor.*
+import nebflow.actor.{ActorRef, ActorSystem, AgentRecord, AgentStatus}
 
 /** Instance-local ownership is an incarnation identity, not a retained reference or activity timestamp. */
 object DelegateLiveness:

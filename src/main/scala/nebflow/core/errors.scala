@@ -1,6 +1,7 @@
 package nebflow.core
 
-import nebflow.shared.{FallbackAttempt, FallbackExhaustedError, ImageCapabilityRejection}
+import nebflow.shared.{FallbackAttempt, FallbackExhaustedError}
+import nebflow.shared.ImageCapabilityRejection
 
 enum NebflowError:
   case ToolFailed(toolName: String, message: String)

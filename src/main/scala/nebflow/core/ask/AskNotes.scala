@@ -8,7 +8,6 @@ import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
-
 import scala.util.control.NonFatal
 
 /* ═══════════════════════════════════════════════════════════════════════════

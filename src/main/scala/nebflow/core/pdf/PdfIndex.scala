@@ -1,7 +1,7 @@
 package nebflow.core.pdf
 
-import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
+import io.circe.syntax.*
 
 /**
  * The page index — an INVERTED index (term → the pages carrying it) built once,

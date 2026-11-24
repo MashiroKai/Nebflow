@@ -1,8 +1,9 @@
 package nebflow.cli
 
+import nebflow.neblink.core.*
+
 import cats.effect.{ExitCode, IO}
 import cats.syntax.all.*
-import nebflow.neblink.core.*
 
 import java.lang.management.ManagementFactory
 

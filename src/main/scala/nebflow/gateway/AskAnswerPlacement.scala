@@ -52,8 +52,8 @@ package nebflow.gateway
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
-import nebflow.actor.{AskOrigin, InteractionHubCommand}
 import nebflow.agent.SharedResources
+import nebflow.actor.{AskOrigin, InteractionHubCommand}
 import nebflow.shared.{NebflowLogger, UiMessage}
 
 private[gateway] object AskAnswerPlacement:

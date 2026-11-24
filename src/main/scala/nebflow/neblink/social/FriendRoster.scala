@@ -1,8 +1,9 @@
 package nebflow.neblink.social
 
+import nebflow.neblink.core.*
+
 import nebflow.core.FriendRosterPort
 import nebflow.core.tools.ToolError
-import nebflow.neblink.core.*
 import nebflow.shared.{FriendSummary, GroupSummary}
 
 /**

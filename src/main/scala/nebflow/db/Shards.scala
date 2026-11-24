@@ -3,7 +3,6 @@ package nebflow.db
 import io.circe.Json
 
 import java.nio.file.{Files, Path}
-
 import scala.jdk.CollectionConverters.*
 
 /**

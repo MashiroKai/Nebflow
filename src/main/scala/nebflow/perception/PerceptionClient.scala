@@ -1,6 +1,7 @@
 package nebflow.perception
 
-import cats.effect.{IO, Ref}
+import cats.effect.IO
+import cats.effect.Ref
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
@@ -9,7 +10,6 @@ import nebflow.shared.NebflowLogger
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.time.Duration
-
 import scala.concurrent.duration.*
 
 /**

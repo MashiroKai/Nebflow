@@ -1,9 +1,12 @@
 package nebflow.neblink.core
 
-import cats.effect.{IO, Ref}
+import nebflow.neblink.social.ProfileDescriptions
+
 import nebflow.neblink.identity.*
 import nebflow.neblink.relay.*
-import nebflow.neblink.social.{ProfileDescriptions, *}
+import nebflow.neblink.social.*
+
+import cats.effect.{IO, Ref}
 import nebflow.shared.NebflowLogger
 
 /**

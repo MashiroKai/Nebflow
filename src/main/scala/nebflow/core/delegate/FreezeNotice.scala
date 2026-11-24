@@ -2,8 +2,8 @@ package nebflow.core.delegate
 
 import cats.effect.IO
 import cats.syntax.all.*
-import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
+import io.circe.syntax.*
 import nebflow.actor.{AgentCommand, FreezeDisplay, FreezeKind}
 import nebflow.shared.{Defaults, NebflowLogger, PathUtil}
 

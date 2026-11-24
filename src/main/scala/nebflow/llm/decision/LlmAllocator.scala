@@ -3,10 +3,10 @@ package nebflow.llm.decision
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
-import nebflow.core.jev.*
+import nebflow.core.jev.{CatalogEntry, JevAllocation, JevFallback, JevFallbackKind}
 import nebflow.llm.kernel.{KernelCallSites, LlmKernel}
 import nebflow.llm.{CacheBreakpoints, ModelCandidate, ProviderRegistry}
-import nebflow.shared.*
+import nebflow.shared.{Defaults, Message, MessageRole, NebflowLogger}
 
 /**
  * LlmAllocator —— **小模型分配腿**（jev-retire 批：JeV 腿退役后唯一分配执行体）.

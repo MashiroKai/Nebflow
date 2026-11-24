@@ -1,10 +1,11 @@
 package nebflow.core.tools
 
 import cats.effect.IO
+import io.circe.Json
 import io.circe.syntax.*
-import io.circe.{Json, JsonObject}
-import nebflow.llm.imagegen.ImageGenTypes.ImageGenRequest
+import io.circe.JsonObject
 import nebflow.llm.imagegen.{ImageGenJobs, ImageGenService}
+import nebflow.llm.imagegen.ImageGenTypes.ImageGenRequest
 import nebflow.shared.NebflowLogger
 
 import java.nio.file.Files

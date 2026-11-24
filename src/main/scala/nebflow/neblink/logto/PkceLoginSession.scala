@@ -1,10 +1,13 @@
 package nebflow.neblink.logto
 
+import nebflow.neblink.identity.*
+
 import cats.effect.IO
 import cats.effect.kernel.Ref
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.neblink.identity.{CredentialDiagnostics, CredentialFailure, *}
+import nebflow.neblink.identity.CredentialDiagnostics
+import nebflow.neblink.identity.CredentialFailure
 
 /**
  * Single-flight Authorization Code + PKCE login session (gateway memory

@@ -1,6 +1,9 @@
 package nebflow.neblink.relay
 
-import nebflow.neblink.core.{EndpointPreference, NeblinkEndpoint}
+import nebflow.neblink.core.NeblinkEndpoint
+
+import nebflow.neblink.core.EndpointPreference
+
 import nebflow.shared.PeerInfo
 
 /**

@@ -1,7 +1,7 @@
 package nebflow.db.format
 
-import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
+import io.circe.syntax.*
 
 import java.security.MessageDigest
 
