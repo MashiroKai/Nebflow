@@ -52,7 +52,7 @@ const USER_MD = '## 沟通偏好\n回复保持简短。';
 
 test.use({ viewport: { width: 375, height: 812 }, hasTouch: true, colorScheme: 'dark' });
 
-async function bootApp(page) {
+async function bootApp(page, {longMemory = false} = {}) {
   /** @type {string[]} */
   const sentTypes = [];
   await page.addInitScript(() => {
@@ -95,7 +95,7 @@ async function bootApp(page) {
       if (parsed.type === 'getConfig') sendConfig();
       else if (parsed.type === 'getSessions' || parsed.type === 'listSessions') sendSessions();
       else if (parsed.type === 'getMemory') {
-        const content = parsed.scope === 'user' ? USER_MD : AGENT_MD;
+        const content = parsed.scope === 'user' ? USER_MD : (longMemory ? Array.from({length:30},(_,i)=>`## Long memory title ${i}\n${'Memory body '.repeat(20)}`).join('\n\n') : AGENT_MD);
         ws.send(JSON.stringify({ type: 'memoryData', scope: parsed.scope, content }));
       } else if (parsed.type === 'getHistory') {
         ws.send(JSON.stringify({
@@ -135,8 +135,8 @@ function watchErrors(page) {
   return errors;
 }
 
-test.beforeEach(async ({ page }) => {
-  harness = await bootApp(page);
+test.beforeEach(async ({ page }, testInfo) => {
+  harness = await bootApp(page, {longMemory: testInfo.title.startsWith('mobile memory audit')});
 });
 /** @type {{sentTypes: string[]}|null} */
 let harness = null;
@@ -152,9 +152,10 @@ test('mobile memory audit: card geometry and long title', async ({ page }) => {
   expect(text.over).toBe(true); expect(text.ellipsis).toBe('ellipsis');
   const scroll = page.locator('.mh-memory-cards');
   for (const f of [0,0.5,1]) {
-    const r = await scroll.evaluate((el, fraction) => {el.scrollTop=(el.scrollHeight-el.clientHeight)*fraction; const b=el.getBoundingClientRect(), h=document.querySelector('.mobile-page[data-page="profile"] .mobile-back-btn').getBoundingClientRect(); const items=[...el.querySelectorAll('.mh-memory-card')].map(n=>n.getBoundingClientRect()).filter(r=>r.bottom>b.top && r.top<b.bottom).map(r=>({left:r.left,right:r.right})); return {left:b.left,right:b.right,top:b.top,headerBottom:h.bottom,items};},f);
+    const r = await scroll.evaluate((el, fraction) => {el.scrollTop=(el.scrollHeight-el.clientHeight)*fraction; const b=el.getBoundingClientRect(), h=document.querySelector('.mobile-page[data-page="profile"] .mobile-back-btn').getBoundingClientRect(); const items=[...el.querySelectorAll('.mh-memory-card')].map(n=>n.getBoundingClientRect()).filter(r=>r.bottom>b.top && r.top<b.bottom).map(r=>({left:r.left,right:r.right,top:r.top})); return {left:b.left,right:b.right,top:b.top,headerBottom:h.bottom,scroll:el.scrollTop,max:el.scrollHeight-el.clientHeight,items};},f);
     expect(r.left).toBeGreaterThanOrEqual(0); expect(r.right).toBeLessThanOrEqual(375); expect(r.top).toBeGreaterThanOrEqual(r.headerBottom-1);
-    expect(r.items.length).toBeGreaterThan(0); for(const item of r.items) {expect(item.left).toBeGreaterThanOrEqual(0); expect(item.right).toBeLessThanOrEqual(375);}
+    expect(r.max).toBeGreaterThan(0); expect(Math.abs(r.scroll-r.max*f)).toBeLessThan(2);
+    expect(r.items.length).toBeGreaterThan(0); for(const item of r.items) {expect(item.left).toBeGreaterThanOrEqual(0); expect(item.right).toBeLessThanOrEqual(375); if(item.top>=r.top) expect(item.top).toBeGreaterThanOrEqual(r.headerBottom-1);}
   }
   await page.locator('.mh-memory-edit').click();
   await expect(page.locator('#memory-modal-body')).toBeVisible();
