@@ -395,7 +395,7 @@ def case_w(battery, tmp):
                              'compile$(id)', 'compile`id`', 'compile>out',
                              'compile -- test', '"compile"', 'Compile', './compile',
                              'testOnly nebflow.*evil', 'testOnly nebflow.core.X\ntest',
-                             'scalafix', 'scalafixAll', 'scalafix --check -- foo',
+                             'Compile/scalafix', 'scalafixAll --check', 'scalafix --check -- foo',
                              'compile; shell'))]):
         head = ['--first-run', str(fake)] if label == 'W1' else [str(fake)]
         cmd, proc = run_wrapper([*head, *extra])
@@ -404,6 +404,9 @@ def case_w(battery, tmp):
 
 
 def case_n(battery, tmp):
+    battery.check('N-scalafix-apply',
+                  mod.normalize_tasks(['scalafix', 'scalafixAll']) == ['scalafix', 'scalafixAll'],
+                  'exact application tasks accepted without extra arguments')
     # Every newly allowed form, end-to-end with a fake sbt: guard green, and
     # the fake's argv proves the exact command tokens the wrapper passed.
     fake = make_fake(tmp / 'n', 'fake-sbt', 'sys.exit(0)')

@@ -61,7 +61,8 @@ PRECHECK_WINDOW = ('--last', '15s')
 
 FIRST_RUN_TASKS = ('compile', 'testOnly nebflow.core.LogbackConfigSpec')
 # Command whitelist (fail-closed). Single-token commands:
-SINGLE_TASKS = ('compile', 'Test/compile', 'scalafmtCheckAll', 'scalafmtAll', 'assembly')
+SINGLE_TASKS = ('compile', 'Test/compile', 'scalafmtCheckAll', 'scalafmtAll', 'assembly',
+                'scalafix', 'scalafixAll')
 # Always refused, even though sbt accepts them:
 REFUSED_TASKS = ('test', 'run', 'runMain', 'shell', 'console', 'set', 'eval', 'export')
 # testOnly takes 1+ arguments shaped nebflow.<ClassName>/nebflow.* — the
