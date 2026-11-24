@@ -253,6 +253,12 @@ export const CHECKS = [
   // 逐值同源 + 主会话冻结常数 + 源码消重（C 腿）+ 真状态机（busy 臂/点停帧）。
   { name: 'ask-button-unify', profiles: ['frontend'], timeoutMs: 300_000,
     argv: [process.execPath, 'tests/ask-button-unify.spec.mjs'] },
+  // Ask 回答正文相对路径图片走票据闸（ask-image-ticket 批 2026-11-24，作者报
+  // 「Ask 回答正文相对路径图片看不了」）：S1 Pop 文档卡重开旧票自愈（d6e1a349b
+  // 断言）/ S2 同目录·子目录·无文档上下文三形 / S3 迟到结果竞争闸（askState 重渲
+  // 与切文档两形，旧轮结果不回填、不对已弃图取字节）。双核（chromium+webkit）。
+  { name: 'ask-image-ticket', profiles: ['frontend'], timeoutMs: 300_000,
+    argv: [process.execPath, 'tests/ask-image-ticket.spec.mjs'] },
   nodeCheck('canvas-families', 'check-canvas-families', ['static']),
   // PDF note/ask 入口单源闸（文本层批 2026-11-19，作者逐字纠形「pdf note and ask
   // 不是在侧边栏加一个控件，是让 canvas 的 note 和 ask 能够支持 pdf 的阅读」）：

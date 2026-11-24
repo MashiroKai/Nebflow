@@ -2274,6 +2274,10 @@ export default {
   'canvas.imgFailUnsupported': '这个类型不供图片取字节（HTTP {status}）',
   'canvas.imgFailUnreachable': '读不到这张图（路径无效或无权限）',
   'canvas.imgFailUnknown': '读取失败（HTTP {status}）',
+  // ask-image-ticket 批（2026-11-24 · 作者报「Ask 回答正文相对路径图片看不了」）：
+  // 无文档上下文（选区档 Ask 没有所问文档）时相对引用的占位原因——无从解析基准，
+  // 落明确占位而非注定 404 的页面相对请求。
+  'canvas.imgFailNoDoc': '这条回答没有文档上下文，相对路径图片无法解析',
   'canvas.closeTab': '关闭标签页',
   'canvas.fav.add': '收藏文档',
   'canvas.fav.remove': '取消收藏',

@@ -2160,11 +2160,20 @@ async function openOptimisticFile({ id, title, absPath, pinned }) {
     allowExcluded: true,
     timeoutMs: OPTIMISTIC_FILE_TIMEOUT_MS,
     load: async ({ onProgress, signal }) => {
-      const [{ ticketUrl }, { fetchBlobWithProgress }] = await Promise.all([
+      const [{ ticketUrl, reMint }, { fetchBlobWithProgress }] = await Promise.all([
         import('./nfTicket.js'),
         import('./nfFileCache.js'),
       ]);
-      const res = await fetchBlobWithProgress(await ticketUrl(absPath), onProgress, { signal });
+      let res;
+      try {
+        res = await fetchBlobWithProgress(await ticketUrl(absPath), onProgress, { signal });
+      } catch (error) {
+        // A gateway restart discards its in-memory tickets while this tab may
+        // still consider one fresh. Retry only explicit ticket expiry/loss.
+        if (signal.aborted || error.status !== 403 || !['invalid-ticket', 'expired'].includes(error.nfReason)) throw error;
+        const freshUrl = await reMint(absPath);
+        res = await fetchBlobWithProgress(freshUrl, onProgress, { signal });
+      }
       return { blob: res.blob, version: res.version };
     },
   });
