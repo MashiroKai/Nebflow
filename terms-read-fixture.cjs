@@ -264,6 +264,32 @@ const assert = require('node:assert/strict');
     assert.equal(await sourcePage.evaluate(() => window.navReceived), true);
     await sourcePage.close();
     console.log('PASS: source delegates navigation and hides absolute path');
+    const missingSourcePage = await browser.newPage();
+    await missingSourcePage.route('http://fixture.test/**', async (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: '<a id="missing-source" href="#">missing-source</a>' });
+      if (url.pathname === '/termTip.js') return route.fulfill({ contentType: 'text/javascript', body: readFileSync('src/main/resources/web/js/termTip.js', 'utf8') });
+      if (url.pathname === '/flowHelpers.js') return route.fulfill({ contentType: 'text/javascript', body: 'export const authHeaders = () => ({})' });
+      if (url.pathname === '/i18n.js') return route.fulfill({ contentType: 'text/javascript', body: 'export const t = (key) => key' });
+      if (url.pathname === '/api/wiki/terms/stats') return route.fulfill({ json: { last_rebuild: 'one' } });
+      if (url.pathname === '/api/wiki/terms/lookup') return route.fulfill({ json: { available: true, results: [{ name: 'missing-source', definition: 'definition', doc: process.env.TERM_NEGATIVE_CONTROL === 'missing-source' ? { rel: 'unexpected.md' } : {} }] } });
+      throw new Error('Unexpected request: ' + url.pathname);
+    });
+    await missingSourcePage.goto('http://fixture.test/');
+    await missingSourcePage.evaluate(async () => {
+      const tip = await import('/termTip.js');
+      const a = document.querySelector('#missing-source');
+      tip.attachTermFace(a, null, { term: true });
+      tip.setTermTipNav(() => { window.missingSourceNavigated = true; });
+      a.dataset.wikiTarget = 'missing-source';
+      tip.termTapExpand(a, document.body);
+    });
+    await missingSourcePage.waitForFunction(() => document.querySelector('.nf-term-tip .ts').textContent === 'definition');
+    assert.equal(await missingSourcePage.locator('.nf-term-tip .td').textContent(), '', 'missing source has no source text');
+    assert.equal(await missingSourcePage.locator('.nf-term-tip .term-tip-source').isHidden(), true, 'unresolved source has no navigation action');
+    assert.equal(await missingSourcePage.evaluate(() => !!window.missingSourceNavigated), false, 'unresolved source never navigated');
+    await missingSourcePage.close();
+    console.log('PASS: unresolved source lookup shows no source or navigation action');
     await page.evaluate(() => {
       window.testTip.hideTermTip();
       const a = document.querySelector('#term');
