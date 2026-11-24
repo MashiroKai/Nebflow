@@ -13,7 +13,7 @@ test('model rules mobile mounting and scroll geometry', async ({page}) => {
     let p = decodeURIComponent(new URL(route.request().url()).pathname); if (p === '/') p = '/index.html';
     if (p === '/api/secrets') return route.fulfill({json:{secrets:Array.from({length:12},(_,i)=>({name:`sample-long-secret-metadata-name-${i}`,variable:`SAMPLE_${i}`,purpose:'fixture only',updatedAt:'2024-01-01'}))}});
     if (p === '/api/model-rules/mode') return route.fulfill({json:{mode:'rules'}});
-    if (p === '/api/model-rules') return route.fulfill({json:{mode:'rules',source:'long rule text '.repeat(30),diagram:{nodes:[]}}});
+    if (p === '/api/model-rules') return route.fulfill({json:{mode:'rules',source:Array.from({length:60},(_,i)=>`rule ${i} ${'long-content '.repeat(12)}`).join('\n'),diagram:{nodes:Array.from({length:30},(_,i)=>({rule:'fixture',kind:'match',label:`rule node ${i}`,srcLine:i+1})),edges:[]}}});
     if (p === '/api/sessions') return route.fulfill({json:{sessions:[{id:SID,name:'root',agentName:'Nebula'}],activeId:SID}});
     if (p.startsWith('/api/')) return route.fulfill({json:{}});
     const file = normalize(join(WEB,p)); if (!file.startsWith(WEB + '/')) return route.fulfill({status:403});
@@ -64,11 +64,21 @@ test('model rules mobile mounting and scroll geometry', async ({page}) => {
   const draftBox = await draft.boundingBox(); const headerBox = await header.boundingBox();
   expect(draftBox.x).toBeGreaterThanOrEqual(0); expect(draftBox.x+draftBox.width).toBeLessThanOrEqual(375);
   expect(draftBox.y).toBeGreaterThanOrEqual(headerBox.y+headerBox.height-1);
+  await expect(page.locator('.mr-node')).toHaveCount(30);
   const face=page.locator('.mobile-page[data-page="settings"] #settings-content');
+  await face.evaluate(el=>{el.style.scrollBehavior='auto'});
   for (const fraction of [0,0.5,1]) {
     await face.evaluate((el,f) => {el.scrollTop=(el.scrollHeight-el.clientHeight)*f},fraction);
-    const result=await face.evaluate(el => {const r=el.getBoundingClientRect(); return {left:r.left,right:r.right,scroll:el.scrollTop}});
-    expect(result.left).toBeGreaterThanOrEqual(-1); expect(result.right).toBeLessThanOrEqual(376);
+    const result=await face.evaluate(el => {const r=el.getBoundingClientRect(),h=document.querySelector('.mobile-page[data-page="settings"] .mobile-back-btn').getBoundingClientRect(); const items=[...el.querySelectorAll('.mr-node')].map(n=>n.getBoundingClientRect()).filter(b=>b.bottom>r.top && b.top<r.bottom).map(b=>({left:b.left,right:b.right,top:b.top,bottom:b.bottom})); return {left:r.left,right:r.right,scroll:el.scrollTop,max:el.scrollHeight-el.clientHeight,headerBottom:h.bottom,headerLeft:h.left,headerRight:h.right,headerTop:h.top,top:r.top,items}});
+    expect(result.left).toBeGreaterThanOrEqual(-1); expect(result.right).toBeLessThanOrEqual(376); expect(result.max).toBeGreaterThan(0); expect(Math.abs(result.scroll-result.max*fraction)).toBeLessThan(2);
+    for(const item of result.items) {expect(item.left).toBeGreaterThanOrEqual(0); expect(item.right).toBeLessThanOrEqual(375); }
+    const hit=await header.evaluate(el=>{const r=el.getBoundingClientRect(),hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return el===hit || el.contains(hit)}); expect(hit).toBe(true);
+    if(fraction===0.5 && process.env.MOBILE_AUDIT_EVIDENCE) {mkdirSync(process.env.MOBILE_AUDIT_EVIDENCE,{recursive:true}); await page.screenshot({path:join(process.env.MOBILE_AUDIT_EVIDENCE,'规则-中部.png'),animations:'disabled'});}
+  }
+  for(let i=0;i<30;i++) {
+    const node=page.locator('.mr-node').nth(i); await node.scrollIntoViewIfNeeded();
+    const geometry=await node.evaluate(el=>{const r=el.getBoundingClientRect(),h=document.querySelector('.mobile-page[data-page="settings"] .mobile-back-btn').getBoundingClientRect(),d=document.querySelector('#mobile-dock').getBoundingClientRect(); return {top:r.top,bottom:r.bottom,left:r.left,right:r.right,headerBottom:h.bottom,dockTop:d.top};});
+    expect(geometry.top).toBeGreaterThanOrEqual(geometry.headerBottom); expect(geometry.bottom).toBeLessThanOrEqual(geometry.dockTop);
   }
   if(process.env.MOBILE_AUDIT_EVIDENCE) { mkdirSync(process.env.MOBILE_AUDIT_EVIDENCE,{recursive:true}); await page.screenshot({path:join(process.env.MOBILE_AUDIT_EVIDENCE,'规则.png')}); }
 });
