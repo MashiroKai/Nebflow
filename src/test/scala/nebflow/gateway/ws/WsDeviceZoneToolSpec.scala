@@ -158,6 +158,14 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
         queuedZone <- captured.take.timeout(30.seconds)
         _ = assertEquals(queuedZone, Some("Europe/Paris"))
         _ <- done.take.timeout(30.seconds)
+        _ <- schedule.set(FreezeScheduleConfig(enabled = true, segments = List(FreezeSegment(format(start), format(end)))))
+        _ <- ref ! AgentCommand.UserInput("scheduled freeze without source")
+        _ <- frozen.take.timeout(30.seconds)
+        _ <- schedule.set(FreezeScheduleConfig(enabled = false))
+        _ <- ref ! AgentCommand.CheckFreezeGate
+        thawZone <- captured.take.timeout(30.seconds)
+        _ = assertEquals(thawZone, None)
+        _ <- done.take.timeout(30.seconds)
         _ <- store.flushPendingUiWrites
       yield ()
     }
