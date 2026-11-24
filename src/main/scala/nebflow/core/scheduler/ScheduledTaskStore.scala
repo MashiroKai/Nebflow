@@ -352,6 +352,34 @@ class ScheduledTaskStore(
       }
     }
 
+  /** Materialize all elapsed reminder instances; each replacement commits cursor and instance together. */
+  private[scheduler] def materializeDueOccurrences(now: Long): IO[Unit] =
+    def next(rule: TodoDue, scheduled: Long): Option[Long] = rule match
+      case _: TodoDue.Once => None
+      case weekly: TodoDue.Weekly =>
+        val zone = java.time.ZoneId.of(weekly.zoneId)
+        val date = java.time.Instant.ofEpochMilli(scheduled).atZone(zone).toLocalDate.plusWeeks(1)
+        val local = date.atTime(java.time.LocalTime.parse(weekly.localTime))
+        val rules = zone.getRules
+        val offsets = rules.getValidOffsets(local)
+        val instant = if offsets.isEmpty then rules.getTransition(local).getDateTimeAfter.atZone(zone).toInstant
+                      else local.toInstant(offsets.get(0))
+        Some(instant.toEpochMilli)
+    def advance(sessionId: String, task: ScheduledTask): IO[Unit] =
+      (task.due, task.nextDueAt) match
+        case (Some(rule), Some(at)) if at <= now =>
+          val following = next(rule, at)
+          val occurrence = TodoOccurrence.create(task.id, at, task.revision)
+          val updated = task.copy(occurrences = task.occurrences :+ occurrence, nextDueAt = following,
+            revision = Math.addExact(task.revision, 1L))
+          loadUnlocked(sessionId).flatMap(rows => saveUnlocked(sessionId, rows.map(t => if t.id == task.id then updated else t))) *>
+            advance(sessionId, updated)
+        case _ => IO.unit
+    withStoreLock {
+      readUnlocked(t => t.isTodo && t.enabled && !t.isCompleted && t.nextDueAt.exists(_ <= now), sort = false)
+        .flatMap(_.traverse_(task => advance(task.sessionId, task)))
+    }
+
   def addTask(task: ScheduledTask): IO[Unit] =
     withStoreLock(addUnlocked(task))
 

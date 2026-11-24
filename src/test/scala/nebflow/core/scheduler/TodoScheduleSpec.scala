@@ -218,6 +218,22 @@ class TodoScheduleSpec extends CatsEffectSuite:
 
   private def events: List[AgentCommand.ExternalEvent] = routed.map(_._2).toList
 
+  test("due occurrence is recorded once across repeated ticks and service restart"):
+    val scheduled = System.currentTimeMillis() - 1000L
+    for
+      _ <- reset()
+      task <- IO(ScheduledTask.create("s1", "due", future, kind = Some(ScheduledTask.KindTodo)).copy(
+        due = Some(TodoDue.Once(scheduled, "Europe/London", "2025-01-01T00:00", "Z")),
+        nextDueAt = Some(scheduled)))
+      _ <- taskStore.addTask(task)
+      _ <- mkService().fireDueTasks
+      _ <- mkService().fireDueTasks
+      stored <- taskStore.loadTasks("s1")
+    yield
+      assertEquals(stored.head.occurrences.map(_.scheduledAt), List(scheduled))
+      assertEquals(stored.head.nextDueAt, None)
+      assertEquals(events.size, 0)
+
   test("unfinished due todo re-surfaces: ONE digest ExternalEvent with ids + done guidance, then bumped to next 09:00"):
     for
       _ <- reset()

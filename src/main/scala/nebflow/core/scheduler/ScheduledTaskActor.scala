@@ -165,6 +165,7 @@ class ScheduledTaskService(
   /** One poll cycle — exposed private[scheduler] for spec. */
   private[scheduler] def fireDueTasks: IO[Unit] =
     for
+      _ <- taskStore.materializeDueOccurrences(System.currentTimeMillis())
       due <- taskStore.getAllDueTasks
       // ①条件预评：条件任务先评估——Met/无条件 ⇒ 进同窗合并面；Unmet ⇒ 静默顺延
       // （评估器状态在预评时落库，defer 路径不再重复评估）。
