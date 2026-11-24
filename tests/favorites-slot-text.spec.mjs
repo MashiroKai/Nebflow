@@ -54,7 +54,7 @@ async function measure(page, root) {
 function assertText(result) { for (const e of result.text) assert(e.sw <= e.cw+1 && e.sh <= e.ch+1 && e.overflow !== 'ellipsis', `clipped ${JSON.stringify(e)}`); }
 function assertNoOverlap(result) { assert.deepEqual(result.pairs, [], 'independent visible siblings overlap'); }
 try {
-  for (const [width,height] of [[1280,800],[1440,900],[375,844],[390,844]]) {
+  for (const [width,height] of (process.env.EMPTY_ONLY ? [] : [[1280,800],[1440,900],[375,844],[390,844]])) {
     const s=await createSession(browser,{width,height,colorScheme:'light',explorerEntries:samples.map((name,i)=>({name:`${i}-${name.replaceAll('/','_')}.md`,type:'file',size:1}))});
     try {
       await s.boot(boot);
@@ -129,5 +129,16 @@ try {
         console.log(`EXCEPTION file labels single-line ellipsis with full title/aria ${width}`);
       }
     } finally {await s.close();}
+  }
+  for (const width of [1280,1440]) {
+    const s=await createSession(browser,{width,height:900,colorScheme:'light',explorerEntries:[]});
+    try {
+      await s.boot(boot); await s.page.evaluate(async()=>{const m=await import('/js/activityBar.js');m.enableFriendPanels();m.showSidePanel('files');});
+      await s.page.locator('#explorer-tree .explorer-empty').waitFor({state:'attached'});
+      console.log('EMPTY-DIAG',JSON.stringify(await s.page.evaluate(()=>({sent:window.__wsSent.filter(f=>f.type==='listDir'),chain:(()=>{let a=document.querySelector('#explorer-tree .explorer-empty'),out=[];while(a){let s=getComputedStyle(a),r=a.getBoundingClientRect();out.push({tag:a.tagName,id:a.id,cls:String(a.className),display:s.display,visibility:s.visibility,width:r.width,height:r.height});a=a.parentElement;}return out;})()}))));
+      await s.page.locator('#explorer-tree .explorer-empty').waitFor({state:'visible',timeout:1500});
+      assertNoOverlap(await measure(s.page,'#panel-sessions'));
+      console.log(`PASS empty explorer directory ${width}`);
+    } finally { await s.close(); }
   }
 } finally {await browser.close();}
