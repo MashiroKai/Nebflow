@@ -1198,31 +1198,37 @@ final class ExecutionCommitStore private (
     val path = session.resolve(s"terminal-$safeRun.json")
     checkPath(root, path)
     createDirectories(root, session)
-    if Files.exists(path, LinkOption.NOFOLLOW_LINKS) then
-      val existing = parse(new String(Files.readAllBytes(path), UTF_8)).fold(throw _, identity)
-      if existing != envelope then return ExecutionCommitResult.Rejected("terminal-envelope-conflict")
-      fault("before-terminal-confirm")
-      confirm(path)
+    val conflict =
+      if Files.exists(path, LinkOption.NOFOLLOW_LINKS) then
+        val existing = parse(new String(Files.readAllBytes(path), UTF_8)).fold(throw _, identity)
+        if existing != envelope then true
+        else
+          fault("before-terminal-confirm")
+          confirm(path)
+          false
+      else
+        fault("before-terminal-install")
+        install(path, envelope.noSpaces.getBytes(UTF_8), fault)
+        fault("before-terminal-confirm")
+        confirm(path)
+        false
+    if conflict then ExecutionCommitResult.Rejected("terminal-envelope-conflict")
     else
-      fault("before-terminal-install")
-      install(path, envelope.noSpaces.getBytes(UTF_8), fault)
-      fault("before-terminal-confirm")
-      confirm(path)
-    fault("after-terminal-confirm")
-    val committed = prepared.copy(
-      commitId = commitId,
-      requestId = requestId,
-      expected = ref,
-      event = ExecutionEvent.TerminalCommitted(payloadHash, path.toString)
-    )
-    val result = transitionSync(
-      committed,
-      uncertainTransitions.get((prepared.sessionId, prepared.executionId)).contains(committed)
-    )
-    result match
-      case _: ExecutionCommitResult.Committed => fault("before-terminal-acknowledgement")
-      case _ => ()
-    result
+      fault("after-terminal-confirm")
+      val committed = prepared.copy(
+        commitId = commitId,
+        requestId = requestId,
+        expected = ref,
+        event = ExecutionEvent.TerminalCommitted(payloadHash, path.toString)
+      )
+      val result = transitionSync(
+        committed,
+        uncertainTransitions.get((prepared.sessionId, prepared.executionId)).contains(committed)
+      )
+      result match
+        case _: ExecutionCommitResult.Committed => fault("before-terminal-acknowledgement")
+        case _ => ()
+      result
 
   end installPreparedTerminal
 
