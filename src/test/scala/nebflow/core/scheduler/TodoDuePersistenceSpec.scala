@@ -260,6 +260,21 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       rows <- store.loadTasks("s1")
     yield assertEquals(rows.head.dueRuleHistory.map(x => (x.version, x.rule)), List((0L, first)))
 
+  test("update rule cannot rewrite a generated occurrence"):
+    val dir = os.temp.dir(prefix = "due-update-occurrence-")
+    val store = new ScheduledTaskStore(dir)
+    val first = TodoDue.Weekly(1, "09:00", "Europe/London", "2024-01-01T09:00")
+    val changed = TodoDue.Weekly(2, "09:00", "Europe/London", "2024-01-02T09:00")
+    val occurrence = TodoOccurrence.create("old", 1000L, 0L).copy(nextReminderAt = Some(1200L))
+    val initial = legacy.as[ScheduledTask].toOption.get.copy(due = Some(first), occurrences = List(occurrence))
+    for
+      _ <- store.addTask(initial)
+      result <- store.updateTask("s1", initial.id)(_.copy(due = Some(changed), occurrences = Nil)).attempt
+      rows <- store.loadTasks("s1")
+    yield
+      assert(result.isLeft)
+      assertEquals(rows.head.occurrences, List(occurrence))
+
   test("direct save rejects removing a generated occurrence during rule change"):
     val dir = os.temp.dir(prefix = "due-save-occurrence-")
     val store = new ScheduledTaskStore(dir)

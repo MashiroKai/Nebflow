@@ -210,6 +210,8 @@ class ScheduledTaskStore(
         case None => IO.pure(None)
         case Some(current) =>
           val requested = f(current)
+          if requested.due != current.due && requested.occurrences != current.occurrences then
+            throw new IllegalStateException("rule change cannot rewrite occurrences")
           val changed = requested.copy(
             id = current.id,
             sessionId = current.sessionId,
