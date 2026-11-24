@@ -204,6 +204,12 @@ final class AskBashGuardSpec extends CatsEffectSuite:
     assert(AskBashGuard.validate(fat).isLeft)
   }
 
+  test("parser preserves first pipeline and trailing escape errors") {
+    assertEquals(AskBashGuard.validate("grep x\\"), Left("trailing backslash"))
+    assertEquals(AskBashGuard.validate("| cat x\\"), Left("empty pipeline segment"))
+    assertEquals(AskBashGuard.validate("cat x | | grep y"), Left("empty pipeline segment"))
+  }
+
   // ── 执行器：argv 直执行（cwd / 管道 / 环境钉 / 失败面） ───────────────────
   private def tempDir(name: String): os.Path =
     os.Path(os.temp.dir(prefix = s"ask-guard-$name-").toNIO.toRealPath())

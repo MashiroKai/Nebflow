@@ -140,13 +140,14 @@ object DaemonSpawn:
     pollMs: Long
   ): Either[ReadyFailure, Unit] =
     val deadline = System.currentTimeMillis() + deadlineMs
-    while true do
-      if !childAlive() then return Left(ChildDied)
-      if probe() then return Right(())
-      if System.currentTimeMillis() >= deadline then return Left(TimedOut)
-      if pollMs > 0 then Thread.sleep(pollMs)
+    var result: Option[Either[ReadyFailure, Unit]] = None
+    while result.isEmpty do
+      if !childAlive() then result = Some(Left(ChildDied))
+      else if probe() then result = Some(Right(()))
+      else if System.currentTimeMillis() >= deadline then result = Some(Left(TimedOut))
+      else if pollMs > 0 then Thread.sleep(pollMs)
     end while
-    Left(TimedOut) // unreachable
+    result.get
 
   private def readyTimeoutMs(): Long =
     val sec =

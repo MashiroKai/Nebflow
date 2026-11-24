@@ -209,45 +209,49 @@ object WriteFace:
    *  中间坏帧不在此面（追加不消费历史；全量坏帧由读面报 Corrupt → 隔离）。
    */
   def prepareAppend(target: Path, validateLastLine: String => Either[String, Unit]): TailState =
-    if !Files.exists(target) then return TailState.Clean
-    val size = Files.size(target)
-    if size == 0L then return TailState.Clean
-    val raf = new RandomAccessFile(target.toFile, "rw")
-    try
-      val lastNl = lastNewlineBefore(raf, size) // -1 = 整文件无换行（全是残段）
-      val tornBytes = size - (lastNl + 1)
-      if tornBytes > 0 then
-        raf.setLength(lastNl + 1)
-        log.warn("torn tail repaired at {}: {} unacked byte(s) truncated (crash-window artifact)", target, tornBytes)
-      if lastNl <= 0 then
-        // 无完整帧（整文件皆残段）或唯一帧为空行：无尾帧可校。
-        return if tornBytes > 0 then TailState.RepairedTornTail(tornBytes) else TailState.Clean
-      val frameStart = lastNewlineBefore(raf, lastNl) + 1
-      val frame = readRange(raf, frameStart, lastNl)
-      validateLastLine(frame) match
-        case Right(()) =>
-          if tornBytes > 0 then TailState.RepairedTornTail(tornBytes) else TailState.Clean
-        case Left(why) =>
-          TailState.BadTail(why)
-    finally raf.close()
-    end try
+    if !Files.exists(target) then TailState.Clean
+    else
+      val size = Files.size(target)
+      if size == 0L then TailState.Clean
+      else
+        val raf = new RandomAccessFile(target.toFile, "rw")
+        try
+          val lastNl = lastNewlineBefore(raf, size) // -1 = 整文件无换行（全是残段）
+          val tornBytes = size - (lastNl + 1)
+          if tornBytes > 0 then
+            raf.setLength(lastNl + 1)
+            log.warn("torn tail repaired at {}: {} unacked byte(s) truncated (crash-window artifact)", target, tornBytes)
+          if lastNl <= 0 then
+            // 无完整帧（整文件皆残段）或唯一帧为空行：无尾帧可校。
+            if tornBytes > 0 then TailState.RepairedTornTail(tornBytes) else TailState.Clean
+          else
+            val frameStart = lastNewlineBefore(raf, lastNl) + 1
+            val frame = readRange(raf, frameStart, lastNl)
+            validateLastLine(frame) match
+              case Right(()) =>
+                if tornBytes > 0 then TailState.RepairedTornTail(tornBytes) else TailState.Clean
+              case Left(why) =>
+                TailState.BadTail(why)
+        finally raf.close()
+        end try
   end prepareAppend
 
   /** 反向扫描 `[0, limit)` 内最后一个 `\n` 的位置；无则 -1（分块回扫，避免整读大分片）。 */
   private def lastNewlineBefore(raf: RandomAccessFile, limit: Long): Long =
     val chunk = new Array[Byte](8192)
     var remaining = limit
-    while remaining > 0 do
+    var found = -1L
+    while remaining > 0 && found < 0 do
       val len = math.min(8192L, remaining).toInt
       val at = remaining - len
       raf.seek(at)
       raf.readFully(chunk, 0, len)
       var i = len - 1
-      while i >= 0 do
-        if chunk(i) == '\n'.toByte then return at + i
-        i -= 1
+      while i >= 0 && found < 0 do
+        if chunk(i) == '\n'.toByte then found = at + i
+        else i -= 1
       remaining = at
-    -1L
+    found
 
   private def readRange(raf: RandomAccessFile, start: Long, endExclusive: Long): String =
     val len = (endExclusive - start).toInt

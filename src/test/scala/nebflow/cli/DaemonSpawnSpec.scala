@@ -205,6 +205,17 @@ class DaemonSpawnSpec extends FunSuite:
     )
   }
 
+  test("awaitReadyCore: dead child prevents probe even when probe would succeed") {
+    var probed = false
+    val result = DaemonSpawn.awaitReadyCore(() => { probed = true; true }, () => false, deadlineMs = 0, pollMs = 0)
+    assertEquals(result, Left(DaemonSpawn.ChildDied: DaemonSpawn.ReadyFailure))
+    assert(!probed)
+  }
+
+  test("awaitReadyCore: ready probe wins over an expired deadline") {
+    assertEquals(DaemonSpawn.awaitReadyCore(() => true, () => true, deadlineMs = 0, pollMs = 0), Right(()))
+  }
+
   test("awaitReadyCore: never-ready live child hits the deadline as TimedOut") {
     assertEquals(
       DaemonSpawn.awaitReadyCore(() => false, () => true, deadlineMs = 0, pollMs = 0),

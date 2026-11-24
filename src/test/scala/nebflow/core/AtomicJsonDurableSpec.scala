@@ -102,4 +102,11 @@ class AtomicJsonDurableSpec extends CatsEffectSuite:
       _ <- IO(os.write.append(j, """{"base":0,"state":{"v":2,"proj""")) // torn: no newline
       read <- IO(AtomicJson.readAll(f))
     yield assertEquals(read.records.map(_.note), List(rec(1)), "残尾（半条）被丢弃，只留成帧记录")
+  test("an unreadable journal returns no records"):
+    for
+      dir <- IO(os.temp.dir())
+      f = dir / "state.json"
+      _ <- IO(os.makeDir(AtomicJson.journalPathOf(f)))
+      bytes <- IO(AtomicJson.noteBytes(f))
+    yield assertEquals(bytes, 0L)
 end AtomicJsonDurableSpec
