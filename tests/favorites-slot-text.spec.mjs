@@ -15,6 +15,23 @@ async function measure(page, root) {
     const root = document.querySelector(sel);
     const text = [...root.querySelectorAll('.cfp-row-title,.cfp-row-src,.cfp-row-date,.cfp-empty,.cfp-search-input')].map(el => ({name: el.className, sw: el.scrollWidth, cw: el.clientWidth, sh: el.scrollHeight, ch: el.clientHeight, overflow: getComputedStyle(el).textOverflow}));
     const pairs = [];
+    // Compare visible, non-ancestor leaf elements clipped by each overflow ancestor.
+    // Ancestor/descendant pairs are intentional containment, not overlap.
+    const leaves=[...root.querySelectorAll('*')].filter(el => !el.children.length && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none');
+    function visibleRect(el) {
+      const r=el.getBoundingClientRect(); let left=r.left, top=r.top, right=r.right, bottom=r.bottom;
+      for(let p=el.parentElement;p;p=p.parentElement) {
+        const s=getComputedStyle(p), q=p.getBoundingClientRect();
+        if(/(hidden|clip|auto|scroll)/.test(s.overflowX)) {left=Math.max(left,q.left);right=Math.min(right,q.right);}
+        if(/(hidden|clip|auto|scroll)/.test(s.overflowY)) {top=Math.max(top,q.top);bottom=Math.min(bottom,q.bottom);}
+      }
+      return {left:Math.max(0,left),top:Math.max(0,top),right:Math.min(innerWidth,right),bottom:Math.min(innerHeight,bottom)};
+    }
+    const boxes=leaves.map(el=>({el,r:visibleRect(el)})).filter(({r})=>r.right>r.left && r.bottom>r.top);
+    for(let i=0;i<boxes.length;i++) for(let j=i+1;j<boxes.length;j++) {
+      const a=boxes[i],b=boxes[j];
+      if(Math.min(a.r.right,b.r.right)-Math.max(a.r.left,b.r.left)>1 && Math.min(a.r.bottom,b.r.bottom)-Math.max(a.r.top,b.r.top)>1) pairs.push([a.el.className,b.el.className]);
+    }
     for (const row of root.querySelectorAll('.cfp-row')) {
       const els = [...row.querySelectorAll('.cfp-main,.cfp-thumb,.cfp-row-title,.cfp-row-meta,.cfp-row-src,.cfp-row-date')];
       for (let i=0;i<els.length;i++) for (let j=i+1;j<els.length;j++) {
@@ -72,7 +89,8 @@ try {
       const inputState=await search.evaluate(el=>({value:el.value, start:el.selectionStart, end:el.selectionEnd, scrollLeft:el.scrollLeft, panelScroll:el.closest('.cfp-page').scrollWidth, panelWidth:el.closest('.cfp-page').clientWidth, rect:el.getBoundingClientRect().toJSON()}));
       assert.equal(inputState.value,query); assert.equal(inputState.start,query.length); assert.equal(inputState.end,query.length); assert(inputState.scrollLeft>0);
       assert(inputState.panelScroll<=inputState.panelWidth+1);
-      assert(await search.evaluate(el=>{const r=el.getBoundingClientRect();const hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return hit===el||el.contains(hit);}), 'search not obscured');
+      assert(await search.evaluate(el=>{const r=el.getBoundingClientRect();return [0.05,0.5,0.95].every(x=>[0.05,0.5,0.95].every(y=>{const hit=document.elementFromPoint(r.left+r.width*x,r.top+r.height*y);return hit===el||el.contains(hit);}));}), 'search not obscured at all nine points');
+      const filtered=await measure(s.page,root); assertNoOverlap(filtered);
       if(width===1280||width===375) await s.page.screenshot({path:join(shots,`search-long-${width}.png`),animations:'disabled'});
       await search.fill('');
       console.log(`PASS favorites text and siblings ${width}`);
