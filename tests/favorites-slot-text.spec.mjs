@@ -93,12 +93,15 @@ try {
       await s.page.evaluate(async (texts) => {
         const f=await import('/js/canvasFavorites.js');
         for(let i=0;i<texts.length;i++) f.toggleFavoritePath({path:'/workspace/'+String(i)+'/'+texts[(i+2)%texts.length]+'.md',title:texts[i]});
+        f.toggleFavoritePath({path:'/workspace/media.png',title:'Media'});
+        f.toggleFavoritePath({path:'/workspace/file.pdf',title:'File'});
         if (innerWidth < 500) (await import('/js/mobile/navController.js')).dockTo('workbench');
       },samples);
       if(width<500) await s.page.locator('.mobile-page[data-page="workbench"].live .mf-hub-row[data-hub-page="favorites"]').click(); else await s.page.click('#favorites-btn');
       const root=width<500?'#canvas-fav-page':'#panel-favorites';
       await s.page.waitForSelector(`${root} .cfp-row`); await settle(s.page,100);
       const tabs=s.page.locator(`${root} .cfp-tab`);
+      assert.deepEqual(await tabs.evaluateAll(els=>els.map(el=>el.dataset.tab)),['note','media','file']);
       for(let index=0;index<await tabs.count();index++) {
       const tab=tabs.nth(index);
       const originalTab=await tab.textContent();
