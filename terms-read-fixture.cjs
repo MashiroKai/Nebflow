@@ -166,5 +166,30 @@ const assert = require('node:assert/strict');
       await page.waitForFunction((name) => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'fallback ' + name), name);
     }
     console.log('PASS: unavailable, ambiguity, malformed JSON and 404 fall back to resolved payload');
+    await page.evaluate(() => {
+      window.testTip.hideTermTip();
+      const a = document.querySelector('#term');
+      a.dataset.wikiTarget = 'cache-test';
+      delete a.dataset.wikiResolved;
+      a.dataset.wikiProject = 'project-a';
+      window.cacheLookups = 0;
+      window.fetch = async (url) => {
+        if (String(url).includes('/lookup?')) {
+          window.cacheLookups++;
+          return new Response(JSON.stringify({ available: true, results: [{ name: 'cache-test', definition: 'cache ' + window.cacheLookups, doc: {} }] }));
+        }
+        return new Response('{}', { status: 404 });
+      };
+      window.testTip.termTapExpand(a, null);
+    });
+    await page.waitForFunction(() => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'cache 1'));
+    await page.evaluate(() => { window.testTip.hideTermTip(); window.testTip.termTapExpand(document.querySelector('#term'), null); });
+    await page.waitForFunction(() => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'cache 1'));
+    assert.equal(await page.evaluate(() => window.cacheLookups), 1);
+    await page.evaluate(() => { window.testTip.hideTermTip(); document.querySelector('#term').dataset.wikiProject = 'project-b'; window.testTip.termTapExpand(document.querySelector('#term'), null); });
+    await page.waitForFunction(() => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'cache 2'));
+    await page.evaluate(() => { window.testTip.hideTermTip(); window.advanceClock(); window.testTip.termTapExpand(document.querySelector('#term'), null); });
+    await page.waitForFunction(() => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'cache 3'));
+    console.log('PASS: positive cache reuse, project isolation and five-minute expiry');
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
