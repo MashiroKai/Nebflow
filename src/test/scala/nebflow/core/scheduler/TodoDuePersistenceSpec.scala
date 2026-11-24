@@ -415,6 +415,20 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       assert(result.isLeft)
       assertEquals(exists, false)
 
+  test("direct save refuses propagated rule change that drops existing occurrences"):
+    val dir = os.temp.dir(prefix = "due-save-propagated-occurrence-")
+    val store = new ScheduledTaskStore(dir)
+    val first = TodoDue.Weekly(1, "09:00", "Europe/London", "2024-01-01T09:00")
+    val changed = TodoDue.Weekly(2, "09:00", "Europe/London", "2024-01-02T09:00")
+    val occurrence = TodoOccurrence.create("old", 1000L, 0L)
+    val original = legacy.as[ScheduledTask].toOption.get.copy(due = Some(first), occurrences = List(occurrence))
+    val propagated = original.copy(sessionId = "s2", revision = 1L, due = Some(changed), dueRuleVersion = 1L,
+      dueRuleHistory = List(TodoRuleSnapshot(0L, first)), occurrences = Nil)
+    for
+      _ <- store.addTask(original)
+      result <- store.saveTasks("s2", List(propagated)).attempt
+    yield assert(result.isLeft)
+
   test("direct save advances revision and rejects a second stale save"):
     val dir = os.temp.dir(prefix = "due-save-generation-")
     val store = new ScheduledTaskStore(dir)

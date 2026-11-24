@@ -348,6 +348,7 @@ class ScheduledTaskStore(
             t.revision > c.revision &&
               (t.dueRuleVersion < c.dueRuleVersion ||
                 c.dueRuleHistory.exists(snapshot => !t.dueRuleHistory.contains(snapshot)) ||
+                (t.due != c.due && c.occurrences.exists(o => !t.occurrences.contains(o))) ||
                 (t.dueRuleVersion == c.dueRuleVersion && t.due != c.due) ||
                 (t.dueRuleVersion > c.dueRuleVersion &&
                   c.due.exists(rule => !t.dueRuleHistory.contains(TodoRuleSnapshot(c.dueRuleVersion, rule)))))
