@@ -230,14 +230,19 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       competing <- cats.effect.Ref.of[IO, Boolean](false)
       waiter <- store.withStoreLock(ran.set(true), waiting.complete(()).void *> gate.get).start
       _ <- waiting.get.timeout(scala.concurrent.duration.DurationInt(5).seconds)
-      rival <- new ScheduledTaskStore(dir).withStoreLock(competing.set(true)).start
-      _ <- rival.cancel
-      rivalRan <- competing.get
-      _ <- IO(assertEquals(rivalRan, false))
+      mutexAttempt <- cats.effect.Deferred[IO, Unit]
+      mutexAcquired <- cats.effect.Deferred[IO, Unit]
+      rival <- new ScheduledTaskStore(dir).withStoreLock(competing.set(true), IO.unit,
+        mutexAttempt.complete(()).void, mutexAcquired.complete(()).void).start
+      _ <- mutexAttempt.get.timeout(scala.concurrent.duration.DurationInt(5).seconds)
+      acquiredBefore <- mutexAcquired.tryGet
+      _ <- IO(assertEquals(acquiredBefore, None))
       _ <- waiter.cancel.timeout(scala.concurrent.duration.DurationInt(5).seconds)
+      _ <- mutexAcquired.get.timeout(scala.concurrent.duration.DurationInt(5).seconds)
       value <- ran.get
       _ <- IO(assertEquals(value, false))
       _ <- IO.blocking { process.getOutputStream.write(1); process.getOutputStream.flush(); process.waitFor() }
+      _ <- rival.joinWithNever.timeout(scala.concurrent.duration.DurationInt(5).seconds)
       uncontended <- cats.effect.Ref.of[IO, Boolean](false)
       _ <- new ScheduledTaskStore(dir).withStoreLock(IO.unit, uncontended.set(true)).timeout(scala.concurrent.duration.DurationInt(5).seconds)
       observed <- uncontended.get

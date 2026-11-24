@@ -46,13 +46,14 @@ class ScheduledTaskStore(
    * 全库读写互斥：任何文件读/改/写都必须持有（见类注）。CE 3.5 的 Mutex 无
    * unsafe 直构 —— lazy + global runtime 物化一次（先例：DeviceProfile.scala）。
    */
-  private[scheduler] def withStoreLock[A](action: IO[A], onOsWait: IO[Unit] = IO.unit): IO[A] =
+  private[scheduler] def withStoreLock[A](action: IO[A], onOsWait: IO[Unit] = IO.unit, onMutexWait: IO[Unit] = IO.unit, onMutexAcquired: IO[Unit] = IO.unit): IO[A] =
     for
       canonical <- IO.blocking {
         java.nio.file.Files.createDirectories(baseDir.toNIO)
         baseDir.toNIO.toRealPath()
       }
-      result <- ScheduledTaskStore.mutexFor(canonical).lock.surround {
+      result <- (onMutexWait *> ScheduledTaskStore.mutexFor(canonical).lock.surround {
+        onMutexAcquired *> {
         val fileLock = Resource.make {
           IO.blocking(java.nio.channels.FileChannel.open(
             canonical.resolve(".scheduled-tasks.lock"),
@@ -70,7 +71,8 @@ class ScheduledTaskStore(
           )
         }
         fileLock.use(_ => action)
-      }
+        }
+      })
     yield result
 
   private def sessionFile(sessionId: String): os.Path =

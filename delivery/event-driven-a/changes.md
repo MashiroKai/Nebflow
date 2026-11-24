@@ -8,4 +8,4 @@ Legacy triggerAt is a separate surfacing clock, not a due time. New schedules re
 
 # Impact
 
-Legacy records remain without a due setting; new one-shot and weekly rules are validated before storage. Occurrence creation and cursor advancement share an atomic session-file replacement, with duplicate keys ignored. The store operation is not wired to a scheduler or write port; cross-process concurrency and notification execution are not established by this change.
+Legacy records remain without a due setting; new one-shot and weekly rules are validated before storage. Occurrence creation and cursor advancement share an atomic session-file replacement, with duplicate keys ignored. Store operations use a directory-scoped JVM mutex and an OS file lock. OS lock acquisition uses a cancellable 25 ms retry loop without a built-in limit; the caller controls how long to wait through cancellation or a timeout. The store operation is not wired to a scheduler or write port; notification execution is not established by this change.
