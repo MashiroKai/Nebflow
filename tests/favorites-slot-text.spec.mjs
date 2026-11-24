@@ -133,6 +133,18 @@ try {
       assert(inputState.panelScroll<=inputState.panelWidth+1);
       assert(await search.evaluate(el=>{const r=el.getBoundingClientRect();return [0.05,0.5,0.95].every(x=>[0.05,0.5,0.95].every(y=>{const hit=document.elementFromPoint(r.left+r.width*x,r.top+r.height*y);return hit===el||el.contains(hit);}));}), 'search not obscured at all nine points');
       const filtered=await measure(s.page,root); assertNoOverlap(filtered); assertText(filtered);
+      // Exercise long localized no-results messages, restoring the application text afterwards.
+      const empty=s.page.locator(`${root} .cfp-empty`);
+      const originalEmpty=await empty.textContent();
+      for(const sample of samples.slice(0,3)) {
+        await empty.evaluate((el,text)=>{el.textContent=text;},sample);
+        assertText(await measure(s.page,root));
+        assertNoOverlap(await measure(s.page,root));
+      }
+      await empty.evaluate(el=>{el.style.whiteSpace='nowrap';el.style.overflowWrap='normal';});
+      const badEmpty=await measure(s.page,root);
+      assert.throws(()=>assertText(badEmpty),/clipped/);
+      await empty.evaluate((el,text)=>{el.removeAttribute('style');el.textContent=text;},originalEmpty);
       if(width===1280 || width===375 || width===390) await negativeOverlap(s.page,root,`${root} .cfp-empty`);
       if(width===1280||width===375) await s.page.screenshot({path:join(shots,`search-long-${width}.png`),animations:'disabled'});
       await search.fill('');
