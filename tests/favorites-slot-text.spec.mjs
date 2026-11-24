@@ -117,6 +117,21 @@ try {
       await tab.evaluate((el,text)=>{el.removeAttribute('style');el.textContent=text;},originalTab);
       console.log(`PASS category label index=${index} width=${width}`);
       }
+      if (width<500) {
+        const back=s.page.locator(`${root} .cfp-back`);
+        const original=await back.textContent();
+        for (const sample of samples.slice(0,3)) {
+          await back.evaluate((el,text)=>{el.textContent=text;},sample);
+          const size=await back.evaluate(el=>({sw:el.scrollWidth,cw:el.clientWidth}));
+          assert(size.sw<=size.cw,`back button label overflow ${JSON.stringify(size)}`);
+          assertNoOverlap(await measure(s.page,root));
+        }
+        await back.evaluate(el=>{el.style.whiteSpace='nowrap';el.style.overflowWrap='normal';});
+        const broken=await back.evaluate(el=>({sw:el.scrollWidth,cw:el.clientWidth}));
+        assert.throws(()=>assert(broken.sw<=broken.cw,'back button label overflow'),/back button label overflow/);
+        await back.evaluate((el,text)=>{el.removeAttribute('style');el.textContent=text;},original);
+        console.log(`PASS back button long label and negative control width=${width}`);
+      }
       const pageTitle=s.page.locator(`${root} .cfp-title`);
       const originalTitle=await pageTitle.textContent();
       for(const sample of samples.slice(0,3)) {

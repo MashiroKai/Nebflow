@@ -127,6 +127,7 @@ body.mobile-layer .mf-strip-chip .mf-cv-star svg { width: 18px; height: 18px; }
   position: relative;
   flex: none;
 }
+.cfp-back { flex: none; height: auto; min-height: var(--ds-page-back-size); overflow-wrap: anywhere; }
 .cfp-title { flex: 1; min-width: 0; margin: 0; text-align: center; overflow-wrap: anywhere; font-size: 17px; font-weight: 600; }
 .cfp-search { padding: var(--ds-space-2) var(--ds-space-6); flex: none; }
 .cfp-search-input {
