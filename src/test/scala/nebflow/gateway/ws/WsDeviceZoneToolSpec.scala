@@ -7,7 +7,7 @@ import fs2.Stream
 import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.actor.{ActorSystem, AgentDef, AgentKind, AgentRecord, AgentStatus}
+import nebflow.actor.{ActorSystem, AgentCommand, AgentDef, AgentKind, AgentRecord, AgentStatus}
 import nebflow.agent.{AgentActor, AgentLibrary, SharedResources, SubAgentTaskStore}
 import nebflow.core.{FileChangeTracker, RateLimiter, SessionStore}
 import nebflow.core.compact.HistoryArchiver
@@ -109,6 +109,22 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
         _ <- routes.handleMessagePublic(typelessNoZone.noSpaces, _ => IO.unit)
         typelessNextZone <- captured.take.timeout(30.seconds)
         _ = assertEquals(typelessNextZone, None)
+        _ <- done.take.timeout(30.seconds)
+        _ <- routes.handleMessagePublic(frame.noSpaces, _ => IO.unit)
+        sourceBeforeMail <- captured.take.timeout(30.seconds)
+        _ = assertEquals(sourceBeforeMail, Some("Asia/Tokyo"))
+        _ <- done.take.timeout(30.seconds)
+        _ <- ref ! AgentCommand.UserInput("mail wake", source = Some("mail"))
+        mailZone <- captured.take.timeout(30.seconds)
+        _ = assertEquals(mailZone, None)
+        _ <- done.take.timeout(30.seconds)
+        _ <- routes.handleMessagePublic(frame.noSpaces, _ => IO.unit)
+        sourceBeforeEvent <- captured.take.timeout(30.seconds)
+        _ = assertEquals(sourceBeforeEvent, Some("Asia/Tokyo"))
+        _ <- done.take.timeout(30.seconds)
+        _ <- ref ! AgentCommand.ExternalEvent("schedule", "trigger", "scheduled event")
+        eventZone <- captured.take.timeout(30.seconds)
+        _ = assertEquals(eventZone, None)
         _ <- done.take.timeout(30.seconds)
         _ <- store.flushPendingUiWrites
       yield ()
