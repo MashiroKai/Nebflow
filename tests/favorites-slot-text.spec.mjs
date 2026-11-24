@@ -53,6 +53,12 @@ async function measure(page, root) {
 }
 function assertText(result) { for (const e of result.text) assert(e.sw <= e.cw+1 && e.sh <= e.ch+1 && e.overflow !== 'ellipsis', `clipped ${JSON.stringify(e)}`); }
 function assertNoOverlap(result) { assert.deepEqual(result.pairs, [], 'independent visible siblings overlap'); }
+async function negativeOverlap(page, root, selector) {
+  await page.locator(selector).first().evaluate(el=>{const r=el.getBoundingClientRect(),root=el.closest('#panel-sessions,.cfp-page');const blocker=document.createElement('span');blocker.id='injected-overlap';blocker.textContent='X';Object.assign(blocker.style,{position:'fixed',left:r.left+'px',top:r.top+'px',width:Math.max(r.width,20)+'px',height:Math.max(r.height,20)+'px',zIndex:'999999'});root.appendChild(blocker);});
+  const bad=await measure(page,root);
+  assert.throws(()=>assertNoOverlap(bad),/overlap/);
+  await page.locator('#injected-overlap').evaluate(el=>el.remove());
+}
 async function checkSearch(page, selector, panel, query) {
   const input=page.locator(selector);
   await input.evaluate(el=>{el.value='';});
@@ -122,6 +128,7 @@ try {
       assert(inputState.panelScroll<=inputState.panelWidth+1);
       assert(await search.evaluate(el=>{const r=el.getBoundingClientRect();return [0.05,0.5,0.95].every(x=>[0.05,0.5,0.95].every(y=>{const hit=document.elementFromPoint(r.left+r.width*x,r.top+r.height*y);return hit===el||el.contains(hit);}));}), 'search not obscured at all nine points');
       const filtered=await measure(s.page,root); assertNoOverlap(filtered);
+      if(width===1280) await negativeOverlap(s.page,root,`${root} .cfp-empty`);
       if(width===1280||width===375) await s.page.screenshot({path:join(shots,`search-long-${width}.png`),animations:'disabled'});
       await search.fill('');
       console.log(`PASS favorites text and siblings ${width}`);
@@ -147,6 +154,7 @@ try {
         if(width===1280) await negativeSearch(s.page,'#explorer-search','#panel-sessions',query);
         await fileSearch.fill('VeryLong');
         assertNoOverlap(await measure(s.page,'#panel-sessions'));
+        if(width===1280) await negativeOverlap(s.page,'#panel-sessions','#explorer-search');
         await fileSearch.fill('no-match-987654321');
         assertNoOverlap(await measure(s.page,'#panel-sessions'));
         assert.equal(await rows.evaluateAll(els=>els.filter(el=>!el.hidden).length), 0);
@@ -168,6 +176,7 @@ try {
       console.log('EMPTY-DIAG',JSON.stringify(await s.page.evaluate(()=>({sent:window.__wsSent.filter(f=>f.type==='listDir'),chain:(()=>{let a=document.querySelector('#explorer-tree .explorer-empty'),out=[];while(a){let s=getComputedStyle(a),r=a.getBoundingClientRect();out.push({tag:a.tagName,id:a.id,cls:String(a.className),display:s.display,visibility:s.visibility,width:r.width,height:r.height});a=a.parentElement;}return out;})()}))));
       await s.page.locator('#explorer-tree .explorer-empty').waitFor({state:'visible',timeout:1500});
       assertNoOverlap(await measure(s.page,'#panel-sessions'));
+      if(width===1280) await negativeOverlap(s.page,'#panel-sessions','#explorer-tree .explorer-empty');
       console.log(`PASS empty explorer directory ${width}`);
     } finally { await s.close(); }
   }
