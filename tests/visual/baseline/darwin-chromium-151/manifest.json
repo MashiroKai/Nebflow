@@ -1,6 +1,6 @@
 {
   "generatedBy": "scripts/visual-baseline.mjs --update",
-  "generatedAt": "2026-11-02T05:09:15.989Z",
+  "generatedAt": "2026-11-24T00:10:40.255Z",
   "platform": "darwin-chromium-151",
   "browser": {
     "label": "chromium-151",
@@ -16,9 +16,9 @@
       "tag": "canvas-markdown-tab-dark",
       "scenario": "canvas-markdown-tab",
       "theme": "dark",
-      "bytes": 61211,
-      "at": "2026-11-02T05:09:06.661Z",
-      "ms": 2599,
+      "bytes": 54982,
+      "at": "2026-11-24T00:09:55.507Z",
+      "ms": 3055,
       "mask": [
         ".mic-orb-wrap"
       ]
@@ -27,9 +27,31 @@
       "tag": "canvas-markdown-tab-light",
       "scenario": "canvas-markdown-tab",
       "theme": "light",
-      "bytes": 56680,
-      "at": "2026-11-02T05:09:09.049Z",
-      "ms": 2386,
+      "bytes": 54997,
+      "at": "2026-11-24T00:09:58.461Z",
+      "ms": 2927,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "canvas-markdown-code-tab-dark",
+      "scenario": "canvas-markdown-code-tab",
+      "theme": "dark",
+      "bytes": 51684,
+      "at": "2026-11-24T00:10:01.437Z",
+      "ms": 2941,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "canvas-markdown-code-tab-light",
+      "scenario": "canvas-markdown-code-tab",
+      "theme": "light",
+      "bytes": 52212,
+      "at": "2026-11-24T00:10:04.409Z",
+      "ms": 2949,
       "mask": [
         ".mic-orb-wrap"
       ]
@@ -38,9 +60,9 @@
       "tag": "canvas-code-tab-dark",
       "scenario": "canvas-code-tab",
       "theme": "dark",
-      "bytes": 43941,
-      "at": "2026-11-02T05:09:12.492Z",
-      "ms": 3442,
+      "bytes": 37256,
+      "at": "2026-11-24T00:10:08.413Z",
+      "ms": 3981,
       "mask": [
         ".mic-orb-wrap"
       ]
@@ -49,12 +71,79 @@
       "tag": "canvas-code-tab-light",
       "scenario": "canvas-code-tab",
       "theme": "light",
-      "bytes": 40038,
-      "at": "2026-11-02T05:09:15.961Z",
-      "ms": 3467,
+      "bytes": 38775,
+      "at": "2026-11-24T00:10:12.412Z",
+      "ms": 3975,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "canvas-txt-tab-dark",
+      "scenario": "canvas-txt-tab",
+      "theme": "dark",
+      "bytes": 57108,
+      "at": "2026-11-24T00:10:14.769Z",
+      "ms": 2334,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "canvas-txt-tab-light",
+      "scenario": "canvas-txt-tab",
+      "theme": "light",
+      "bytes": 54647,
+      "at": "2026-11-24T00:10:17.151Z",
+      "ms": 2358,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "canvas-html-tab-dark",
+      "scenario": "canvas-html-tab",
+      "theme": "dark",
+      "bytes": 44904,
+      "at": "2026-11-24T00:10:19.554Z",
+      "ms": 2378,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "canvas-html-tab-light",
+      "scenario": "canvas-html-tab",
+      "theme": "light",
+      "bytes": 45793,
+      "at": "2026-11-24T00:10:22.026Z",
+      "ms": 2449,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "canvas-image-tab-dark",
+      "scenario": "canvas-image-tab",
+      "theme": "dark",
+      "bytes": 21914,
+      "at": "2026-11-24T00:10:24.466Z",
+      "ms": 2418,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "canvas-image-tab-light",
+      "scenario": "canvas-image-tab",
+      "theme": "light",
+      "bytes": 20836,
+      "at": "2026-11-24T00:10:26.932Z",
+      "ms": 2444,
       "mask": [
         ".mic-orb-wrap"
       ]
     }
-  ]
+  ],
+  "promotedFrom": "../../../../tmp/stand-canvas-approved-a9bd/darwin-chromium-151/baseline-draft"
 }
