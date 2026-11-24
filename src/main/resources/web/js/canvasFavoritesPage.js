@@ -228,6 +228,18 @@ function buildPage(onClose, onOpened) {
   return { el: page, dispose };
 }
 
+/** Desktop sidebar keeps its own instance; the mobile Workbench retains the page route. */
+export function mountFavoritesSidebar() {
+  const panel = document.getElementById('panel-favorites');
+  if (!panel || panel.firstElementChild) return;
+  const built = buildPage(() => { void import('./activityBar.js').then((m) => m.showSidePanel('files')); });
+  built.el.id = 'canvas-fav-sidebar-page';
+  built.el.classList.add('cfp-sidebar', 'is-open');
+  built.el.removeAttribute('role');
+  panel.appendChild(built.el);
+  void syncFavoritesFromEngine();
+}
+
 /** 当前打开的收藏页（单例）。 */
 let current = null;
 

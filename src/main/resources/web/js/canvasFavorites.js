@@ -237,7 +237,7 @@ export function mountSidebarFavorites() {
   head.setAttribute('aria-label', t('canvas.favPage.open'));
   head.addEventListener('click', (e) => {
     e.stopPropagation();
-    void import('./canvasFavoritesPage.js').then((m) => m.openFavoritesPage());
+    void import('./activityBar.js').then((m) => m.showSidePanel('favorites'));
   });
   const body = document.createElement('div');
   section.append(head, body);

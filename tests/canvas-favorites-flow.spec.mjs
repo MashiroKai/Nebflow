@@ -15,7 +15,7 @@ import { ROOT, loadPlaywright, launchBrowser, createSession, settle } from '../s
 const PRIMARY = ROOT.includes('/.stand/worktrees/') ? ROOT.split('/.stand/worktrees/')[0] : ROOT;
 const SHOT_DIR = process.env.FAV_FLOW_SHOT_DIR || join(PRIMARY, '.stand', 'tmp', 'canvas-favorites-r2', 'evidence', 'screenshots');
 const BOOT = { config: { llm: { providers: {} }, features: {} }, sessionId: 'fav-flow', messages: [] };
-const PAGE = '#canvas-fav-page';
+let PAGE = '#canvas-fav-page';
 // 1x1 透明 PNG：图片缩略图桩（真字节，避免破图干扰截图）。
 const PNG_1PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
 
@@ -142,11 +142,17 @@ async function starRoundTrip(page, tag, openPage) {
 }
 
 async function closePage(page) {
-  await page.keyboard.press('Escape');
-  await page.waitForSelector(PAGE, { state: 'detached', timeout: 5000 }).catch(() => {});
+  if (PAGE === '#canvas-fav-sidebar-page') {
+    await page.click('#files-btn');
+    await page.waitForSelector('#panel-favorites.active', { state: 'detached' });
+  } else {
+    await page.keyboard.press('Escape');
+    await page.waitForSelector(PAGE, { state: 'detached', timeout: 5000 });
+  }
 }
 
 async function desktopCase(browser, failures) {
+  PAGE = '#canvas-fav-sidebar-page';
   const s = await createSession(browser, { width: 1200, height: 800, colorScheme: 'light' });
   const page = s.page;
   page.on('pageerror', (e) => failures.push(`[desktop] pageerror ${e.message}`));
@@ -154,8 +160,9 @@ async function desktopCase(browser, failures) {
   await s.boot(BOOT);
   await seed(page);
   const openPage = async () => {
-    await page.click('#canvas-fav-section .canvas-fav-head');
+    await page.click('#favorites-btn');
     await page.waitForSelector(`${PAGE}.is-open .cfp-row`, { timeout: 15000 });
+    await page.fill(`${PAGE} .cfp-search-input`, '');
     await settle(page, 200);
   };
   await openPage();
@@ -202,7 +209,7 @@ async function desktopCase(browser, failures) {
   await page.fill(`${PAGE} .cfp-search-input`, '论文');
   await settle(page, 150);
   await page.click(`${PAGE} .cfp-row[data-fav-path="/w/docs/t.pdf"]`);
-  const closed = await page.waitForSelector(PAGE, { state: 'detached', timeout: 15000 }).then(() => true, () => false);
+  const closed = await page.waitForSelector('#panel-favorites.active', { state: 'detached', timeout: 15000 }).then(() => true, () => false);
   check('desktop: 点 PDF 条目后收藏页关闭', closed);
   await settle(page, 300);
 
@@ -214,6 +221,7 @@ async function desktopCase(browser, failures) {
 }
 
 async function mobileCase(browser, failures) {
+  PAGE = '#canvas-fav-page';
   const s = await createSession(browser, { width: 390, height: 844, colorScheme: 'light', clock: 0 });
   const page = s.page;
   page.on('pageerror', (e) => failures.push(`[mobile] pageerror ${e.message}`));
@@ -224,6 +232,7 @@ async function mobileCase(browser, failures) {
   const openPage = async () => {
     await page.click('.mobile-page[data-page="workbench"].live .mf-hub-row[data-hub-page="favorites"]');
     await page.waitForSelector(`${PAGE}.is-open .cfp-row`, { timeout: 15000 });
+    await page.fill(`${PAGE} .cfp-search-input`, '');
     await settle(page, 200);
   };
   await openPage();

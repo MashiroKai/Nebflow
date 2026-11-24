@@ -815,6 +815,9 @@ html[data-theme="light"] {
   box-shadow: var(--btn-shadow);
 }
 
+/* The nested capsule action follows the concentric end-control geometry. */
+.canvas-button.canvas-pop-btn { border-radius: var(--ds-capsule-end-radius); }
+
 /* 玻璃药丸 .g2-pill（消费方 = 接管卡次级【退出】；类名零改动，材质归包）：
    面级配方收窄为药丸（无折射线）；几何 h36 r999 沿用
 

@@ -99,6 +99,33 @@ async function desktopCase(browser, failures) {
     return { btnRight: b.right, titleLeft: t.left };
   });
   check('desktop: 收藏钮位于胶囊左侧', geo.btnRight <= geo.titleLeft + 1, JSON.stringify(geo));
+  const measureEnds = () => s.page.evaluate(() => {
+    const r = q => document.querySelector(q).getBoundingClientRect();
+    const h = r('#canvas-panel .canvas-header'), a = r('#canvas-fav-btn'), b = r('#canvas-pop-btn');
+    const ai = r('#canvas-fav-btn svg'), bi = r('#canvas-pop-btn .pop-ic-pop');
+    const delta = (x, y) => Math.abs(x - y);
+    const center = (x) => [x.left + x.width / 2, x.top + x.height / 2];
+    const [ax, ay] = center(a), [bx, by] = center(b), [aix, aiy] = center(ai), [bix, biy] = center(bi);
+    return { inset: delta(a.left - h.left, h.right - b.right), vertical: Math.max(delta(ay, h.top + h.height / 2), delta(by, h.top + h.height / 2)), optical: Math.max(delta(ax, aix), delta(ay, aiy), delta(bx, bix), delta(by, biy)), size: delta(ai.width, bi.width), radii: delta(parseFloat(getComputedStyle(document.querySelector('#canvas-fav-btn')).borderRadius), parseFloat(getComputedStyle(document.querySelector('#canvas-pop-btn')).borderRadius)) };
+  });
+  const valid = g => Object.values(g).every(v => v <= 1);
+  const endGeometry = await measureEnds();
+  check('desktop: capsule end optical geometry', valid(endGeometry), JSON.stringify(endGeometry));
+  await s.page.locator('#canvas-fav-btn svg').evaluate(el => { el.style.transform = 'translateX(4px)'; });
+  check('desktop: optical geometry negative control', !valid(await measureEnds()));
+  await s.page.locator('#canvas-fav-btn svg').evaluate(el => { el.style.transform = ''; });
+  const navGeometry = await s.page.evaluate(() => {
+    const a = document.querySelector('#social-btn').getBoundingClientRect(), b = document.querySelector('#favorites-btn').getBoundingClientRect();
+    const icon = document.querySelector('#favorites-btn svg').getBoundingClientRect();
+    return { sameColumn: Math.abs(a.left - b.left) < 1 && Math.abs(a.width - b.width) < 1, adjacent: b.top >= a.bottom && b.top - a.bottom <= 12, iconFits: icon.left >= b.left && icon.right <= b.right && icon.top >= b.top && icon.bottom <= b.bottom, label: !!document.querySelector('#favorites-btn').getAttribute('aria-label') };
+  });
+  check('desktop: favorites below phone access, aligned and unclipped', Object.values(navGeometry).every(Boolean), JSON.stringify(navGeometry));
+  await s.page.click('#favorites-btn');
+  await s.page.waitForSelector('#panel-favorites.active #canvas-fav-sidebar-page', { state: 'visible' });
+  check('desktop: favorites view within sidebar', await s.page.locator('#sidebar-panel #panel-favorites.active .cfp-sidebar').isVisible());
+  await shot(s.page, '#activity-bar', 'desktop-favorites-entry.png', 'desktop favorites entry');
+  await shot(s.page, '#panel-favorites', 'desktop-favorites-panel.png', 'desktop favorites sidebar panel');
+  await s.page.click('#files-btn');
   check('desktop: 初始未收藏态（描边）', (await btn.getAttribute('class')).indexOf('is-on') < 0);
   await shot(s.page, '#canvas-panel .canvas-header', 'desktop-capsule-off.png', 'desktop capsule off');
 

@@ -896,7 +896,7 @@ body:not(.mobile-layer):not(.card-window) #canvas-panel.stacked .canvas-header {
 body:not(.mobile-layer) .canvas-header {
   height: var(--capsule-h, 36px);
   width: var(--capsule-w, 180px);
-  padding: var(--ds-capsule-pad-desk);
+  padding: var(--ds-capsule-end-inset);
   /* #926 件1 兜底（作者令 2026-10-26「任何状态不溢出」）：胶囊本体裁切盒 ——
      .t-name ellipsis 为主收口，本体裁切防过渡中途/字体度量抖动等任何态的
      子元素出界（pop 钮无出界装饰，裁切零副作用；手机层通栏头不受本条）。 */
@@ -4651,11 +4651,11 @@ body:not(.mobile-layer) .canvas-header .canvas-title { flex: 1; min-width: 0; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: var(--cv-size-btn);
-  height: var(--cv-size-btn);
+  width: var(--ds-capsule-end-size);
+  height: var(--ds-capsule-end-size);
   padding: 0;
   border: none;
-  border-radius: var(--cv-radius-btn);
+  border-radius: var(--ds-capsule-end-radius);
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -4666,7 +4666,7 @@ body:not(.mobile-layer) .canvas-header .canvas-title { flex: 1; min-width: 0; }
 }
 
 .canvas-pop-btn:active { transform: scale(var(--cv-active-scale)); }
-.canvas-pop-btn svg { width: 13px; height: 13px; }
+.canvas-pop-btn svg, .canvas-fav-btn svg { width: var(--ds-capsule-end-icon); height: var(--ds-capsule-end-icon); }
 .canvas-pop-btn .pop-ic-merge { display: none; }
 .canvas-pop-btn.is-independent { color: rgb(var(--sapphire)); }
 .canvas-pop-btn.is-independent .pop-ic-pop { display: none; }

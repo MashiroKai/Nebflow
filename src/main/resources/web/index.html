@@ -691,6 +691,7 @@
          unrelated to the friends feature) — the button stays mounted and
          functional in every friends-flag state. -->
     <button id="social-btn" class="activity-btn" data-panel-btn="social" title="Phone access" aria-pressed="false"><i data-lucide="smartphone"></i></button>
+    <button id="favorites-btn" class="activity-btn" data-panel-btn="favorites" title="Favorites" aria-label="Favorites" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5 21 7.5v9L12 21.5l-9-5v-9z"/><path d="m3 7.5 9 5 9-5M12 12.5v9"/></svg></button>
     <div class="activity-spacer"></div>
     <!-- 2026-09-05 旧 UI 退役：v5 §3.5 二级入口（#legacy-btn/#legacy-pop 与
          teams-btn/flows-btn）已整体删除（作者裁定「直接删除，不是封存」）；
@@ -753,6 +754,7 @@
           </div>
         </div>
       </div>
+      <div id="panel-favorites" class="panel" data-panel-id="favorites"></div>
       <div id="panel-messages" class="panel" data-panel-id="messages">
         <div class="panel-header"><span class="panel-title" data-i18n="panel.messages">Messages</span></div>
         <div id="fm-conversations" role="listbox" aria-label="Messages"></div>
