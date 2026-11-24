@@ -25,6 +25,7 @@
 import state from './state.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
+import { EVENTS } from './events.js';
 import { statusIcon, escapeHtml } from './utils.js';
 // 弹窗退场批（作者令 2026-10-31②）：手机层 /model 面板铺满屏 + 左上返回（桌面零变化）。
 import { mobileSheetBack } from './mobile/popSheet.js';
@@ -1017,7 +1018,7 @@ function renderChainSectionBody(container) {
       summary.className = 'set-row-hint';
       summary.textContent = ruleSummary;
       const host = document.createElement('div');
-      host.addEventListener('model-rules-saved', async () => {
+      host.addEventListener(EVENTS.MODEL_RULES_SAVED, async () => {
         try {
           const response = await fetch('/api/model-rules', { headers: authHeaders() });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);

@@ -32,6 +32,7 @@ export const EVENTS = Object.freeze({
   AGENT_VIEW_REQUESTED: 'nebflow-agent-view-requested',
   // i18n 面：语言切换（content-i18n 重渲染腿）
   LOCALE_CHANGED: 'locale-changed',
+  MODEL_RULES_SAVED: 'model-rules-saved',
   // Delegate mirror refresh and archive notifications.
   DELEGATE_CHAIN_MIRROR_UPDATED: 'delegate-chain-mirror-updated',
   DELEGATE_ARCHIVED: 'delegate-archived',
