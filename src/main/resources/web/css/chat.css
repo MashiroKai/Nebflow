@@ -5327,17 +5327,13 @@ body:not(.mobile-layer) .option-preview-media {
   overflow-wrap: normal;
   vertical-align: baseline;
 }
-/* On narrow screens keep the start readable and mark longer thinking text,
-   rather than silently sliding it out of view. Desktop streaming stays unchanged. */
+/* Mobile thinking text wraps in flow instead of silently losing its start. */
 @media (max-width: 600px) {
-  .nf-workline:has(.nf-wl-think) .nf-wl-slot {
-    height: calc(2 * var(--ds-fs-hint, 12px) * var(--ds-lh-body, 1.5));
-  }
+  .nf-workline:has(.nf-wl-think) .nf-wl-slot { height: auto; overflow: visible; }
+  .nf-workline .nf-wl-item:has(.nf-wl-think) { position: static; }
   .nf-workline .nf-wl-think {
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
     white-space: normal;
+    overflow: visible;
     overflow-wrap: anywhere;
     -webkit-mask-image: none;
     mask-image: none;

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
 test.use({ viewport: { width: 375, height: 812 } });
-test('mobile live thinking preserves its beginning and visibly signals truncation', async ({ page }) => {
+test('mobile live thinking wraps without clipping', async ({ page }) => {
   await page.route('**/*', route => {
     const path = decodeURIComponent(new URL(route.request().url()).pathname);
     const file = normalize(join(root, path));
@@ -25,5 +25,6 @@ test('mobile live thinking preserves its beginning and visibly signals truncatio
   await expect(think).toBeVisible();
   const metrics = await think.evaluate(el => ({ left: el.scrollLeft, width: el.clientWidth, scroll: el.scrollWidth, ellipsis: getComputedStyle(el).textOverflow, line: getComputedStyle(el).webkitLineClamp, wrap: getComputedStyle(el).whiteSpace }));
   expect(metrics.left).toBe(0);
-  expect(metrics.ellipsis === 'ellipsis' || (metrics.wrap !== 'nowrap' && metrics.line === '2')).toBe(true);
+  expect(metrics.wrap).not.toBe('nowrap');
+  expect(metrics.scroll).toBeLessThanOrEqual(metrics.width + 1);
 });
