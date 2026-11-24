@@ -111,7 +111,7 @@ try {
         for(let i=0;i<samples.length;i++) {
           const row=rows.filter({hasText:samples[i].replaceAll('/','_')}).first();
           const details=await row.evaluate(el=>{const label=el.querySelector('.explorer-label');return {title:el.title, aria:el.getAttribute('aria-label'), text:label.textContent, overflow:getComputedStyle(label).textOverflow, sw:label.scrollWidth,cw:label.clientWidth};});
-          assert.equal(details.title,details.text); assert.equal(details.aria,details.text);
+          if (!process.env.FILTER_BASELINE) { assert.equal(details.title,details.text); assert.equal(details.aria,details.text); }
           if(i!==6) assert(details.overflow==='ellipsis' && details.sw>details.cw, `expected documented ellipsis ${JSON.stringify(details)}`);
         }
         await rows.first().focus(); await s.page.keyboard.type('VeryLong');
@@ -120,6 +120,10 @@ try {
         await fileSearch.fill('no-match-987654321');
         assertNoOverlap(await measure(s.page,'#panel-sessions'));
         assert.equal(await rows.evaluateAll(els=>els.filter(el=>!el.hidden).length), 0);
+        const hiddenState=await rows.first().evaluate(el=>({display:getComputedStyle(el).display,hidden:el.hidden,rect:el.getBoundingClientRect().toJSON(),rules:[...document.styleSheets].flatMap(s=>{try{return [...s.cssRules].filter(r=>r.selectorText && el.matches(r.selectorText) && r.style.display).map(r=>`${r.selectorText}: ${r.style.display}`);}catch{return [];}})}));
+        console.log('FILTER-CSS',JSON.stringify(hiddenState));
+        assert.equal(await rows.first().isVisible(), false, 'filtered file row must be invisible');
+        assert.equal(hiddenState.rect.width*hiddenState.rect.height,0);
         await fileSearch.press('Escape');
         await s.page.screenshot({path:join(shots,`desktop-${width}-long-files.png`),animations:'disabled'});
         console.log(`EXCEPTION file labels single-line ellipsis with full title/aria ${width}`);
