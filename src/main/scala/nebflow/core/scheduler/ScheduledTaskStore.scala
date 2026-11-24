@@ -219,7 +219,8 @@ class ScheduledTaskStore(
             dueRuleVersion =
               if requested.due == current.due then current.dueRuleVersion
               else Math.addExact(current.dueRuleVersion, 1L),
-            dueRuleHistory = if requested.due == current.due then current.dueRuleHistory
+            dueRuleHistory =
+              if requested.due == current.due then current.dueRuleHistory
               else current.dueRuleHistory ++ current.due.toList.map(TodoRuleSnapshot(current.dueRuleVersion, _))
           )
           val updated =
@@ -339,8 +340,10 @@ class ScheduledTaskStore(
           val adjusted = tasks.map { task =>
             byId.get(task.id) match
               case Some(old) if old.due != task.due =>
-                task.copy(dueRuleVersion = Math.addExact(old.dueRuleVersion, 1L),
-                  dueRuleHistory = old.dueRuleHistory ++ old.due.toList.map(TodoRuleSnapshot(old.dueRuleVersion, _)))
+                task.copy(
+                  dueRuleVersion = Math.addExact(old.dueRuleVersion, 1L),
+                  dueRuleHistory = old.dueRuleHistory ++ old.due.toList.map(TodoRuleSnapshot(old.dueRuleVersion, _))
+                )
               case Some(old) => task.copy(dueRuleVersion = old.dueRuleVersion, dueRuleHistory = old.dueRuleHistory)
               case None => task
           }
@@ -683,9 +686,11 @@ class ScheduledTaskStore(
                         createdAt = old.createdAt,
                         source = owner,
                         revision = Math.addExact(owned.map(_.revision).max, 1L),
-                        dueRuleVersion = if old.due == task.due then old.dueRuleVersion else Math.addExact(old.dueRuleVersion, 1L),
-                        dueRuleHistory = if old.due == task.due then old.dueRuleHistory else
-                          old.dueRuleHistory ++ old.due.toList.map(TodoRuleSnapshot(old.dueRuleVersion, _))
+                        dueRuleVersion =
+                          if old.due == task.due then old.dueRuleVersion else Math.addExact(old.dueRuleVersion, 1L),
+                        dueRuleHistory =
+                          if old.due == task.due then old.dueRuleHistory
+                          else old.dueRuleHistory ++ old.due.toList.map(TodoRuleSnapshot(old.dueRuleVersion, _))
                       )
                     loadUnlocked(task.sessionId).flatMap { targetRows =>
                       val sameSessionIds = owned.filter(_.sessionId == task.sessionId).map(_.id).toSet

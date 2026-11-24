@@ -178,8 +178,11 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
   test("occurrence reconciles against its bound historic rule version"):
     val first = TodoDue.Weekly(1, "09:00", "Europe/London", "2024-01-01T09:00")
     val changed = TodoDue.Weekly(2, "09:00", "Europe/London", "2024-01-02T09:00")
-    val task = legacy.as[ScheduledTask].toOption.get.copy(due = Some(changed), dueRuleVersion = 1L,
-      dueRuleHistory = List(TodoRuleSnapshot(0L, first)))
+    val task = legacy
+      .as[ScheduledTask]
+      .toOption
+      .get
+      .copy(due = Some(changed), dueRuleVersion = 1L, dueRuleHistory = List(TodoRuleSnapshot(0L, first)))
     assertEquals(task.ruleForOccurrence(TodoOccurrence.create("old", 1000L, 0L)), Some(first))
     assertEquals(task.ruleForOccurrence(TodoOccurrence.create("old", 2000L, 1L)), Some(changed))
     assertEquals(task.ruleForOccurrence(TodoOccurrence.create("old", 3000L, 2L)), None)
@@ -203,7 +206,8 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
     val store = new ScheduledTaskStore(dir)
     val first = TodoDue.Weekly(1, "09:00", "Europe/London", "2024-01-01T09:00")
     val changed = TodoDue.Weekly(2, "09:00", "Europe/London", "2024-01-02T09:00")
-    val initial = legacy.as[ScheduledTask].toOption.get.copy(name = Some("series"), source = Some("engine"), due = Some(first))
+    val initial =
+      legacy.as[ScheduledTask].toOption.get.copy(name = Some("series"), source = Some("engine"), due = Some(first))
     for
       _ <- store.addTask(initial)
       rearm <- store.upsertTaskByName(initial.copy(sessionId = "s2", due = Some(changed)))

@@ -70,6 +70,7 @@ object TodoDue:
 end TodoDue
 
 final case class TodoRuleSnapshot(version: Long, rule: TodoDue)
+
 object TodoRuleSnapshot:
   given Codec[TodoRuleSnapshot] = io.circe.generic.semiauto.deriveCodec
 
@@ -220,6 +221,7 @@ case class ScheduledTask(
   dueRuleVersion: Long = 0L,
   dueRuleHistory: List[TodoRuleSnapshot] = Nil
 ):
+
   /** Resolve the rule frozen at an occurrence's creation; missing versions are not guessed. */
   def ruleForOccurrence(occurrence: TodoOccurrence): Option[TodoDue] =
     if occurrence.todoId != id then None
