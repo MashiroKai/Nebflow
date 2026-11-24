@@ -4168,6 +4168,14 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 .nf-term-tip .term-tip-source,
 .nf-term-tip .term-tip-retry { min-width: 44px; min-height: 44px; }
 .nf-term-tip .term-tip-close { float: right; }
+.nf-term-tip .term-tip-source,
+.nf-term-tip .term-tip-retry {
+  width: auto;
+  padding: var(--ds-space-2) var(--ds-space-3);
+  border-radius: var(--ds-radius-button);
+  font-size: var(--ds-fs-btn);
+  white-space: normal;
+}
 .nf-term-tip button:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 /* 悬浮提示（tip 形态）三段字档（canvas-hint-text 批 2026-11-05）：
    标题 = S 档 strong（12/600/1.45）· 正文 = H 档（12/400/1.45/muted，修前
