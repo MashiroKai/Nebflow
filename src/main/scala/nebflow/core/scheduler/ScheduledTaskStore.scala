@@ -685,6 +685,7 @@ class ScheduledTaskStore(
                         sessionId = task.sessionId,
                         createdAt = old.createdAt,
                         source = owner,
+                        occurrences = old.occurrences,
                         revision = Math.addExact(owned.map(_.revision).max, 1L),
                         dueRuleVersion =
                           if old.due == task.due then old.dueRuleVersion else Math.addExact(old.dueRuleVersion, 1L),

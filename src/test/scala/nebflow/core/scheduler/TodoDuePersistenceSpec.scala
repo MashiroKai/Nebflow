@@ -187,6 +187,22 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
     assertEquals(task.ruleForOccurrence(TodoOccurrence.create("old", 2000L, 1L)), Some(changed))
     assertEquals(task.ruleForOccurrence(TodoOccurrence.create("old", 3000L, 2L)), None)
 
+  test("rearm rule change preserves every field of generated occurrences"):
+    val dir = os.temp.dir(prefix = "rearm-occurrences-")
+    val store = new ScheduledTaskStore(dir)
+    val first = TodoDue.Weekly(1, "09:00", "Europe/London", "2024-01-01T09:00")
+    val changed = TodoDue.Weekly(2, "09:00", "Europe/London", "2024-01-02T09:00")
+    val occurrence = TodoOccurrence.create("old", 1000L, 0L).copy(nextReminderAt = Some(1200L))
+    val initial = legacy.as[ScheduledTask].toOption.get.copy(
+      name = Some("series"), source = Some("engine"), due = Some(first), occurrences = List(occurrence)
+    )
+    for
+      _ <- store.addTask(initial)
+      rearm <- store.upsertTaskByName(initial.copy(sessionId = "s2", due = Some(changed), occurrences = Nil))
+    yield
+      assertEquals(rearm.saved.occurrences, List(occurrence))
+      assertEquals(rearm.saved.ruleForOccurrence(occurrence), Some(first))
+
   test("rearm rejects equal-revision conflicting copies instead of creating a third row"):
     val dir = os.temp.dir(prefix = "rearm-conflict-")
     val store = new ScheduledTaskStore(dir)
