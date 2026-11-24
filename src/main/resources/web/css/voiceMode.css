@@ -126,6 +126,7 @@ body.voice-mode-active #queue-bar {
   color: var(--color-text, #e8ecf4);
   font-size: var(--ds-fs-body);
   line-height: 1.4;
+  flex-shrink: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -136,6 +137,7 @@ body.voice-mode-active #queue-bar {
   font-size: var(--ds-fs-hint);
   line-height: 1.4;
   font-style: italic;
+  flex-shrink: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

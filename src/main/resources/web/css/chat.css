@@ -5327,6 +5327,18 @@ body:not(.mobile-layer) .option-preview-media {
   overflow-wrap: normal;
   vertical-align: baseline;
 }
+/* Mobile thinking text wraps in flow instead of silently losing its start. */
+@media (max-width: 600px) {
+  .nf-workline:has(.nf-wl-think) .nf-wl-slot { height: auto; overflow: visible; }
+  .nf-workline .nf-wl-item:has(.nf-wl-think) { position: static; }
+  .nf-workline .nf-wl-think {
+    white-space: normal;
+    overflow: visible;
+    overflow-wrap: anywhere;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+}
 .nf-wl-think::after, .ask-stream-line::after { content: "\258D"; color: var(--color-primary); animation: nf-wl-blink 0.7s steps(1) infinite; }
 .nf-wl-item.is-done .nf-wl-think::after { display: none; }
 

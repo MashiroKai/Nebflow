@@ -596,7 +596,7 @@ export function thinkingWorklineItem(view, text) {
   think._nfText = next;
   // Tail anchor (see the doc above): pin the scroller to its right edge so the
   // newest text sits at the row's end and the old text slides out left.
-  pinTail(think);
+  if (!window.matchMedia('(max-width: 600px)').matches) pinTail(think);
 }
 
 /** Thinking finished: swap the reveal for the completed label + check. */

@@ -87,14 +87,19 @@ async function bootApp(page) {
     localStorage.setItem('fm_api_mock_seed', JSON.stringify({
       self: { userId: 'me', neblinkId: 'me@example.com', name: 'Me', avatarUrl: '' },
       users: [],
-      friends: [{ userId: 'u-p', neblinkId: 'pagfriend', name: '分页君', avatarUrl: '', since: Date.now() - 86400e3 }],
+      friends: Array.from({length: 30}, (_,i)=>({userId:`u-${i}`,neblinkId:`friend-${i}`,name:`联系人${String(i).padStart(2,'0')}`,avatarUrl:'',since:Date.now()-86400e3})).concat([{ userId: 'u-p', neblinkId: 'pagfriend', name: '分页君', avatarUrl: '', since: Date.now() - 86400e3 }]),
       incoming: [], outgoing: [],
-      conversations: [{
+      conversations: Array.from({length: 30}, (_, i) => ({
+        conversationId: `c-${i}`,
+        friend: { userId: `u-${i}`, neblinkId: `friend-${i}`, name: `分页联系人 ${i}`, avatarUrl: '' },
+        lastMessage: { id: 220+i, senderId: `u-${i}`, kind: 'text', body: `历史消息 ${i} ${'long text '.repeat(15)}`, createdAt: Date.now() - i*1000 },
+        unreadCount: 0, pendingAskCount: 0,
+      })).concat([{
         conversationId: 'c-p',
         friend: { userId: 'u-p', neblinkId: 'pagfriend', name: '分页君', avatarUrl: '' },
         lastMessage: { id: 220, senderId: 'u-p', kind: 'text', body: '历史消息 #220', createdAt: Date.now() - 60e3 },
         unreadCount: 0, pendingAskCount: 0,
-      }],
+      }]),
       messages: {
         'c-p': Array.from({ length: n }, (_, i) => ({
           id: 200 + i, senderId: i % 2 ? 'me' : 'u-p', kind: 'text',
@@ -279,6 +284,48 @@ async function goto(page, id) {
   }
   await page.waitForTimeout(900);
 }
+
+test('mobile social dock pages: real mounted rows and long content', async ({ page }) => {
+  await page.locator('#mobile-dock .dock-key[data-dock="messages"]').click();
+  await expect(page.locator('.mobile-page[data-page="messages"]')).toHaveClass(/live/);
+  const messages = page.locator('.mobile-page[data-page="messages"] #fm-conversations');
+  const row = messages.locator('.fm-conv-row').first();
+  await expect(row).toBeVisible({timeout:10000});
+  const rowBox = await row.boundingBox();
+  expect(rowBox.x).toBeGreaterThanOrEqual(0); expect(rowBox.x+rowBox.width).toBeLessThanOrEqual(375);
+  // Dock root pages deliberately have no header (navController.js); never substitute the panel top.
+  await expect(page.locator('.mobile-page[data-page="messages"] .mobile-page-header')).toHaveCount(0);
+  await messages.evaluate(el=>{el.style.scrollBehavior='auto'});
+  const socialRows=messages.locator('.fm-conv-row'); await expect(socialRows).toHaveCount(31);
+  for (const f of [0,0.5,1]) {
+    const b=await messages.evaluate((el,fraction)=>{el.scrollTop=(el.scrollHeight-el.clientHeight)*fraction; const r=el.getBoundingClientRect(); return {left:r.left,right:r.right,scroll:el.scrollTop,max:el.scrollHeight-el.clientHeight};},f);
+    expect(b.left).toBeGreaterThanOrEqual(0); expect(b.right).toBeLessThanOrEqual(375); expect(b.max).toBeGreaterThan(0); expect(Math.abs(b.scroll-b.max*f)).toBeLessThan(2);
+    const dock=page.locator('#mobile-dock'); await expect(dock).toBeVisible();
+  }
+  for(let i=0;i<31;i++) {
+    const item=socialRows.nth(i); await item.evaluate(el=>el.scrollIntoView({block:'center',behavior:'instant'}));
+    const b=await item.boundingBox(), dock=await page.locator('#mobile-dock').boundingBox();
+    expect(b.x).toBeGreaterThanOrEqual(0); expect(b.x+b.width).toBeLessThanOrEqual(375); expect(b.y).toBeGreaterThanOrEqual(0); expect(b.y+b.height).toBeLessThanOrEqual(dock.y);
+  }
+  const out=process.env.MOBILE_AUDIT_EVIDENCE;
+  if(out) { const {mkdirSync}=await import('node:fs'); mkdirSync(out,{recursive:true}); await page.screenshot({path:join(out,'社交.png'),animations:'disabled'}); }
+  await page.locator('#mobile-dock .dock-key[data-dock="contacts"]').click();
+  await expect(page.locator('.mobile-page[data-page="contacts"]')).toHaveClass(/live/);
+  const contacts=page.locator('.mobile-page[data-page="contacts"] #fm-contacts-body'); await expect(contacts).toBeVisible();
+  const friends=contacts.locator('.fm-friend-row'); await expect(friends).toHaveCount(31);
+  await contacts.evaluate(el=>{el.style.scrollBehavior='auto'});
+  for(const f of [0,0.5,1]) {
+    const geo=await contacts.evaluate((el,fraction)=>{el.scrollTop=(el.scrollHeight-el.clientHeight)*fraction;return {top:el.scrollTop,max:el.scrollHeight-el.clientHeight}},f);
+    expect(geo.max).toBeGreaterThan(0); expect(Math.abs(geo.top-geo.max*f)).toBeLessThan(2);
+    const dock=page.locator('#mobile-dock .dock-key[data-dock="contacts"]');
+    const hit=await dock.evaluate(el=>{const r=el.getBoundingClientRect(),n=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return n===el||el.contains(n)}); expect(hit).toBe(true);
+  }
+  for(let i=0;i<31;i++) {
+    const friend=friends.nth(i); await friend.evaluate(el=>el.scrollIntoView({block:'center',behavior:'instant'}));
+    const r=await friend.boundingBox(), dock=await page.locator('#mobile-dock').boundingBox();
+    expect(r.x).toBeGreaterThanOrEqual(0); expect(r.x+r.width).toBeLessThanOrEqual(375); expect(r.y).toBeGreaterThanOrEqual(0); expect(r.y+r.height).toBeLessThanOrEqual(dock.y);
+  }
+});
 
 test('E1/E2/E3/E4/E5 per-page scroll-end reserve and dock pass-under (375x812)', async ({ page }) => {
   const rows = [];

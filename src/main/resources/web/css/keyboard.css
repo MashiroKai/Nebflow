@@ -81,6 +81,18 @@ outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
   outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
+/* Desktop chat scrolls below overlays and is masked: the indicator is an
+   independent, non-interactive sibling, bounded by the measured clear area. */
+.nf-chat-focus-frame { display: none; }
+@media (min-width: 769px) {
+  body:not(.mobile-layer):has(#chat.nf-nav-stop:focus-visible) #chat.nf-nav-stop:focus-visible { outline: none; }
+  body:not(.mobile-layer):has(#chat.nf-nav-stop:focus-visible) .nf-chat-focus-frame {
+    display: block; position: fixed; z-index: 10; pointer-events: none;
+    box-sizing: border-box; border: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+    border-radius: var(--ds-radius-chip);
+  }
+}
+
 /* 层容器（陷阱宿主）自身不出环：它是「盒子」不是「控件」。 */
 .nf-trap-root:focus,
 .nf-trap-root:focus-visible {

@@ -209,4 +209,32 @@ export function initMode() {
     input.addEventListener('blur', () => { setMode('meta'); });
   }
   publishMode();
+  initChatFocusFrame();
+}
+
+// The scrollport extends beneath the glass header and composer, and is masked at
+// its top. Paint its keyboard indicator as a non-interactive sibling instead.
+function initChatFocusFrame() {
+  const chat = document.getElementById('chat');
+  const header = document.getElementById('header');
+  const overlays = document.getElementById('top-overlays');
+  const inputArea = document.getElementById('input-area');
+  if (!chat || !header || !inputArea || !window.ResizeObserver) return;
+  const frame = document.createElement('div');
+  frame.className = 'nf-chat-focus-frame';
+  frame.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(frame);
+  const update = () => {
+    const c = chat.getBoundingClientRect(), h = header.getBoundingClientRect(), i = inputArea.getBoundingClientRect();
+    const o = overlays?.getBoundingClientRect();
+    const top = Math.max(c.top, h.bottom, o?.bottom || 0);
+    const bottom = Math.min(c.bottom, i.top);
+    Object.assign(frame.style, {left: `${Math.max(0,c.left)}px`, top: `${top}px`, width: `${Math.max(0,Math.min(innerWidth,c.right)-Math.max(0,c.left))}px`, height: `${Math.max(0,bottom-top)}px`});
+  };
+  const observer = new ResizeObserver(update);
+  [chat, header, overlays, inputArea].filter(Boolean).forEach(el => observer.observe(el));
+  window.addEventListener('resize', update, {passive:true});
+  window.visualViewport?.addEventListener('resize', update, {passive:true});
+  document.addEventListener('focusin', update);
+  update();
 }

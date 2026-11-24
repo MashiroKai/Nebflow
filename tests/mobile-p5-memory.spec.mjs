@@ -52,7 +52,7 @@ const USER_MD = '## 沟通偏好\n回复保持简短。';
 
 test.use({ viewport: { width: 375, height: 812 }, hasTouch: true, colorScheme: 'dark' });
 
-async function bootApp(page) {
+async function bootApp(page, {longMemory = false} = {}) {
   /** @type {string[]} */
   const sentTypes = [];
   await page.addInitScript(() => {
@@ -95,7 +95,7 @@ async function bootApp(page) {
       if (parsed.type === 'getConfig') sendConfig();
       else if (parsed.type === 'getSessions' || parsed.type === 'listSessions') sendSessions();
       else if (parsed.type === 'getMemory') {
-        const content = parsed.scope === 'user' ? USER_MD : AGENT_MD;
+        const content = parsed.scope === 'user' ? USER_MD : (longMemory ? Array.from({length:30},(_,i)=>`## Long memory title ${i}\n${'Memory body '.repeat(20)}`).join('\n\n') : AGENT_MD);
         ws.send(JSON.stringify({ type: 'memoryData', scope: parsed.scope, content }));
       } else if (parsed.type === 'getHistory') {
         ws.send(JSON.stringify({
@@ -135,11 +135,39 @@ function watchErrors(page) {
   return errors;
 }
 
-test.beforeEach(async ({ page }) => {
-  harness = await bootApp(page);
+test.beforeEach(async ({ page }, testInfo) => {
+  harness = await bootApp(page, {longMemory: testInfo.title.startsWith('mobile memory audit')});
 });
 /** @type {{sentTypes: string[]}|null} */
 let harness = null;
+
+test('mobile memory audit: card geometry and long title', async ({ page }) => {
+  await openPanel(page);
+  const header = page.locator('.mobile-page[data-page="profile"] .mobile-back-btn');
+  await expect(header).toBeVisible();
+  const title = page.locator('.mh-memory-card-title').first();
+  await title.evaluate(el => { el.textContent = 'long-memory-title-without-spaces-'.repeat(20); });
+  const text = await title.evaluate(el => { const r=el.getBoundingClientRect(), cs=getComputedStyle(el); return {left:r.left,right:r.right,over:el.scrollWidth>el.clientWidth,ellipsis:cs.textOverflow}; });
+  expect(text.left).toBeGreaterThanOrEqual(0); expect(text.right).toBeLessThanOrEqual(375);
+  expect(text.over).toBe(true); expect(text.ellipsis).toBe('ellipsis');
+  const scroll = page.locator('.mh-memory-cards');
+  for (const f of [0,0.5,1]) {
+    const r = await scroll.evaluate((el, fraction) => {el.scrollTop=(el.scrollHeight-el.clientHeight)*fraction; const b=el.getBoundingClientRect(), h=document.querySelector('.mobile-page[data-page="profile"] .mobile-back-btn').getBoundingClientRect(); const items=[...el.querySelectorAll('.mh-memory-card')].map(n=>n.getBoundingClientRect()).filter(r=>r.bottom>b.top && r.top<b.bottom).map(r=>({left:r.left,right:r.right,top:r.top})); return {left:b.left,right:b.right,top:b.top,headerBottom:h.bottom,scroll:el.scrollTop,max:el.scrollHeight-el.clientHeight,items};},f);
+    expect(r.left).toBeGreaterThanOrEqual(0); expect(r.right).toBeLessThanOrEqual(375); expect(r.top).toBeGreaterThanOrEqual(r.headerBottom-1);
+    expect(r.max).toBeGreaterThan(0); expect(Math.abs(r.scroll-r.max*f)).toBeLessThan(2);
+    const hit=await header.evaluate(el=>{const b=el.getBoundingClientRect(),n=document.elementFromPoint(b.left+b.width/2,b.top+b.height/2); return n===el||el.contains(n)}); expect(hit).toBe(true);
+    expect(r.items.length).toBeGreaterThan(0); for(const item of r.items) {expect(item.left).toBeGreaterThanOrEqual(0); expect(item.right).toBeLessThanOrEqual(375); if(item.top>=r.top) expect(item.top).toBeGreaterThanOrEqual(r.headerBottom-1);}
+  }
+  const cards=page.locator('.mh-memory-card');
+  for(let i=0;i<await cards.count();i++) {const item=cards.nth(i); await item.evaluate(el=>el.scrollIntoView({block:'center',behavior:'instant'})); const b=await item.boundingBox(),h=await header.boundingBox(),d=await page.locator('#mobile-dock').boundingBox(); expect(b.y).toBeGreaterThanOrEqual(h.y+h.height); expect(b.y+b.height).toBeLessThanOrEqual(d.y);}
+  await page.locator('.mh-memory-edit').click();
+  await expect(page.locator('#memory-modal-body')).toBeVisible();
+  const edit = await page.locator('#memory-modal-body').boundingBox();
+  expect(edit.x).toBeGreaterThanOrEqual(0); expect(edit.x+edit.width).toBeLessThanOrEqual(375);
+  await page.locator('.mh-memory-edit').click();
+  const out=process.env.MOBILE_AUDIT_EVIDENCE;
+  if(out) { const {mkdirSync}=await import('node:fs'); mkdirSync(out,{recursive:true}); await page.screenshot({path:join(out,'记忆.png'),animations:'disabled'}); }
+});
 
 test('T1 merged panel geometry: page-ized full-bleed adoption in profile page (dock 批换代判据)', async ({ page }) => {
   const errors = watchErrors(page);
