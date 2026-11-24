@@ -16,6 +16,14 @@ import java.util.UUID
 sealed trait TodoDue
 
 object TodoDue:
+  def deviceZone(value: Option[String]): Option[String] =
+    value.filter(ZoneId.getAvailableZoneIds.contains)
+
+  def requireCreationZone(explicit: Option[String], device: Option[String]): Either[String, String] =
+    explicit match
+      case Some(zone) => deviceZone(Some(zone)).toRight("Please clarify a valid IANA time zone")
+      case None => deviceZone(device).toRight("Please clarify the creation time zone")
+
   final case class Once(dueAt: Long, zoneId: String, wallClock: String, originalOffset: String) extends TodoDue
   final case class Weekly(dayOfWeek: Int, localTime: String, zoneId: String, wallClock: String) extends TodoDue
 

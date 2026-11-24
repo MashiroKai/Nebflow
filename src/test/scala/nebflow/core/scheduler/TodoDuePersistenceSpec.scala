@@ -59,6 +59,14 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
 
   private def withDue(value: Json): Json = legacy.deepMerge(Json.obj("due" -> value))
 
+  test("device time zone accepts IANA regions and requests clarification without a source"):
+    assertEquals(TodoDue.deviceZone(Some("Asia/Tokyo")), Some("Asia/Tokyo"))
+    List(None, Some(""), Some("Not/AZone"), Some("+09:00")).foreach { value =>
+      assertEquals(TodoDue.deviceZone(value), None)
+      assert(TodoDue.requireCreationZone(None, value).isLeft)
+    }
+    assertEquals(TodoDue.requireCreationZone(None, Some("Asia/Tokyo")), Right("Asia/Tokyo"))
+
   test("legacy record has no due setting and old encoded fields retain their values"):
     val task = legacy.as[ScheduledTask].toOption.get
     val encoded = task.asJson
