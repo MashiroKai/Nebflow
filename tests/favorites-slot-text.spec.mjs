@@ -143,6 +143,21 @@ try {
       const badTitle=await measure(s.page,root);
       assert.throws(()=>assertText(badTitle),/clipped/);
       await pageTitle.evaluate((el,text)=>{el.removeAttribute('style');el.textContent=text;},originalTitle);
+      const entryButtons=s.page.locator(`${root} .cfp-row`);
+      for(let i=0;i<await entryButtons.count();i++) {
+        const label=entryButtons.nth(i).locator('.cfp-row-title');
+        const original=await label.textContent();
+        for(const sample of samples.slice(0,3)) {
+          await label.evaluate((el,text)=>{el.textContent=text;},sample);
+          assertText(await measure(s.page,root));
+          assertNoOverlap(await measure(s.page,root));
+          await label.evaluate(el=>{el.style.whiteSpace='nowrap';el.style.overflowWrap='normal';});
+          const broken=await measure(s.page,root);
+          assert.throws(()=>assertText(broken),/clipped/);
+          await label.evaluate(el=>el.removeAttribute('style'));
+        }
+        await label.evaluate((el,text)=>{el.removeAttribute('style');el.textContent=text;},original);
+      }
       for (const position of [0,0.5,1]) {
         await s.page.locator(`${root} .cfp-body`).evaluate((el,p)=>{el.scrollTop=(el.scrollHeight-el.clientHeight)*p;},position);
         const result=await measure(s.page,root); assertText(result); assertNoOverlap(result);
