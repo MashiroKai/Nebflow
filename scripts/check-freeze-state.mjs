@@ -287,8 +287,8 @@ check('⑤ 前端按钮判据 = 权威块 wakeable（旧后端才回落分类表
   return '快照按 asOf 定序、按钮=wakeable（可降级）';
 });
 
-// Explicit recovery publishes its state; Mail alone preserves the recovery hold.
-check('⑥ explicit recovery publishes delegateWoken; Mail retains recovery-held supplements', () => {
+// Recovery publishes its state; Mail releases the gate or retains a refused supplement.
+check('⑥ recovery publishes delegateWoken; Mail releases the gate in place', () => {
   const df = readFileSync(DELEGATE_FREEZE_SCALA, 'utf8');
   assert(/def onWoken\([\s\S]{0,300}wsSend: Option\[Json => IO\[Unit\]\]/.test(df),
     'onWoken 缺 wsSend（Mail 唤醒腿无从发帧——本轮报障成因）');
@@ -298,11 +298,13 @@ check('⑥ explicit recovery publishes delegateWoken; Mail retains recovery-held
   assert(/\.onWoken\(resources, delegateId, via, wsSend\)/.test(wake), 'Explicit live recovery must pass wsSend to onWoken');
   const mail = readFileSync(MAIL_TOOL_SCALA, 'utf8');
   const delivery = mail.slice(mail.indexOf('private def deliverToDelegate('), mail.indexOf('end deliverToDelegate'));
-  assert(/if nebflow\.core\.delegate\.SessionResumption\.requiresManual\(\s*Some\(current\),\s*task,\s*live\s*\)\s*=>\s*queueRecoverySupplement\(id, message, blocks, ctx\)/.test(delivery),
-    'Recovery-held Mail must retain its supplement before any execution path');
-  const heldAt = delivery.indexOf('queueRecoverySupplement(');
-  assert(heldAt >= 0 && heldAt < delivery.indexOf('deliverToDelegateAdmitted('), 'Manual recovery guard must precede execution');
-  assert(!/onWoken\(|DelegateWakeLeg|wakeFrozen\(/.test(mail), 'Mail must not release a manual recovery gate');
+  assert(/if nebflow\.core\.delegate\.SessionResumption\.requiresManual\(\s*Some\(current\),\s*task,\s*live\s*\)\s*=>\s*releaseGateByMail\(id, message, blocks, ctx, system, resources, current, live\)/.test(delivery),
+    'Recovery-held Mail must release the gate through the dedicated leg');
+  const release = mail.slice(mail.indexOf('private def releaseGateByMail('), mail.indexOf('end releaseGateByMail'));
+  assert(/DelegateWakeLeg\s*\.wake\(res, ctx\.wsSend, id, message, "mail"\)/.test(release), 'Live session must wake with the supplement');
+  assert(/resumeDelegateInPlace\([\s\S]*gateReleased = true/.test(release), 'Non-live session must resume in place with the gate released');
+  assert(/case Left\(reason\)\s*=>\s*queueRecoverySupplement/.test(release), 'Refused wake must retain the supplement');
+  assert(/current\.cancelRequestedAt\.nonEmpty/.test(delivery), 'Cancelled delegates must remain refused');
   const supplement = mail.slice(mail.indexOf('private def queueRecoverySupplement('), mail.indexOf('end queueRecoverySupplement'));
   assert(/\.mailOnce\(id, event, "mail-supplement", identity, producer = "mail", deduplicateReceipts = true\)/.test(supplement),
     'Recovery-held Mail must persist a deduplicated supplement');
@@ -318,13 +320,13 @@ check('⑥ explicit recovery publishes delegateWoken; Mail retains recovery-held
   const predicate = manual.slice(manual.indexOf('): Boolean =') + '): Boolean ='.length)
     .replace(/\/\*[^]*?\*\//g, '').replace(/\/\/[^\n]*/g, '').replace(/\s+/g, '');
   assert(predicate === 'record.exists(r=>r.frozenSince.nonEmpty||r.frozenReason.nonEmpty||r.restartInterruptedAt.nonEmpty||r.cancelRequestedAt.nonEmpty)||task.exists(t=>Set("pending-recovery","frozen").contains(t.status))||live.exists(r=>r.status==nebflow.actor.AgentStatus.Frozen||r.frozenReason.nonEmpty)',
-    'Every recovery-held source must independently block Mail execution');
+    'Every recovery-held source must independently require gate release');
   const ws = readFileSync(WS_JS, 'utf8');
   assert(/'delegateWoken'/.test(ws), "ws.js 帧过滤集缺 'delegateWoken'（会被入口过滤器静默丢弃）");
   const main = readFileSync(MAIN_JS, 'utf8');
   assert(/onMessage\('delegateWoken'/.test(main), 'main.js 未收 delegateWoken');
   assert(/mergeFreeze\(info, msg\.freeze\)/.test(main), 'delegateWoken 未按权威块落行');
-  return 'Explicit recovery forwards wsSend; Mail preserves the manual gate and durable supplement';
+  return 'Recovery forwards wsSend; Mail releases the gate in place or retains a refused supplement';
 });
 
 check('⑥ 一致性扫描工具在册（可复现今日 case）', () => {
