@@ -13,7 +13,7 @@ const { browser } = await launchBrowser(loadPlaywright().mod);
 async function measure(page, root) {
   return page.evaluate((sel) => {
     const root = document.querySelector(sel);
-    const text = [...root.querySelectorAll('.cfp-row-title,.cfp-row-src,.cfp-row-date,.cfp-empty,.cfp-search-input')].map(el => ({name: el.className, sw: el.scrollWidth, cw: el.clientWidth, sh: el.scrollHeight, ch: el.clientHeight, overflow: getComputedStyle(el).textOverflow}));
+    const text = [...root.querySelectorAll('.cfp-title,.cfp-row-title,.cfp-row-src,.cfp-row-date,.cfp-empty,.explorer-empty')].map(el => ({name: el.className, sw: el.scrollWidth, cw: el.clientWidth, sh: el.scrollHeight, ch: el.clientHeight, overflow: getComputedStyle(el).textOverflow}));
     const pairs = [];
     // Compare visible, non-ancestor leaf elements clipped by each overflow ancestor.
     // Ancestor/descendant pairs are intentional containment, not overlap.
@@ -132,7 +132,7 @@ try {
       assert.equal(inputState.value,query); assert.equal(inputState.start,query.length); assert.equal(inputState.end,query.length); assert(inputState.scrollLeft>0);
       assert(inputState.panelScroll<=inputState.panelWidth+1);
       assert(await search.evaluate(el=>{const r=el.getBoundingClientRect();return [0.05,0.5,0.95].every(x=>[0.05,0.5,0.95].every(y=>{const hit=document.elementFromPoint(r.left+r.width*x,r.top+r.height*y);return hit===el||el.contains(hit);}));}), 'search not obscured at all nine points');
-      const filtered=await measure(s.page,root); assertNoOverlap(filtered);
+      const filtered=await measure(s.page,root); assertNoOverlap(filtered); assertText(filtered);
       if(width===1280 || width===375 || width===390) await negativeOverlap(s.page,root,`${root} .cfp-empty`);
       if(width===1280||width===375) await s.page.screenshot({path:join(shots,`search-long-${width}.png`),animations:'disabled'});
       await search.fill('');
@@ -182,7 +182,7 @@ try {
       await s.page.locator('#explorer-tree .explorer-empty').waitFor({state:'attached'});
       console.log('EMPTY-DIAG',JSON.stringify(await s.page.evaluate(()=>({sent:window.__wsSent.filter(f=>f.type==='listDir'),chain:(()=>{let a=document.querySelector('#explorer-tree .explorer-empty'),out=[];while(a){let s=getComputedStyle(a),r=a.getBoundingClientRect();out.push({tag:a.tagName,id:a.id,cls:String(a.className),display:s.display,visibility:s.visibility,width:r.width,height:r.height});a=a.parentElement;}return out;})()}))));
       await s.page.locator('#explorer-tree .explorer-empty').waitFor({state:'visible',timeout:1500});
-      assertNoOverlap(await measure(s.page,'#panel-sessions'));
+      const emptyState=await measure(s.page,'#panel-sessions'); assertNoOverlap(emptyState); assertText(emptyState);
       if(width===1280) await negativeOverlap(s.page,'#panel-sessions','#explorer-tree .explorer-empty');
       console.log(`PASS empty explorer directory ${width}`);
     } finally { await s.close(); }
