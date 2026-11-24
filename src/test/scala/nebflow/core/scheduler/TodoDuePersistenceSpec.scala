@@ -352,6 +352,18 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       assert(result.isLeft)
       assertEquals(exists, false)
 
+  test("user todo retry refuses conflicting identity in another session"):
+    val dir = os.temp.dir(prefix = "due-user-identity-")
+    val store = new ScheduledTaskStore(dir)
+    val original = legacy.as[ScheduledTask].toOption.get.copy(source = Some("user"))
+    for
+      _ <- store.addTask(original)
+      result <- store.addUserTodoOnce(original.copy(sessionId = "s2", content = "conflict")).attempt
+      exists <- IO(os.exists(dir / "s2.json"))
+    yield
+      assert(result.isLeft)
+      assertEquals(exists, false)
+
   test("direct save advances revision and rejects a second stale save"):
     val dir = os.temp.dir(prefix = "due-save-generation-")
     val store = new ScheduledTaskStore(dir)

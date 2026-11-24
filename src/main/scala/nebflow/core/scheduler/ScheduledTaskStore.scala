@@ -464,7 +464,11 @@ class ScheduledTaskStore(
                 old.project == task.project && old.priority == task.priority =>
             IO.pure(old)
           case Some(_) => IO.raiseError(new IllegalArgumentException("create identity conflict"))
-          case None => saveUnlocked(task.sessionId, existing :+ task).as(task)
+          case None =>
+            scanUnlocked(_.id == task.id, sort = false).flatMap { copies =>
+              if copies.nonEmpty then IO.raiseError(new IllegalArgumentException("create identity conflict"))
+              else saveUnlocked(task.sessionId, existing :+ task).as(task)
+            }
       }
     }
 
