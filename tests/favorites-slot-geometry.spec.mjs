@@ -24,7 +24,11 @@ try {
         await s.page.click(btn);
         await s.page.waitForSelector(`${panel}.active`, { state: 'visible' });
         await settle(s.page, 100);
-        if (name === 'favorites') assert.equal(await s.page.locator('#panel-favorites .cfp-search-input').evaluate(el => el === document.activeElement), true, 'desktop focus enters search');
+        if (name === 'favorites') {
+          assert.equal(await s.page.locator('#panel-favorites .cfp-search-input').evaluate(el => el === document.activeElement), true, 'desktop focus enters search');
+          assert.equal(await s.page.locator('#panel-favorites .cfp-search-input').getAttribute('placeholder'), '搜索收藏');
+          assert.equal(await s.page.locator('#panel-favorites .cfp-title').evaluate(el => getComputedStyle(el).textAlign), 'left');
+        }
         const geometry = await s.page.evaluate((sel) => {
           const r = document.querySelector(sel).getBoundingClientRect();
           const bar = document.querySelector('#activity-bar').getBoundingClientRect();

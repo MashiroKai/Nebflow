@@ -2345,7 +2345,7 @@ export default {
   'canvas.favPage.open': 'Open favorites',
   'canvas.favPage.title': 'Favorites',
   'canvas.favPage.back': 'Back',
-  'canvas.favPage.search': 'Search',
+  'canvas.favPage.search': 'Search favorites',
   'canvas.favPage.empty': 'No favorites yet. Tap the star at the top of a document to save it.',
   'canvas.favPage.noMatch': 'No matching favorites',
   'canvas.favPage.tab.note': 'Notes',

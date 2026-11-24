@@ -208,6 +208,8 @@ body.mobile-layer .mf-strip-chip .mf-cv-star svg { width: 18px; height: 18px; }
   border-radius: inherit;
   transform: none;
 }
+#panel-favorites .cfp-sidebar .cfp-bar { padding-left: 14px; }
+#panel-favorites .cfp-sidebar .cfp-title { text-align: left; }
 #panel-favorites .cfp-sidebar .cfp-bar,
 #panel-favorites .cfp-sidebar .cfp-search,
 #panel-favorites .cfp-sidebar .cfp-tabs,

@@ -2286,7 +2286,7 @@ export default {
   'canvas.favPage.open': '打开收藏页',
   'canvas.favPage.title': '收藏',
   'canvas.favPage.back': '返回',
-  'canvas.favPage.search': '搜索',
+  'canvas.favPage.search': '搜索收藏',
   'canvas.favPage.empty': '还没有收藏。在文档顶部点星标即可收藏。',
   'canvas.favPage.noMatch': '没有匹配的收藏',
   'canvas.favPage.tab.note': '笔记',
