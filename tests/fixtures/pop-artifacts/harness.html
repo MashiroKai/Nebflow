@@ -658,24 +658,24 @@
       if (!media) return { clicked: false };
       media.click();
       await new Promise(r => setTimeout(r, 60));
-      const lb = document.querySelector('.nf-lightbox');
+      const lb = document.querySelector('.nf-lightbox.on[data-nf-lb-gallery="on"]');
+      const img = lb?.querySelector('.nf-lightbox-img');
       return {
         clicked: true,
         open: !!lb,
         cls: lb ? lb.className : '',
-        hasMedia: !!(lb && lb.querySelector('.nf-lightbox-media')),
-        mediaTag: lb && lb.querySelector('.nf-lightbox-media')
-          ? lb.querySelector('.nf-lightbox-media').tagName.toLowerCase() : '',
+        hasMedia: !!img,
+        mediaTag: img ? img.tagName.toLowerCase() : '',
         hasCanvasBtn: !!(lb && lb.querySelector('.nf-lightbox-canvas')),
-        hasName: !!(lb && lb.querySelector('.nf-lightbox-name')),
-        nameText: lb && lb.querySelector('.nf-lightbox-name') ? lb.querySelector('.nf-lightbox-name').textContent : '',
+        hasName: !!img?.alt,
+        nameText: img?.alt || '',
       };
     };
 
     window.__closeLightboxEsc = async () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       await new Promise(r => setTimeout(r, 30));
-      return { open: !!document.querySelector('.nf-lightbox') };
+      return { open: !!document.querySelector('.nf-lightbox.on[data-nf-lb-gallery="on"]') };
     };
 
     window.__closeLightboxBackdrop = async () => {
@@ -685,7 +685,7 @@
       // The backdrop branch closes only when the click lands on the overlay
       // itself (e.target === overlay) — dispatching on `lb` does exactly that.
       await new Promise(r => setTimeout(r, 30));
-      return { open: !!document.querySelector('.nf-lightbox') };
+      return { open: !!document.querySelector('.nf-lightbox.on[data-nf-lb-gallery="on"]') };
     };
 
     /** AC-S2 (Pop side): a Pop artifact with ONE document — its file card is

@@ -309,7 +309,7 @@ test.describe('AC-S1 — image card click faces: Canvas single point, lightbox f
     expect(probe.open, 'no absPath on a live attachment → the lightbox zoom fallback').toBe(true);
     expect(probe.hasMedia, 'it carries the zoomed media').toBe(true);
     expect(probe.mediaTag, 'an image face').toBe('img');
-    expect(probe.hasName, 'the file name is shown').toBe(true);
+    expect(probe.nameText, 'accessible image name matches the clicked image').toBe('one.png');
 
     const esc = await page.evaluate(() => window.__closeLightboxEsc());
     expect(esc.open, 'Escape closes the lightbox').toBe(false);
