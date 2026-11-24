@@ -13,6 +13,13 @@ object TodoOccurrenceCrashChild:
   def main(args: Array[String]): Unit =
     val store = new ScheduledTaskStore(os.Path(args(0)))
     val occurrence = TodoOccurrence.create("old", 1000L, 7L)
+    if args(1) == "hold" then
+      store.withStoreLock(IO.blocking {
+        System.out.println("LOCKED")
+        System.out.flush()
+        System.in.read()
+      }).unsafeRunSync()
+      sys.exit(0)
     val halt = () => Runtime.getRuntime.halt(71)
     if args(1) == "race" then
       val recorded = store.recordOccurrence("s1", occurrence, Some(2000L)).unsafeRunSync()
@@ -197,6 +204,37 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       _ <- holder.cancel
       rows <- new ScheduledTaskStore(dir).loadTasks("s1").timeout(scala.concurrent.duration.DurationInt(5).seconds)
     yield assertEquals(rows, List(initial))
+
+  test("cancel while another process holds OS lock releases local mutex"):
+    val dir = os.temp.dir(prefix = "occurrence-os-cancel-")
+    val cp = List.newBuilder[String]
+    var loader = Thread.currentThread().getContextClassLoader
+    while loader != null do
+      loader match
+        case urls: java.net.URLClassLoader =>
+          cp ++= urls.getURLs.toList.filter(_.getProtocol == "file").map(u => Paths.get(u.toURI).toString)
+        case _ => ()
+      loader = loader.getParent
+    cp += System.getProperty("java.class.path")
+    val process = new ProcessBuilder(Paths.get(System.getProperty("java.home"), "bin", "java").toString,
+      "-cp", cp.result().distinct.mkString(java.io.File.pathSeparator),
+      "nebflow.core.scheduler.TodoOccurrenceCrashChild", dir.toString, "hold").redirectErrorStream(true).start()
+    val reader = new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream))
+    val store = new ScheduledTaskStore(dir)
+    (for
+      ready <- IO.blocking(reader.readLine())
+      _ <- IO(assertEquals(ready, "LOCKED"))
+      ran <- cats.effect.Ref.of[IO, Boolean](false)
+      started <- cats.effect.Deferred[IO, Unit]
+      waiter <- (started.complete(()) *> store.withStoreLock(ran.set(true))).start
+      _ <- started.get
+      _ <- IO.sleep(scala.concurrent.duration.DurationInt(150).millis)
+      _ <- waiter.cancel.timeout(scala.concurrent.duration.DurationInt(5).seconds)
+      value <- ran.get
+      _ <- IO(assertEquals(value, false))
+      _ <- IO.blocking { process.getOutputStream.write(1); process.getOutputStream.flush(); process.waitFor() }
+      _ <- new ScheduledTaskStore(dir).withStoreLock(IO.unit).timeout(scala.concurrent.duration.DurationInt(5).seconds)
+    yield ()).guarantee(IO.blocking { process.getOutputStream.close(); () })
 
   test("two independent JVMs serialize occurrence writes"):
     val dir = os.temp.dir(prefix = "occurrence-process-race-")

@@ -60,7 +60,14 @@ class ScheduledTaskStore(
             java.nio.file.StandardOpenOption.WRITE
           ))
         }(channel => IO.blocking(channel.close()).handleError(_ => ())).flatMap { channel =>
-          Resource.make(IO.interruptibleMany(channel.lock()))(lock => IO.blocking(lock.release()).handleError(_ => ()))
+          def acquire: IO[java.nio.channels.FileLock] =
+            IO.blocking(Option(channel.tryLock())).flatMap {
+              case Some(lock) => IO.pure(lock)
+              case None => IO.sleep(scala.concurrent.duration.DurationInt(25).millis) *> acquire
+            }
+          Resource.makeFull[IO, java.nio.channels.FileLock](poll => poll(acquire))(
+            lock => IO.blocking(lock.release()).handleError(_ => ())
+          )
         }
         fileLock.use(_ => action)
       }
