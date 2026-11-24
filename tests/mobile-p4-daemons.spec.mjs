@@ -19,6 +19,7 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
+import { mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { openHubPage } from './_mobile-dock-nav.mjs';
 
@@ -127,6 +128,35 @@ test.beforeEach(async ({ page }) => {
 /** @type {{method:string,path:string,body:any}[]} */
 let writes = [];
 
+test('mobile daemon audit: containment, header, controls and long text', async ({ page }) => {
+  await openPanel(page);
+  const result = await page.evaluate(() => {
+    const panel = document.querySelector('#daemon-panel');
+    const body = panel.querySelector('.daemon-panel-body');
+    const row = panel.querySelector('.daemon-row');
+    const command = row.querySelector('.daemon-command');
+    command.textContent = 'long-command-without-spaces-'.repeat(20);
+    const header = document.querySelector('.mobile-page[data-page="daemon"] .mobile-back-btn');
+    body.scrollTop = 0;
+    const r = row.getBoundingClientRect();
+    if (!header || !header.getClientRects().length) throw new Error('daemon page header control missing');
+    const h = header.getBoundingClientRect();
+    const c = command.getBoundingClientRect();
+    const controls = [...row.querySelectorAll('button')].filter(el => el.getClientRects().length);
+    const overlap = controls.some(el => { const b = el.getBoundingClientRect(); return b.left < c.right && b.right > c.left && b.top < c.bottom && b.bottom > c.top; });
+    const cs = getComputedStyle(command);
+    return { left: r.left, right: r.right, top: r.top, headerBottom: h.bottom, overlap, controls: controls.length, long: command.scrollWidth > command.clientWidth, clipped: cs.whiteSpace === 'nowrap' && cs.textOverflow === 'ellipsis' && cs.overflowX === 'hidden' };
+  });
+  expect(result.left).toBeGreaterThanOrEqual(0);
+  expect(result.right).toBeLessThanOrEqual(375);
+  expect(result.top).toBeGreaterThanOrEqual(result.headerBottom - 1);
+  expect(result.controls).toBeGreaterThan(0);
+  expect(result.overlap).toBe(false);
+  expect(result.long && result.clipped).toBe(true);
+  const out = process.env.MOBILE_AUDIT_EVIDENCE;
+  if (out) { mkdirSync(out, { recursive: true }); await page.screenshot({ path: join(out, 'daemon.png'), animations: 'disabled' }); }
+});
+
 test('T1 page geometry: adopted full-bleed in daemon page, radius 0 (dock 批换代判据)', async ({ page }) => {
   const errors = watchErrors(page);
   await openPanel(page);
@@ -153,13 +183,13 @@ test('T2 process row anatomy: status dot + name + :port + command + autostart sw
   await expect(r1.locator('a.daemon-name')).toHaveAttribute('href', 'http://localhost:8111');
   await expect(r1.locator('.daemon-port')).toHaveText(':8111');
   await expect(r1.locator('.daemon-command')).toHaveText('npm run dev');
-  await expect(r1.locator('.daemon-autostart-input')).toBeChecked();
+  await expect(r1.locator('[role="switch"][data-autostart-id]')).toBeChecked();
 
   // 行 2 watcher：starting 点 + 非链名 + 开关未选。
   const r2 = rows.nth(1);
   await expect(r2.locator('.daemon-status')).toHaveClass(/starting/);
   await expect(r2.locator('a.daemon-name')).toHaveCount(0);
-  await expect(r2.locator('.daemon-autostart-input')).not.toBeChecked();
+  await expect(r2.locator('[role="switch"][data-autostart-id]')).not.toBeChecked();
   // 行 3 legacy：error 点。
   await expect(rows.nth(2).locator('.daemon-status')).toHaveClass(/error/);
   expect(errors).toEqual([]);
@@ -180,9 +210,9 @@ test('T4 autostart toggle flips → PUT /api/daemons/:id (open point ④)', asyn
   const errors = watchErrors(page);
   await openPanel(page);
   const r1 = page.locator('#daemon-panel .daemon-row').nth(0);
-  const r1input = r1.locator('.daemon-autostart-input');
-  // 开关 = 自绘 track/thumb（input 本体不可视点）—— 用户路径点 label。
-  const r1label = r1.locator('label.daemon-autostart');
+  const r1input = r1.locator('[role="switch"][data-autostart-id]');
+  // 共享开关以 role=switch 暴露状态和点击入口。
+  const r1label = r1input;
   await expect(r1input).toBeChecked();
   await r1label.click();
   await expect(r1input).not.toBeChecked();

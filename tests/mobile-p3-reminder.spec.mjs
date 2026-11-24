@@ -18,6 +18,7 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
+import { mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { openHubPage } from './_mobile-dock-nav.mjs';
 
@@ -130,6 +131,40 @@ test.beforeEach(async ({ page }) => {
 /** @type {{sendTasks: (list: any[]) => void}|null} */
 let harness = null;
 
+test('mobile reminder audit: containment, header, floating control and long text', async ({ page }) => {
+  const tasks = taskFixture();
+  tasks[0].content = '长提醒内容用于测试文字是否截断或完整显示'.repeat(12);
+  harness.sendTasks(tasks);
+  await openPanel(page);
+  const row = page.locator('#reminder-panel .reminder-row').first();
+  await expect(row).toBeVisible();
+  const result = await page.evaluate(() => {
+    const panel = document.querySelector('#reminder-panel');
+    const body = panel.querySelector('.reminder-panel-body');
+    const row = panel.querySelector('.reminder-row');
+    const text = row.querySelector('.reminder-row-text');
+    const header = panel.querySelector('.reminder-panel-header');
+    const fab = panel.querySelector('.reminder-fab-add');
+    body.scrollTop = 0;
+    const r = row.getBoundingClientRect(), h = header.getBoundingClientRect();
+    const cs = getComputedStyle(text);
+    const long = text.scrollWidth > text.clientWidth;
+    const clipped = long && cs.whiteSpace === 'nowrap' && cs.textOverflow === 'ellipsis' && cs.overflowX === 'hidden';
+    body.scrollTop = body.scrollHeight;
+    const f = fab.getBoundingClientRect();
+    const rows = [...panel.querySelectorAll('.reminder-row')];
+    const overlap = rows.some(el => { const b = el.getBoundingClientRect(); return b.left < f.right && b.right > f.left && b.top < f.bottom && b.bottom > f.top; });
+    return { left: r.left, right: r.right, rowTop: r.top, headerBottom: h.bottom, overlap, long, clipped };
+  });
+  expect(result.left).toBeGreaterThanOrEqual(0);
+  expect(result.right).toBeLessThanOrEqual(375);
+  expect(result.rowTop).toBeGreaterThanOrEqual(result.headerBottom - 1);
+  expect(result.overlap).toBe(false);
+  expect(result.long && result.clipped).toBe(true);
+  const out = process.env.MOBILE_AUDIT_EVIDENCE;
+  if (out) { mkdirSync(out, { recursive: true }); await page.screenshot({ path: join(out, 'reminder.png'), animations: 'disabled' }); }
+});
+
 test('T1 page geometry: adopted full-bleed in reminder page, radius 0 (dock 批换代判据)', async ({ page }) => {
   const errors = watchErrors(page);
   await openPanel(page);
@@ -195,10 +230,11 @@ test('T4 next-trigger main line + last-triggered sub line (open point ①)', asy
   const body = page.locator('#reminder-panel .reminder-panel-body');
   const row = body.locator('.reminder-row', { hasText: '每小时巡检构建' });
   await expect(row.locator('.reminder-row-time')).toContainText('今天');
-  await expect(row.locator('.reminder-row-last')).toContainText('上次触发');
-  // 无 lastTriggered 的行不出现副行节点。
+  await row.locator('.reminder-expand-btn').click();
+  await expect(row.locator('.reminder-row-fact').filter({ hasText: '上次触发' })).toBeVisible();
+  // 无 lastTriggered 的行不出现对应详情。
   const daily = body.locator('.reminder-row', { hasText: '每天晨报摘要' });
-  await expect(daily.locator('.reminder-row-last')).toHaveCount(0);
+  await expect(daily.locator('.reminder-row-fact').filter({ hasText: '上次触发' })).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 

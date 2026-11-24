@@ -6,6 +6,7 @@ const { browser } = await launchBrowser(loaded.mod.playwright || loaded.mod);
 try {
   const session = await createSession(browser);
   await session.boot({ sessionId: 'parent', messages: [] });
+  await session.page.setViewportSize({ width: 375, height: 812 });
   const result = await session.page.evaluate(async () => {
     const { renderProviderFailureStatus: render } = await import('/js/providerFailureStatus.js');
     const root = document.createElement('section');
@@ -30,6 +31,22 @@ try {
     await new Promise(resolve => setTimeout(resolve, 0));
     return { rowCount, text, unsafeElements, opened, restored, cleared: root.childNodes.length === 0 };
   });
+  const summary = await session.page.evaluate(async () => {
+    const { renderProviderFailureStatus: render } = await import('/js/providerFailureStatus.js');
+    const root = document.createElement('section');
+    root.style.width = '300px';
+    document.body.appendChild(root);
+    render({ dom: { chat: root }, sessionId: 'parent' }, {
+      items: [{ sessionId: 'a', parentSessionId: 'parent', title: 'Task A' }],
+      providerGroups: [{ provider: 'unknown', reason: 'provider unavailable', presentation: 'availability', sessionIds: ['a'] }],
+    }, () => {});
+    const el = root.querySelector('.llm-failure-summary');
+    const style = getComputedStyle(el);
+    return { scrollWidth: el.scrollWidth, clientWidth: el.clientWidth, whiteSpace: style.whiteSpace, overflowWrap: style.overflowWrap };
+  });
+  assert.notEqual(summary.whiteSpace, 'nowrap', 'recovery explanation must wrap');
+  assert.equal(summary.overflowWrap, 'anywhere', 'long unbroken content must wrap');
+  assert(summary.scrollWidth <= summary.clientWidth, 'recovery explanation must not overflow');
   assert.equal(result.rowCount, 1);
   assert(!result.text.includes('Private task'));
   assert(result.text.includes('Task A'));

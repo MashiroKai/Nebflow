@@ -51,6 +51,8 @@
 }
 .llm-failure-summary {
   margin-top: var(--ds-space-1);
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .llm-failure-status {
   display: flex;
