@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// indent-revert-shots.mjs — 缩进撤回批（2026-11-05 16:43 作者令）的取证 harness。
+// indent-revert-shots.mjs — 作者 2026-11-24 令文档首行缩进「都去掉」的浏览器闸。
 //
 // 被测面（同一 harness 跑两次：改前 web 树 vs 改后 web 树）：
 //   ① 文档面：`workspace-open-item` → canvas.js → fileViewers.renderFile →
@@ -18,7 +18,8 @@
 //   SHOT_PREFIX=before node tests/indent-revert-shots.mjs    # 改前（main 导出树）
 // 可选 env：PORT=8187、SHOTS_DIR=<dir>、VIEWPORT_W/VIEWPORT_H
 
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
+import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { dirname, join, normalize, resolve, extname } from 'node:path';
@@ -33,10 +34,11 @@ const WEB = process.env.WEB_ROOT
   : join(ROOT, 'src', 'main', 'resources', 'web');
 const PORT = Number(process.env.PORT || 8187);
 const BASE = `http://127.0.0.1:${PORT}`;
-const SHOTS_DIR = process.env.SHOTS_DIR || join(ROOT, '.nebflow', 'evidence', '20261105_indent-revert');
+const SHOTS_DIR = process.env.SHOTS_DIR || join(tmpdir(), `indent-revert-${process.pid}`);
 const PREFIX = process.env.SHOT_PREFIX || 'after';
-const VW = Number(process.env.VIEWPORT_W || 1280);
-const VH = Number(process.env.VIEWPORT_H || 900);
+const MOBILE = process.argv.includes('--mobile');
+const VW = Number(process.env.VIEWPORT_W || (MOBILE ? 390 : 1280));
+const VH = Number(process.env.VIEWPORT_H || (MOBILE ? 844 : 900));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const MIME = {
@@ -51,13 +53,13 @@ const MIME = {
    一段不带）+ 有序/无序列表 + 代码块 + 表格 + 引用块。长段刻意写满折行，
    才能看出「首行缩进 / 续行齐左」。 */
 const P_ENTITY =
-  '&emsp;&emsp;第一段（源文件以实体起行）：文档正文只缩进首行，中文排版习惯是首行空两字、'
-  + '其余各行齐左。这一段特意写长，用来观察折行后的第二行、第三行是否仍然贴着内容列左缘 —— '
+  '&emsp;&emsp;第一段（源文件以实体起行）：作者令文档段落首行缩进都去掉，'
+  + '首行与其余各行齐左。这一段特意写长，用来观察折行后的第二行、第三行是否仍然贴着内容列左缘 —— '
   + '如果出现挂起缩进或整块左移，折行后的行会整体向右漂移，读数与截图都能立刻看出来。';
 
 const P_PLAIN =
   '第二段（源文件不带实体）：这一段同样写长，用来对照「实体起行」与「纯正文」两种源形态是否'
-  + '收敛到同一个视觉结果 —— 首行两个字、续行齐左。只有首行缩进一种缩进，不做层级下沉。';
+  + '收敛到同一个视觉结果 —— 首行与续行齐左，不做首行缩进，也不做层级下沉。';
 
 const DOC_MD = [
   '# 缩进验收样例（撤回批 2026-11-05）',
@@ -85,7 +87,7 @@ const DOC_MD = [
   '',
   '| 面 | 改后读数 | 说明 |',
   '| --- | --- | --- |',
-  '| 正文段落 | 首行 2 字 | 续行齐左 |',
+  '| 正文段落 | 零首行缩进 | 首行续行齐左 |',
   '| 列表 | 只缩列表符号 | 不吃首行缩进 |',
   '| 代码 / 表格 / 引用 | 零缩进 | 不吃首行缩进 |',
   '',
@@ -215,6 +217,21 @@ const MEASURE_DOC = (sel) => {
         leadingEntitySpaces: lead ? lead[0].length : 0,
         computedTextIndent: getComputedStyle(p).textIndent,
         firstGlyphOffset: firstGlyphOffset(p),
+        lineStarts: (() => {
+          const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+          const lines = new Map();
+          for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+            for (let i = 0; i < t.length; i++) {
+              if (/\s/.test(t.data[i])) continue;
+              const range = document.createRange();
+              range.setStart(t, i); range.setEnd(t, i + 1);
+              const r = range.getBoundingClientRect();
+              const y = Math.round(r.top);
+              if (!lines.has(y)) lines.set(y, r.left);
+            }
+          }
+          return [...lines.values()];
+        })(),
       };
     }),
     blocks: {
@@ -271,7 +288,7 @@ const MEASURE_MSG = (sel) => {
 
 /* ─────────────── 执行 ─────────────── */
 mkdirSync(SHOTS_DIR, { recursive: true });
-const browser = await chromium.launch();
+const browser = await (process.env.BROWSER === 'webkit' ? webkit : chromium).launch();
 const report = { webRoot: WEB, prefix: PREFIX, viewport: { w: VW, h: VH } };
 try {
   const { page, pageErrors } = await boot(browser);
@@ -282,6 +299,7 @@ try {
       detail: { id: 'file:' + absPath, itemType: 'markdown', title: 'indent-sample.md', content, absPath, pinned: true },
     }));
   }, { absPath: DOC_PATH, content: DOC_MD });
+  if (VW <= 600) await page.evaluate(async () => (await import('/js/mobile/navController.js')).dockTo('canvas'));
   await page.waitForSelector('.canvas-tab-pane.active .canvas-md-scroll', { timeout: 20000 });
   await sleep(800);
   const DOC_SEL = '.canvas-tab-pane.active .canvas-md-viewer';
@@ -304,6 +322,13 @@ try {
   report.pageErrors = pageErrors;
   writeFileSync(join(SHOTS_DIR, `${PREFIX}_readings.json`), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
+  assert.ok(report.doc.paragraphs.length >= 2, 'expected rendered document paragraphs');
+  for (const p of report.doc.paragraphs) {
+    assert.equal(parseFloat(p.computedTextIndent), 0, 'document paragraph must have zero text-indent');
+    assert.equal(p.leadingEntitySpaces, 0, 'leading source spaces must be normalized');
+    assert.ok(p.lineStarts.length >= 2, 'test paragraph must wrap');
+    assert.ok(Math.abs(p.lineStarts[0] - p.lineStarts[1]) < 1, 'first and continuation line must align');
+  }
 } finally {
   await browser.close();
   await new Promise((r) => webServer.close(r));

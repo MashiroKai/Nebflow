@@ -1819,7 +1819,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 /* 段落缩进撤回（撤回批 2026-11-05 16:43 作者令「你发的消息不加缩进功能」）：agent
    发出的消息正文回到普通段落形态 —— 气泡内不做首行缩进、不做层级缩进，正文与列表
    只保留一条常规列表层级（ul/ol 各自的左缘缩进，浏览器同款）。此处**不再有**
-   text-indent 声明；文档面（Canvas 阅读器）的首行缩进是另一回事，见 css/split.css。 */
+   text-indent 声明；作者 2026-11-24 令文档首行缩进也「都去掉」。 */
 .bubble.ai p:first-child, .bubble.injected p:first-child, .ask-bub.ai p:first-child { margin-top: 0; }
 .bubble.ai p:last-child, .bubble.injected p:last-child, .ask-bub.ai p:last-child { margin-bottom: 0; }
 /* 列表缩进走 token（原 18px / --ds-space-5 裸值退役，取 --ds-list-indent）：每级

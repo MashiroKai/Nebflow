@@ -608,10 +608,10 @@ try {
   ok(streamFinal.svg === 1, `③ 完成后 svg 恰好 1 个（${streamFinal.svg}，state=${streamFinal.states}）`);
   ok(streamFinal.calls - callsBefore === 1, `③ 库 render 调用恰好 1 次（before=${callsBefore} after=${streamFinal.calls}）`);
 
-  /* ── ⑩ 段落缩进（作者令 09:13「对段落内容，要有缩进」） ──────────────── */
+  /* ── ⑩ 段落零首行缩进（作者 2026-11-24 令「都去掉」） ──────────────── */
   const indent = await page.evaluate(() => {
     const root = getComputedStyle(document.documentElement);
-    const token = root.getPropertyValue('--ds-text-indent').trim();     // 期望 = 2em
+    const token = root.getPropertyValue('--ds-text-indent').trim();     // 已删除
     const listTok = root.getPropertyValue('--ds-list-indent').trim();   // 期望 = 1.6em
     const bubble = [...document.querySelectorAll('.bubble.ai')]
       .find((b) => (b.textContent || '').includes('段落缩进验收'));
@@ -646,8 +646,8 @@ try {
       narrow: getComputedStyle(document.documentElement).getPropertyValue('--ds-list-indent-narrow').trim(),
     };
   });
-  ok(!!indent && indent.token === '2em' && Math.abs(indent.pIndent - 2 * indent.pFont) < 0.6,
-    `⑩① 正文段落首行缩进 = token 值（computed ${indent && indent.pIndent}px / 2em@${indent && indent.pFont}px / token=${indent && indent.token}）`);
+  ok(!!indent && indent.token === '' && indent.pIndent === 0,
+    `⑩① 正文段落零首行缩进（computed ${indent && indent.pIndent}px / token=${indent && indent.token}）`);
   ok(!!indent && indent.liExists === true && indent.liIndent === 0,
     `⑩② 列表项内段落零首行缩进（li>p text-indent=${indent && indent.liIndent}px）`);
   ok(!!indent && indent.quoteIndent === 0, `⑩② 引用块内段落零首行缩进（${indent && indent.quoteIndent}px）`);
