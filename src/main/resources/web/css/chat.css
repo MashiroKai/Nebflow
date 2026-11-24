@@ -5973,6 +5973,9 @@ body:not(.mobile-layer) .option-preview-media {
 .row.pop-artifact.user .pop-stack-view .media-layer.layer-back { transform: translateX(-26px) rotate(-3.5deg); }
 .row.pop-artifact.user .pop-stack-area { width: max-content; }
 .row.pop-artifact.user .pop-stack-area > .pill { margin-right: var(--ds-space-8); }
+/* Expanded media retain their own aspect ratios and can be narrower than the
+   stack column. Anchor each user card (and its footer) to the bubble edge. */
+.row.pop-artifact.user .pop-expanded-card { align-items: flex-end; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    attach-bubble-unify (2026-10-20 author ruling 「用户发送附件与气泡设计语言统一
