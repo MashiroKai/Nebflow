@@ -153,8 +153,18 @@ test('mobile daemon audit: containment, header, controls and long text', async (
   expect(result.controls).toBeGreaterThan(0);
   expect(result.overlap).toBe(false);
   expect(result.long && result.clipped).toBe(true);
+  const scroll = page.locator('#daemon-panel .daemon-panel-body');
+  for (const f of [0, 0.5, 1]) {
+    const geo = await scroll.evaluate((el, fraction) => {
+      el.scrollTop = (el.scrollHeight - el.clientHeight) * fraction;
+      const b = el.getBoundingClientRect(), h = document.querySelector('.mobile-page[data-page="daemon"] .mobile-back-btn').getBoundingClientRect();
+      return {left:b.left,right:b.right,top:b.top,headerBottom:h.bottom};
+    }, f);
+    expect(geo.left).toBeGreaterThanOrEqual(0); expect(geo.right).toBeLessThanOrEqual(375);
+    expect(geo.top).toBeGreaterThanOrEqual(geo.headerBottom - 1);
+  }
   const out = process.env.MOBILE_AUDIT_EVIDENCE;
-  if (out) { mkdirSync(out, { recursive: true }); await page.screenshot({ path: join(out, 'daemon.png'), animations: 'disabled' }); }
+  if (out) { mkdirSync(out, { recursive: true }); await page.screenshot({ path: join(out, '守护进程.png'), animations: 'disabled' }); }
 });
 
 test('T1 page geometry: adopted full-bleed in daemon page, radius 0 (dock 批换代判据)', async ({ page }) => {

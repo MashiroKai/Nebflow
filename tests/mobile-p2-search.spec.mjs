@@ -129,6 +129,34 @@ test.beforeEach(async ({ page }) => {
   await bootApp(page);
 });
 
+test('mobile search audit: mounted results, three scroll positions and long line', async ({ page }) => {
+  await openPanel(page);
+  await page.locator('#search-keyword').fill('量子纠缠');
+  const rows = page.locator('#search-results .search-result');
+  await expect(rows).toHaveCount(2);
+  const header = page.locator('.mobile-page[data-page="search"] .mobile-back-btn');
+  await expect(header).toBeVisible();
+  await rows.first().locator('.search-result-preview').evaluate(el => { el.textContent = '量子纠缠 long-search-result-without-spaces-'.repeat(20); });
+  const long = await rows.first().locator('.search-result-preview').evaluate(el => {
+    const cs = getComputedStyle(el), r = el.getBoundingClientRect();
+    return {width: r.width, scroll: el.scrollWidth, left:r.left, right:r.right, clamp:cs.webkitLineClamp, wrap:cs.wordBreak};
+  });
+  expect(long.left).toBeGreaterThanOrEqual(0); expect(long.right).toBeLessThanOrEqual(375);
+  expect(long.clamp).toBe('2'); expect(long.wrap).toBe('break-word');
+  const scroll = page.locator('#search-results');
+  for (const fraction of [0, 0.5, 1]) {
+    const geometry = await scroll.evaluate((el, f) => {
+      el.scrollTop = (el.scrollHeight-el.clientHeight)*f;
+      const r=el.getBoundingClientRect(), h=document.querySelector('.mobile-page[data-page="search"] .mobile-back-btn').getBoundingClientRect();
+      return {left:r.left,right:r.right,top:r.top,headerBottom:h.bottom};
+    }, fraction);
+    expect(geometry.left).toBeGreaterThanOrEqual(0); expect(geometry.right).toBeLessThanOrEqual(375);
+    expect(geometry.top).toBeGreaterThanOrEqual(geometry.headerBottom-1);
+  }
+  const out = process.env.MOBILE_AUDIT_EVIDENCE;
+  if(out) { const { mkdirSync } = await import('node:fs'); mkdirSync(out,{recursive:true}); await page.screenshot({path:join(out,'搜索.png'),animations:'disabled'}); }
+});
+
 test('T1 page geometry: adopted full-bleed in search page, radius 0 (dock 批换代判据)', async ({ page }) => {
   const errors = watchErrors(page);
   await openPanel(page);

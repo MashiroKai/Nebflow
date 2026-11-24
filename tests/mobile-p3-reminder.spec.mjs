@@ -161,8 +161,18 @@ test('mobile reminder audit: containment, header, floating control and long text
   expect(result.rowTop).toBeGreaterThanOrEqual(result.headerBottom - 1);
   expect(result.overlap).toBe(false);
   expect(result.long && result.clipped).toBe(true);
+  const scroll = page.locator('#reminder-panel .reminder-panel-body');
+  for (const f of [0, 0.5, 1]) {
+    const geo = await scroll.evaluate((el, fraction) => {
+      el.scrollTop = (el.scrollHeight - el.clientHeight) * fraction;
+      const b=el.getBoundingClientRect(), h=document.querySelector('#reminder-panel .reminder-panel-header').getBoundingClientRect();
+      return {left:b.left,right:b.right,top:b.top,headerBottom:h.bottom};
+    }, f);
+    expect(geo.left).toBeGreaterThanOrEqual(0); expect(geo.right).toBeLessThanOrEqual(375);
+    expect(geo.top).toBeGreaterThanOrEqual(geo.headerBottom - 1);
+  }
   const out = process.env.MOBILE_AUDIT_EVIDENCE;
-  if (out) { mkdirSync(out, { recursive: true }); await page.screenshot({ path: join(out, 'reminder.png'), animations: 'disabled' }); }
+  if (out) { mkdirSync(out, { recursive: true }); await page.screenshot({ path: join(out, '提醒.png'), animations: 'disabled' }); }
 });
 
 test('T1 page geometry: adopted full-bleed in reminder page, radius 0 (dock 批换代判据)', async ({ page }) => {

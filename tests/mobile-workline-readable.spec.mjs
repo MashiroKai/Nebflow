@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdirSync } from 'node:fs';
 import { dirname, join, normalize, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -27,4 +27,6 @@ test('mobile live thinking wraps without clipping', async ({ page }) => {
   expect(metrics.left).toBe(0);
   expect(metrics.wrap).not.toBe('nowrap');
   expect(metrics.scroll).toBeLessThanOrEqual(metrics.width + 1);
+  const out=process.env.MOBILE_AUDIT_EVIDENCE;
+  if(out) {mkdirSync(out,{recursive:true}); await page.screenshot({path:join(out,'聚焦条.png'),animations:'disabled'});}
 });

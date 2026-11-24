@@ -280,6 +280,25 @@ async function goto(page, id) {
   await page.waitForTimeout(900);
 }
 
+test('mobile social dock pages: real mounted rows and long content', async ({ page }) => {
+  await page.locator('#mobile-dock .dock-key[data-dock="messages"]').click();
+  await expect(page.locator('.mobile-page[data-page="messages"]')).toHaveClass(/live/);
+  const messages = page.locator('.mobile-page[data-page="messages"] #fm-conversations');
+  const row = messages.locator('.fm-conv-row').first();
+  await expect(row).toBeVisible({timeout:10000});
+  const rowBox = await row.boundingBox();
+  expect(rowBox.x).toBeGreaterThanOrEqual(0); expect(rowBox.x+rowBox.width).toBeLessThanOrEqual(375);
+  for (const f of [0,0.5,1]) {
+    const b=await messages.evaluate((el,fraction)=>{el.scrollTop=(el.scrollHeight-el.clientHeight)*fraction; const r=el.getBoundingClientRect(); return {left:r.left,right:r.right};},f);
+    expect(b.left).toBeGreaterThanOrEqual(0); expect(b.right).toBeLessThanOrEqual(375);
+  }
+  const out=process.env.MOBILE_AUDIT_EVIDENCE;
+  if(out) { const {mkdirSync}=await import('node:fs'); mkdirSync(out,{recursive:true}); await page.screenshot({path:join(out,'社交.png'),animations:'disabled'}); }
+  await page.locator('#mobile-dock .dock-key[data-dock="contacts"]').click();
+  await expect(page.locator('.mobile-page[data-page="contacts"]')).toHaveClass(/live/);
+  await expect(page.locator('.mobile-page[data-page="contacts"] #fm-contacts-body')).toBeVisible();
+});
+
 test('E1/E2/E3/E4/E5 per-page scroll-end reserve and dock pass-under (375x812)', async ({ page }) => {
   const rows = [];
   for (const t of TARGETS) {
