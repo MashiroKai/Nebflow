@@ -113,10 +113,6 @@
   position: relative;
   flex: none;
 }
-.cfp-back {
-  width: 36px; height: 36px; border: 0; background: transparent; color: inherit;
-  font-size: 30px; line-height: 1; cursor: pointer; padding: 0;
-}
 .cfp-title { position: absolute; left: 50%; transform: translateX(-50%); margin: 0; font-size: 17px; font-weight: 600; }
 .cfp-search { padding: var(--ds-space-2) var(--ds-space-6); flex: none; }
 .cfp-search-input {

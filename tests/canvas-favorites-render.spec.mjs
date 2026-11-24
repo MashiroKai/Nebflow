@@ -176,7 +176,15 @@ async function mobileCase(browser, failures) {
   check('mobile: 有效条目不置灰', (await s.page.locator(HUB + ' .cfp-row[data-fav-path="/w/a.md"]').getAttribute('class')).indexOf('is-invalid') < 0);
   check('mobile: 403 不置灰（非 404/410 不判失效）', (await s.page.locator(HUB + ' .cfp-row[data-fav-path="/w/forbidden.md"]').getAttribute('class')).indexOf('is-invalid') < 0);
   check('mobile: 500 不置灰（非 404/410 不判失效）', (await s.page.locator(HUB + ' .cfp-row[data-fav-path="/w/flaky.md"]').getAttribute('class')).indexOf('is-invalid') < 0);
-  await shot(s.page, '#canvas-fav-page', 'mobile-favorites-page.png', 'mobile favorites page');
+  for (const [name, width, height] of [['mobile', 390, 844], ['tablet', 768, 1024], ['desktop', 1280, 800]]) {
+    await s.page.setViewportSize({ width, height });
+    const back = s.page.locator('#canvas-fav-page .cfp-back');
+    const box = await back.boundingBox();
+    const style = await back.evaluate(el => ({ font: getComputedStyle(el).fontSize, color: getComputedStyle(el).color, parentColor: getComputedStyle(el.parentElement).color }));
+    check(`${name}: back geometry and color`, !!box && box.width === 36 && box.height === 36 && style.font === '30px' && style.color === style.parentColor, JSON.stringify({ box, style }));
+    await shot(s.page, '#canvas-fav-page', `back-${name}.png`, `${name} favorites page`);
+  }
+  await s.page.setViewportSize({ width: 390, height: 844 });
 
   // 点失效条目：toast 可读提示，不开 canvas。
   await s.page.evaluate(() => {
