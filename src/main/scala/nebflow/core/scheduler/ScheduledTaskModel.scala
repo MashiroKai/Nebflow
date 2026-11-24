@@ -69,6 +69,10 @@ object TodoDue:
   }
 end TodoDue
 
+final case class TodoRuleSnapshot(version: Long, rule: TodoDue)
+object TodoRuleSnapshot:
+  given Codec[TodoRuleSnapshot] = io.circe.generic.semiauto.deriveCodec
+
 /** One planned reminder, with snoozing separate from its immutable identity. */
 final case class TodoOccurrence(
   todoId: String,
@@ -213,7 +217,8 @@ case class ScheduledTask(
   due: Option[TodoDue] = None,
   nextDueAt: Option[Long] = None,
   occurrences: List[TodoOccurrence] = Nil,
-  dueRuleVersion: Long = 0L
+  dueRuleVersion: Long = 0L,
+  dueRuleHistory: List[TodoRuleSnapshot] = Nil
 ):
   /** true = 待办面（周期浮出直至销账），false = 定时任务面（现状）。 */
   def isTodo: Boolean = kind.contains(ScheduledTask.KindTodo)
@@ -273,7 +278,8 @@ object ScheduledTask:
         val noDue = if t.due.isEmpty then obj.remove("due") else obj
         val noNext = if t.nextDueAt.isEmpty then noDue.remove("nextDueAt") else noDue
         val noOccurrences = if t.occurrences.isEmpty then noNext.remove("occurrences") else noNext
-        if t.dueRuleVersion == 0L then noOccurrences.remove("dueRuleVersion") else noOccurrences
+        val noVersion = if t.dueRuleVersion == 0L then noOccurrences.remove("dueRuleVersion") else noOccurrences
+        if t.dueRuleHistory.isEmpty then noVersion.remove("dueRuleHistory") else noVersion
       }
     }
   )

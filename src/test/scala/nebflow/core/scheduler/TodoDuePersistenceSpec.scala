@@ -175,6 +175,18 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
   test("hard halt after atomic replacement preserves advanced series"):
     checkHardCrash("after")
 
+  test("changing a reminder rule retains its prior version snapshot"):
+    val dir = os.temp.dir(prefix = "due-rule-history-")
+    val store = new ScheduledTaskStore(dir)
+    val first = TodoDue.Weekly(1, "09:00", "Europe/London", "2024-01-01T09:00")
+    val changed = TodoDue.Weekly(2, "09:00", "Europe/London", "2024-01-02T09:00")
+    val initial = legacy.as[ScheduledTask].toOption.get.copy(due = Some(first))
+    for
+      _ <- store.addTask(initial)
+      _ <- store.updateTask("s1", initial.id)(_.copy(due = Some(changed)))
+      rows <- store.loadTasks("s1")
+    yield assertEquals(rows.head.dueRuleHistory.map(x => (x.version, x.rule)), List((0L, first)))
+
   test("direct save increments rule version when a reminder rule changes"):
     val dir = os.temp.dir(prefix = "due-rule-save-")
     val store = new ScheduledTaskStore(dir)
