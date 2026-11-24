@@ -190,6 +190,8 @@ async function legacyTermInfoFor(a, signal) {
 function paintTermTip(a, info) {
   const el = ensureTermTipEl();
   el.querySelector('.term-tip-retry').hidden = true;
+  el.style.maxHeight = '';
+  el.querySelector('.ts').style.maxHeight = '';
   el.querySelector('.tt').textContent = info.name || '';
   el.querySelector('.ts').textContent = info.definition || '';
   // 气泡的显示字符串 = 词条名 + 定义（term-system-v2 词条视觉面批 2026-11-05，
@@ -201,13 +203,22 @@ function paintTermTip(a, info) {
   el.style.display = 'block';
   // Viewport-clamped placement: above the link when there is room, else below.
   const r = a.getBoundingClientRect();
-  const vw = document.documentElement.clientWidth || window.innerWidth;
-  const vh = document.documentElement.clientHeight || window.innerHeight;
+  const viewport = window.visualViewport;
+  const left = viewport?.offsetLeft || 0;
+  const top = viewport?.offsetTop || 0;
+  const vw = viewport?.width || document.documentElement.clientWidth || window.innerWidth;
+  const vh = viewport?.height || document.documentElement.clientHeight || window.innerHeight;
+  const below = Math.max(0, top + vh - 16 - r.bottom - 8);
+  const above = Math.max(0, r.top - top - 24);
+  const useBelow = below >= el.offsetHeight || below >= above;
+  const available = useBelow ? below : above;
+  el.style.maxHeight = Math.max(0, available) + 'px';
+  const body = el.querySelector('.ts');
+  body.style.maxHeight = Math.max(0, available - (el.offsetHeight - body.offsetHeight) - 4) + 'px';
   const bw = el.offsetWidth;
   const bh = el.offsetHeight;
-  const x = Math.min(Math.max(8, r.left + r.width / 2 - bw / 2), Math.max(8, vw - bw - 8));
-  let y = r.top - bh - 8;
-  if (y < 8) y = Math.min(r.bottom + 8, Math.max(8, vh - bh - 8));
+  const x = Math.min(Math.max(left + 16, r.left + r.width / 2 - bw / 2), Math.max(left + 16, left + vw - bw - 16));
+  const y = useBelow ? r.bottom + 8 : r.top - bh - 8;
   el.style.left = Math.round(x) + 'px';
   el.style.top = Math.round(y) + 'px';
 }
