@@ -606,9 +606,14 @@ test.describe('AC-S1 复验 — whole-card Canvas open under REAL mouse clicks',
       await page.evaluate(() => window.__userMediaLive());
       const row = page.locator('#chat > .row.user-media');
       const bubble = page.locator('#chat > .row.user:not(.user-media) > .bubble.user').last();
-      const bubbleRight = (await bubble.boundingBox()).x + (await bubble.boundingBox()).width;
+      // The bubble entrance animates its width; await its terminal frame and
+      // read each rectangle once rather than combining two different frames.
+      await bubble.evaluate(el => Promise.all(el.getAnimations().map(a => a.finished.catch(() => {}))));
+      const bubbleRect = await bubble.boundingBox();
+      const bubbleRight = bubbleRect.x + bubbleRect.width;
       const front = row.locator('.pop-stack-view .layer-front');
-      expect(Math.abs((await front.boundingBox()).x + (await front.boundingBox()).width - bubbleRight)).toBeLessThanOrEqual(1);
+      const frontRect = await front.boundingBox();
+      expect(Math.abs(frontRect.x + frontRect.width - bubbleRight)).toBeLessThanOrEqual(1);
       await row.locator('.pill').click();
       await expect(row.locator('.pop-expand-view')).toHaveClass(/show/);
       for (const card of await row.locator('.pop-expand-view .media-layer').all()) {
