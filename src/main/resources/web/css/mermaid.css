@@ -5,6 +5,19 @@
    产出同一批占位 div，水合腿在 js/fenceKit.js + 各族渲染器。
    令牌纪律：本文件零裸色值（色/尺寸一律 --* 变量）；新增面必须同纪律。 */
 
+/* The active, pure-diagram pane alone gives up the shared title capsule. */
+#canvas-slide:has(.canvas-tab-pane.active[data-canvas-kind="mermaid"]) > .canvas-header {
+  display: none;
+}
+.canvas-tab-pane[data-canvas-kind="mermaid"] .canvas-source-toggle,
+.canvas-tab-pane[data-canvas-kind="mermaid"] .canvas-find-toggle,
+.canvas-tab-pane[data-canvas-kind="mermaid"] .canvas-select-toggle {
+  border-radius: var(--ds-radius-chip);
+  background: var(--glass-control-bg);
+  box-shadow: none;
+}
+.canvas-md-viewer .nf-mermaid { width: 100%; }
+
 /* ── 块级围栏（图）：mermaid / svg 同一几何 ───────────────────────────── */
 /* 图槽**就是图片位**（mermaid-inline-center 批 2026-11-07）。作者令逐字：
    「Mermaid 就直接像个图片一样嵌入在文档里，不需要可以上下滚动。然后使用跟图片
