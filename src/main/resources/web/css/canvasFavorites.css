@@ -122,12 +122,12 @@ body.mobile-layer .mf-strip-chip .mf-cv-star svg { width: 18px; height: 18px; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 52px;
+  min-height: 52px;
   padding: env(safe-area-inset-top, 0) 16px 0;
   position: relative;
   flex: none;
 }
-.cfp-title { position: absolute; left: 50%; transform: translateX(-50%); margin: 0; font-size: 17px; font-weight: 600; }
+.cfp-title { flex: 1; min-width: 0; margin: 0; text-align: center; overflow-wrap: anywhere; font-size: 17px; font-weight: 600; }
 .cfp-search { padding: var(--ds-space-2) var(--ds-space-6); flex: none; }
 .cfp-search-input {
   width: 100%;

@@ -98,6 +98,17 @@ try {
       if(width<500) await s.page.locator('.mobile-page[data-page="workbench"].live .mf-hub-row[data-hub-page="favorites"]').click(); else await s.page.click('#favorites-btn');
       const root=width<500?'#canvas-fav-page':'#panel-favorites';
       await s.page.waitForSelector(`${root} .cfp-row`); await settle(s.page,100);
+      const pageTitle=s.page.locator(`${root} .cfp-title`);
+      const originalTitle=await pageTitle.textContent();
+      for(const sample of samples.slice(0,3)) {
+        await pageTitle.evaluate((el,text)=>{el.textContent=text;},sample);
+        assertText(await measure(s.page,root));
+        assertNoOverlap(await measure(s.page,root));
+      }
+      await pageTitle.evaluate(el=>{el.style.whiteSpace='nowrap';el.style.overflowWrap='normal';});
+      const badTitle=await measure(s.page,root);
+      assert.throws(()=>assertText(badTitle),/clipped/);
+      await pageTitle.evaluate((el,text)=>{el.removeAttribute('style');el.textContent=text;},originalTitle);
       for (const position of [0,0.5,1]) {
         await s.page.locator(`${root} .cfp-body`).evaluate((el,p)=>{el.scrollTop=(el.scrollHeight-el.clientHeight)*p;},position);
         const result=await measure(s.page,root); assertText(result); assertNoOverlap(result);
