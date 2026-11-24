@@ -175,6 +175,23 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
   test("hard halt after atomic replacement preserves advanced series"):
     checkHardCrash("after")
 
+  test("occurrence recording rejects a stale session copy when another revision is authoritative"):
+    val dir = os.temp.dir(prefix = "occurrence-stale-session-")
+    val store = new ScheduledTaskStore(dir)
+    val old = legacy.as[ScheduledTask].toOption.get.copy(nextDueAt = Some(1000L))
+    val newer = old.copy(sessionId = "s2", revision = 1L)
+    val occurrence = TodoOccurrence.create("old", 1000L, 0L)
+    for
+      _ <- store.saveTasks("s1", List(old))
+      _ <- store.saveTasks("s2", List(newer))
+      result <- store.recordOccurrence("s1", occurrence, Some(2000L)).attempt
+      stale <- store.loadTasks("s1")
+      latest <- store.loadTasks("s2")
+    yield
+      assert(result.isLeft)
+      assertEquals(stale, Nil)
+      assertEquals(latest, List(newer))
+
   test("two store instances concurrently record one occurrence once"):
     val dir = os.temp.dir(prefix = "occurrence-race-")
     val first = new ScheduledTaskStore(dir)

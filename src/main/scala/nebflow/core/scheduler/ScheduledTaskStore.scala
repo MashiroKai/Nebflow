@@ -335,8 +335,12 @@ class ScheduledTaskStore(
     afterCommit: () => Unit = () => ()
   ): IO[Boolean] =
     withStoreLock {
-      loadUnlocked(sessionId).flatMap { rows =>
+      scanUnlocked(_.id == occurrence.todoId, sort = false).flatMap { copies =>
+        val authority = distinctById(copies).headOption
+        loadUnlocked(sessionId).flatMap { rows =>
         rows.find(_.id == occurrence.todoId) match
+          case Some(task) if !authority.contains(task) =>
+            IO.raiseError(new IllegalStateException("stale or conflicting task revision"))
           case None => IO.raiseError(new IllegalArgumentException("todo not found"))
           case Some(task) if task.occurrences.exists(_.key == occurrence.key) => IO.pure(false)
           case Some(task) if !task.nextDueAt.contains(occurrence.scheduledAt) =>
@@ -349,6 +353,7 @@ class ScheduledTaskStore(
             )
             IO(beforeCommit()) *> saveUnlocked(sessionId, rows.map(t => if t.id == task.id then updated else t)) *>
               IO(afterCommit()).as(true)
+        }
       }
     }
 
