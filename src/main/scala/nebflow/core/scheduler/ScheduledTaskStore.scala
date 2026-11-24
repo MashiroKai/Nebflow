@@ -358,10 +358,16 @@ class ScheduledTaskStore(
             byId.get(task.id) match
               case Some(old) if old.due != task.due =>
                 task.copy(
+                  revision = Math.addExact(old.revision, 1L),
                   dueRuleVersion = Math.addExact(old.dueRuleVersion, 1L),
                   dueRuleHistory = old.dueRuleHistory ++ old.due.toList.map(TodoRuleSnapshot(old.dueRuleVersion, _))
                 )
-              case Some(old) => task.copy(dueRuleVersion = old.dueRuleVersion, dueRuleHistory = old.dueRuleHistory)
+              case Some(old) =>
+                task.copy(
+                  revision = if task == old then old.revision else Math.addExact(old.revision, 1L),
+                  dueRuleVersion = old.dueRuleVersion,
+                  dueRuleHistory = old.dueRuleHistory
+                )
               case None => task
           }
           saveUnlocked(sessionId, adjusted)

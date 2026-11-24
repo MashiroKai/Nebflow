@@ -340,6 +340,20 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       rows <- store.loadTasks("s2")
     yield assertEquals(rows, List(newer))
 
+  test("direct save advances revision and rejects a second stale save"):
+    val dir = os.temp.dir(prefix = "due-save-generation-")
+    val store = new ScheduledTaskStore(dir)
+    val original = legacy.as[ScheduledTask].toOption.get
+    for
+      _ <- store.addTask(original)
+      _ <- store.saveTasks("s1", List(original.copy(content = "first")))
+      result <- store.saveTasks("s1", List(original.copy(content = "second"))).attempt
+      rows <- store.loadTasks("s1")
+    yield
+      assert(result.isLeft)
+      assertEquals(rows.head.content, "first")
+      assertEquals(rows.head.revision, 1L)
+
   test("direct save rejects a stale revision instead of overwriting newer state"):
     val dir = os.temp.dir(prefix = "due-save-stale-")
     val store = new ScheduledTaskStore(dir)
