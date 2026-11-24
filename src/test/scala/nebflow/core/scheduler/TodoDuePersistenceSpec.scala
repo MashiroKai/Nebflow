@@ -175,6 +175,21 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
   test("hard halt after atomic replacement preserves advanced series"):
     checkHardCrash("after")
 
+  test("tick refuses to overwrite a stale destination session copy"):
+    val dir = os.temp.dir(prefix = "tick-stale-destination-")
+    val store = new ScheduledTaskStore(dir)
+    val due = TodoDue.Once(1000L, "Europe/London", "1970-01-01T00:00:01", "Z")
+    val stale = legacy.as[ScheduledTask].toOption.get.copy(sessionId = "s2", due = Some(due), nextDueAt = Some(1000L))
+    val latest = stale.copy(revision = 1L, content = "latest")
+    for
+      _ <- store.saveTasks("s1", List(latest))
+      _ <- store.saveTasks("s2", List(stale))
+      result <- store.materializeDueOccurrences(1000L).attempt
+      unchanged <- IO(io.circe.parser.decode[List[ScheduledTask]](os.read(dir / "s2.json")).toOption.get)
+    yield
+      assert(result.isLeft)
+      assertEquals(unchanged, List(stale))
+
   test("occurrence recording rejects stale rule versions"):
     val dir = os.temp.dir(prefix = "occurrence-stale-rule-")
     val store = new ScheduledTaskStore(dir)
