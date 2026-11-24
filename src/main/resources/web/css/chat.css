@@ -5443,6 +5443,9 @@ body:not(.mobile-layer) .option-preview-media {
   max-width: var(--msg-bubble-max-w);
 }
 
+.pop-file-unit { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }
+.pop-file-unit > .file-card { max-width: 100%; }
+
 /* ── media stack (WeChat-style: front card + peeking layers right) ──
    UI 统一批（ui-unification-20261103-canvas-overlay）：栈区与「展开 N」钮的
    **形**已上收 design-system.css ⑨ .ds-media-stack / .ds-media-stack__pill

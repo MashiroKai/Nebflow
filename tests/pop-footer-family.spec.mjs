@@ -36,6 +36,7 @@ import { chromium, webkit } from 'playwright';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { deflateSync, crc32 as zlibCrc32 } from 'node:zlib';
+import { execFileSync } from 'node:child_process';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installTicketMock, ticketGuard } from './nf-ticket-mock.mjs';
@@ -163,6 +164,15 @@ const HISTORY = () => [
     ]),
   },
   {
+    type: 'tool', label: 'Pop("混合交付")', summary: '3 items delivered', isError: false,
+    timestamp: T.multiTs + 1,
+    content: popPayload([
+      { kind: 'image', name: 'site-photo.png', path: PATH_PHOTO, size: PNG.length, ext: 'png' },
+      { kind: 'image', name: 'second-photo.png', path: PATH_PHOTO, size: PNG.length, ext: 'png' },
+      { kind: 'file', name: 'metrics.csv', path: PATH_CSV, size: CSV_BYTES.length, ext: 'csv' },
+    ]),
+  },
+  {
     type: 'tool', label: 'Pop("现场照片")', summary: '1 image delivered', isError: false,
     timestamp: T.imgTs,
     content: popPayload([
@@ -267,20 +277,31 @@ async function boot(width, height, scheme, engine) {
 
 const census = (page) => page.evaluate(() => {
   // .row.user-media 也带 .pop-artifact 类（同层同形家族）⇒ Pop 数组须排除 user 行。
-  const rows = Array.from(document.querySelectorAll('#chat .row.pop-artifact')).filter((r) => !r.classList.contains('user'));
+  const rows = Array.from(document.querySelectorAll('#chat .row.pop-artifact')).filter((r) => !r.classList.contains('user') && !r.querySelector('.pop-stack-area'));
   const media = document.querySelector('#chat .row.user-media');
-  const badges = Array.from(document.querySelectorAll('#chat .row > .duration-badge'));
+  const badges = Array.from(document.querySelectorAll('#chat .row .duration-badge'));
   return {
     userMedia: !!media,
     popRows: rows.length,
     popNonUser: rows.length,
     badgesTotal: badges.length,
-    userBadgeTs: media?.querySelector(':scope > .duration-badge .duration-badge-time')?.getAttribute('data-ts') || '',
-    userDl: !!media?.querySelector(':scope > .duration-badge .msg-dl'),
+    userBadgeTs: media?.querySelector('.duration-badge .duration-badge-time')?.getAttribute('data-ts') || '',
+    userDl: !!media?.querySelector(':scope .duration-badge .msg-dl'),
     userQuote: !!media?.querySelector(':scope > .duration-badge .msg-quote-btn'),
-    popBadgeTs: rows.map((r) => r.querySelector(':scope > .duration-badge .duration-badge-time')?.getAttribute('data-ts') || ''),
-    popDl: rows.map((r) => !!r.querySelector(':scope > .duration-badge .msg-dl')),
-    popQuote: rows.map((r) => !!r.querySelector(':scope > .duration-badge .msg-quote-btn')),
+    popBadgeTs: rows.map((r) => r.querySelector('.duration-badge .duration-badge-time')?.getAttribute('data-ts') || ''),
+    popDl: rows.map((r) => !!r.querySelector('.duration-badge .msg-dl')),
+    popQuote: rows.map((r) => !!r.querySelector('.duration-badge .msg-quote-btn, .duration-badge .msg-quote-item-btn')),
+    fileFooters: rows.map((r) => Array.from(r.querySelectorAll('.pop-file-unit')).map((unit) => ({
+      cards: unit.querySelectorAll(':scope > .file-card').length,
+      footers: unit.querySelectorAll(':scope > .duration-badge').length,
+      download: !!unit.querySelector(':scope .duration-badge .msg-dl'),
+      quote: !!unit.querySelector(':scope > .duration-badge .msg-quote-item-btn'),
+      geometry: (() => {
+        const card = unit.querySelector(':scope > .file-card')?.getBoundingClientRect();
+        const footer = unit.querySelector(':scope > .duration-badge')?.getBoundingClientRect();
+        return !!card && !!footer && footer.top >= card.bottom - 1 && footer.left >= -1 && footer.right <= innerWidth + 1 && footer.width > 0 && footer.height > 0;
+      })(),
+    }))),
     popMsgIds: rows.map((r) => r.dataset.msgId || ''),
   };
 });
@@ -297,7 +318,8 @@ async function assertFamily(page, tag) {
   ok(`${tag} Pop 多件行时间档（重放腿 m.timestamp 三腿）`, c.popBadgeTs[0] === String(T.multiTs), `got ${c.popBadgeTs[0]}`);
   ok(`${tag} Pop 文件卡行时间档`, c.popBadgeTs[1] === String(T.popTs), `got ${c.popBadgeTs[1]}`);
   ok(`${tag} Pop 图片行时间档`, c.popBadgeTs[2] === String(T.imgTs), `got ${c.popBadgeTs[2]}`);
-  ok(`${tag} Pop 多件行零下载键（宁缺毋假）+ 引用钮`, c.popDl[0] === false && c.popQuote[0] === true, `dl=${c.popDl[0]} quote=${c.popQuote[0]}`);
+  ok(`${tag} 多文件各有一个卡片、一个 footer 与单文件下载和引用`, c.fileFooters[0].length === 2 && c.fileFooters[0].every((f) => f.cards === 1 && f.footers === 1 && f.download && f.quote), JSON.stringify(c.fileFooters[0]));
+  ok(`${tag} 文档 footer 位于卡片下方且在视口宽度内`, c.fileFooters.slice(0, 2).flat().every((f) => f.geometry));
   ok(`${tag} Pop 文件卡行下载键 + 引用钮`, c.popDl[1] === true && c.popQuote[1] === true, `dl=${c.popDl[1]} quote=${c.popQuote[1]}`);
   ok(`${tag} Pop 图片行下载键 + 引用钮`, c.popDl[2] === true && c.popQuote[2] === true, `dl=${c.popDl[2]} quote=${c.popQuote[2]}`);
   ok(`${tag} Pop 行 msgId 齐备（引用寻址锚）`, c.popMsgIds.every((id) => !!id));
@@ -309,12 +331,12 @@ async function assertFamily(page, tag) {
  *  即返（验红面，不抛未捕获异常打断后续取证）。 */
 async function downloadPopRow(page, ts, wantName, wantBytes, tag, tmpName) {
   const sel = `#chat .row.pop-artifact:not(.user):has(.duration-badge .duration-badge-time[data-ts="${ts}"])`;
-  if ((await page.locator(`${sel} > .duration-badge .msg-dl`).count()) === 0) {
+  if ((await page.locator(`${sel} .duration-badge .msg-dl`).count()) === 0) {
     ok(`${tag} 下载键在场（改前验红面）`, false, 'no .msg-dl on Pop row');
     return;
   }
   const dlPromise = page.waitForEvent('download', { timeout: 10000 });
-  await page.locator(`${sel} > .duration-badge .msg-dl`).first().click();
+  await page.locator(`${sel} .duration-badge .msg-dl`).first().click();
   const dl = await dlPromise;
   const nameOk = dl.suggestedFilename() === wantName;
   const tmp = join(SHOTS, tmpName);
@@ -324,8 +346,8 @@ async function downloadPopRow(page, ts, wantName, wantBytes, tag, tmpName) {
   ok(`${tag} 下载字节同长（${wantBytes.length}B，票腿真字节）`, size === wantBytes.length, `got ${size}`);
   const flashed = await page.evaluate((tsv) => {
     const row = Array.from(document.querySelectorAll('#chat .row.pop-artifact:not(.user)'))
-      .find((r) => r.querySelector(`:scope > .duration-badge .duration-badge-time[data-ts="${tsv}"]`));
-    return !!row?.querySelector(':scope > .duration-badge .msg-dl.copied');
+      .find((r) => r.querySelector(`.duration-badge .duration-badge-time[data-ts="${tsv}"]`));
+    return !!row?.querySelector(':scope .duration-badge .msg-dl.copied');
   }, String(ts));
   ok(`${tag} 成功态 .copied 绿勾反馈`, flashed);
 }
@@ -340,6 +362,45 @@ for (const [engineName, engine] of [['chromium', chromium], ['webkit', webkit]])
 
     // T1 三类卡片同框 footer 家族。
     await assertFamily(page, tag);
+    const mixed = page.locator('#chat .row.pop-artifact:not(.user)').filter({ has: page.locator('.pop-stack-area') });
+    const groupFooter = mixed.locator(':scope > .duration-badge');
+    ok(`${tag} 混合行折叠整组下载与引用`, await groupFooter.locator('.msg-group-dl').count() === 1 && await groupFooter.locator('.msg-quote-btn').count() === 1);
+    ok(`${tag} 混合行文档有单独 footer`, await mixed.locator('.pop-file-unit > .pop-file-footer .msg-dl').count() === 1);
+    if (scheme === 'dark') {
+      const zipWait = page.waitForEvent('download');
+      await groupFooter.locator('.msg-group-dl').click();
+      const zip = await zipWait;
+      const zipPath = join(SHOTS, `.mixed-${engineName}.zip`);
+      await zip.saveAs(zipPath);
+      const bytes = readFileSync(zipPath);
+      ok(`${tag} 混合行 ZIP 含全部文件名和原始字节`, zip.suggestedFilename() === 'attachments.zip' && ['site-photo.png', 'second-photo.png', 'metrics.csv'].every((n) => bytes.includes(Buffer.from(n))) && bytes.includes(PNG) && bytes.includes(CSV_BYTES));
+      const names = execFileSync('unzip', ['-Z1', zipPath], { encoding: 'utf8' }).trim().split('\n').sort();
+      const expected = ['metrics.csv', 'second-photo.png', 'site-photo.png'];
+      const zipExact = JSON.stringify(names) === JSON.stringify(expected) && expected.every((name) =>
+        execFileSync('unzip', ['-p', zipPath, name]).equals(name === 'metrics.csv' ? CSV_BYTES : PNG));
+      ok(`${tag} ZIP 逐条解包且每项字节与原件一致`, zipExact);
+      await page.evaluate(() => { window.__fixtureOpens = []; window.addEventListener('workspace-open-item', (e) => window.__fixtureOpens.push(e.detail)); });
+      await mixed.locator('.file-card').click();
+      const opened = await page.evaluate(() => window.__fixtureOpens.at(-1)?.absPath);
+      ok(`${tag} 文档实点打开对应 Canvas`, opened === PATH_CSV, String(opened));
+      if (await page.locator('#mobile-dock [data-dock="chat"]').count()) await page.locator('#mobile-dock [data-dock="chat"]').click();
+    }
+    await mixed.locator('.pop-stack-area .pill').click();
+    await page.waitForTimeout(500);
+    ok(`${tag} 展开隐藏整组 footer`, !(await groupFooter.isVisible()));
+    ok(`${tag} 展开仍有文档单件下载`, await mixed.locator('.pop-file-unit > .pop-file-footer .msg-dl').isVisible());
+    if (scheme === 'dark') {
+      const fileWait = page.waitForEvent('download');
+      await mixed.locator('.pop-file-unit > .pop-file-footer .msg-dl').click();
+      const file = await fileWait;
+      const filePath = join(SHOTS, `.mixed-file-${engineName}`);
+      await file.saveAs(filePath);
+      ok(`${tag} 展开文档下载仅本文件`, file.suggestedFilename() === 'metrics.csv' && readFileSync(filePath).equals(CSV_BYTES));
+    }
+    await mixed.screenshot({ path: join(SHOTS, `mixed-expanded-${tag}.png`) });
+    await mixed.locator('.pop-stack-area .pill').click();
+    await page.waitForTimeout(500);
+    await mixed.screenshot({ path: join(SHOTS, `mixed-collapsed-${tag}.png`) });
     // 同框实拍：滚到聊天列底部，手机层整幅。
     await page.evaluate(() => {
       const chat = document.querySelector('#chat');
@@ -354,7 +415,7 @@ for (const [engineName, engine] of [['chromium', chromium], ['webkit', webkit]])
       await downloadPopRow(page, T.imgTs, 'site-photo.png', PNG, `${tag} Pop 图片行`, `.dl-popimg-${engineName}`);
       {
         const dlPromise = page.waitForEvent('download', { timeout: 10000 });
-        await page.locator('#chat .row.user-media > .duration-badge .msg-dl').first().click();
+        await page.locator('#chat .row.user-media .duration-badge .msg-dl').first().click();
         const dl = await dlPromise;
         const tmp = join(SHOTS, `.dl-user-${engineName}`);
         await dl.saveAs(tmp);
@@ -367,7 +428,7 @@ for (const [engineName, engine] of [['chromium', chromium], ['webkit', webkit]])
       // T3 引用真实断言：Pop 文件卡行 footer 引用钮 → chip → 发送 → 引用块 → 跳转。
       // 改前（PHASE=before）引用钮缺席 ⇒ 记 FAIL 即跳过整链（验红面，不悬挂）。
       const popMsgId = (await census(page)).popMsgIds[1];
-      const quoteBtn = page.locator(`#chat .row.pop-artifact[data-msg-id="${popMsgId}"] > .duration-badge .msg-quote-btn`);
+      const quoteBtn = page.locator(`#chat .row.pop-artifact[data-msg-id="${popMsgId}"] .pop-file-footer .msg-quote-item-btn`);
       if ((await quoteBtn.count()) === 0) {
         ok(`${tag} footer 引用钮在场（改前验红面）`, false, 'no .msg-quote-btn on Pop row');
       } else {
@@ -414,16 +475,16 @@ for (const [engineName, engine] of [['chromium', chromium], ['webkit', webkit]])
       await page.waitForFunction(() => {
         const rows = Array.from(document.querySelectorAll('#chat .row.pop-artifact:not(.user)'));
         const r = rows[rows.length - 1];
-        return !!r && !!r.querySelector(':scope > .duration-badge .msg-quote-btn');
+        return !!r && !!r.querySelector('.duration-badge .msg-quote-item-btn');
       }, null, { timeout: 5000 }).catch(() => {});
       const liveRow = await page.evaluate(() => {
         const rows = Array.from(document.querySelectorAll('#chat .row.pop-artifact:not(.user)'));
         const r = rows[rows.length - 1];
         return {
-          ts: r.querySelector(':scope > .duration-badge .duration-badge-time')?.getAttribute('data-ts') || '',
+          ts: r.querySelector('.duration-badge .duration-badge-time')?.getAttribute('data-ts') || '',
           id: r.dataset.msgId || '',
-          dl: !!r.querySelector(':scope > .duration-badge .msg-dl'),
-          quote: !!r.querySelector(':scope > .duration-badge .msg-quote-btn'),
+          dl: !!r.querySelector(':scope .duration-badge .msg-dl'),
+          quote: !!r.querySelector('.duration-badge .msg-quote-item-btn'),
           name: r.querySelector('.fc-name')?.textContent || '',
         };
       });
@@ -434,7 +495,7 @@ for (const [engineName, engine] of [['chromium', chromium], ['webkit', webkit]])
         const dlPromise = page.waitForEvent('download', { timeout: 10000 });
         await page.evaluate(() => {
           const rows = Array.from(document.querySelectorAll('#chat .row.pop-artifact:not(.user)'));
-          rows[rows.length - 1].querySelector(':scope > .duration-badge .msg-dl').click();
+          rows[rows.length - 1].querySelector(':scope .duration-badge .msg-dl').click();
         });
         const dl = await dlPromise;
         const tmp = join(SHOTS, '.dl-live-chromium');

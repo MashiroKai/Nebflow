@@ -1674,17 +1674,29 @@ export function buildPopArtifactRow(payload, opts) {
   const group = attachmentArea('pop-group');
   row.appendChild(group);
 
+  let stackArea = null;
   if (media.length === 1) group.appendChild(buildMediaFlat(media[0]));
   else if (media.length > 1) {
-    // 单张引用入口（2026-11-02 11:00 作者令移入 footer）：LLM Pop 交付行与用户
-    // 媒体行同一条路 —— 叠卡每张各有描述符，footer 入口按当前 front 取该张。
-    group.appendChild(buildMediaStack(media, {
+    // 单张引用入口：叠卡每张各有描述符，footer 入口按当前 front 取该张。
+    stackArea = buildMediaStack(media, {
       quoteDescFor: (it, i) => stackItemQuoteDesc(it, i, media.length),
-    }));
+    });
+    group.appendChild(stackArea);
   }
-  files.forEach(f => group.appendChild(buildFileCard(f, {
-    quoteRef: { kind: 'file', fileName: f.name || (f.path || '').split('/').pop(), path: f.path || '', attachments: [{ type: 'file', name: f.name || '', path: f.path || '' }] },
-  })));
+  files.forEach(f => {
+    const fileName = f.name || (f.path || '').split('/').pop();
+    const desc = { kind: 'file', fileName, path: f.path || '', attachments: [{ type: 'file', name: fileName, path: f.path || '' }] };
+    const unit = document.createElement('div');
+    unit.className = 'pop-file-unit';
+    unit.appendChild(buildFileCard(f));
+    const footer = buildMediaRowFooterBadge([f], ts);
+    if (footer) {
+      footer.classList.add('pop-file-footer');
+      footer.appendChild(createMsgQuoteButton(desc));
+      unit.appendChild(footer);
+    }
+    group.appendChild(unit);
+  });
 
   const failed = payload.fileRefs && Number(payload.fileRefs.failed) > 0;
   if (failed) {
@@ -1700,8 +1712,14 @@ export function buildPopArtifactRow(payload, opts) {
   }
   // footer 信息条（作者令 2026-11-01 16:19）：与文件/图片消息同族徽章，装配
   // 单点 buildMediaRowFooterBadge（用户媒体行同一装配器）。
-  const badge = buildMediaRowFooterBadge(items, ts);
-  if (badge) row.appendChild(badge);
+  const badge = media.length ? buildMediaRowFooterBadge(items, ts) : null;
+  if (badge) {
+    row.appendChild(badge);
+    if (stackArea) stackArea.addEventListener(EVENTS.NF_POP_EXPANDED, (e) => {
+      const d = /** @type {CustomEvent} */ (e).detail;
+      badge.style.display = d && d.expanded ? 'none' : '';
+    });
+  }
   return row;
 }
 
