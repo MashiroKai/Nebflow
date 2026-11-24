@@ -311,7 +311,7 @@ test('桌面决策选项作答后完成并移除', async ({ page }) => {
   await page.evaluate(async (sid) => (await import('/js/todoFace.js')).renderTodoTaskList(sid), SID);
   await page.locator('.tfl-capsule').click();
   const row = page.locator('.tfl-row[data-id="t4"]');
-  await expect(row.locator('.tfl-complete')).toBeDisabled();
+  await expect(row.locator('.tfl-complete')).toBeEnabled();
   await row.locator('.tfl-row-title').click();
   await shot(page, 'desktop-unanswered');
   await row.locator('.ta-qd-opt').first().click();
@@ -344,16 +344,42 @@ test('未作答决策禁止完成且后端拒绝后恢复待办', async ({ page 
   await page.evaluate(async (sid) => (await import('/js/todoFace.js')).renderTodoTaskList(sid), SID);
   await page.locator('.tfl-capsule').click();
   const row = page.locator('.tfl-row[data-id="t4"]');
-  await expect(row.locator('.tfl-complete')).toBeDisabled();
-  await expect(row.locator('.tfl-complete')).toHaveAttribute('title', '先选一项');
+  await expect(row.locator('.tfl-complete')).toBeEnabled();
+  await row.locator('.tfl-complete').click();
+  await expect(row.locator('.tfl-decision-hint')).toHaveText('先选一项');
+  await expect(row.locator('.tfl-decision-hint')).toBeVisible();
+  await expect(row.locator('.ta-qd-opts')).toHaveClass(/tfl-decision-attention/);
   expect(frames(h.captured, 'completeTodo')).toHaveLength(0);
+  expect(frames(h.captured, 'answerTodoDecision')).toHaveLength(0);
+  await shot(page, 'desktop-visible-hint-after');
+  await row.locator('.ta-qd-opt').first().click();
+  await expect(row.locator('.tfl-decision-hint')).toBeHidden();
+  await expect(row.locator('.ta-qd-opts')).not.toHaveClass(/tfl-decision-attention/);
   // Simulate a stale client bypassing the UI gate; the fixture rejects and store refreshes.
   await page.evaluate(async () => (await import('/js/todoStore.js')).todoStore.completeItem('t4'));
   await expect.poll(() => frames(h.captured, 'completeTodo').length).toBe(1);
   await expect(row).toBeVisible();
-  await expect(row.locator('.tfl-complete')).toBeDisabled();
-  await expect(row.locator('.tfl-complete')).toHaveAttribute('title', '先选一项');
+  await expect(row.locator('.tfl-complete')).toBeEnabled();
+  await row.locator('.tfl-complete').click();
+  await expect(row.locator('.tfl-decision-hint')).toBeVisible();
   expect(h.backend.rows[0].completed).toBe(false);
+  await row.locator('.ta-qd-opt').first().click();
+  await row.locator('.ta-decision-submit').click();
+  await expect.poll(() => h.backend.rows[0].completed).toBe(true);
+  await expect(row).toHaveCount(0);
+});
+
+test('已作答决策仍可直接完成', async ({ page }) => {
+  const h = await bootApp(page);
+  await h.waitRows(4);
+  h.backend.rows[0].decision = { question: '选择方案', options: [{ id: 'yes', title: '选甲' }], answer: { selectedOptionIds: ['yes'] } };
+  h.sendFrame({ type: 'scheduledTaskList', sessionId: SID, scope: 'all', tasks: h.backend.rows.map(rowJson) });
+  await page.evaluate(async (sid) => (await import('/js/todoFace.js')).renderTodoTaskList(sid), SID);
+  await page.locator('.tfl-capsule').click();
+  const row = page.locator('.tfl-row[data-id="t4"]');
+  await row.locator('.tfl-complete').click();
+  await expect.poll(() => frames(h.captured, 'completeTodo').some((f) => f.id === 't4')).toBe(true);
+  await expect(row).toHaveCount(0);
 });
 
 test('移动列表决策选项作答后完成并移除', async ({ page }) => {

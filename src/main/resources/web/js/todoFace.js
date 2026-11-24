@@ -1508,6 +1508,10 @@ class TodoFace {
     const dec = item.decision;
     detail.appendChild(el('div', 'ta-qd-q', String(dec.question || '')));
     const options = Array.isArray(dec.options) ? dec.options : [];
+    const hint = el('div', 'tfl-decision-hint', t('todoapple.answerFirst'));
+    hint.setAttribute('role', 'alert');
+    hint.hidden = true;
+    detail.appendChild(hint);
     const picks = new Set();
     const list = el('div', 'ta-qd-opts');
     list.setAttribute('role', dec.multiSelect ? 'group' : 'radiogroup');
@@ -1516,6 +1520,7 @@ class TodoFace {
       const optionRow = buildDecisionOption(item.id, option, !!dec.multiSelect, false, (checked) => {
         if (!dec.multiSelect) picks.clear();
         if (checked) picks.add(option.id); else picks.delete(option.id);
+        if (picks.size) { hint.hidden = true; list.classList.remove('tfl-decision-attention'); }
       });
       if (dec.answer || dec.secret) optionRow.querySelector('input').disabled = true;
       list.appendChild(optionRow);
@@ -1546,22 +1551,29 @@ class TodoFace {
       title.setAttribute('aria-expanded', String(!detail.hidden));
     });
     main.append(title, detail);
-    row.append(main, this.buildCompleteButton(item));
+    row.append(main, this.buildCompleteButton(item, () => {
+      detail.hidden = false;
+      title.setAttribute('aria-expanded', 'true');
+      hint.hidden = false;
+      list.classList.add('tfl-decision-attention');
+    }));
     return row;
   }
 
-  buildCompleteButton(item) {
+  buildCompleteButton(item, onUnanswered = null) {
     const btn = el('button', 'tfl-complete');
     btn.type = 'button';
     const gated = !!(item.decision && !item.decision.answer);
-    btn.disabled = gated;
-    btn.title = gated ? t('todoapple.answerFirst') : t('todoface.complete');
+    btn.title = t('todoface.complete');
     btn.setAttribute('aria-label', btn.title);
     const ring = el('span', 'tfl-complete-ring');
     const fill = el('span', 'tfl-complete-fill');
     fill.innerHTML = CHECK_SVG;
     btn.append(ring, fill);
-    btn.addEventListener('click', () => this.performComplete(item.id, btn.closest('.tfl-row')));
+    btn.addEventListener('click', () => {
+      if (gated) { if (onUnanswered) onUnanswered(); return; }
+      this.performComplete(item.id, btn.closest('.tfl-row'));
+    });
     return btn;
   }
 
