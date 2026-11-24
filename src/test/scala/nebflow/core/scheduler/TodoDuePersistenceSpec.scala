@@ -175,6 +175,15 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
   test("hard halt after atomic replacement preserves advanced series"):
     checkHardCrash("after")
 
+  test("occurrence reconciles against its bound historic rule version"):
+    val first = TodoDue.Weekly(1, "09:00", "Europe/London", "2024-01-01T09:00")
+    val changed = TodoDue.Weekly(2, "09:00", "Europe/London", "2024-01-02T09:00")
+    val task = legacy.as[ScheduledTask].toOption.get.copy(due = Some(changed), dueRuleVersion = 1L,
+      dueRuleHistory = List(TodoRuleSnapshot(0L, first)))
+    assertEquals(task.ruleForOccurrence(TodoOccurrence.create("old", 1000L, 0L)), Some(first))
+    assertEquals(task.ruleForOccurrence(TodoOccurrence.create("old", 2000L, 1L)), Some(changed))
+    assertEquals(task.ruleForOccurrence(TodoOccurrence.create("old", 3000L, 2L)), None)
+
   test("rearm rejects equal-revision conflicting copies instead of creating a third row"):
     val dir = os.temp.dir(prefix = "rearm-conflict-")
     val store = new ScheduledTaskStore(dir)

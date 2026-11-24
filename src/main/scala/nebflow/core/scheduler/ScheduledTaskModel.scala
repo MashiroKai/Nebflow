@@ -220,6 +220,12 @@ case class ScheduledTask(
   dueRuleVersion: Long = 0L,
   dueRuleHistory: List[TodoRuleSnapshot] = Nil
 ):
+  /** Resolve the rule frozen at an occurrence's creation; missing versions are not guessed. */
+  def ruleForOccurrence(occurrence: TodoOccurrence): Option[TodoDue] =
+    if occurrence.todoId != id then None
+    else if occurrence.ruleVersion == dueRuleVersion then due
+    else dueRuleHistory.find(_.version == occurrence.ruleVersion).map(_.rule)
+
   /** true = 待办面（周期浮出直至销账），false = 定时任务面（现状）。 */
   def isTodo: Boolean = kind.contains(ScheduledTask.KindTodo)
 
