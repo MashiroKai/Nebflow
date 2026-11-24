@@ -145,6 +145,17 @@ try {
       const badTitle=await measure(s.page,root);
       assert.throws(()=>assertText(badTitle),/clipped/);
       await pageTitle.evaluate((el,text)=>{el.removeAttribute('style');el.textContent=text;},originalTitle);
+      if(width>=1000) {
+        for(const sidebarWidth of [180,236]) {
+          await s.page.locator('#sidebar').evaluate((el,w)=>{el.style.transition='none';el.style.flex=`0 0 ${w}px`;},sidebarWidth);
+          assert(Math.abs(await s.page.locator('#sidebar').evaluate(el=>el.getBoundingClientRect().width)-sidebarWidth)<1);
+          for(const position of [0,0.5,1]) {
+            await s.page.locator(`${root} .cfp-body`).evaluate((el,p)=>{el.scrollTop=(el.scrollHeight-el.clientHeight)*p;},position);
+            const measured=await measure(s.page,root); assertText(measured); assertNoOverlap(measured);
+          }
+          console.log(`PASS sidebar width=${sidebarWidth} positions=start,middle,end`);
+        }
+      }
       const entryButtons=s.page.locator(`${root} .cfp-row`);
       for(let i=0;i<await entryButtons.count();i++) {
         const label=entryButtons.nth(i).locator('.cfp-row-title');
