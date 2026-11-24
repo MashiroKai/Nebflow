@@ -298,6 +298,18 @@ try {
       }
     } finally {await s.close();}
   }
+  for (const length of [256,512,1024]) {
+    const s=await createSession(browser,{width:1280,height:800,colorScheme:'light',explorerEntries:[]});
+    try {
+      await s.boot(boot);
+      await s.page.evaluate(async size=>{const f=await import('/js/canvasFavorites.js');f.toggleFavoritePath({path:'/'+'p'.repeat(size-4)+'.md',title:'Path sample'});},length);
+      await s.page.click('#favorites-btn');
+      const row=s.page.locator('#panel-favorites .cfp-row').first(); await row.waitFor();
+      await s.page.locator('#sidebar').evaluate(el=>{el.style.transition='none';el.style.flex='0 0 180px';});
+      const state=await row.evaluate(el=>({rowHeight:el.getBoundingClientRect().height,viewportHeight:el.closest('.cfp-body').getBoundingClientRect().height,pathBytes:new TextEncoder().encode(el.querySelector('.cfp-row-src').textContent).length}));
+      console.log('PATH-HEIGHT',JSON.stringify(state)); assert.equal(state.pathBytes,length);
+    } finally {await s.close();}
+  }
   for (const width of [1280,1440]) {
     const s=await createSession(browser,{width,height:900,colorScheme:'light',explorerEntries:[]});
     try {
