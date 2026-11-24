@@ -301,6 +301,19 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       assert(result.isLeft)
       assertEquals(rows, List(row))
 
+  test("direct save rejects an equal-revision conflicting cross-session replica"):
+    val dir = os.temp.dir(prefix = "due-save-conflict-")
+    val store = new ScheduledTaskStore(dir)
+    val original = legacy.as[ScheduledTask].toOption.get
+    val conflict = original.copy(sessionId = "s2", content = "conflict")
+    for
+      _ <- store.addTask(original)
+      result <- store.saveTasks("s2", List(conflict)).attempt
+      exists <- IO(os.exists(dir / "s2.json"))
+    yield
+      assert(result.isLeft)
+      assertEquals(exists, false)
+
   test("direct save accepts a newer cross-session revision"):
     val dir = os.temp.dir(prefix = "due-save-newer-")
     val store = new ScheduledTaskStore(dir)
