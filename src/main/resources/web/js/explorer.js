@@ -818,6 +818,8 @@ function makeExplorerRow(kind, path, depth) {
     return row;
   }
   row.setAttribute('role', 'treeitem');
+  row.title = path.split('/').pop() || path;
+  row.setAttribute('aria-label', row.title);
   row.setAttribute('aria-level', String(depth + 1));
   row.tabIndex = -1; // roving：由 syncRoving() 把"当前行"改回 0
   row.dataset.focusKey = `explorer:${path}`; // data-focus-key 生产者（B3-2 的输入）
