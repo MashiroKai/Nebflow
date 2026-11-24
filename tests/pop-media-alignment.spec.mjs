@@ -417,9 +417,10 @@ test.describe('AC-S1 复验 — whole-card Canvas open under REAL mouse clicks',
       window.removeEventListener('workspace-open-item', window.__onOpen);
       return {
         opens: window.__opens,
-        lightbox: !!document.querySelector('.nf-lightbox'),
-        lightboxName: document.querySelector('.nf-lightbox-name')
-          ? document.querySelector('.nf-lightbox-name').textContent : '',
+        lightbox: !!document.querySelector('.nf-lightbox.on[data-nf-lb-gallery="on"]'),
+        lightboxName: document.querySelector('.nf-lightbox.on .nf-lightbox-img')?.alt || '',
+        galleryIndex: document.querySelector('.nf-lightbox.on')?.dataset.nfLbGalIndex,
+        galleryTotal: document.querySelector('.nf-lightbox.on')?.dataset.nfLbGalTotal,
       };
     });
     return { point, hit, ...result };
@@ -451,10 +452,11 @@ test.describe('AC-S1 复验 — whole-card Canvas open under REAL mouse clicks',
     const layerImg = page.locator('#chat .pop-expand-view .media-layer').nth(1).locator('.pop-img');
     const probe = await realCenterClick(page, layerImg);
     expect(probe.hit, `the click point hit-tests to the image body (got ${probe.hit})`).toContain('img.pop-img');
-    expect(probe.opens.length, 'exactly one Canvas open fired').toBe(1);
-    expect(probe.opens[0].absPath, 'opened file = the clicked row\'s item (shot-2.png)').toBe('/tmp/pop/shot-2.png');
-    expect(probe.opens[0].id, 'identity = file:<absPath> (the file-card single point)').toBe('file:/tmp/pop/shot-2.png');
-    expect(probe.lightbox, 'no lightbox detour on a pathed image (复验令 a)').toBe(false);
+    expect(probe.opens).toHaveLength(0);
+    expect(probe.lightbox).toBe(true);
+    expect(probe.lightboxName).toBe('shot-2.png');
+    expect(probe.galleryIndex).toBe('1');
+    expect(probe.galleryTotal).toBe('3');
     expect(pageErrors).toEqual([]);
     await context.close();
   });
@@ -470,10 +472,11 @@ test.describe('AC-S1 复验 — whole-card Canvas open under REAL mouse clicks',
     const frontImg = page.locator('#chat .pop-stack-view .media-layer.layer-front .pop-img');
     const probe = await realCenterClick(page, frontImg);
     expect(probe.hit, `the click point hit-tests to the image body (got ${probe.hit})`).toContain('img.pop-img');
-    expect(probe.opens.length, 'exactly one Canvas open fired').toBe(1);
-    expect(probe.opens[0].absPath, 'opened file = the SHOWN item (shot-1.png, front before any swipe)').toBe('/tmp/pop/shot-1.png');
-    expect(probe.opens[0].id, 'identity = file:<absPath>').toBe('file:/tmp/pop/shot-1.png');
-    expect(probe.lightbox, 'no lightbox on the collapsed-stack open (复验令 b)').toBe(false);
+    expect(probe.opens).toHaveLength(0);
+    expect(probe.lightbox).toBe(true);
+    expect(probe.lightboxName).toBe('shot-1.png');
+    expect(probe.galleryIndex).toBe('0');
+    expect(probe.galleryTotal).toBe('3');
     expect(pageErrors).toEqual([]);
     await context.close();
   });
@@ -509,10 +512,11 @@ test.describe('AC-S1 复验 — whole-card Canvas open under REAL mouse clicks',
     // THE A-1 assertion: the click follows the swipe — opens the SHOWN card.
     const probe = await realCenterClick(page, view);
     expect(probe.hit, `the click point hit-tests to the shown card's body (got ${probe.hit})`).toContain('img.pop-img');
-    expect(probe.opens.length, 'exactly one Canvas open fired').toBe(1);
-    expect(probe.opens[0].absPath, 'opened file = the SHOWN card (shot-2.png), NOT the hardcoded first').toBe('/tmp/pop/shot-2.png');
-    expect(probe.opens[0].id, 'identity = file:<absPath>').toBe('file:/tmp/pop/shot-2.png');
-    expect(probe.lightbox, 'no lightbox on the collapsed-stack open (A-1)').toBe(false);
+    expect(probe.opens).toHaveLength(0);
+    expect(probe.lightbox).toBe(true);
+    expect(probe.lightboxName).toBe('shot-2.png');
+    expect(probe.galleryIndex).toBe('1');
+    expect(probe.galleryTotal).toBe('3');
     expect(pageErrors).toEqual([]);
     await context.close();
   });
@@ -525,9 +529,11 @@ test.describe('AC-S1 复验 — whole-card Canvas open under REAL mouse clicks',
 
     const probe = await realCenterClick(page, page.locator('#chat .pop-media-flat .pop-img'));
     expect(probe.hit, `the click point hit-tests to the image body (got ${probe.hit})`).toContain('img.pop-img');
-    expect(probe.opens.length, 'exactly one Canvas open fired').toBe(1);
-    expect(probe.opens[0].absPath, 'the flat card opened Canvas with the image').toBe('/tmp/pop/wide.png');
-    expect(probe.lightbox, 'no lightbox (the 10:59 face already worked — keep it working)').toBe(false);
+    expect(probe.opens).toHaveLength(0);
+    expect(probe.lightbox).toBe(true);
+    expect(probe.lightboxName).toBe('wide.png');
+    expect(probe.galleryIndex).toBe('0');
+    expect(probe.galleryTotal).toBe('1');
     expect(pageErrors).toEqual([]);
     await context.close();
   });
