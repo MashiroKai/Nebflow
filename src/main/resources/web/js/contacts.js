@@ -220,7 +220,14 @@ async function doRefresh() {
     // §3.1③ 惰性标记：**这一拍没取到**且面板未激活 ⇒ 置位，面板激活时强制重取。
     if (!panelActive()) relationStateDirty = true;
   }
+  const focusedRow = document.activeElement?.closest?.('#fm-contacts-body .fm-friend-row');
+  const focusedId = focusedRow?.dataset.friendId;
   render();
+  if (focusedId) {
+    const replacement = [...document.querySelectorAll('#fm-contacts-body .fm-friend-row')]
+      .find(row => row.dataset.friendId === focusedId);
+    replacement?.focus({ preventScroll: true });
+  }
   updateBadge();
 }
 
@@ -542,6 +549,7 @@ function deviceRow(d) {
 function friendRow(f) {
   const blocked = !!f.blocked;
   const row = el('div', 'fm-row fm-friend-row' + (blocked ? ' fm-blocked' : ''));
+  row.dataset.friendId = String(f.userId || '');
   row.setAttribute('role', 'option');
   row.setAttribute('tabindex', '0');
   row.setAttribute('aria-selected', 'false');
