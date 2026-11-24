@@ -492,6 +492,70 @@ function renderAutoTerms(mdViewer, data, projectName, absPath) {
   return made;
 }
 
+// Document names are candidates only inside the current project, and only when
+// the exact name identifies one document. Never use wikilink's preference rules.
+export function renderDocumentMentions(host, data, projectName, absPath = '') {
+  if (!host || !projectName || !Array.isArray(data?.nodes)) return 0;
+  const project = (data.projects || []).find(p => p.name === projectName);
+  if (!project) return 0;
+  const candidates = new Map();
+  for (const node of data.nodes) {
+    if (!node || node.stub || node.project !== projectName || !node.rel) continue;
+    const names = new Set([String(node.title || '').trim(), String(node.rel).split('/').pop()].filter(Boolean));
+    for (const name of names) {
+      const key = name.toLowerCase();
+      if (!candidates.has(key)) candidates.set(key, []);
+      candidates.get(key).push({ node, name });
+    }
+  }
+  const unique = [...candidates.values()].filter(items => items.length === 1)
+    .map(([item]) => ({ name: item.name, node: item.node }))
+    .filter(item => {
+      const resolved = resolvedForNode(item.node, project);
+      return resolved && (!resolved.absPath || normVaultPath(resolved.absPath) !== normVaultPath(absPath));
+    });
+  const matcher = buildTermMatcher(unique);
+  if (!matcher.size) return 0;
+  const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const p = node.parentElement;
+      if (!p || p.closest('pre,code,a,button,script,style,.katex,.nf-term,h1,h2,h3,h4,h5,h6')) return NodeFilter.FILTER_REJECT;
+      return node.nodeValue?.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    },
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  let count = 0;
+  for (const node of nodes) {
+    const text = node.nodeValue || '';
+    const hits = matcher.find(text);
+    if (!hits.length) continue;
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    for (const hit of hits) {
+      const doc = hit.term.node;
+      const resolved = resolvedForNode(doc, project);
+      if (!resolved) continue;
+      resolved.term = { name: hit.text, definition: String(doc.summary || ''), rel: String(doc.rel), doc: String(doc.title || '') };
+      frag.appendChild(document.createTextNode(text.slice(last, hit.start)));
+      const link = document.createElement('a');
+      link.className = 'nf-term';
+      link.href = '#';
+      link.textContent = hit.text;
+      link.dataset.wikiResolved = JSON.stringify(resolved);
+      link.dataset.wikiProject = projectName;
+      link.dataset.wikiTarget = hit.text;
+      attachTermFace(link, host, { term: resolved.term });
+      frag.appendChild(link);
+      last = hit.end;
+      count++;
+    }
+    frag.appendChild(document.createTextNode(text.slice(last)));
+    node.parentNode?.replaceChild(frag, node);
+  }
+  return count;
+}
+
 /**
  * 任意 DOM 宿主的词条化落面（Ask 回答词条化批 2026-11-23；设计正本 §5 G4/G5
  * 「在 createAskDialog 增加 termLinks 钩子，复用 termLexicon.js 同源」）。
@@ -611,7 +675,10 @@ async function renderWikilinks(mdViewer, baseDir, absPath) {
   // 正文裸词识别（B5-1）：显式 `[[词条]]` 全部就位后再跑（walker 已拒 A 子树，
   // 这里是顺序兜底：绝不把刚生成的 wikilink 文本再链一次）。无词条 ⇒ 零开销、
   // 输出与改造前逐字节相同。
-  if (data) renderAutoTerms(mdViewer, data, currentProject, absPath);
+  if (data) {
+    renderAutoTerms(mdViewer, data, currentProject, absPath);
+    renderDocumentMentions(mdViewer, data, currentProject, absPath);
+  }
   // 词条索引块（term-system-v2 词条视觉面批 2026-11-05）：渲染管线尾部自动生成，
   // 必须在两条词条腿（显式引用 + 正文裸词）都挂完面之后才扫得出引用集合。
   renderTermIndex(mdViewer);
