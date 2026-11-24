@@ -1,9 +1,5 @@
 package nebflow.agent
 
-import nebflow.neblink.attachment.*
-import nebflow.neblink.core.*
-import nebflow.neblink.social.*
-
 import cats.effect.std.Dispatcher
 import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
@@ -21,9 +17,9 @@ import nebflow.core.workspace.KnowledgeStore
 import nebflow.core.{RateLimiter, SessionStore, *}
 import nebflow.dropbox.DropboxService
 import nebflow.llm.*
-import nebflow.neblink.attachment.AttachUploadRegistry
-import nebflow.neblink.social.FriendService
-import nebflow.neblink.core.NeblinkService
+import nebflow.neblink.attachment.{AttachUploadRegistry, *}
+import nebflow.neblink.core.{NeblinkService, *}
+import nebflow.neblink.social.{FriendService, *}
 import nebflow.shared.{FileHistory, ReadTracker, *}
 
 /** A recovered protected attempt whose runner Resource is retained by this runtime. */

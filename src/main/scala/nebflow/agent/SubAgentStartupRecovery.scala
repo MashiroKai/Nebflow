@@ -2,8 +2,8 @@ package nebflow.agent
 
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import nebflow.actor.AgentCommand
 import nebflow.core.SessionStore
 import nebflow.core.delegate.{ChainStore, DelegateRegistry, DelegateTerminalTtl}
