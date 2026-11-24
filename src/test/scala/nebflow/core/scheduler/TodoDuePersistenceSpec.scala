@@ -401,6 +401,20 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       result <- store.addUserTodoOnce(old).attempt
     yield assert(result.isLeft)
 
+  test("direct save rejects corrupt rule history on newer propagated replica"):
+    val dir = os.temp.dir(prefix = "due-save-history-authority-")
+    val store = new ScheduledTaskStore(dir)
+    val rule = TodoDue.Weekly(1, "09:00", "Europe/London", "2024-01-01T09:00")
+    val original = legacy.as[ScheduledTask].toOption.get.copy(due = Some(rule), dueRuleVersion = 4L)
+    val invalid = original.copy(sessionId = "s2", revision = 1L, dueRuleVersion = 0L, dueRuleHistory = Nil)
+    for
+      _ <- store.addTask(original)
+      result <- store.saveTasks("s2", List(invalid)).attempt
+      exists <- IO(os.exists(dir / "s2.json"))
+    yield
+      assert(result.isLeft)
+      assertEquals(exists, false)
+
   test("direct save advances revision and rejects a second stale save"):
     val dir = os.temp.dir(prefix = "due-save-generation-")
     val store = new ScheduledTaskStore(dir)

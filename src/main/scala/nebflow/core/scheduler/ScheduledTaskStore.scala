@@ -344,7 +344,15 @@ class ScheduledTaskStore(
             c.revision == t.revision && c.copy(sessionId = "") != t.copy(sessionId = "") &&
               !byId.get(t.id).contains(c)
           )
-          localStale || newer || equalConflict
+          val invalidRuleHistory = copies.exists(c =>
+            t.revision > c.revision &&
+              (t.dueRuleVersion < c.dueRuleVersion ||
+                c.dueRuleHistory.exists(snapshot => !t.dueRuleHistory.contains(snapshot)) ||
+                (t.dueRuleVersion == c.dueRuleVersion && t.due != c.due) ||
+                (t.dueRuleVersion > c.dueRuleVersion &&
+                  c.due.exists(rule => !t.dueRuleHistory.contains(TodoRuleSnapshot(c.dueRuleVersion, rule)))))
+          )
+          localStale || newer || equalConflict || invalidRuleHistory
         }
         val rewritesInstances = tasks.exists(t =>
           byId.get(t.id).exists(old => old.due != t.due && old.occurrences != t.occurrences)
