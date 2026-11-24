@@ -61,5 +61,25 @@ const assert = require('node:assert/strict');
     });
     await page.waitForFunction(() => document.querySelector('.nf-term-tip .ts').textContent === 'correct project');
     console.log('PASS: duplicate name matches project and document identity');
+    await page.evaluate(async () => {
+      const tip = await import('/termTip.js');
+      tip.hideTermTip();
+      const a = document.querySelector('#term');
+      a.dataset.wikiTarget = 'missing';
+      delete a.dataset.wikiResolved;
+      window.legacyUrl = '';
+      window.fetch = async (url) => {
+        if (String(url).includes('/lookup?')) return new Response('{}', { status: 404 });
+        if (String(url).includes('/api/wiki/term?')) {
+          window.legacyUrl = String(url);
+          return new Response(JSON.stringify({ resolved: true, term: { name: 'missing', definition: 'legacy' } }), { status: 200 });
+        }
+        return new Response('{}', { status: 200 });
+      };
+      tip.termTapExpand(a, null);
+    });
+    await page.waitForFunction(() => document.querySelector('.nf-term-tip .ts').textContent === 'legacy');
+    assert.match(await page.evaluate(() => window.legacyUrl), /project=one/);
+    console.log('PASS: lookup miss falls back to project-scoped registry');
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

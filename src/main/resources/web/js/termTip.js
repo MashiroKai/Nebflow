@@ -19,9 +19,6 @@ let termTipGeneration = 0;
 let termTipAbort = null;
 /** 深链导航回调（docs viewer 注入 onWikilinkClick；无导航面留空 = 收泡即止）。 */
 let termTipNav = null;
-/** @type {Map<string, any>} term-API fallback cache, including misses. */
-const termApiCache = new Map();
-const termApiVersions = new Map();
 
 /** 注入气泡内点击的深链导航（docs viewer = onWikilinkClick；chat 等面不注入）。 */
 export function setTermTipNav(fn) {
@@ -150,16 +147,14 @@ async function legacyTermInfoFor(a, signal) {
       }
     } catch (e) { /* fall through to the API leg */ }
   }
-  const name = a.dataset.wikiTermFallback || '';
+  const name = a.dataset.wikiTermFallback || a.dataset.wikiTarget || '';
   if (!name) return null;
-  const key = name.toLowerCase();
-  if (termApiCache.has(key)) return termApiCache.get(key);
-  const version = (termApiVersions.get(key) || 0) + 1;
-  termApiVersions.set(key, version);
+  const project = a.dataset.wikiProject || '';
   let info = null;
   try {
     const { authHeaders } = await import('./flowHelpers.js');
-    const res = await fetch('/api/wiki/term?name=' + encodeURIComponent(name), { headers: { ...authHeaders() }, signal });
+    const query = '?name=' + encodeURIComponent(name) + (project ? '&project=' + encodeURIComponent(project) : '');
+    const res = await fetch('/api/wiki/term' + query, { headers: { ...authHeaders() }, signal });
     if (res.ok) {
       const body = await res.json();
       if (body && body.resolved && body.term) {
@@ -167,7 +162,6 @@ async function legacyTermInfoFor(a, signal) {
       }
     }
   } catch (e) { info = null; }
-  if (info && termApiVersions.get(key) === version) termApiCache.set(key, info);
   return info;
 }
 
