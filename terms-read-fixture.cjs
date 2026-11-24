@@ -278,5 +278,18 @@ const assert = require('node:assert/strict');
     await page.locator('.nf-term-tip .term-tip-retry:not([hidden])').click();
     await page.waitForFunction(() => window.missCalls === 2);
     console.log('PASS: missing results are not cached');
+    await page.evaluate(() => {
+      window.testTip.hideTermTip();
+      const a = document.querySelector('#term');
+      a.dataset.wikiTarget = 'offline';
+      a.dataset.wikiResolved = JSON.stringify({ term: { name: 'offline', definition: 'offline fallback' } });
+      window.fetch = async (url) => {
+        if (String(url).includes('/lookup?')) throw new TypeError('network unavailable');
+        return new Response('{}', { status: 404 });
+      };
+      window.testTip.termTapExpand(a, null);
+    });
+    await page.waitForFunction(() => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'offline fallback'));
+    console.log('PASS: network failure falls back to resolved payload');
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
