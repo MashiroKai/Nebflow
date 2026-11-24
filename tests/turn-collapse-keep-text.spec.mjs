@@ -188,9 +188,10 @@ for (const zoom of [0.9, 1, 1.1, 1.25, 1.5]) {
     expect(result.top).toBeGreaterThanOrEqual(result.clipTop);
     expect(result.bottom).toBeLessThanOrEqual(result.clipBottom);
     const count = page.locator('.nf-injection-stack-count');
-    const clipped = await count.screenshot();
+    const button = page.locator('[data-nf-injection-stack] button');
+    const clipped = await button.screenshot();
     await count.evaluate(el => { el.style.overflow = 'visible'; });
-    const visible = await count.screenshot();
+    const visible = await button.screenshot();
     expect(clipped.equals(visible)).toBe(true);
     await context.close();
   });
@@ -234,7 +235,7 @@ for (const width of [900, 390, 375]) {
     expect(geometry.stack.top).toBeGreaterThanOrEqual(geometry.header.bottom - 1);
     expect(geometry.stack.top).toBeGreaterThanOrEqual(geometry.user.bottom - 1);
     expect(geometry.stack.bottom).toBeLessThanOrEqual(geometry.nextUser.top + 1);
-    console.log(`STABLE_GEOMETRY ${width} ${JSON.stringify({digit: geometry.digit, clip: geometry.clip})}`);
+    console.log(`STABLE_GEOMETRY ${width} ${JSON.stringify({digit: geometry.digit, clip: geometry.clip, button: geometry.button})}`);
     expect(geometry.textFits).toBe(true);
     expect(geometry.digit.left).toBeGreaterThanOrEqual(geometry.clip.left - 1);
     expect(geometry.digit.right).toBeLessThanOrEqual(geometry.clip.right + 1);
