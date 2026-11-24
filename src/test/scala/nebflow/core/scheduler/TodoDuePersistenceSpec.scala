@@ -13,6 +13,15 @@ object TodoOccurrenceCrashChild:
   def main(args: Array[String]): Unit =
     val store = new ScheduledTaskStore(os.Path(args(0)))
     val occurrence = TodoOccurrence.create("old", 1000L, 7L)
+    if args(1) == "probe" then
+      val channel = java.nio.channels.FileChannel.open(
+        os.Path(args(0)).toNIO.resolve(".scheduled-tasks.lock"),
+        java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.WRITE)
+      val lock = channel.tryLock()
+      if lock == null then sys.exit(4)
+      lock.release()
+      channel.close()
+      sys.exit(0)
     if args(1) == "hold" then
       store.withStoreLock(IO.blocking {
         System.out.println("LOCKED")
@@ -191,6 +200,35 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       _ <- new ScheduledTaskStore(dir).withStoreLock(IO.unit).timeout(scala.concurrent.duration.DurationInt(5).seconds)
       didRun <- ran.get
     yield assertEquals(didRun, false)
+
+  test("cancelled lock holder releases OS lock for a separate process"):
+    val dir = os.temp.dir(prefix = "occurrence-cancel-os-probe-")
+    val cp = List.newBuilder[String]
+    var loader = Thread.currentThread().getContextClassLoader
+    while loader != null do
+      loader match
+        case urls: java.net.URLClassLoader =>
+          cp ++= urls.getURLs.toList.filter(_.getProtocol == "file").map(u => Paths.get(u.toURI).toString)
+        case _ => ()
+      loader = loader.getParent
+    cp += System.getProperty("java.class.path")
+    def probe: IO[Int] = IO.blocking {
+      val child = new ProcessBuilder(Paths.get(System.getProperty("java.home"), "bin", "java").toString,
+        "-cp", cp.result().distinct.mkString(java.io.File.pathSeparator),
+        "nebflow.core.scheduler.TodoOccurrenceCrashChild", dir.toString, "probe")
+        .redirectErrorStream(true).redirectOutput((dir / "probe.log").toIO).start()
+      assert(child.waitFor(30, java.util.concurrent.TimeUnit.SECONDS))
+      child.exitValue()
+    }
+    for
+      entered <- cats.effect.Deferred[IO, Unit]
+      holder <- new ScheduledTaskStore(dir).withStoreLock(entered.complete(()) *> IO.never[Unit]).start
+      _ <- entered.get
+      locked <- probe
+      _ <- IO(assertEquals(locked, 4))
+      _ <- holder.cancel
+      released <- probe
+    yield assertEquals(released, 0)
 
   test("cancelled lock holder releases locks and leaves file intact"):
     val dir = os.temp.dir(prefix = "occurrence-cancel-holder-")
