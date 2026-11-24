@@ -532,7 +532,7 @@ test.describe('AC-S1 复验 — whole-card Canvas open under REAL mouse clicks',
     await context.close();
   });
 
-  test.fixme('KNOWN-DEFECT-2928: the corner button remains a working SECOND entry (复验令: 可留但不再是唯一通路)', async ({ browser }) => {
+  test.fixme('KNOWN-DEFECT-2940: the corner button remains a working SECOND entry (复验令: 可留但不再是唯一通路)', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await renderStack(page, 3);
     const pill = page.locator('#chat .pop-stack-area .pill');
