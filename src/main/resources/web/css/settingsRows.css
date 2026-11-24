@@ -1,3 +1,26 @@
+.mp-trimode {
+  display: flex;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-1);
+  border: var(--nf-toggle-border) solid var(--nf-toggle-accent);
+  border-radius: var(--ds-radius-pill);
+  background: var(--nf-toggle-track-off);
+}
+.mp-trimode button {
+  flex: 1;
+  min-width: 0;
+  padding: var(--ds-space-2);
+  border: 0;
+  border-radius: var(--ds-radius-pill);
+  background: transparent;
+  color: var(--color-text);
+}
+.mp-trimode button[aria-checked="true"] {
+  background: var(--nf-toggle-accent);
+  color: var(--nf-toggle-knob-bg);
+}
+.mp-trimode button:focus-visible { outline: var(--nf-toggle-border) solid var(--nf-toggle-ring); }
+
 /* settingsRows.css — 设置页 iOS 设置行族的**造型唯一标准**
    （settings-ios-rows 批 2026-11-06，作者令「能点击下一个面板的样式都统一成苹果的
      这种样式 然后 底部的重启服务去掉 并且这些可点击的按钮 布局规整一点」）

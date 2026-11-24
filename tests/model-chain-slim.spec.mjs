@@ -85,7 +85,7 @@ await new Promise((r) => webServer.listen(PORT, '127.0.0.1', r));
 /* ─────────────── 引导（mock API + mock WS + 真 web 壳） ─────────────── */
 async function boot(browser, { viewport, colorScheme, locale = 'zh-CN', touch = false }) {
   const ctx = await browser.newContext({ viewport, colorScheme, deviceScaleFactor: 2, hasTouch: touch });
-  const sim = { chains: Object.fromEntries(['Nebula', 'kernel', 'project-dispatcher', 'node', 'subagent'].map((r) => [r, r === 'Nebula' ? CHAIN : null])), puts: [] };
+  const sim = { mode: 'follow', source: '', chains: Object.fromEntries(['Nebula', 'kernel', 'project-dispatcher', 'node', 'subagent'].map((r) => [r, r === 'Nebula' ? CHAIN : null])), puts: [] };
   await ctx.addInitScript((l) => {
     localStorage.setItem('nebflow_token', 't');
     localStorage.setItem('neblink_token', 't');
@@ -101,6 +101,16 @@ async function boot(browser, { viewport, colorScheme, locale = 'zh-CN', touch = 
   await page.route('**/agents/*/agent.json', (r) => r.fulfill({ json: {} }));
   await page.route('**/api/**', (r) => {
     const p = decodeURIComponent(new URL(r.request().url()).pathname);
+    if (p === '/api/model-rules/mode') {
+      sim.modePuts = (sim.modePuts || 0) + 1;
+      if (sim.failMode) return r.fulfill({ status: 500, json: { error: 'save failed' } });
+      sim.mode = r.request().postDataJSON().mode;
+      return r.fulfill({ json: { mode: sim.mode } });
+    }
+    if (p === '/api/model-rules') {
+      if (r.request().method() === 'PUT') sim.source = r.request().postDataJSON().source;
+      return r.fulfill({ json: { mode: sim.mode, source: sim.source, diagram: { nodes: [] } } });
+    }
     if (p === '/api/sessions') {
       return r.fulfill({ json: { sessions: [{ id: SID, name: 'root', agentName: 'Nebula' }], activeId: SID } });
     }
@@ -193,11 +203,11 @@ async function openSettings(page, { mobile }) {
  * 属于 separate 档，先真点开关再断言 —— 顺带把开关的乐观翻转 + setMode 一起验了。
  */
 async function ensureSeparate(page) {
-  const sw = page.locator('#model-mode-switch');
+  const sw = page.locator('#model-chain-modes [data-rule-mode="slots"]');
   if (await sw.getAttribute('aria-checked') !== 'true') {
     await sw.click();
     await page.waitForFunction(
-      () => document.querySelector('#model-mode-switch')?.getAttribute('aria-checked') === 'true',
+      () => document.querySelector('#model-chain-modes [data-rule-mode="slots"]')?.getAttribute('aria-checked') === 'true',
       null, { timeout: 5000 });
   }
   await page.waitForSelector('#small-llm-settings-row select', { state: 'visible', timeout: 15000 });
@@ -209,17 +219,37 @@ async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = fals
   const viewport = mobile ? { width: 375, height: 812 } : { width: 1280, height: 800 };
   const { ctx, page, errors, sim } = await boot(browser, { viewport, colorScheme: theme, locale, touch: mobile });
   await openSettings(page, { mobile });
+  if (engineName === 'chromium' && theme === 'light' && locale === 'zh-CN') {
+    const modes = page.locator('#model-chain-modes');
+    const section = page.locator('#model-chain-section');
+    await section.screenshot({ path: join(SHOTS_DIR, `tri-follow-${mobile ? 'mobile' : 'desktop'}.png`) });
+    ok(tag, '跟随态不渲染编辑器', await page.locator('.mr-draft').count() === 0);
+    await modes.locator('[data-rule-mode="slots"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-rule-mode="slots"]')?.getAttribute('aria-checked') === 'true');
+    await section.screenshot({ path: join(SHOTS_DIR, `tri-slots-${mobile ? 'mobile' : 'desktop'}.png`) });
+    ok(tag, '分槽态不渲染编辑器', await page.locator('.mr-draft').count() === 0);
+    await modes.locator('[data-rule-mode="rules"]').click();
+    await page.locator('.mr-draft').waitFor({ state: 'visible' });
+    await section.screenshot({ path: join(SHOTS_DIR, `tri-rules-${mobile ? 'mobile' : 'desktop'}.png`) });
+    ok(tag, '规则摘要和编辑器在场', await page.locator('#model-rules-section-body .set-row-hint').innerText() === '暂无规则。');
+    await page.locator('.mr-draft').fill('rule example');
+    await page.locator('[data-act="apply"]').click();
+    await page.waitForFunction(() => document.querySelector('#model-rules-section-body .set-row-hint')?.textContent === '源码');
+    ok(tag, '规则保存后摘要更新', sim.source === 'rule example');
+    await modes.locator('[data-rule-mode="follow"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-rule-mode="follow"]')?.getAttribute('aria-checked') === 'true');
+    await page.waitForFunction(() => document.querySelector('#model-chain-config .mp-config-inner')?.children.length === 0);
+  }
 
   // ① 模式开关（switch 批）：全站唯一开关组件，一个 role=switch 的按钮 + 一行当前态。
-  const modeSwitch = page.locator('#model-mode-switch');
-  ok(tag, '模式控件 = 一个 role=switch 的 .nb-toggle（零分段按钮残留）',
-    await modeSwitch.count() === 1 && await modeSwitch.getAttribute('role') === 'switch' &&
-    await page.locator('#model-chain-modes .mp-mode-btn').count() === 0 &&
-    await page.locator('#model-chain-modes button').count() === 1);
-  ok(tag, '默认档 = 全部跟随主会话（开关关 + 当前态文字明示）',
-    await modeSwitch.getAttribute('aria-checked') === 'false' &&
+  const modeSwitch = page.locator('#model-chain-modes [data-rule-mode="follow"]');
+  ok(tag, '模式控件 = 三态单选组',
+    await page.locator('#model-chain-modes[role="radiogroup"]').count() === 1 &&
+    await page.locator('#model-chain-modes button[role="radio"]').count() === 3);
+  ok(tag, '默认档 = 全部跟随',
+    await modeSwitch.getAttribute('aria-checked') === 'true' &&
     (await page.locator('#model-chain-mode-state').textContent() || '')
-      .includes(locale === 'zh-CN' ? '全部跟随主会话' : 'following the main session'),
+      .includes(locale === 'zh-CN' ? '全部跟随' : 'Follow'),
     await page.locator('#model-chain-mode-state').textContent());
   // unified 档（渐进披露批 2026-11-21 作者令「关档不要置灰展示那堆卡，只留开关；开档才
   // 展开四类配置卡与对应说明」）：只渲染主会话卡（唯一可写主链）；披露体收起且**零子件**
@@ -253,13 +283,13 @@ async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = fals
     sep.small === 1, JSON.stringify(sep));
   ok(tag, '当前态文字随档位改写',
     (await page.locator('#model-chain-mode-state').textContent() || '')
-      .includes(locale === 'zh-CN' ? '分开配置' : 'per-class'),
+      .includes(locale === 'zh-CN' ? '分开配置' : 'Per-slot'),
     await page.locator('#model-chain-mode-state').textContent());
   ok(tag, '开档：披露体展开（.open）且 follower 卡在披露体内', await page.evaluate(() =>
     document.getElementById('model-chain-config')?.classList.contains('open') === true &&
     !!document.querySelector('#model-chain-config .mp-config-inner [data-role="subagent"]')));
   // 切回关档 ⇒ 披露体收起后清空（follower 卡离场、不残留壳），主会话卡仍在
-  await page.locator('#model-mode-switch').click();
+  await page.locator('#model-chain-modes [data-rule-mode="follow"]').click();
   await page.waitForFunction(() => document.querySelector('#model-chain-config .mp-config-inner')?.children.length === 0,
     null, { timeout: 5000 });
   const back = await page.evaluate(() => ({
@@ -353,9 +383,8 @@ async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = fals
     JSON.stringify({ zh: dict.zhMode, en: dict.enMode }));
   ok(tag, 'i18n 退役键零残留（zh/en 双向）', dict.zhLeak.length === 0 && dict.enLeak.length === 0,
     JSON.stringify({ zhLeak: dict.zhLeak, enLeak: dict.enLeak }));
-  // 两字典本就有 7 键的存量差（zh 多 8 键 / en 多 1 键，与本批无关）——这里钉的
-  // 是「本批六个键在两侧对称删干净」（差值不因单边漏删而变化）。
-  ok(tag, 'i18n 删键对称（差值 = 存量基线 7）', dict.zhCount - dict.enCount === 7,
+  // 当前基线的字典总数差为 6；退役键双侧检查在上方独立断言。
+  ok(tag, 'i18n 字典差值 = 当前基线 6', dict.zhCount - dict.enCount === 6,
     `zh=${dict.zhCount} en=${dict.enCount} Δ=${dict.zhCount - dict.enCount}`);
 
   // 实拍：五类角色各自独立在位，截图确认同屏可见。
@@ -442,6 +471,17 @@ async function functionalLeg(browser) {
   await ctx.close();
 }
 
+async function modeFailureLeg(browser) {
+  const { ctx, page, errors, sim } = await boot(browser, { viewport: { width: 1280, height: 800 }, colorScheme: 'light' });
+  await openSettings(page, { mobile: false });
+  sim.failMode = true;
+  await page.locator('[data-rule-mode="slots"]').click();
+  await page.waitForFunction(() => document.querySelector('#model-chain-mode-state')?.textContent.includes('保存失败'));
+  ok('mode-failure', '失败后回滚跟随模式', await page.locator('[data-rule-mode="follow"]').getAttribute('aria-checked') === 'true');
+  ok('mode-failure', '仅预期 500 错误', errors.every(e => /500/.test(e)));
+  await ctx.close();
+}
+
 /* ─────────────── 主流程：双引擎 × 双主题 ─────────────── */
 for (const engineName of ENGINES) {
   const browser = await (engineName === 'webkit' ? webkit : chromium).launch({ headless: process.env.HEADLESS !== '0' });
@@ -453,7 +493,7 @@ for (const engineName of ENGINES) {
     // 英文腿（i18n 双语实拍；最窄 390 视口那一条才是「不折行」的真判据）
     await leg(engineName, browser, { theme: 'dark', locale: 'en' });
     await leg(engineName, browser, { theme: 'dark', locale: 'en', mobile: true });
-    if (engineName === 'chromium') await functionalLeg(browser);
+    if (engineName === 'chromium') { await functionalLeg(browser); await modeFailureLeg(browser); }
   } finally {
     await browser.close();
   }

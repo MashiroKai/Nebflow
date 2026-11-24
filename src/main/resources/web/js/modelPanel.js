@@ -33,7 +33,7 @@ import { rootNameParams } from './rootName.js';
 // 模型设置页 switch 批（2026-11-21 作者令）：设置页「模型（按会话类别）」节的模式
 // 控件由两段式按钮改为**一个开关**——开关组件全站单源（toggle.js 的 .nb-toggle），
 // 这里消费 createToggle 的 DOM 形态（组件契约门禁 R5 禁裸 innerHTML，故不取字符串版）。
-import { createToggle, setToggleState } from './toggle.js';
+import { mountModelRulesSection } from './sidebar/modelRulesPanel.js';
 
 // ── Shared helpers (model refs + chain display) ────────────
 
@@ -203,7 +203,12 @@ function readStoredMode() {
   try { return localStorage.getItem(MODE_KEY) === 'separate' ? 'separate' : 'unified'; }
   catch { return 'unified'; } // 隐私模式 / 无存储：退回默认档
 }
-let panelMode = readStoredMode(); // 'unified' | 'separate'
+let panelMode = readStoredMode(); // derived view cache, never the authoritative mode
+let ruleMode = null;
+let modeBusy = false;
+let modeError = '';
+let ruleSummary = '';
+let rulesUnmount = null;
 /** @type {Set<() => void>} */
 const modeListeners = new Set();
 /** 订阅模式变化（设置页节的同步腿；/model 面板自带 mp-modes 就地重绘）。 */
@@ -793,49 +798,37 @@ function renderChainSectionDivergedNote(container) {
  * @param {HTMLElement} container #model-chain-section-body
  */
 function renderSessionModeControl(container) {
-  const separate = panelMode === 'separate';
-  let row = /** @type {HTMLElement|null} */ (container.querySelector('#model-chain-modes'));
+  let row = container.querySelector('#model-chain-modes');
   if (!row) {
     row = document.createElement('div');
     row.id = 'model-chain-modes';
-    row.className = 'set-row mp-mode-row';
-    const label = document.createElement('span');
-    label.className = 'set-row-label';
-    label.textContent = t('model.modeSeparate');
-    const ctrl = document.createElement('span');
-    ctrl.className = 'set-row-ctrl';
-    const toggle = createToggle({
-      on: separate,
-      id: 'model-mode-switch',
-      label: t('model.modeSeparate'),
-      title: t('model.modeSeparateHint'),
-    });
-    // 开关 → setMode（写单一状态 + 持久化 + 两面对称重绘）。
-    // 🔴 翻转必须在 setMode **之前**（组件契约的乐观翻转：bindToggle 同序）：
-    // setMode 同步触发本节整段重绘（DOM 增删会强制一次样式重算），若把 class
-    // 翻转压到重绘里，那次重算会把「已开」当成起始值 ⇒ 180ms 过渡被吞，
-    // 开关看上去是瞬间跳过去的（实测无 transitionrun 事件）。
-    toggle.addEventListener('click', () => {
-      const next = toggle.classList.contains('on') ? 'unified' : 'separate';
-      setToggleState(toggle, next === 'separate');
-      setMode(next);
-    });
-    ctrl.appendChild(toggle);
-    row.append(label, ctrl);
+    row.className = 'mp-trimode';
+    row.setAttribute('role', 'radiogroup');
+    row.setAttribute('aria-label', t('modelRules.modeLabel'));
+    for (const mode of ['follow', 'slots', 'rules']) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.ruleMode = mode;
+      button.setAttribute('role', 'radio');
+      button.textContent = t('modelRules.mode.' + mode);
+      button.addEventListener('click', () => void setRuleMode(mode));
+      row.appendChild(button);
+    }
     container.insertBefore(row, container.firstChild);
   }
-  const toggle = /** @type {HTMLElement|null} */ (row.querySelector('#model-mode-switch'));
-  setToggleState(toggle, separate);
-
-  let state = /** @type {HTMLElement|null} */ (container.querySelector('#model-chain-mode-state'));
-  if (!state) {
-    state = document.createElement('div');
-    state.id = 'model-chain-mode-state';
-    state.className = 'set-row-hint mp-mode-state';
-    state.setAttribute('role', 'status');
-    container.insertBefore(state, row.nextSibling);
+  row.querySelectorAll('button').forEach(button => {
+    button.setAttribute('aria-checked', String(button.dataset.ruleMode === ruleMode));
+    button.disabled = modeBusy || ruleMode === null;
+  });
+  let status = container.querySelector('#model-chain-mode-state');
+  if (!status) {
+    status = document.createElement('div');
+    status.id = 'model-chain-mode-state';
+    status.className = 'set-row-hint mp-mode-state';
+    status.setAttribute('role', 'status');
+    container.insertBefore(status, row.nextSibling);
   }
-  state.textContent = separate ? t('model.modeStateSeparate') : t('model.modeStateUnified');
+  status.textContent = modeError || (ruleMode ? t('modelRules.mode.' + ruleMode) : t('modelRules.loading'));
 }
 
 /**
@@ -1013,6 +1006,34 @@ function syncRows(draft, parent, anchor) {
  */
 function renderChainSectionBody(container) {
   renderSessionModeControl(container);
+  let rules = container.querySelector('#model-rules-section-body');
+  if (ruleMode === 'rules') {
+    if (!rules) {
+      rules = document.createElement('div');
+      rules.id = 'model-rules-section-body';
+      const heading = document.createElement('h3');
+      heading.textContent = t('settings.modelRulesTitle');
+      const summary = document.createElement('div');
+      summary.className = 'set-row-hint';
+      summary.textContent = ruleSummary;
+      const host = document.createElement('div');
+      host.addEventListener('model-rules-saved', async () => {
+        try {
+          const response = await fetch('/api/model-rules', { headers: authHeaders() });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const data = await response.json();
+          ruleSummary = data.error ? `${t('modelRules.loadError')}: ${data.error}` : (data.source ? t('modelRules.source') : t('modelRules.diagramEmpty'));
+        } catch (error) { ruleSummary = `${t('modelRules.loadFailed')}: ${error.message}`; }
+        summary.textContent = ruleSummary;
+      });
+      rules.append(heading, summary, host);
+      container.appendChild(rules);
+      rulesUnmount = mountModelRulesSection(host);
+    }
+    container.querySelectorAll('[data-role="Nebula"], #model-chain-config, .mp-group-list').forEach(el => el.remove());
+    return;
+  }
+  if (rules) { rulesUnmount?.(); rulesUnmount = null; rules.remove(); }
   const list = ensureGroupList(container);
   const fold = ensureConfigFold(container, list);
   const inner = /** @type {HTMLElement} */ (fold.querySelector('.mp-config-inner'));
@@ -1053,6 +1074,7 @@ async function refreshChainSection(container) {
 export function mountModelChainSection(container) {
   if (!container) return () => {};
   let alive = true;
+  void loadRuleMode();
   void refreshChainSection(container);
   const off = onModelChainChange(() => {
     if (alive && container.isConnected) void refreshChainSection(container);
@@ -1062,7 +1084,7 @@ export function mountModelChainSection(container) {
   const offMode = onModelModeChange(() => {
     if (alive && container.isConnected) renderChainSectionBody(container);
   });
-  return () => { alive = false; off(); offMode(); };
+  return () => { alive = false; off(); offMode(); rulesUnmount?.(); rulesUnmount = null; };
 }
 
 // ── 生图 切换分组（jev-imagegen-align-llm 批 2026-11-02，作者令第 4 条；
@@ -1443,7 +1465,50 @@ async function refreshPanel() {
   renderPanel();
 }
 
+async function loadRuleMode() {
+  try {
+    const response = await fetch('/api/model-rules', { headers: authHeaders() });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (!['follow', 'slots', 'rules'].includes(data.mode)) throw new Error('Invalid mode');
+    ruleMode = data.mode;
+    ruleSummary = data.error ? `${t('modelRules.loadError')}: ${data.error}` : (data.source ? t('modelRules.source') : t('modelRules.diagramEmpty'));
+    modeError = '';
+    applyViewMode(ruleMode === 'follow' ? 'unified' : 'separate');
+  } catch (error) {
+    modeError = `${t('modelRules.loadFailed')}: ${error.message}`;
+    emitModeChange();
+  }
+}
+
+async function setRuleMode(next) {
+  if (modeBusy || !ruleMode || next === ruleMode) return;
+  const previous = ruleMode;
+  modeBusy = true;
+  ruleMode = next;
+  modeError = '';
+  applyViewMode(next === 'follow' ? 'unified' : 'separate');
+  try {
+    const response = await fetch('/api/model-rules/mode', {
+      method: 'PUT', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: next }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  } catch (error) {
+    ruleMode = previous;
+    modeError = `${t('modelRules.saveFailed')}: ${error.message}`;
+    applyViewMode(previous === 'follow' ? 'unified' : 'separate');
+  } finally {
+    modeBusy = false;
+    emitModeChange();
+  }
+}
+
 function setMode(mode) {
+  void setRuleMode(mode === 'separate' ? 'slots' : 'follow');
+}
+
+function applyViewMode(mode) {
   panelMode = mode === 'separate' ? 'separate' : 'unified';
   try { localStorage.setItem(MODE_KEY, panelMode); } catch { /* 隐私模式：本次会话仍生效 */ }
   // 就地重绘 /model 面板的两个模式钮（面板未开 ⇒ 零命中，改由订阅面自绘）。
@@ -1522,6 +1587,7 @@ export async function openModelPanel() {
     /** @type {HTMLElement} */ (panelEl.querySelector('.model-panel'))?.focus();
     return;
   }
+  await loadRuleMode();
   panelEl = buildPanel();
   /** @type {HTMLElement} */ (panelEl.querySelector('.model-panel'))?.focus();
   await openModelPanelRefresh();
