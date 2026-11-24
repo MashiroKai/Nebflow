@@ -15,6 +15,26 @@ import { buildFieldShell } from './socialSearchCore.js';
 const PAGE_ID = 'canvas-fav-page';
 /** 无限滚动：每批渲染条数。 */
 const BATCH = 30;
+let pathTooltip;
+function hidePathTooltip() { if (pathTooltip) pathTooltip.hidden = true; }
+function showPathTooltip(row, path) {
+  if (!pathTooltip) {
+    pathTooltip = document.createElement('div');
+    pathTooltip.className = 'cfp-path-tooltip';
+    pathTooltip.setAttribute('role', 'tooltip');
+    document.body.appendChild(pathTooltip);
+  }
+  pathTooltip.textContent = path;
+  pathTooltip.hidden = false;
+  const anchor = row.getBoundingClientRect();
+  const tip = pathTooltip.getBoundingClientRect();
+  const margin = 8;
+  const left = Math.max(margin, Math.min(anchor.right + margin, innerWidth - tip.width - margin));
+  const below = anchor.bottom + margin;
+  const top = Math.max(margin, Math.min(below + tip.height <= innerHeight - margin ? below : anchor.top - tip.height - margin, innerHeight - tip.height - margin));
+  pathTooltip.style.left = `${left}px`;
+  pathTooltip.style.top = `${top}px`;
+}
 
 const TAB_LABEL = {
   note: () => t('canvas.favPage.tab.note'),
@@ -154,8 +174,11 @@ function buildPage(onClose, onOpened) {
       row.type = 'button';
       row.className = 'cfp-row';
       row.dataset.favPath = entry.path;
-      row.dataset.fullPath = entry.path;
       row.dataset.kind = favKind(entry.path);
+      row.addEventListener('mouseenter', () => showPathTooltip(row, entry.path));
+      row.addEventListener('mouseleave', hidePathTooltip);
+      row.addEventListener('focus', () => { if (row.matches(':focus-visible')) showPathTooltip(row, entry.path); });
+      row.addEventListener('blur', hidePathTooltip);
       const main = document.createElement('div');
       main.className = 'cfp-main';
       const h = document.createElement('div');
@@ -234,6 +257,7 @@ function buildPage(onClose, onOpened) {
 
   // 无限滚动：接近底部时追加下一批。
   body.addEventListener('scroll', () => {
+    hidePathTooltip();
     if (body.scrollTop + body.clientHeight >= body.scrollHeight - 80 && state.shown < state.items.length) {
       renderBatch();
     }

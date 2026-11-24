@@ -35,13 +35,18 @@ try {
         await s.page.locator('#panel-favorites .cfp-search-input').focus();
         for (let i = 0; i < 5 && !(await row.evaluate(el => el === document.activeElement)); i++) await s.page.keyboard.press('Tab');
         assert(await row.evaluate(el => el === document.activeElement), 'keyboard reaches row');
-        const focused = await row.evaluate(el => { const tip = getComputedStyle(el, '::after'); return { height: el.getBoundingClientRect().height, content: tip.content, position: tip.position, width: tip.width, heightTip: tip.height, scrollable: tip.overflowY }; });
-        assert.equal(focused.height, rowHeight, 'focus must not grow row');
-        assert.equal(focused.content, JSON.stringify(path), 'focus tooltip contains complete path');
-        assert.equal(focused.position, 'fixed'); assert(parseFloat(focused.width)>0 && parseFloat(focused.heightTip)>0);
+        const tooltip = s.page.locator('.cfp-path-tooltip');
+        async function checkTip(mode) {
+          assert.equal(await row.evaluate(el => el.getBoundingClientRect().height), rowHeight, 'disclosure must not grow row');
+          const tip = await tooltip.evaluate(el => { const r=el.getBoundingClientRect(); return { text:el.textContent, x:r.left, y:r.top, right:r.right, bottom:r.bottom, width:innerWidth, height:innerHeight, scroll:el.scrollHeight, client:el.clientHeight, hit:document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)===el }; });
+          assert.equal(tip.text,path); assert(tip.x>=0 && tip.y>=0 && tip.right<=tip.width && tip.bottom<=tip.height, `tooltip out of viewport ${JSON.stringify(tip)}`);
+          assert(tip.hit, 'tooltip is not obscured'); assert(tip.scroll<=tip.client+1,'tooltip is clipped');
+          if(size===1024) await s.page.screenshot({path:join(shots,`tooltip-${theme}-${mode}.png`),animations:'disabled'});
+        }
+        await checkTip('focus');
         await s.page.locator('#panel-favorites .cfp-search-input').focus();
         await row.hover();
-        assert.equal(await row.evaluate(el => getComputedStyle(el, '::after').content), JSON.stringify(path), 'hover tooltip contains complete path');
+        await checkTip('hover');
       }
     } finally { await s.close(); }
   }
