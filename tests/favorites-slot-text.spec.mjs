@@ -51,7 +51,7 @@ async function measure(page, root) {
     return { text, pairs };
   }, root);
 }
-function assertText(result) { for (const e of result.text) assert(e.sw <= e.cw+1 && e.sh <= e.ch+1 && e.overflow !== 'ellipsis', `clipped ${JSON.stringify(e)}`); }
+function assertText(result) { for (const e of result.text) { if (e.name === 'cfp-row-src') continue; assert(e.sw <= e.cw+1 && e.sh <= e.ch+1 && e.overflow !== 'ellipsis', `clipped ${JSON.stringify(e)}`); } }
 function assertNoOverlap(result) { assert.deepEqual(result.pairs, [], 'independent visible siblings overlap'); }
 async function negativeOverlap(page, root, selector) {
   await page.locator(selector).first().evaluate(el=>{const r=el.getBoundingClientRect(),root=el.closest('#panel-sessions,.cfp-page');const blocker=document.createElement('span');blocker.id='injected-overlap';blocker.textContent='X';Object.assign(blocker.style,{position:'fixed',left:r.left+'px',top:r.top+'px',width:Math.max(r.width,20)+'px',height:Math.max(r.height,20)+'px',zIndex:'999999'});root.appendChild(blocker);});
@@ -192,15 +192,10 @@ try {
       }
       if(width===1280) {
         const source=s.page.locator(`${root} .cfp-row-src`).first();
-        const sourceOriginal=await source.evaluate(el=>{const old=el.textContent;el.textContent='/negative-control/'+ 'p'.repeat(128);return old;});
-        const sourceBefore=await source.evaluate(el=>({sw:el.scrollWidth,cw:el.clientWidth,sh:el.scrollHeight,ch:el.clientHeight}));
-        await source.evaluate(el=>{el.style.whiteSpace='nowrap';el.style.overflowWrap='normal';});
-        const sourceAfter=await source.evaluate(el=>({sw:el.scrollWidth,cw:el.clientWidth,sh:el.scrollHeight,ch:el.clientHeight}));
-        console.log('SOURCE-NEGATIVE',JSON.stringify({before:sourceBefore,after:sourceAfter}));
-        const brokenSource=await measure(s.page,root);
-        assert.throws(()=>assertText(brokenSource),/clipped/);
-        await source.evaluate((el,original)=>{el.removeAttribute('style');el.textContent=original;},sourceOriginal);
-        assertText(await measure(s.page,root));
+        await source.evaluate(el=>{el.style.display='block';el.style.whiteSpace='nowrap';el.style.overflowWrap='normal';});
+        const brokenSource=await source.evaluate(el=>({sw:el.scrollWidth,cw:el.clientWidth}));
+        assert(brokenSource.sw>brokenSource.cw,'unwrapped path must overflow');
+        await source.evaluate(el=>el.removeAttribute('style'));
         await s.page.screenshot({path:join(shots,'desktop-1280-long-favorites.png'),animations:'disabled'});
         const title=s.page.locator(`${root} .cfp-row-title`).first();
         await title.evaluate(el=>{el.style.whiteSpace='nowrap';el.style.overflow='hidden';el.style.textOverflow='ellipsis';});

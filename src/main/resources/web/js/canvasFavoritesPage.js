@@ -165,11 +165,16 @@ function buildPage(onClose, onOpened) {
       const src = document.createElement('span');
       src.className = 'cfp-row-src';
       src.textContent = entry.path;
+      src.title = entry.path;
+      const fullPath = document.createElement('span');
+      fullPath.className = 'cfp-row-full-path';
+      fullPath.textContent = entry.path;
+      fullPath.setAttribute('aria-hidden', 'true');
       const date = document.createElement('span');
       date.className = 'cfp-row-date';
       date.textContent = formatDate(entry.savedAt);
       meta.append(src, date);
-      main.append(h, meta);
+      main.append(h, meta, fullPath);
       row.appendChild(main);
       row.addEventListener('click', () => {
         void openFavorite(entry).then((status) => {

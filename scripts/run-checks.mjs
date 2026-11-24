@@ -230,6 +230,8 @@ export const CHECKS = [
   nodeCheck('canvas-seat-draft', 'check-canvas-seat-draft'),
   { name: 'canvas-save-failure-dedup', profiles: ['frontend'], timeoutMs: 180_000,
     argv: ['npm', 'exec', '--no', '--', 'playwright', 'test', 'tests/canvas-save-failure-dedup.spec.mjs', '--workers=1'] },
+  { name: 'favorites-path-clamp', profiles: ['frontend'], timeoutMs: 180_000,
+    argv: [process.execPath, 'tests/favorites-path-clamp.spec.mjs'] },
   { name: 'favorites-slot-text', profiles: ['frontend'], timeoutMs: 180_000,
     argv: [process.execPath, 'tests/favorites-slot-text.spec.mjs'] },
   { name: 'favorites-slot-geometry', profiles: ['frontend'], timeoutMs: 180_000,
