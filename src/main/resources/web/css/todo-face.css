@@ -1023,7 +1023,7 @@
 }
 .tfl-row-detail[hidden] { display: none; }
 .tfl-decision-hint { color: var(--color-text); font-weight: 600; }
-.tfl-decision-attention { outline: 2px solid var(--color-text); outline-offset: var(--ds-space-half); }
+.tfl-decision-attention { outline: 2px solid var(--color-text); outline-offset: var(--ds-space-half); border-radius: var(--ds-radius-badge); }
 .tfl-edit-prio { display: flex; align-items: center; gap: var(--ds-space-half); flex-wrap: wrap; }
 .tfl-edit-prio-btn {
   display: inline-flex;

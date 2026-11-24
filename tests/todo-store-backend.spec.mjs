@@ -336,7 +336,8 @@ test('直接完成普通待办会发送帧并移除行', async ({ page }) => {
   expect(h.backend.rows[0].completed).toBe(true);
 });
 
-test('未作答决策禁止完成且后端拒绝后恢复待办', async ({ page }) => {
+test('未作答决策提示选择且后端拒绝后恢复待办', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   const h = await bootApp(page);
   await h.waitRows(4);
   h.backend.rows[0].decision = { question: '选择方案', options: [{ id: 'yes', title: '选甲' }], multiSelect: false };
