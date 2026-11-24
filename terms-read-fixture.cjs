@@ -262,5 +262,21 @@ const assert = require('node:assert/strict');
     assert.equal(await sourcePage.evaluate(() => window.navReceived), true);
     await sourcePage.close();
     console.log('PASS: source delegates navigation and hides absolute path');
+    await page.evaluate(() => {
+      window.testTip.hideTermTip();
+      const a = document.querySelector('#term');
+      a.dataset.wikiTarget = 'retry-miss';
+      delete a.dataset.wikiResolved;
+      window.missCalls = 0;
+      window.fetch = async (url) => {
+        if (String(url).includes('/lookup?')) window.missCalls++;
+        return new Response('{}', { status: 404 });
+      };
+      window.testTip.termTapExpand(a, null);
+    });
+    await page.waitForFunction(() => [...document.querySelectorAll('.nf-term-tip .term-tip-retry')].some((el) => !el.hidden));
+    await page.locator('.nf-term-tip .term-tip-retry:not([hidden])').click();
+    await page.waitForFunction(() => window.missCalls === 2);
+    console.log('PASS: missing results are not cached');
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
