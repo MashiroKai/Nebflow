@@ -462,9 +462,10 @@ function wrapSelectedText(rows, range, onPick) {
     const bubble = row.querySelector('.bubble');
     if (!bubble) continue;
     const w = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT);
+    /** @type {Text[]} */
     const nodes = [];
     let n;
-    while ((n = w.nextNode())) { if (n.textContent.trim() && range.intersectsNode(n)) nodes.push(n); }
+    while ((n = w.nextNode())) { if (n instanceof Text && n.textContent.trim() && range.intersectsNode(n)) nodes.push(n); }
     for (const t of nodes) {
       const len = t.textContent.length;
       const s = t === sc ? so : 0;
@@ -538,7 +539,7 @@ export function selectionExplainFrame(type, msg) {
     ? String(msg.text || '')
     : tt('解释失败：', 'Explain failed: ') + String(msg.message || '');
   // 弹窗开着 ⇒ 同步到最新解释（回包晚于点击时）。
-  const tipEl = document.querySelector('.nf-term-tip.interactive, .nf-term-tip');
+  const tipEl = /** @type {HTMLElement|null} */ (document.querySelector('.nf-term-tip.interactive, .nf-term-tip'));
   if (explainPickEl && explainPickEl.isConnected && explainTipBody && tipEl && tipEl.style.display !== 'none') {
     tipEl.querySelector('.ts').textContent = explainTipBody();
   }

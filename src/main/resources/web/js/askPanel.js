@@ -42,7 +42,7 @@ import { cleanupCardIframes } from './cardRegistry.js';
  * @param {AskPanelOptions} options
  */
 export function createAskPanel(options) {
-  const opts = options || {};
+  const opts = options || /** @type {AskPanelOptions} */ ({});
   // 唯一的内核构造点：门面之外不允许出现 createAskDialog 的调用（静态闸守卫）。
   const dialog = createAskDialog(opts.dialog);
   dialog.wire();

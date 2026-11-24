@@ -149,7 +149,7 @@ let tags = [];
 /** @typedef {{id:string,tagId:string|null,name:string,detail:string,due:number|null,
  *   priority:number,completed:boolean,completedAt:number|null,createdAt:number,
  *   sessionId:string,project:string|null,title:string,notes:string,
- *   decision?:{question?:string,options?:string[],multiSelect?:boolean,allowOther?:boolean}|null}} TodoRow */
+ *   decision?:{question?:string,options?:Array<{id:string,title?:string,detail?:string}>,multiSelect?:boolean,allowOther?:boolean,answer?:any,secret?:boolean}|null}} TodoRow */
 
 /**
  * 造一行（name/detail 为唯一存储面；title/notes 是只读别名视图）。

@@ -145,14 +145,14 @@ export function mountModelRulesSection(host) {
       return;
     }
     if (el.dataset.act === 'stage') {
-      const dr = host.querySelector('.mr-draft');
+      const dr = /** @type {HTMLTextAreaElement|null} */ (host.querySelector('.mr-draft'));
       if (dr) draft = dr.value;
       status = '';
       errors = [];
       return render();
     }
     if (el.dataset.act === 'apply') {
-      const dr = host.querySelector('.mr-draft');
+      const dr = /** @type {HTMLTextAreaElement|null} */ (host.querySelector('.mr-draft'));
       if (dr) draft = dr.value;
       await apply();
     }

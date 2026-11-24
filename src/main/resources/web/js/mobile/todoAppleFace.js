@@ -990,7 +990,7 @@ function buildList(root, section, nav) {
         const answeredIds = new Set(answered && Array.isArray(dec.answer.selectedOptionIds) ? dec.answer.selectedOptionIds : []);
         const errLine = el('div', 'ta-decision-error');
         errLine.setAttribute('role', 'alert');
-        const submit = el('button', 'ta-decision-submit', t('todoapple.answerSubmit'));
+        const submit = /** @type {HTMLButtonElement} */ (el('button', 'ta-decision-submit', t('todoapple.answerSubmit')));
         submit.type = 'button';
         options.forEach((option, i) => {
           // 选项真源形 = {id,title,detail,media}：取 title（有 detail 附一行），
@@ -1407,7 +1407,7 @@ let qdFilterOpen = false;
 /** @typedef {{id:string, tagId:string|null, name:string, detail:string, due:number|null,
  *   priority:number, completed:boolean, createdAt:number,
  *   sessionId:string|null,
- *   decision?:{question?:string, options?:string[], multiSelect?:boolean, allowOther?:boolean}|null}} QdRow */
+ *   decision?:{question?:string, options?:Array<{id:string,title?:string,detail?:string}>, multiSelect?:boolean, allowOther?:boolean, answer?:any, secret?:boolean}|null}} QdRow */
 
 /** The card queue = open todos in the store's own order (no second sort recipe),
  *  narrowed by the filter panel (single source for both the deck and the home
@@ -1857,7 +1857,7 @@ function buildQuick(root, section) {
 
   /** One option row. `.ta-qd-opt-body` = the layout slot the per-option media
    *  group will be inserted into (column flow: media above the label).
-   *  @param {QdRow} item @param {number} i @param {string} option @param {boolean} multi
+   *  @param {QdRow} item @param {number} i @param {{id:string,title?:string,detail?:string}} option @param {boolean} multi
    *  @returns {HTMLElement} */
   const optionRow = (item, i, option, multi) => {
     const row = el('label', 'ta-qd-opt');

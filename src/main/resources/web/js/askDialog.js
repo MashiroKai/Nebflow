@@ -114,6 +114,7 @@ function setMarkdownHtml(node, text, streaming) {
  * @property {boolean} [busy]
  * @property {number} [lastFrameAt]
  * @property {string} [mailAddress]
+ * @property {string} [replyState]
  */
 
 /**
@@ -124,7 +125,7 @@ function setMarkdownHtml(node, text, streaming) {
  * @property {(s: AskSession) => boolean} canSubmit 发送前硬闸
  * @property {() => Promise<AskSession|null>} ensureSession 取/建会话
  * @property {(s: AskSession) => void} ensureBound 发送前绑定帧
- * @property {(s: AskSession, text: string) => any} send 发送腿（返回值原样经 onQueued 回传）
+ * @property {(s: AskSession, text: string, attachments: Array<{name: string, mimeType: string, data: string, size: number}>) => any} send 发送腿（返回值原样经 onQueued 回传）
  * @property {(msg: any) => ('state'|'delta'|'done'|'interrupted'|'error'|'user'|null)} frameKind 帧名→动作
  * @property {(s: AskSession) => void} [onUnread] 未读点等消费者副作用
  * @property {(s: AskSession) => void} [onPersist] 落盘
@@ -449,7 +450,7 @@ export function createAskDialog(cfg) {
       const existing = Array.from(col.children);
       for (const node of existing) {
         if (!node.classList || !node.classList.contains('ask-card-row')) continue;
-        const k = node.dataset ? node.dataset.nfCardKey || '' : '';
+        const k = node.getAttribute('data-nf-card-key') || '';
         if (!pool.has(k)) pool.set(k, []);
         /** @type {HTMLElement[]} */ (pool.get(k)).push(/** @type {HTMLElement} */ (node));
       }
