@@ -187,6 +187,11 @@ for (const zoom of [0.9, 1, 1.1, 1.25, 1.5]) {
     }, zoom);
     expect(result.top).toBeGreaterThanOrEqual(result.clipTop);
     expect(result.bottom).toBeLessThanOrEqual(result.clipBottom);
+    const count = page.locator('.nf-injection-stack-count');
+    const clipped = await count.screenshot();
+    await count.evaluate(el => { el.style.overflow = 'visible'; });
+    const visible = await count.screenshot();
+    expect(clipped.equals(visible)).toBe(true);
     await context.close();
   });
 }
