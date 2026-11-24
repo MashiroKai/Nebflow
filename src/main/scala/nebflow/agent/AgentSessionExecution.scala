@@ -3140,8 +3140,9 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // / plugin builtin 白名单名），与 buildAllowedToolSet 的 pluginAppended /
     // pluginGranted 同源（同两个 agentDef 字段：pluginMcpServers / pluginTools）。
     val pluginMcpPrefixes = agentDef.pluginMcpServers.map(sid => s"mcp__${sid}__")
+    val pluginEngineTools = nebflow.core.plugin.PluginRegistry.engineGrantFor(agentDef.pluginMcpServers)
     def isPluginLoaded(n: String): Boolean =
-      pluginMcpPrefixes.exists(n.startsWith) || agentDef.pluginTools.contains(n)
+      pluginMcpPrefixes.exists(n.startsWith) || agentDef.pluginTools.contains(n) || pluginEngineTools.contains(n)
     val (dynamicDefs, baseDefs) = allDefs.partition(td => isPluginLoaded(td.name))
     val mode = nebflow.llm.ToolLoadMode.forModel(agentDef.model.flatMap(_.preferred))
     val plan = nebflow.llm.DynamicToolLoad.plan(agentDef.name, mode, baseDefs, dynamicDefs)
