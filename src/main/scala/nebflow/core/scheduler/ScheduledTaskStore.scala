@@ -335,7 +335,11 @@ class ScheduledTaskStore(
       loadUnlocked(sessionId).flatMap { existing =>
         val byId = existing.map(t => t.id -> t).toMap
         val stale = tasks.exists(t => byId.get(t.id).exists(_.revision != t.revision))
+        val rewritesInstances = tasks.exists(t =>
+          byId.get(t.id).exists(old => old.due != t.due && old.occurrences != t.occurrences)
+        )
         if stale then IO.raiseError(new IllegalStateException("stale task revision"))
+        else if rewritesInstances then IO.raiseError(new IllegalStateException("rule change cannot rewrite occurrences"))
         else
           val adjusted = tasks.map { task =>
             byId.get(task.id) match
