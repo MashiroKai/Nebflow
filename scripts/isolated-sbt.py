@@ -66,7 +66,8 @@ SINGLE_TASKS = ('compile', 'Test/compile', 'scalafmtCheckAll', 'scalafmtAll', 'a
 REFUSED_TASKS = ('test', 'run', 'runMain', 'shell', 'console', 'set', 'eval', 'export')
 # testOnly takes 1+ arguments shaped nebflow.<ClassName>/nebflow.* — the
 # charset (letters, digits, underscore, dot, star) blocks shell/sbt metachars.
-TESTONLY_ARG_RE = re.compile(r'nebflow\.[A-Za-z0-9_.*]+')
+TESTONLY_ARG_RE = re.compile(r'nebflow\.[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\*?')
+SCALAFIX_CHECK_RE = re.compile(r'(?:Compile/|Test/)?scalafix --check')
 
 DEFAULT_MAX_SECONDS = 1800
 DEFAULT_SBT_HEAP = '3g'  # matches the repo's canonical invocation (scripts/rebrand.sh)
@@ -106,7 +107,7 @@ def normalize_tasks(tokens):
     i = 0
     while i < len(tokens):
         token = tokens[i]
-        if token in SINGLE_TASKS:
+        if token in SINGLE_TASKS or SCALAFIX_CHECK_RE.fullmatch(token):
             commands.append(token)
             i += 1
             continue
@@ -121,7 +122,7 @@ def normalize_tasks(tokens):
             commands.append('testOnly ' + ' '.join(args))
             continue
         parts = token.split()
-        if (len(parts) > 1 and parts[0] == 'testOnly' and
+        if (len(parts) > 1 and parts[0] == 'testOnly' and token == ' '.join(parts) and
                 all(TESTONLY_ARG_RE.fullmatch(part) for part in parts[1:])):
             commands.append(token)
             i += 1
@@ -251,35 +252,46 @@ def log_show_window(start, end):
         return subprocess.CompletedProcess(cmd, 125, '', str(exc))
 
 
-DENY_LINE_RE = re.compile(r'Sandbox: (\S+?)\((\d+)\) deny\(\d+\) network-outbound remote:\*:(\d+)')
+DENY_LINE_RE = re.compile(r'Sandbox: (\S+?)\((\d+)\) deny\(\d+\) (.*)')
+# Historical unrelated WebKit system-service probes are not sbt descendants;
+# permit only these observed operations, never a deny from the task tree.
+WEBKIT_ALLOW = frozenset(('mach-lookup com.apple.ReportMemoryException',
+                          'mach-lookup com.apple.analyticsd',
+                          'system-privilege 10001'))
 
 
 def judge_deny(text, tree_pids, port):
-    """Classify sandbox deny lines: network denies on `port` whose PID is in
-    tree_pids are failures; the same denies from other PIDs are info items;
-    any other line mentioning the port is recorded as an unclassified info.
-
-    Skipped entirely: lines emitted BY the log tool about its own query runs.
-    The sweep/precheck --predicate argv embeds both the port and 'deny(', so
-    log's own run records self-match the predicate and would pollute the info
-    list (first-run evidence 2026-11-24: all four non_tree_deny_lines were of
-    this form)."""
+    """Fail closed on sandbox denies except narrowly documented log noise."""
     failures, info = [], []
     for line in text.splitlines():
-        if 'log run noninteractively' in line:
+        # log emits its own predicate as argv, not a sandbox event.
+        if 'log run noninteractively' in line and 'Sandbox:' not in line:
+            continue
+        if not re.search(r'\bdeny\(\d+\)', line):
             continue
         match = DENY_LINE_RE.search(line)
-        if match and match.group(1) == 'log':
-            continue
-        if match and int(match.group(3)) == port:
-            pid = int(match.group(2))
-            entry = {'pid': pid, 'process': match.group(1), 'line': line.strip()}
-            if pid in tree_pids:
-                failures.append(entry)
-            else:
-                info.append(entry)
-        elif str(port) in line:
-            info.append({'pid': None, 'process': None, 'line': line.strip()})
+        # Unified log may emit a JSON metadata continuation for the same
+        # observed WebKit event; require the exact identity and operation.
+        if line.startswith('MetaData: '):
+            try:
+                metadata = json.loads(line[len('MetaData: '):])
+                metadata_pid = int(metadata['pid'])
+                if (metadata_pid not in tree_pids and
+                        metadata['process'] == 'com.apple.WebKit.Networking.Deve' and
+                        re.sub(r'^deny\(\d+\) ', '', metadata['summary']) in WEBKIT_ALLOW):
+                    info.append({'pid': metadata_pid, 'process': metadata['process'], 'line': line.strip()})
+                    continue
+            except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+                pass
+        pid = int(match.group(2)) if match else None
+        process = match.group(1) if match else None
+        entry = {'pid': pid, 'process': process, 'line': line.strip()}
+        if (match and pid not in tree_pids and
+                process == 'com.apple.WebKit.Networking.Deve' and
+                match.group(3).strip() in WEBKIT_ALLOW):
+            info.append(entry)
+        else:
+            failures.append(entry)
     return {'failures': failures, 'info': info}
 
 
@@ -549,7 +561,16 @@ def main(argv=None):
         die(EXIT_PRECHECK, 'log show precheck failed; refusing to start (fail closed)')
 
     baseline = judge_deny(precheck.stdout or '', set(), DENIED_PORT)
-    ev.append('precheck', baseline_info=baseline['info'])
+    ev.append('precheck', baseline_info=baseline['info'], baseline_failures=baseline['failures'])
+    if baseline['failures']:
+        verdict = {'guard': {'pass': False, 'failures': baseline['failures'],
+                             'reason': 'precheck-deny'},
+                   'task': [], 'run_id': run_id, 'info': {'baseline_non_tree_deny_lines': baseline['info']}}
+        ev.write_bytes('verdict.json', json.dumps(verdict, indent=2).encode() + b'\n')
+        ev.append('run_end', outcome='precheck-deny')
+        ev.flush_sweep_raw()
+        release_token(token)
+        die(EXIT_GUARD, 'unallowed sandbox deny in precheck; refusing to start')
 
     task_results = []
     reaped_all = []

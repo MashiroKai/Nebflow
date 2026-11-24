@@ -251,8 +251,8 @@ def case_d(battery, tmp):
     ok = len(judged['failures']) == 1 and judged['failures'][0]['pid'] == tree_pid
     battery.check('D', ok, f'tree pid {tree_pid} on denied port => guard failure')
     judged = mod.judge_deny(other, {tree_pid}, PORT)
-    battery.check('D-neg', len(judged['failures']) == 0 and len(judged['info']) == 1,
-                  'non-tree pid on denied port => info item only')
+    battery.check('D-neg', len(judged['failures']) == 1 and not judged['info'],
+                  'unallowed non-tree deny also fails closed')
     # log tool self-match noise: the sweep/precheck --predicate argv embeds
     # the port and 'deny(', so log's own run records self-match and must be
     # ignored entirely (first-run 2026-11-24: all 4 info lines were these).
@@ -264,11 +264,18 @@ def case_d(battery, tmp):
         f'network-outbound remote:*:{PORT}',
     )
     judged = mod.judge_deny('\n'.join(log_self), {tree_pid}, PORT)
-    battery.check('D-log-self', judged == {'failures': [], 'info': []},
-                  'log self-match lines (run records and Sandbox: log denies) are ignored')
+    battery.check('D-log-self', len(judged['failures']) == 1,
+                  'query record ignored but actual log sandbox deny fails')
     judged = mod.judge_deny(log_self[0] + '\n' + other + '\n' + log_self[1], {tree_pid}, PORT)
-    battery.check('D-log-mixed', len(judged['info']) == 1 and judged['info'][0]['pid'] == other_pid,
-                  'with log noise around it, a real non-tree deny still lands as exactly one info item')
+    battery.check('D-log-mixed', len(judged['failures']) == 2,
+                  'non-tree and log denies fail despite query noise')
+    for operation in mod.WEBKIT_ALLOW:
+        line = f'Sandbox: com.apple.WebKit.Networking.Deve(6138) deny(1) {operation}'
+        battery.check('D-allowed', len(mod.judge_deny(line, {tree_pid}, PORT)['info']) == 1 and
+                      len(mod.judge_deny(line, {6138}, PORT)['failures']) == 1,
+                      f'allow observed unrelated WebKit only: {operation}')
+    battery.check('D-unknown', len(mod.judge_deny('Sandbox: mystery(9) deny(1) file-read-data /x', set(), PORT)['failures']) == 1,
+                  'unknown sandbox deny fails')
 
 
 def case_e(battery, tmp):
@@ -382,7 +389,14 @@ def case_w(battery, tmp):
                          ('W14', ['testOnly', 'evil.Spec']),
                          ('W15', ['testOnly', 'nebflow.core.X;run']),
                          ('W16', ['foo']),
-                         ('W17', ['testOnly', 'nebflow.core.LogbackConfigSpec', 'bar.Baz'])):
+                         ('W17', ['testOnly', 'nebflow.core.LogbackConfigSpec', 'bar.Baz']),
+                         *[(f'W-extra-{i}', [value]) for i, value in enumerate((
+                             'compile&&test', 'compile||test', 'compile|test',
+                             'compile$(id)', 'compile`id`', 'compile>out',
+                             'compile -- test', '"compile"', 'Compile', './compile',
+                             'testOnly nebflow.*evil', 'testOnly nebflow.core.X\ntest',
+                             'scalafix', 'scalafixAll', 'scalafix --check -- foo',
+                             'compile; shell'))]):
         head = ['--first-run', str(fake)] if label == 'W1' else [str(fake)]
         cmd, proc = run_wrapper([*head, *extra])
         battery.record(label, cmd, proc, proc.returncode == mod.EXIT_USAGE,
