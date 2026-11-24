@@ -1,19 +1,37 @@
 #!/usr/bin/env node
 // Real app shell, network fixture; downloads and contrast use real Chromium.
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 import { strict as assert } from 'node:assert';
 import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 process.env.MERMAID_DOWNLOAD_IMPORT = '1';
+
 const temp = mkdtempSync(join(tmpdir(), 'diagram-check-'));
 process.env.SHOTS_DIR = temp;
 const { boot, P_DOC, CANVAS_DOC } = await import('./mermaid-inline-center.spec.mjs');
-const browser = await chromium.launch();
+for (const [engine, browserType] of Object.entries({chromium, webkit}).filter(([name]) => !process.env.MERMAID_ENGINE || process.env.MERMAID_ENGINE === name)) {
+const browser = await browserType.launch();
+// The legacy shared harness uses blocked port 1; redirect only this test's page.
+const newContext = browser.newContext.bind(browser);
+browser.newContext = async (...args) => {
+  const context = await newContext(...args);
+  const newPage = context.newPage.bind(context);
+  context.newPage = async (...pageArgs) => {
+    const page = await newPage(...pageArgs);
+    const goto = page.goto.bind(page);
+    page.goto = (url, options) => goto(url.replace('localhost:1/', 'localhost:4173/'), options);
+    return page;
+  };
+  return context;
+};
 try {
   for (const dark of [false, true]) {
     const { ctx, page, sendHistory } = await boot(browser, { width: 1280, height: 800, dark });
+    page.on('console', m => { if (m.type() === 'error') console.log('BROWSER ERROR', m.text()); });
     try {
+      await page.route('blob:**', route => route.continue());
+      await page.evaluate(() => { window.__diagramBlobTypes = new Map(); const create = URL.createObjectURL.bind(URL); URL.createObjectURL = blob => { const url = create(blob); window.__diagramBlobTypes.set(url, blob.type); return url; }; });
       await page.evaluate(({ absPath, content }) => window.dispatchEvent(new CustomEvent('workspace-open-item', {detail: { id: 'file:' + absPath, itemType: 'markdown', title: 'canvas-diagrams.md', content, absPath, pinned: true }})), {absPath: P_DOC, content: CANVAS_DOC});
       await page.waitForSelector('.canvas-tab-pane.active .nf-mermaid[data-mermaid-state="done"]', {timeout:45000});
       for (const surface of ['canvas','chat']) {
@@ -39,7 +57,8 @@ try {
           const l1=lum(fg), l2=lum(bg);
           return {fg,bg,ratio:(Math.max(l1,l2)+.05)/(Math.min(l1,l2)+.05)};
         });
-        console.log(surface,dark?'dark':'light','contrast',JSON.stringify(colors));
+        console.log(engine,surface,dark?'dark':'light','contrast',JSON.stringify(colors));
+        if (process.env.MERMAID_EVIDENCE_DIR) await page.screenshot({path:join(process.env.MERMAID_EVIDENCE_DIR, `${engine}-${surface}-${dark?'dark':'light'}.png`)});
         assert.ok(colors.ratio >= 3, 'WCAG non-text contrast below 3:1');
         assert.equal(await buttons.count(), 3);
         let svgSize;
@@ -47,7 +66,7 @@ try {
           const [download] = await Promise.all([page.waitForEvent('download'), buttons.nth(index).click()]);
           assert.equal(download.suggestedFilename(), `diagram.${ext}`);
           const bytes = readFileSync(await download.path());
-          const inferredMime = await page.evaluate(async url => (await fetch(url)).headers.get('content-type'), download.url());
+          const inferredMime = await page.evaluate(url => window.__diagramBlobTypes.get(url), download.url());
           assert.equal(inferredMime, mime);
           if (ext === 'svg') {
             const text=bytes.toString();
@@ -69,5 +88,7 @@ try {
       }
     } finally { await ctx.close(); }
   }
-} finally { await browser.close(); rmSync(temp,{recursive:true,force:true}); }
+} finally { await browser.close(); }
+}
+rmSync(temp,{recursive:true,force:true});
 console.log('PASS mermaid-download-app');
