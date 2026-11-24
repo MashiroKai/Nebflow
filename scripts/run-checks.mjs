@@ -83,6 +83,11 @@ export const CHECKS = [
   // 文档收藏渲染级闸（真 Chromium，三端）：需浏览器 ⇒ frontend 腿（与其它 spec 同档）。
   { name: 'canvas-favorites-render', profiles: ['frontend'], timeoutMs: 240_000,
     argv: [process.execPath, 'tests/canvas-favorites-render.spec.mjs'] },
+  // Canvas 文档首行零缩进及首续行对齐：桌面、手机真实浏览器。
+  { name: 'canvas-doc-indent-desktop', profiles: ['frontend'], timeoutMs: 120_000,
+    argv: [process.execPath, 'tests/indent-revert-shots.mjs'] },
+  { name: 'canvas-doc-indent-mobile', profiles: ['frontend'], timeoutMs: 120_000,
+    argv: [process.execPath, 'tests/indent-revert-shots.mjs', '--mobile'] },
   // 按钮样式统一闸（button-style-unify-canvas-ref 批 2026-11-22）：全站实底静止按钮面
   // 消费统一阴影令牌 var(--btn-shadow)（canvas 基准）；裸写投影/字面量圆角即红。
   nodeCheck('button-style-unify', 'check-button-style-unify'),

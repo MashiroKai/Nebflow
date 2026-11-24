@@ -34,10 +34,11 @@ const WEB = process.env.WEB_ROOT
   : join(ROOT, 'src', 'main', 'resources', 'web');
 const PORT = Number(process.env.PORT || 8187);
 const BASE = `http://127.0.0.1:${PORT}`;
-const SHOTS_DIR = process.env.SHOTS_DIR || join(ROOT, '.nebflow', 'evidence', '20261105_indent-revert');
+const SHOTS_DIR = process.env.SHOTS_DIR || join(tmpdir(), `indent-revert-${process.pid}`);
 const PREFIX = process.env.SHOT_PREFIX || 'after';
-const VW = Number(process.env.VIEWPORT_W || 1280);
-const VH = Number(process.env.VIEWPORT_H || 900);
+const MOBILE = process.argv.includes('--mobile');
+const VW = Number(process.env.VIEWPORT_W || (MOBILE ? 390 : 1280));
+const VH = Number(process.env.VIEWPORT_H || (MOBILE ? 844 : 900));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const MIME = {
