@@ -121,6 +121,21 @@ class FileTransferChunkSpec extends CatsEffectSuite:
 
   // ===== 分块形态（relay 腿接收端）=====
 
+  test("relay chunk returns parent creation failure without modifying the blocking file") {
+    withTmp { dir =>
+      val blocker = dir / "blocker"
+      val target = blocker / "nested" / "chunk.bin"
+      val bytes = Array.tabulate[Byte](Chunk)(_.toByte)
+      for
+        _ <- IO.blocking(os.write(blocker, "keep"))
+        result <- FileTransferAction.handle(putParams(target.toString, bytes, 0, Chunk.toLong, ChunkedTransfer.sha256Hex(bytes)))
+      yield
+        assert(result.isLeft, result.toString)
+        assertEquals(os.read(blocker), "keep")
+        assert(!os.exists(target))
+    }
+  }
+
   test("relay 分块：逐块 put ⇒ 双侧整件摘要一致，块回执带接收端**自算**摘要") {
     withTmp { dir =>
       val p = dir / "chunked.bin"

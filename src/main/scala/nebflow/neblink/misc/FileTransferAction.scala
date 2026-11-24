@@ -554,9 +554,7 @@ object FileTransferAction:
               // 跨设备附件批（2026-11-05）：建父目录（`os.write.append` 不建 ⇒ 改前嵌套路径
               // 首块必 `NoSuchFileException`）。与 legacy 整件 put 的 `createFolders = true`
               // 语义对齐；**只在缺目录时建**，既有件零触碰（收端全保护口径不变）。
-              ensureParentDir(path) match
-                case Left(reason) => return Left(reason)
-                case Right(_) => ()
+              ensureParentDir(path).flatMap { _ =>
               os.write.append(path, payload)
               // 本流从零创建了该文件 ⇒ 登记归属（后续块 / 末块清理才敢动它）。
               if baseBytes == 0L then streamClaims.put(path.toString, streamKey(totalBytes, chunkSize))
@@ -604,6 +602,7 @@ object FileTransferAction:
               else Right(chunkAckJson(nowBytes, computedChunk, None, totalBytes))
 
               end if
+              }
 
             end if
 
