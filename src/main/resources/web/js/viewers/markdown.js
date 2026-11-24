@@ -998,7 +998,7 @@ function humanCardBodyLines(lines) {
  * @returns {string}
  */
 function expandImageEmbeds(md) {
-  if (!md || md.indexOf('![[', 1) < 0) return md;
+  if (!md || md.indexOf('![[') < 0) return md;
   const lines = md.split('\n');
   const cardLines = humanCardBodyLines(lines);
   let inFence = false;
