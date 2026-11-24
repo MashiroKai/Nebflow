@@ -31,8 +31,10 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
     assertEquals(encoded.as[ScheduledTask].toOption, Some(task))
 
   test("legacy encoded golden bytes are identical after decoding and encoding"):
-    val original = legacy.as[ScheduledTask].toOption.get.asJson.mapObject(_.remove("due")).noSpaces
-    assertEquals(parse(original).toOption.get.as[ScheduledTask].toOption.get.asJson.noSpaces, original)
+    val expected = """{"id":"old","sessionId":"s1","content":"legacy","triggerAt":123456,"createdAt":100,"triggered":false,"triggeredAt":null,"referencePath":null,"repeat":null,"enabled":true,"name":null,"detail":null,"kind":"todo","condition":null,"conditionState":null,"idleStreak":0,"reviewFlag":false,"lastFiredAt":null,"missCount":0,"project":null,"priority":0,"completedAt":null,"source":null,"revision":0,"decision":null}"""
+    val output = legacy.as[ScheduledTask].toOption.get.asJson.noSpaces
+    assertEquals(output, expected)
+    assert(!output.contains("\"due\""))
 
   test("store rejects directly constructed invalid reminder rules"):
     val base = legacy.as[ScheduledTask].toOption.get
