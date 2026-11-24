@@ -389,10 +389,11 @@ function ensureFigureDom() {
 
   barEl = document.createElement('div');
   barEl.className = 'nf-lightbox-bar';
-  const mkBtn = (icon, label, fn) => {
+  const mkBtn = (icon, label, action, fn) => {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'nf-lightbox-ctl';
+    b.dataset.action = action;
     b.title = label;
     b.setAttribute('aria-label', label);
     const i = document.createElement('i');
@@ -401,9 +402,9 @@ function ensureFigureDom() {
     b.addEventListener('click', fn);
     return b;
   };
-  barEl.appendChild(mkBtn('maximize-2', t('lightbox.zoomFit'), figFit));
-  barEl.appendChild(mkBtn('download', t('lightbox.downloadSvg'), () => downloadDiagram('svg')));
-  barEl.appendChild(mkBtn('image-down', t('lightbox.downloadPng'), () => downloadDiagram('png')));
+  barEl.appendChild(mkBtn('maximize-2', t('lightbox.zoomFit'), 'fit', figFit));
+  barEl.appendChild(mkBtn('download', t('lightbox.downloadSvg'), 'download-svg', () => downloadDiagram('svg')));
+  barEl.appendChild(mkBtn('image-down', t('lightbox.downloadPng'), 'download-png', () => downloadDiagram('png')));
 
   overlayEl.append(stageEl, barEl);
   createIconsIn(barEl);
