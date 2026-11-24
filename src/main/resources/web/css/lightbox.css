@@ -153,7 +153,7 @@ img.nf-zoom-img { cursor: pointer; }
   /* 纸面：框图自带配色，浮层底是深色半透明 —— 给一档表面底，亮暗都可读。 */
   background: var(--color-surface);
   border-radius: var(--ds-radius-input);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24), 0 2px 8px rgba(0, 0, 0, 0.16);
+  box-shadow: var(--ds-shadow-media-card);
   padding: var(--ds-space-3);
   overflow: hidden;
 }

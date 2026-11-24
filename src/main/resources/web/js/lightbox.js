@@ -486,20 +486,16 @@ function fitFractions() {
  */
 function fitDiagramCanvas() {
   if (!canvasEl || !stageEl) return;
-  const size = figureSize(canvasEl.firstElementChild);
   const r = stageEl.getBoundingClientRect();
   const f = fitFractions();
   const padX = parseFloat(getComputedStyle(canvasEl).paddingLeft || '0') * 2 || 0;
   const padY = parseFloat(getComputedStyle(canvasEl).paddingTop || '0') * 2 || 0;
   const boxW = Math.max(1, r.width * f.w - padX);
   const boxH = Math.max(1, r.height * f.h - padY);
+  // Use the same maximum fit area as the image viewer for the paper itself.
+  // The SVG's preserveAspectRatio=meet keeps its artwork contained inside it.
   let w = boxW;
   let h = boxH;
-  if (size && size.w > 0 && size.h > 0) {
-    const ar = size.w / size.h;
-    if (boxW / boxH > ar) h = boxH, w = h * ar;   // 盒比图宽 ⇒ 高度受限
-    else w = boxW, h = w / ar;                     // 盒比图高 ⇒ 宽度受限
-  }
   // 不取整：像素取整会把纸面中心推离屏幕中心（±0.5px 的肉眼「歪」，验收是 1px 级）。
   // 纸面是 border-box（css/base.css 全局）⇒ 写回去的是「内容盒 + padding」；
   // 只写内容尺寸会让 padding 吃掉高度（实测 36:1 的宽图内容高被压成 0）。

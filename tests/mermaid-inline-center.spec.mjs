@@ -389,6 +389,16 @@ try {
       `V2a 桌面打开后相对屏幕居中（纸面中心偏差 ${tallLb && JSON.stringify(tallLb.canvasOff)}px）`);
     ok(!!tallLb && Math.abs(tallLb.svgOff[0]) <= 1 && Math.abs(tallLb.svgOff[1]) <= 1,
       `V2b 图的几何中心同屏幕中心（偏差 ${tallLb && JSON.stringify(tallLb.svgOff)}px）`);
+    ok(!!tallLb && Math.abs(tallLb.canvas[2] - tallLb.stage[2] * 0.92) <= 1 && Math.abs(tallLb.canvas[3] - tallLb.stage[3] * 0.88) <= 1,
+      `V2fit 纸面匹配图片适配盒（${JSON.stringify(tallLb && tallLb.canvas)}）`);
+    ok(!!tallLb && !!tallLb.svg && !!tallLb.canvas &&
+      tallLb.svg[0] >= tallLb.canvas[0] - 1 && tallLb.svg[1] >= tallLb.canvas[1] - 1 &&
+      tallLb.svg[0] + tallLb.svg[2] <= tallLb.canvas[0] + tallLb.canvas[2] + 1 &&
+      tallLb.svg[1] + tallLb.svg[3] <= tallLb.canvas[1] + tallLb.canvas[3] + 1 &&
+      tallLb.canvas[0] >= tallLb.stage[0] - 1 && tallLb.canvas[1] >= tallLb.stage[1] - 1 &&
+      tallLb.canvas[0] + tallLb.canvas[2] <= tallLb.stage[0] + tallLb.stage[2] + 1 &&
+      tallLb.canvas[1] + tallLb.canvas[3] <= tallLb.stage[1] + tallLb.stage[3] + 1,
+      `V2contain SVG 四边在纸面及可视舞台内（svg=${JSON.stringify(tallLb && tallLb.svg)} canvas=${JSON.stringify(tallLb && tallLb.canvas)}）`);
     ok(!!tallLb && tallLb.svgIsVector && tallLb.svgTexts > 0,
       `V5a 打开的是真矢量 SVG（text/tspan ${tallLb && tallLb.svgTexts} 个，非位图）`);
     ok(!!tallLb && tallLb.a11y.role === 'dialog' && tallLb.a11y.modal === 'true' && !!tallLb.a11y.closeLabel,
@@ -599,6 +609,8 @@ try {
       `V3b ${vp.tag}：打开后相对屏幕居中（纸面偏差 ${mNorm && JSON.stringify(mNorm.canvasOff)}px）`);
     ok(!!mNorm && Math.abs(mNorm.svgOff[0]) <= 1 && Math.abs(mNorm.svgOff[1]) <= 1,
       `V3c ${vp.tag}：图的几何中心同屏幕中心（偏差 ${mNorm && JSON.stringify(mNorm.svgOff)}px）`);
+    ok(!!mNorm && Math.abs(mNorm.canvas[2] - mNorm.stage[2] * 0.92) <= 1 && Math.abs(mNorm.canvas[3] - mNorm.stage[3] * 0.88) <= 1,
+      `V3fit ${vp.tag}：纸面匹配图片适配盒（${JSON.stringify(mNorm && mNorm.canvas)}）`);
     ok(!!mNorm && mNorm.pinned === '0', `V4b ${vp.tag}：可视视口与布局视口一致时不加内联盒（pinned=${mNorm && mNorm.pinned}）`);
     await page.screenshot({ path: join(SHOTS_DIR, `viewer-${vp.tag}-open.png`) });
 
