@@ -235,5 +235,32 @@ const assert = require('node:assert/strict');
       await screen.close();
     }
     console.log('PASS: three viewport geometry, keyboard activation, ARIA and escape focus');
+    const sourcePage = await browser.newPage();
+    await sourcePage.route('http://fixture.test/**', async (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: '<a id="source-term" href="#">source</a>' });
+      if (url.pathname === '/termTip.js') return route.fulfill({ contentType: 'text/javascript', body: readFileSync('src/main/resources/web/js/termTip.js', 'utf8') });
+      if (url.pathname === '/flowHelpers.js') return route.fulfill({ contentType: 'text/javascript', body: 'export const authHeaders = () => ({})' });
+      if (url.pathname === '/i18n.js') return route.fulfill({ contentType: 'text/javascript', body: 'export const t = (key) => key' });
+      if (url.pathname === '/api/wiki/terms/stats') return route.fulfill({ json: { last_rebuild: 'one' } });
+      if (url.pathname === '/api/wiki/terms/lookup') return route.fulfill({ json: { available: true, results: [{ name: 'source', definition: 'definition', doc: { rel: 'vault/source.md', abs_path: '/private/secret.md' } }] } });
+      throw new Error('Unexpected request: ' + url.pathname);
+    });
+    await sourcePage.goto('http://fixture.test/');
+    await sourcePage.evaluate(async () => {
+      const tip = await import('/termTip.js');
+      const a = document.querySelector('#source-term');
+      a.dataset.wikiResolved = JSON.stringify({ term: { name: 'source', rel: 'vault/source.md' } });
+      tip.attachTermFace(a, null, { term: true });
+      tip.setTermTipNav((link, host) => { window.navReceived = link.id === 'source-term' && host === document.body; });
+      tip.termTapExpand(a, document.body);
+    });
+    await sourcePage.waitForFunction(() => document.querySelector('.nf-term-tip .ts').textContent === 'definition');
+    assert.equal(await sourcePage.locator('.nf-term-tip .td').textContent(), 'vault/source.md');
+    assert.equal((await sourcePage.locator('.nf-term-tip').textContent()).includes('/private/secret.md'), false);
+    await sourcePage.locator('.term-tip-source').click();
+    assert.equal(await sourcePage.evaluate(() => window.navReceived), true);
+    await sourcePage.close();
+    console.log('PASS: source delegates navigation and hides absolute path');
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
