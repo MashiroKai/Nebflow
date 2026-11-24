@@ -598,6 +598,28 @@ test.describe('AC-S1 复验 — whole-card Canvas open under REAL mouse clicks',
     await context.close();
   });
 
+  for (const viewport of [{ width: 1200, height: 900 }, { width: 390, height: 844 }]) {
+    test(`user media aligns to bubble in both stack states at ${viewport.width}px`, async ({ browser }) => {
+      const { context, page, pageErrors } = await newPage(browser);
+      await page.setViewportSize(viewport);
+      await page.addStyleTag({ content: '.row { animation: none !important; } #popup-chat { display: none; }' });
+      await page.evaluate(() => window.__userMediaLive());
+      const row = page.locator('#chat > .row.user-media');
+      const bubble = page.locator('#chat > .row.user:not(.user-media) > .bubble.user').last();
+      const bubbleRight = (await bubble.boundingBox()).x + (await bubble.boundingBox()).width;
+      const front = row.locator('.pop-stack-view .layer-front');
+      expect(Math.abs((await front.boundingBox()).x + (await front.boundingBox()).width - bubbleRight)).toBeLessThanOrEqual(1);
+      await row.locator('.pill').click();
+      await expect(row.locator('.pop-expand-view')).toHaveClass(/show/);
+      for (const card of await row.locator('.pop-expand-view .media-layer').all()) {
+        const rect = await card.boundingBox();
+        expect(Math.abs(rect.x + rect.width - bubbleRight)).toBeLessThanOrEqual(1);
+      }
+      expect(pageErrors).toEqual([]);
+      await context.close();
+    });
+  }
+
   test('(c2) 复报令 A-2: the pill clears the PEEKING layers\' painted extent — no overlap, spacing held', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await renderStack(page, 3); // LLM row: .row.pop-artifact (no .user)
