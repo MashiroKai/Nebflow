@@ -17,7 +17,8 @@ async function measure(page, root) {
     const pairs = [];
     // Compare visible, non-ancestor leaf elements clipped by each overflow ancestor.
     // Ancestor/descendant pairs are intentional containment, not overlap.
-    const leaves=[...root.querySelectorAll('*')].filter(el => !el.children.length && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none');
+    // SVG paths form a single icon; compare its SVG bounding box, not its strokes.
+    const leaves=[...root.querySelectorAll('*')].filter(el => (el.tagName.toLowerCase()==='svg' || (!el.children.length && !el.closest('svg'))) && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none');
     function visibleRect(el) {
       const r=el.getBoundingClientRect(); let left=r.left, top=r.top, right=r.right, bottom=r.bottom;
       for(let p=el.parentElement;p;p=p.parentElement) {
@@ -30,7 +31,7 @@ async function measure(page, root) {
     const boxes=leaves.map(el=>({el,r:visibleRect(el)})).filter(({r})=>r.right>r.left && r.bottom>r.top);
     for(let i=0;i<boxes.length;i++) for(let j=i+1;j<boxes.length;j++) {
       const a=boxes[i],b=boxes[j];
-      if(Math.min(a.r.right,b.r.right)-Math.max(a.r.left,b.r.left)>1 && Math.min(a.r.bottom,b.r.bottom)-Math.max(a.r.top,b.r.top)>1) pairs.push([a.el.className,b.el.className]);
+      if(Math.min(a.r.right,b.r.right)-Math.max(a.r.left,b.r.left)>1 && Math.min(a.r.bottom,b.r.bottom)-Math.max(a.r.top,b.r.top)>1) pairs.push([a.el.outerHTML.slice(0,160),b.el.outerHTML.slice(0,160)]);
     }
     for (const row of root.querySelectorAll('.cfp-row')) {
       const els = [...row.querySelectorAll('.cfp-main,.cfp-thumb,.cfp-row-title,.cfp-row-meta,.cfp-row-src,.cfp-row-date')];
@@ -98,6 +99,12 @@ try {
         await s.page.click('#files-btn');
         const rows=s.page.locator('#explorer-tree .explorer-file');
         await rows.first().waitFor();
+        assertNoOverlap(await measure(s.page,'#panel-sessions'));
+        const fileTree=s.page.locator('#explorer-tree');
+        for(const position of [0,0.5,1]) {
+          await fileTree.evaluate((el,p)=>{el.scrollTop=(el.scrollHeight-el.clientHeight)*p;},position);
+          assertNoOverlap(await measure(s.page,'#panel-sessions'));
+        }
         for(let i=0;i<samples.length;i++) {
           const row=rows.filter({hasText:samples[i].replaceAll('/','_')}).first();
           const details=await row.evaluate(el=>{const label=el.querySelector('.explorer-label');return {title:el.title, aria:el.getAttribute('aria-label'), text:label.textContent, overflow:getComputedStyle(label).textOverflow, sw:label.scrollWidth,cw:label.clientWidth};});
