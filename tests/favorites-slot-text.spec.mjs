@@ -278,6 +278,26 @@ try {
       }
     } finally {await s.close();}
   }
+  for (const sidebarWidth of [180,236]) {
+    const s=await createSession(browser,{width:1280,height:800,colorScheme:'light',explorerEntries:[]});
+    try {
+      await s.boot(boot);
+      await s.page.evaluate(async()=>{const f=await import('/js/canvasFavorites.js');for(let i=0;i<18;i++) f.toggleFavoritePath({path:`/regular/${i}.md`,title:`regular entry ${i}`});});
+      await s.page.click('#favorites-btn');
+      await s.page.locator('#panel-favorites .cfp-row').first().waitFor();
+      await s.page.locator('#sidebar').evaluate((el,w)=>{el.style.transition='none';el.style.flex=`0 0 ${w}px`;},sidebarWidth);
+      for(const [index,position] of [[0,'start'],[9,'middle'],[17,'end']]) {
+        const row=s.page.locator('#panel-favorites .cfp-row').nth(index);
+        await row.evaluate(el=>el.scrollIntoView({block:'center'}));
+        const state=await row.evaluate(el=>{const p=el.closest('.cfp-body'),v=p.getBoundingClientRect(),rows=[...p.querySelectorAll('.cfp-row')],i=rows.indexOf(el),r=el.getBoundingClientRect();const complete=rows.map((e,n)=>({n,r:e.getBoundingClientRect()})).filter(x=>x.r.top>=v.top&&x.r.bottom<=v.bottom).map(x=>x.n);return {scrollTop:p.scrollTop,scrollHeight:p.scrollHeight,clientHeight:p.clientHeight,rowHeight:r.height,viewportHeight:v.height,index:i,complete,inside:[...el.querySelectorAll('.cfp-row-title,.cfp-row-src')].every(e=>{const x=e.getBoundingClientRect();return x.top>=v.top&&x.bottom<=v.bottom&&x.left>=v.left&&x.right<=v.right;}),titleBytes:new TextEncoder().encode(el.querySelector('.cfp-row-title').textContent).length,pathBytes:new TextEncoder().encode(el.querySelector('.cfp-row-src').textContent).length};});
+        assert(state.inside && state.rowHeight<=state.viewportHeight);
+        if(position==='start') assert.equal(state.complete[0],index);
+        if(position==='end') assert.equal(state.complete.at(-1),index);
+        if(position==='middle') assert(state.complete.some(n=>n<index)&&state.complete.some(n=>n>index));
+        console.log('INDEPENDENT-REGULAR',JSON.stringify({sidebarWidth,position,...state}));
+      }
+    } finally {await s.close();}
+  }
   for (const width of [1280,1440]) {
     const s=await createSession(browser,{width,height:900,colorScheme:'light',explorerEntries:[]});
     try {
