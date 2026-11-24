@@ -822,7 +822,7 @@ const DECK_SWIPE_Y_PX = 48;      // 纵拖过阈：上滑或下滑关闭当前�
  *  拖不动 + .panning 类泄漏）。逃逸口 = [data-nf-content-gesture] 标记。
  *  判据走 closest 委托：内容面内的子元素（img/文字层）同享仲裁。 */
 const CONTENT_GESTURE_SELECTOR =
-  '.canvas-image-viewport, .wiki-canvas, .fm-viewport, [data-nf-content-gesture]';
+  '.canvas-image-viewport, .wiki-canvas, .fm-viewport, .canvas-md-viewer pre, .canvas-md-viewer pre > code.hljs, [data-nf-content-gesture]';
 
 /** 边缘返回手势（bindEdgeBack）认领横滑后的抑制旗：bindDocSwipe 在 move/finish
  *  查它 —— 认领期内切卡手势整体让路（同模块直读，零 DOM 事件戏法）。 */
