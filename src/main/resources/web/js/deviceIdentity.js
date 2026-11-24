@@ -123,11 +123,20 @@ export function currentAutoBinding() {
  * boundDeviceId（自动判定命中才携带——缺席键省略，不发 null/空串；手动命名
  * 键 `name` 已随设置区退役，永不携带）。
  */
+export function deviceTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+  } catch (_) {
+    return undefined;
+  }
+}
+
 export function deviceStamp() {
   const stamp = {
     clientId: deviceClientId(),
     platform: detectPlatform(),
     browser: detectBrowser(),
+    timeZone: deviceTimeZone(),
   };
   const bound = currentAutoBinding();
   if (bound) stamp.boundDeviceId = bound;
