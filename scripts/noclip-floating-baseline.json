@@ -3843,16 +3843,6 @@
       "owner": "noclip-unified-fix (作者排期)"
     },
     {
-      "key": "src/main/resources/web/css/split.css::text-truncation::.nf-term-tip .ts",
-      "file": "src/main/resources/web/css/split.css",
-      "line": 3920,
-      "rule": "text-truncation",
-      "selector": ".nf-term-tip .ts",
-      "severity": "P2",
-      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
-      "owner": "noclip-unified-fix (作者排期)"
-    },
-    {
       "key": "src/main/resources/web/css/split.css::text-truncation::.wg-broken .row",
       "file": "src/main/resources/web/css/split.css",
       "line": 4295,

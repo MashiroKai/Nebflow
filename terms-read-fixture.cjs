@@ -153,18 +153,20 @@ const assert = require('node:assert/strict');
       ['missing', null],
     ];
     for (const [name, response] of fallbackCases) {
-      await page.evaluate(({ name, response }) => {
+      await page.evaluate(({ name, response, broken }) => {
         window.testTip.hideTermTip();
         const a = document.querySelector('#term');
         a.dataset.wikiTarget = name;
-        a.dataset.wikiResolved = JSON.stringify({ term: { name, definition: 'fallback ' + name } });
+        a.dataset.wikiResolved = JSON.stringify({ term: { name, definition: broken ? 'broken fallback' : 'fallback ' + name } });
         window.fetch = async (url) => {
           if (String(url).includes('/lookup?')) return response === null ? new Response('', { status: 404 }) : new Response(typeof response === 'string' ? response : JSON.stringify(response));
           return new Response('{}', { status: 404 });
         };
         window.testTip.termTapExpand(a, null);
-      }, { name, response });
-      await page.waitForFunction((name) => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'fallback ' + name), name);
+      }, { name, response, broken: process.env.TERM_NEGATIVE_CONTROL === name });
+      await page.waitForFunction(() => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent.startsWith('fallback ') || el.textContent === 'broken fallback'));
+      const actual = await page.locator('.nf-term-tip:visible .ts').textContent();
+      assert.equal(actual, 'fallback ' + name, `fallback boundary: ${name}`);
     }
     console.log('PASS: unavailable, ambiguity, malformed JSON and 404 fall back to resolved payload');
     await page.evaluate(() => {
