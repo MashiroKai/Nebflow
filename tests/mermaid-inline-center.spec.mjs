@@ -46,7 +46,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
-const WEB = resolve(process.env.MERMAID_WEB_ROOT || resolve(ROOT, 'src/main/resources/web'));
+const WEB = resolve(ROOT, 'src/main/resources/web');
 const STAMP = new Date().toISOString().replace(/[-:T]/g, '').replace(/\..*$/, '');
 const SHOTS_DIR = process.env.SHOTS_DIR || join(ROOT, 'reports-evidence', `mermaid-inline-center__${STAMP}__shots`);
 mkdirSync(SHOTS_DIR, { recursive: true });
@@ -318,9 +318,6 @@ async function closeIfOpen(page) {
   await page.waitForTimeout(260);
 }
 
-export { boot, P_DOC, CANVAS_DOC };
-
-if (!process.env.MERMAID_DOWNLOAD_IMPORT) {
 const browser = await chromium.launch();
 const summary = { counts: null, shots: SHOTS_DIR, inline: {}, stability: {}, viewer: {} };
 
@@ -690,4 +687,3 @@ console.log(`\nshots: ${SHOTS_DIR}`);
 console.log(`PASS ${pass} / FAIL ${fail} / total ${pass + fail}`);
 console.log(fail === 0 ? 'ALL PASS' : `FAILED: ${fail}`);
 process.exit(fail === 0 ? 0 : 1);
-}

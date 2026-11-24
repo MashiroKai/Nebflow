@@ -402,58 +402,10 @@ function ensureFigureDom() {
     return b;
   };
   barEl.appendChild(mkBtn('maximize-2', t('lightbox.zoomFit'), figFit));
-  barEl.appendChild(mkBtn('download', t('lightbox.downloadSvg'), () => downloadDiagram('svg')));
-  barEl.appendChild(mkBtn('image-down', t('lightbox.downloadPng'), () => downloadDiagram('png')));
 
   overlayEl.append(stageEl, barEl);
   createIconsIn(barEl);
   bindFigureGestures();
-}
-
-/** Export the mounted, sanitized diagram with its computed appearance frozen. */
-async function downloadDiagram(format) {
-  const svg = canvasEl && canvasEl.querySelector('svg');
-  if (!svg) return;
-  try {
-    const clone = svg.cloneNode(true);
-    const sourceNodes = [svg, ...svg.querySelectorAll('*')];
-    const copyNodes = [clone, ...clone.querySelectorAll('*')];
-    const properties = ['color', 'fill', 'fill-opacity', 'stroke', 'stroke-width', 'stroke-opacity',
-      'stroke-dasharray', 'stroke-linecap', 'stroke-linejoin', 'opacity', 'font-family', 'font-size',
-      'font-weight', 'font-style', 'letter-spacing', 'text-anchor', 'dominant-baseline', 'visibility'];
-    sourceNodes.forEach((node, i) => {
-      const style = getComputedStyle(node);
-      for (const property of properties) copyNodes[i].style.setProperty(property, style.getPropertyValue(property));
-    });
-    const rect = svg.getBoundingClientRect();
-    const scale = figState ? figState.scale : 1;
-    const width = Math.max(1, rect.width / scale);
-    const height = Math.max(1, rect.height / scale);
-    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-    clone.setAttribute('width', String(width));
-    clone.setAttribute('height', String(height));
-    clone.style.background = getComputedStyle(canvasEl).backgroundColor;
-    const xml = new XMLSerializer().serializeToString(clone);
-    let blob = new Blob([xml], { type: 'image/svg+xml' });
-    if (format === 'png') {
-      const url = URL.createObjectURL(blob);
-      try {
-        const image = new Image();
-        image.src = url;
-        await image.decode();
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.round(width * 3);
-        canvas.height = Math.round(height * 3);
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-        blob = await new Promise((resolve, reject) => canvas.toBlob(b => b ? resolve(b) : reject(new Error('PNG export failed')), 'image/png'));
-      } finally { URL.revokeObjectURL(url); }
-    }
-    notifyLanding(await saveFileBlob(blob, 'diagram.' + format));
-  } catch (error) {
-    console.error('Diagram export failed', error);
-    window.__showToast?.(t('lightbox.downloadError'), 'error');
-  }
 }
 
 /** 适配盒分数（`--nf-lb-fit-w/h`，单源在 css/lightbox.css —— 图片模式与图形模式

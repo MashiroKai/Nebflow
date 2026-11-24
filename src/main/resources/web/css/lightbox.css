@@ -182,11 +182,11 @@ img.nf-zoom-img { cursor: pointer; }
   border: none;
   border-radius: var(--ds-radius-chip);
   background: transparent;
-  color: var(--color-text);
+  color: var(--ds-ink-inverse);
   cursor: pointer;
   transition: background 150ms ease, color 150ms ease;
 }
-.nf-lightbox-ctl:hover { background: var(--glass-control-bg-hover); color: var(--color-text); }
+.nf-lightbox-ctl:hover { background: var(--glass-control-bg-hover); color: var(--ds-ink-inverse); }
 .nf-lightbox-ctl:focus-visible {
   outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
   outline-offset: calc(var(--nf-focus-ring-w) * -1);

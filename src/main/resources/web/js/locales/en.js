@@ -2958,9 +2958,6 @@ export default {
   'lightbox.zoomIn': 'Zoom in',
   'lightbox.zoomOut': 'Zoom out',
   'lightbox.zoomFit': 'Fit to view',
-  'lightbox.downloadSvg': 'Download SVG',
-  'lightbox.downloadPng': 'Download PNG',
-  'lightbox.downloadError': 'Could not download diagram',
 
   // === Usage dashboard (token consumption dashboard, spec §7.5) ===
   'usage.title': 'Usage Dashboard',
