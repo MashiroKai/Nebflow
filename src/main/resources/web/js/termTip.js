@@ -32,7 +32,7 @@ function ensureTermTipEl() {
   const el = document.createElement('div');
   el.className = 'nf-term-tip';
   el.style.display = 'none';
-  el.innerHTML = '<button type="button" class="term-tip-close glass-control"></button><div class="tt"></div><div class="ts" aria-live="polite"></div><div class="td"></div><button type="button" class="term-tip-retry glass-control" hidden></button>';
+  el.innerHTML = '<button type="button" class="term-tip-close glass-control"></button><div class="tt"></div><div class="ts" aria-live="polite"></div><div class="td"></div><button type="button" class="term-tip-source glass-control" hidden></button><button type="button" class="term-tip-retry glass-control" hidden></button>';
   el.setAttribute('role', 'dialog');
   el.setAttribute('aria-label', t('termPreview.openSource'));
   const close = el.querySelector('.term-tip-close');
@@ -42,6 +42,11 @@ function ensureTermTipEl() {
     const link = termTipLink;
     hideTermTip();
     if (link && link.isConnected) link.focus();
+  });
+  const source = el.querySelector('.term-tip-source');
+  source.textContent = t('termPreview.openSource');
+  source.addEventListener('click', () => {
+    if (termTipNav && termTipLink && termTipHost) termTipNav(termTipLink, termTipHost);
   });
   const retry = el.querySelector('.term-tip-retry');
   retry.textContent = t('termPreview.retry');
@@ -199,7 +204,8 @@ function paintTermTip(a, info) {
   // 正文尾部自动生成的「词条索引」块（viewers/markdown.js renderTermIndex），
   // 气泡内不再作为显示文本出现。剩下的跳转提示只在真有导航承载时给（docs
   // viewer 注入了 termTipNav；聊天气泡 / human 卡没有，那里说「点击跳转」是假话）。
-  el.querySelector('.td').textContent = '';
+  el.querySelector('.td').textContent = info.doc || info.rel || '';
+  el.querySelector('.term-tip-source').hidden = !(info.name && termTipNav && termTipHost && a.dataset.wikiResolved);
   el.style.display = 'block';
   // Viewport-clamped placement: above the link when there is room, else below.
   const r = a.getBoundingClientRect();

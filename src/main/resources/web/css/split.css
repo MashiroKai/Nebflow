@@ -4163,6 +4163,7 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 }
 .nf-term-tip.interactive { pointer-events: auto; }
 .nf-term-tip .term-tip-close,
+.nf-term-tip .term-tip-source,
 .nf-term-tip .term-tip-retry { min-width: 44px; min-height: 44px; }
 .nf-term-tip .term-tip-close { float: right; }
 .nf-term-tip button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
