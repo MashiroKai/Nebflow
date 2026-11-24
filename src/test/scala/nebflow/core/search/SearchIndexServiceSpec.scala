@@ -19,6 +19,32 @@ import munit.CatsEffectSuite
  */
 class SearchIndexServiceSpec extends CatsEffectSuite:
 
+  test("migration done phase skips source backfill on re-entry") {
+    val destination = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
+    val source = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
+    try
+      val setup = destination.createStatement()
+      try
+        setup.execute("CREATE TABLE search_index_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)")
+        setup.execute("INSERT INTO search_index_meta(key,value) VALUES('phase','done')")
+      finally setup.close()
+      SearchIndexMigration.migrate(destination, source)
+      val query = destination.createStatement()
+      try
+        val rows = query.executeQuery("SELECT value FROM search_index_meta WHERE key='phase'")
+        assert(rows.next())
+        assertEquals(rows.getString(1), "done")
+      finally query.close()
+    finally
+      destination.close()
+      source.close()
+  }
+
+  test("migration main rejects invalid argument shapes") {
+    intercept[IllegalArgumentException] { SearchIndexMigration.main(Array.empty[String]) }
+    intercept[IllegalArgumentException] { SearchIndexMigration.main(Array("a", "b", "--snapshot")) }
+  }
+
   private val face = "test-face"
 
   /**
