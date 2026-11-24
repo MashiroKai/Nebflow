@@ -6,12 +6,12 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
-  margin-right: var(--ds-space-1h);
+  width: var(--ds-capsule-end-size);
+  height: var(--ds-capsule-end-size);
+  margin-right: 0;
   padding: 0;
   border: 0;
-  border-radius: var(--ds-radius-pill);
+  border-radius: var(--ds-capsule-end-radius);
   background: transparent;
   color: inherit;
   opacity: 0.62;
@@ -24,7 +24,21 @@
 .canvas-fav-btn.is-on { opacity: 1; }
 .canvas-fav-btn .canvas-fav-ic { fill: none; }
 .canvas-fav-btn.is-on .canvas-fav-ic { fill: currentColor; color: var(--ds-fav-star, currentColor); }
-/* 手机工具条星标（.mf-cv-star，族 = g2-fab，尺寸/态层由 g2-fab 供给）：只补星形填充。 */
+/* 手机展开胶囊内星标。 */
+body.mobile-layer .mf-strip-chip .mf-cv-star {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+}
+body.mobile-layer .mf-strip-chip .mf-cv-star[hidden] { display: none; }
+body.mobile-layer .mf-strip-chip .mf-cv-star svg { width: 18px; height: 18px; }
 .mf-cv-star .canvas-fav-ic { fill: none; }
 .mf-cv-star.is-on .canvas-fav-ic { fill: currentColor; color: var(--ds-fav-star, currentColor); }
 /* 点亮动效：星标缩放回弹 + 光晕扩散（r2）。 */
@@ -180,3 +194,19 @@
   .cfp-body { padding-bottom: 40px; }
 }
 .cfp-row.is-invalid { opacity: .45; }
+
+/* Sidebar instance shares the page renderer without escaping the panel. */
+#panel-favorites .cfp-sidebar {
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border-radius: inherit;
+  transform: none;
+}
+#panel-favorites .cfp-sidebar .cfp-bar,
+#panel-favorites .cfp-sidebar .cfp-search,
+#panel-favorites .cfp-sidebar .cfp-tabs,
+#panel-favorites .cfp-sidebar .cfp-body { max-width: none; }

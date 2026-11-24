@@ -417,6 +417,10 @@ node scripts/check-design-spec-sync.mjs --json   # 机器读
 | `--ds-capsule-pad` | `6px 8px 6px 14px` | 标题胶囊内距（手机/基线档） |
 | `--ds-capsule-pad-desk` | `4px 7px 4px 12px` | 36px 固定高胶囊内距（桌面腿） |
 | `--ds-capsule-gap` | `6px` | 胶囊内件缝 |
+| `--ds-capsule-end-inset` | `4px` | 桌面胶囊两端对称内缩 |
+| `--ds-capsule-end-size` | `26px` | 端部动作视觉盒 |
+| `--ds-capsule-end-icon` | `13px` | 端部图标视觉盒 |
+| `--ds-capsule-end-radius` | `calc(var(--capsule-h) / 2 - var(--ds-capsule-end-inset) - var(--ds-border-width))` | 同心内角 |
 | `--ds-media-pill-pad` | `10px 18px` | 「展开 N」钮内距 |
 | `--ds-tab-pad-x` | `10px` | 看板页签横内距 |
 | `--ds-tab-track-pad` | `3px` | 页签轨内距（微缝） |

@@ -356,6 +356,10 @@
   --ds-capsule-pad: 6px 8px 6px 14px;        /* 胶囊内距（手机/基线档） */
   --ds-capsule-pad-desk: 4px 7px 4px 12px;   /* 桌面腿 36px 固定高胶囊内距 */
   --ds-capsule-gap: 6px;                     /* 胶囊内件缝（图标/标题/pop 钮） */
+  --ds-capsule-end-inset: 4px;              /* 对称端部控制的外缘内缩 */
+  --ds-capsule-end-size: 26px;              /* 36px 外壳减描边和双侧内缩 */
+  --ds-capsule-end-icon: 13px;              /* 两端图标相同光学盒 */
+  --ds-capsule-end-radius: calc(var(--capsule-h) / 2 - var(--ds-capsule-end-inset) - var(--ds-border-width));
   --ds-tab-track: rgb(128 128 128 / 0.08);   /* 看板页签轨底（灰通道洗选） */
   --ds-tab-hover: rgb(128 128 128 / 0.15);   /* 页签悬停洗选 */
   --ds-tab-divider: rgb(128 128 128 / 0.25); /* 未选中页签分隔线（暗档同值） */
