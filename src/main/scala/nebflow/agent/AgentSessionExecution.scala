@@ -1539,6 +1539,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         else nebflow.core.sandbox.SandboxPolicy.off
       toolCtx = ToolContext(
         projectRoot = effectiveProjectRoot,
+        deviceZone = state.execution.deviceZone,
         llm = Some(resources.llm),
         sessionStore = Some(resources.sessionStore),
         agentActorRef = Some(ctx.self),

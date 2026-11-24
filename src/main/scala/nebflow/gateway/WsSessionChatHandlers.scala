@@ -1055,7 +1055,8 @@ private[gateway] object WsSessionChatHandlers:
       // device-provenance 批：帧 `device` 键 → 来源设备读数（缺席 ⇒ None ⇒
       // 下方 handleUserText 全 face 逐字节现状）。
       deviceProvenance(immJson).flatMap(device =>
-        handleUserText(immSessionId, immContent, source = "immediateInput", fromUser = true, device, immCmid)
+        handleUserText(immSessionId, immContent, source = "immediateInput", fromUser = true, device, immCmid,
+          deviceZone = nebflow.core.scheduler.TodoDue.deviceZoneFromFrame(immJson))
       )
     )
 
@@ -1086,7 +1087,8 @@ private[gateway] object WsSessionChatHandlers:
     admitWorkOrRefuse(wsSend)(
       // 真人：CLI (ChatSend) 是人在终端里敲的字——实测本帧确实走
       // handleUserText → dispatchUserText（与 immediateInput 同一腿）。
-      handleUserText(umSessionId, umContent, source = "userMessage", fromUser = true, clientMessageId = umCmid)
+      handleUserText(umSessionId, umContent, source = "userMessage", fromUser = true, clientMessageId = umCmid,
+        deviceZone = nebflow.core.scheduler.TodoDue.deviceZoneFromFrame(umJson))
     )
   end handleUserMessage
 

@@ -2346,7 +2346,8 @@ class WebSocketRoutes(
                                           None,
                                           clientMessageId,
                                           Some(blocksList).filter(_.nonEmpty),
-                                          chatWidth
+                                          chatWidth,
+                                          deviceZone = nebflow.core.scheduler.TodoDue.deviceZoneFromFrame(json)
                                         )
                                     )
                                   }
@@ -2566,14 +2567,15 @@ class WebSocketRoutes(
     fromUser: Boolean,
     device: Option[nebflow.bridge.ResolvedDevice] = None,
     // P3 磁盘邮箱批：客户端幂等键透传（见 dispatchUserText 同名参数）。
-    clientMessageId: Option[String] = None
+    clientMessageId: Option[String] = None,
+    deviceZone: Option[String] = None
   ): IO[Unit] =
     if sessionId.nonEmpty && content.nonEmpty then
       // 输入框直通退役（2026-09-14 作者令）：输入框文本一律按普通消息投递 ——
       // 不再探 hub 的 pending AskUser 槽位，文本也不再成为卡片答案
       // （[[dispatchUserText]] = 唯一入队路径）。pending 卡保持 pending，
       // 只能在卡片上作答；headless REST (`rest-turn`) 与输入框同腿，形态不变。
-      dispatchUserText(sessionId, content, source, fromUser, device, clientMessageId)
+      dispatchUserText(sessionId, content, source, fromUser, device, clientMessageId, deviceZone = deviceZone)
     else
       // P1 2026-08-27 (frontend c1d57710): the queue "send-now" branch emitted an
       // empty-content frame (attachments dropped), which reached this path and was
@@ -2627,7 +2629,8 @@ class WebSocketRoutes(
     // canvas ask 附图批：UI 行件（UiMessage.User.attachments）与模型侧附加块
     // （vision 块 + 标签线；正文块由本函数按解析后的 content 前置）。缺席 = Nil ⇒ 逐字现状。
     attachments: List[io.circe.Json] = Nil,
-    mediaBlocks: List[ContentBlock] = Nil
+    mediaBlocks: List[ContentBlock] = Nil,
+    deviceZone: Option[String] = None
   ): IO[Unit] =
     logger.info(s"User text ($source) for session $sessionId (${content.length} chars)") *>
       // tool-card-leak-on-reload 批（2026-11-02）：回合内插话判定在**落盘这一瞬**
@@ -2658,7 +2661,8 @@ class WebSocketRoutes(
             device.fold(resolvedContent)(nebflow.bridge.DeviceProvenance.compose(_, resolvedContent)),
             blocks = inputBlocks,
             fromUser = fromUser,
-            clientMessageId = clientMessageId
+            clientMessageId = clientMessageId,
+            deviceZone = deviceZone
           )
         )
       }

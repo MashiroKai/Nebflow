@@ -27,6 +27,7 @@ object ToolExecutionIdentity:
 // 字段类型窄化,agent 定位器类型退出 core
 case class ToolContext(
   projectRoot: String,
+  deviceZone: Option[String] = None,
   llm: Option[LlmHandle[IO]] = None,
   sessionStore: Option[nebflow.core.SessionStorePort] = None,
   agentActorRef: Option[ActorRef[AgentCommand]] = None,

@@ -922,6 +922,7 @@ private[agent] object AgentFinishTurn:
             .idle(messagesWithImmediate, state.execution.turnIdx)
             .copy(
               pendingImmediateInputs = remainingInputs,
+              deviceZone = nebflow.core.scheduler.TodoDue.mergedDeviceZone(immInputs.map(_.deviceZone)),
               pendingMailQueueCount = state.execution.pendingMailQueueCount,
               pendingUserInputs = state.execution.pendingUserInputs,
               // Sub-agent barrier: held subtask/delegate results and the
