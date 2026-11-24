@@ -166,6 +166,38 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       assertEquals(rows.head.occurrences, List(occurrence))
       assertEquals(rows.head.nextDueAt, Some(2000L))
 
+  test("cancelled lock waiter does not enter or retain the mutex"):
+    val dir = os.temp.dir(prefix = "occurrence-cancel-waiter-")
+    val store = new ScheduledTaskStore(dir)
+    for
+      entered <- cats.effect.Deferred[IO, Unit]
+      release <- cats.effect.Deferred[IO, Unit]
+      attempted <- cats.effect.Deferred[IO, Unit]
+      ran <- cats.effect.Ref.of[IO, Boolean](false)
+      holder <- store.withStoreLock(entered.complete(()) *> release.get).start
+      _ <- entered.get
+      waiter <- (attempted.complete(()) *> new ScheduledTaskStore(dir).withStoreLock(ran.set(true))).start
+      _ <- attempted.get
+      _ <- waiter.cancel
+      _ <- release.complete(())
+      _ <- holder.joinWithNever
+      _ <- new ScheduledTaskStore(dir).withStoreLock(IO.unit).timeout(scala.concurrent.duration.DurationInt(5).seconds)
+      didRun <- ran.get
+    yield assertEquals(didRun, false)
+
+  test("cancelled lock holder releases locks and leaves file intact"):
+    val dir = os.temp.dir(prefix = "occurrence-cancel-holder-")
+    val store = new ScheduledTaskStore(dir)
+    val initial = legacy.as[ScheduledTask].toOption.get.copy(nextDueAt = Some(1000L))
+    for
+      _ <- store.addTask(initial)
+      entered <- cats.effect.Deferred[IO, Unit]
+      holder <- store.withStoreLock(entered.complete(()) *> IO.never[Unit]).start
+      _ <- entered.get
+      _ <- holder.cancel
+      rows <- new ScheduledTaskStore(dir).loadTasks("s1").timeout(scala.concurrent.duration.DurationInt(5).seconds)
+    yield assertEquals(rows, List(initial))
+
   test("two independent JVMs serialize occurrence writes"):
     val dir = os.temp.dir(prefix = "occurrence-process-race-")
     val initial = legacy.as[ScheduledTask].toOption.get.copy(nextDueAt = Some(1000L))
