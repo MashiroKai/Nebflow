@@ -50,6 +50,7 @@ test('model rules mobile mounting and scroll geometry', async ({page}) => {
     expect(geo.left).toBeGreaterThanOrEqual(-1); expect(geo.right).toBeLessThanOrEqual(376);
     expect(geo.top).toBeGreaterThanOrEqual(geo.headerBottom - 1);
     expect(geo.max).toBeGreaterThan(0); expect(Math.abs(geo.scroll-geo.max*fraction)).toBeLessThan(2);
+    const hit=await page.locator('#secrets-modal-close').evaluate(el=>{const b=el.getBoundingClientRect(),n=document.elementFromPoint(b.left+b.width/2,b.top+b.height/2);return n===el||el.contains(n)}); expect(hit).toBe(true);
     expect(geo.items.length).toBeGreaterThan(0);
     for(const item of geo.items) { expect(item.left).toBeGreaterThanOrEqual(0); expect(item.right).toBeLessThanOrEqual(375); if(item.top>=geo.top) expect(item.top).toBeGreaterThanOrEqual(geo.headerBottom-1); }
   }
@@ -76,6 +77,10 @@ test('model rules mobile mounting and scroll geometry', async ({page}) => {
     for(const item of result.items) {expect(item.left).toBeGreaterThanOrEqual(0); expect(item.right).toBeLessThanOrEqual(375); }
     const hit=await header.evaluate(el=>{const r=el.getBoundingClientRect(),hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return el===hit || el.contains(hit)}); expect(hit).toBe(true);
     if(fraction===0.5 && process.env.MOBILE_AUDIT_EVIDENCE) {mkdirSync(process.env.MOBILE_AUDIT_EVIDENCE,{recursive:true}); await page.screenshot({path:join(process.env.MOBILE_AUDIT_EVIDENCE,'规则-中部.png'),animations:'disabled'});}
+  }
+  for(const index of [0,29]) {
+    const node=page.locator('.mr-node').nth(index); await node.evaluate(el=>el.scrollIntoView({block:'center',behavior:'instant'}));
+    const b=await node.boundingBox(),h=await header.boundingBox(),d=await page.locator('#mobile-dock').boundingBox(); expect(b.y).toBeGreaterThanOrEqual(h.y+h.height); expect(b.y+b.height).toBeLessThanOrEqual(d.y);
   }
   for(let i=0;i<30;i++) {
     const node=page.locator('.mr-node').nth(i); await node.scrollIntoViewIfNeeded();

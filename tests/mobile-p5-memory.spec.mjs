@@ -155,6 +155,7 @@ test('mobile memory audit: card geometry and long title', async ({ page }) => {
     const r = await scroll.evaluate((el, fraction) => {el.scrollTop=(el.scrollHeight-el.clientHeight)*fraction; const b=el.getBoundingClientRect(), h=document.querySelector('.mobile-page[data-page="profile"] .mobile-back-btn').getBoundingClientRect(); const items=[...el.querySelectorAll('.mh-memory-card')].map(n=>n.getBoundingClientRect()).filter(r=>r.bottom>b.top && r.top<b.bottom).map(r=>({left:r.left,right:r.right,top:r.top})); return {left:b.left,right:b.right,top:b.top,headerBottom:h.bottom,scroll:el.scrollTop,max:el.scrollHeight-el.clientHeight,items};},f);
     expect(r.left).toBeGreaterThanOrEqual(0); expect(r.right).toBeLessThanOrEqual(375); expect(r.top).toBeGreaterThanOrEqual(r.headerBottom-1);
     expect(r.max).toBeGreaterThan(0); expect(Math.abs(r.scroll-r.max*f)).toBeLessThan(2);
+    const hit=await header.evaluate(el=>{const b=el.getBoundingClientRect(),n=document.elementFromPoint(b.left+b.width/2,b.top+b.height/2); return n===el||el.contains(n)}); expect(hit).toBe(true);
     expect(r.items.length).toBeGreaterThan(0); for(const item of r.items) {expect(item.left).toBeGreaterThanOrEqual(0); expect(item.right).toBeLessThanOrEqual(375); if(item.top>=r.top) expect(item.top).toBeGreaterThanOrEqual(r.headerBottom-1);}
   }
   const cards=page.locator('.mh-memory-card');

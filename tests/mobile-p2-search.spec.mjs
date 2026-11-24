@@ -155,6 +155,7 @@ test('mobile search audit: mounted results, three scroll positions and long line
     expect(geometry.left).toBeGreaterThanOrEqual(0); expect(geometry.right).toBeLessThanOrEqual(375);
     expect(geometry.top).toBeGreaterThanOrEqual(geometry.headerBottom-1);
     expect(geometry.max).toBeGreaterThan(0); expect(Math.abs(geometry.scroll-geometry.max*fraction)).toBeLessThan(2);
+    const hit=await header.evaluate(el=>{const r=el.getBoundingClientRect(),n=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return n===el||el.contains(n)}); expect(hit).toBe(true);
     expect(geometry.items.length).toBeGreaterThan(0);
     for(const item of geometry.items) { expect(item.left).toBeGreaterThanOrEqual(0); expect(item.right).toBeLessThanOrEqual(375); if(item.top>=geometry.top) expect(item.top).toBeGreaterThanOrEqual(geometry.headerBottom-1); }
   }

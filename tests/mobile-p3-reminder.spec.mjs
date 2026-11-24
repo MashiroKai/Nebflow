@@ -177,6 +177,7 @@ test('mobile reminder audit: containment, header, floating control and long text
     expect(geo.left).toBeGreaterThanOrEqual(0); expect(geo.right).toBeLessThanOrEqual(375);
     expect(geo.top).toBeGreaterThanOrEqual(geo.headerBottom - 1);
     expect(geo.max).toBeGreaterThan(0); expect(Math.abs(geo.scroll-geo.max*f)).toBeLessThan(2);
+    const hit=await page.locator('#reminder-panel .reminder-fab-add').evaluate(el=>{const b=el.getBoundingClientRect(),n=document.elementFromPoint(b.left+b.width/2,b.top+b.height/2);return n===el||el.contains(n)}); expect(hit).toBe(true);
     expect(geo.items.length).toBeGreaterThan(0); for(const item of geo.items) {expect(item.left).toBeGreaterThanOrEqual(0); expect(item.right).toBeLessThanOrEqual(375); if(item.top>=geo.top) expect(item.top).toBeGreaterThanOrEqual(geo.headerBottom-1);}
   }
   const allRows=page.locator('#reminder-panel .reminder-row');

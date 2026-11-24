@@ -174,6 +174,7 @@ test('mobile daemon audit: containment, header, controls and long text', async (
   for (const f of [0,0.5,1]) {
     const box=await overlay.locator('.daemon-config-body').evaluate((el,fraction)=>{ el.scrollTop=(el.scrollHeight-el.clientHeight)*fraction; const r=el.getBoundingClientRect(),h=document.querySelector('.daemon-config-header').getBoundingClientRect(); const fields=[...el.querySelectorAll('.daemon-config-field')].map(n=>n.getBoundingClientRect()).filter(n=>n.bottom>r.top && n.top<r.bottom).map(n=>({left:n.left,right:n.right,top:n.top})); return {left:r.left,right:r.right,top:r.top,headerBottom:h.bottom,scroll:el.scrollTop,scrollHeight:el.scrollHeight,clientHeight:el.clientHeight,fields}; },f);
     expect(box.scrollHeight).toBeGreaterThan(box.clientHeight); expect(Math.abs(box.scroll-(box.scrollHeight-box.clientHeight)*f)).toBeLessThan(2); expect(box.left).toBeGreaterThanOrEqual(0); expect(box.right).toBeLessThanOrEqual(375); expect(box.top).toBeGreaterThanOrEqual(box.headerBottom-1);
+    const hit=await overlay.locator('.daemon-config-btn.primary').evaluate(el=>{const b=el.getBoundingClientRect(),n=document.elementFromPoint(b.left+b.width/2,b.top+b.height/2);return n===el||el.contains(n)}); expect(hit).toBe(true);
     expect(box.fields.length).toBeGreaterThan(0); for(const field of box.fields) { expect(field.left).toBeGreaterThanOrEqual(0); expect(field.right).toBeLessThanOrEqual(375); if(field.top>=box.top) expect(field.top).toBeGreaterThanOrEqual(box.headerBottom-1); }
   }
   const fields=overlay.locator('.daemon-config-field');
