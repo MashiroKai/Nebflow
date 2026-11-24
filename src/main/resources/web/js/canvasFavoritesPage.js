@@ -154,6 +154,7 @@ function buildPage(onClose, onOpened) {
       row.type = 'button';
       row.className = 'cfp-row';
       row.dataset.favPath = entry.path;
+      row.dataset.fullPath = entry.path;
       row.dataset.kind = favKind(entry.path);
       const main = document.createElement('div');
       main.className = 'cfp-main';
@@ -166,15 +167,11 @@ function buildPage(onClose, onOpened) {
       src.className = 'cfp-row-src';
       src.textContent = entry.path;
       src.title = entry.path;
-      const fullPath = document.createElement('span');
-      fullPath.className = 'cfp-row-full-path';
-      fullPath.textContent = entry.path;
-      fullPath.setAttribute('aria-hidden', 'true');
       const date = document.createElement('span');
       date.className = 'cfp-row-date';
       date.textContent = formatDate(entry.savedAt);
       meta.append(src, date);
-      main.append(h, meta, fullPath);
+      main.append(h, meta);
       row.appendChild(main);
       row.addEventListener('click', () => {
         void openFavorite(entry).then((status) => {

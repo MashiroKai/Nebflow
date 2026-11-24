@@ -31,13 +31,17 @@ try {
       console.log(JSON.stringify({ phase: before ? 'before' : 'after', theme, bytes: size, browser: label, ...state, title: undefined, text: undefined }));
       await s.page.screenshot({ path: join(shots, `${before ? 'before' : 'after'}-${theme}-${size}.png`), animations: 'disabled' });
       if (!before) {
+        const rowHeight = await row.evaluate(el => el.getBoundingClientRect().height);
         await s.page.locator('#panel-favorites .cfp-search-input').focus();
         for (let i = 0; i < 5 && !(await row.evaluate(el => el === document.activeElement)); i++) await s.page.keyboard.press('Tab');
         assert(await row.evaluate(el => el === document.activeElement), 'keyboard reaches row');
-        const visible = row.locator('.cfp-row-full-path');
-        assert(await visible.isVisible()); assert.equal(await visible.textContent(), path);
+        const focused = await row.evaluate(el => { const tip = getComputedStyle(el, '::after'); return { height: el.getBoundingClientRect().height, content: tip.content, position: tip.position, width: tip.width, heightTip: tip.height, scrollable: tip.overflowY }; });
+        assert.equal(focused.height, rowHeight, 'focus must not grow row');
+        assert.equal(focused.content, JSON.stringify(path), 'focus tooltip contains complete path');
+        assert.equal(focused.position, 'fixed'); assert(parseFloat(focused.width)>0 && parseFloat(focused.heightTip)>0);
         await s.page.locator('#panel-favorites .cfp-search-input').focus();
-        assert.equal(await visible.isVisible(), false);
+        await row.hover();
+        assert.equal(await row.evaluate(el => getComputedStyle(el, '::after').content), JSON.stringify(path), 'hover tooltip contains complete path');
       }
     } finally { await s.close(); }
   }
