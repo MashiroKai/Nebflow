@@ -19,6 +19,7 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
+import { mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { openHubPage } from './_mobile-dock-nav.mjs';
 
@@ -126,6 +127,34 @@ test.beforeEach(async ({ page }) => {
 });
 /** @type {{method:string,path:string,body:any}[]} */
 let writes = [];
+
+test('mobile daemon audit: containment, header, controls and long text', async ({ page }) => {
+  await openPanel(page);
+  const result = await page.evaluate(() => {
+    const panel = document.querySelector('#daemon-panel');
+    const body = panel.querySelector('.daemon-panel-body');
+    const row = panel.querySelector('.daemon-row');
+    const command = row.querySelector('.daemon-command');
+    command.textContent = 'long-command-without-spaces-'.repeat(20);
+    const header = panel.querySelector('.daemon-panel-header');
+    body.scrollTop = 0;
+    const r = row.getBoundingClientRect();
+    const h = header?.getBoundingClientRect();
+    const c = command.getBoundingClientRect();
+    const controls = [...row.querySelectorAll('button')].filter(el => el.getClientRects().length);
+    const overlap = controls.some(el => { const b = el.getBoundingClientRect(); return b.left < c.right && b.right > c.left && b.top < c.bottom && b.bottom > c.top; });
+    const cs = getComputedStyle(command);
+    return { left: r.left, right: r.right, top: r.top, headerBottom: h?.bottom ?? panel.getBoundingClientRect().top, overlap, controls: controls.length, long: command.scrollWidth > command.clientWidth, clipped: cs.whiteSpace === 'nowrap' && cs.textOverflow === 'ellipsis' && cs.overflowX === 'hidden' };
+  });
+  expect(result.left).toBeGreaterThanOrEqual(0);
+  expect(result.right).toBeLessThanOrEqual(375);
+  expect(result.top).toBeGreaterThanOrEqual(result.headerBottom - 1);
+  expect(result.controls).toBeGreaterThan(0);
+  expect(result.overlap).toBe(false);
+  expect(result.long && result.clipped).toBe(true);
+  const out = process.env.MOBILE_AUDIT_EVIDENCE;
+  if (out) { mkdirSync(out, { recursive: true }); await page.screenshot({ path: join(out, 'daemon.png'), animations: 'disabled' }); }
+});
 
 test('T1 page geometry: adopted full-bleed in daemon page, radius 0 (dock 批换代判据)', async ({ page }) => {
   const errors = watchErrors(page);
