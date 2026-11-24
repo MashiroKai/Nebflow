@@ -403,6 +403,7 @@ node scripts/check-design-spec-sync.mjs --json   # 机器读
 | `--ds-fs-display` | `20px` | 页面级大标题、空态主句 |
 | `--ds-fs-card-hero` | `21px` | 过渡卡主标题（具名槽） |
 | `--ds-fs-title-lg` | `28px` | 手机大标题档 |
+| `--ds-fs-page-back` | `30px` | 页面返回钮图标字形（返回钮单源） |
 | `--ds-bubble-pad` | `10px 14px` | 气泡内距（文字离边·气泡） |
 | `--ds-row-pad` | `8px 12px` | 列表行内距（标准） |
 | `--ds-row-pad-tight` | `8px 10px` | 列表行内距（双行名） |
