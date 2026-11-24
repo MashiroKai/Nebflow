@@ -366,6 +366,10 @@ for (const [engineName, engine] of [['chromium', chromium], ['webkit', webkit]])
     const groupFooter = mixed.locator(':scope > .duration-badge');
     ok(`${tag} 混合行折叠整组下载与引用`, await groupFooter.locator('.msg-group-dl').count() === 1 && await groupFooter.locator('.msg-quote-btn').count() === 1);
     ok(`${tag} 混合行文档有单独 footer`, await mixed.locator('.pop-file-unit > .pop-file-footer .msg-dl').count() === 1);
+    await groupFooter.locator('.msg-quote-btn').click();
+    const groupQuote = await page.evaluate(async () => (await import('/js/state.js')).default.getActiveView().pendingAttachments.filter((a) => a.refType === 'chat-message').at(-1)?.content?.attachments?.map((a) => a.name));
+    ok(`${tag} 折叠引用覆盖整行`, JSON.stringify(groupQuote) === JSON.stringify(['site-photo.png', 'second-photo.png', 'metrics.csv']), JSON.stringify(groupQuote));
+    await page.evaluate(async () => (await import('/js/msgQuote.js')).clearQuote());
     if (scheme === 'dark') {
       const zipWait = page.waitForEvent('download');
       await groupFooter.locator('.msg-group-dl').click();
@@ -389,6 +393,10 @@ for (const [engineName, engine] of [['chromium', chromium], ['webkit', webkit]])
     await page.waitForTimeout(500);
     ok(`${tag} 展开隐藏整组 footer`, !(await groupFooter.isVisible()));
     ok(`${tag} 展开仍有文档单件下载`, await mixed.locator('.pop-file-unit > .pop-file-footer .msg-dl').isVisible());
+    await mixed.locator('.pop-file-footer .msg-quote-item-btn').click();
+    const fileQuote = await page.evaluate(async () => (await import('/js/state.js')).default.getActiveView().pendingAttachments.filter((a) => a.refType === 'chat-message').at(-1)?.content?.attachments?.map((a) => a.name));
+    ok(`${tag} 展开引用仅本文件`, JSON.stringify(fileQuote) === JSON.stringify(['metrics.csv']), JSON.stringify(fileQuote));
+    await page.evaluate(async () => (await import('/js/msgQuote.js')).clearQuote());
     if (scheme === 'dark') {
       const fileWait = page.waitForEvent('download');
       await mixed.locator('.pop-file-unit > .pop-file-footer .msg-dl').click();
