@@ -32,7 +32,7 @@ import { createIconsIn, looksLikeMarkdown, renderMarkdownWithMath } from '../uti
 import { setHtmlTree } from '../dom.js';
 import { bindMdExtGate } from '../mdLinkGate.js';
 import { todoStore, TAG_COLOR_PRESETS, PRIORITY_COLORS } from '../todoStore.js';
-import { isAskRow, buildAskCardForRow, decisionOptionLabel, decisionOptionDetail } from '../askTodoQuestion.js';
+import { isAskRow, buildAskCardForRow, buildDecisionOption, decisionOptionLabel, decisionOptionDetail } from '../askTodoQuestion.js';
 import { bindImeGuard, commitEnter } from '../imeGuard.js';
 import state from '../state.js';
 // 次级 LLM 输入框唯一模板（todo-mobile 批 2026-11-18 作者令）：详情页「回复这个
@@ -1024,7 +1024,7 @@ function buildList(root, section, nav) {
             errLine.textContent = `${t('todoapple.answerRejected')}：${res.message || res.code || ''}`;
             submit.disabled = false;
           }
-          // 成功：answeredHandler 以后端 task 真值回写 ⇒ 重渲染后行内已作答态。
+          else todoStore.completeItem(it.id);
         });
         detail.append(errLine, submit);
         bodyBtn.addEventListener('click', () => {
@@ -1860,18 +1860,8 @@ function buildQuick(root, section) {
    *  @param {QdRow} item @param {number} i @param {{id:string,title?:string,detail?:string}} option @param {boolean} multi
    *  @returns {HTMLElement} */
   const optionRow = (item, i, option, multi) => {
-    const row = el('label', 'ta-qd-opt');
-    const input = inputEl('ta-qd-opt-input');
-    input.type = multi ? 'checkbox' : 'radio';
-    input.name = `ta-qd-${item.id}`;
-    input.checked = selectedSet(item.id).has(i);
-    const body = el('span', 'ta-qd-opt-body');
-    body.appendChild(el('span', 'ta-qd-opt-label', decisionOptionLabel(option)));
-    const sub = decisionOptionDetail(option);
-    if (sub) body.appendChild(el('span', 'ta-qd-opt-detail', sub));
-    row.append(input, body);
-    input.addEventListener('change', () => selectOption(item.id, i, input.checked, multi));
-    return row;
+    return buildDecisionOption(item.id, option, multi, selectedSet(item.id).has(i),
+      (checked) => selectOption(item.id, i, checked, multi));
   };
 
   /** 顶带胶囊里的计数读法（作者令 ④）：牌堆长度 + 过滤态一句。

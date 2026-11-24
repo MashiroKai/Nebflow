@@ -97,7 +97,7 @@ const rowJson = (r) => ({
   triggered: r.triggered, triggeredAt: r.triggeredAt, referencePath: r.referencePath,
   repeat: r.repeat, enabled: r.enabled, kind: r.kind, name: r.name, detail: r.detail ?? null, missCount: r.missCount,
   sessionId: r.sessionId, project: r.project,
-  priority: r.priority, completed: !!r.completed, completedAt: r.completedAt ?? null,
+  priority: r.priority, completed: !!r.completed, completedAt: r.completedAt ?? null, decision: r.decision ?? null,
 });
 
 /** 有状态 WS 夹具后端：按 WsTasksWorkspaceHandlers 口径处理写帧并回帧。 */
@@ -202,9 +202,19 @@ async function bootApp(page) {
           send({ type: 'scheduledTaskUpdated', sessionId: row.sessionId, task: rowJson(row) });
           break;
         }
+        case 'answerTodoDecision': {
+          const row = findRow(m.id);
+          row.decision.answer = { selectedOptionIds: m.selectedOptionIds, otherText: m.otherText || null };
+          send({ type: 'todoDecisionAnswered', id: row.id, sessionId: row.sessionId, answer: row.decision.answer, task: rowJson(row) });
+          break;
+        }
         case 'completeTodo': {
           const row = findRow(m.id);
           if (!row) { send({ type: 'scheduledTaskDeleted', id: m.id, sessionId: m.sessionId }); break; }
+          if (row.decision && !row.decision.answer) {
+            send({ type: 'error', msgType: 'completeTodo', id: row.id, code: 'decision_unanswered', message: '先作答' });
+            break;
+          }
           row.completed = true;
           row.completedAt = row.completedAt ?? Date.now();
           // 后端兼容策略：新帧 + 老帧同发（CONTRACT.md §3）。
@@ -267,6 +277,41 @@ async function bootApp(page) {
 }
 
 const frames = (captured, type) => captured.filter((f) => f.type === type);
+
+test('桌面决策选项作答后完成并移除', async ({ page }) => {
+  const h = await bootApp(page);
+  await h.waitRows(4);
+  h.backend.rows[0].decision = { question: '选择方案', options: [{ id: 'yes', title: '选甲' }, { id: 'no', title: '选乙' }], multiSelect: false };
+  h.sendFrame({ type: 'scheduledTaskList', sessionId: SID, scope: 'all', tasks: h.backend.rows.map(rowJson) });
+  await page.evaluate(async (sid) => (await import('/js/todoFace.js')).renderTodoTaskList(sid), SID);
+  await page.locator('.tfl-capsule').click();
+  const row = page.locator('.tfl-row[data-id="t4"]');
+  await expect(row.locator('.tfl-complete')).toBeDisabled();
+  await row.locator('.tfl-row-title').click();
+  await row.locator('.ta-qd-opt').first().click();
+  await row.locator('.ta-decision-submit').click();
+  await expect.poll(() => frames(h.captured, 'completeTodo').some((f) => f.id === 't4')).toBe(true);
+  expect(frames(h.captured, 'answerTodoDecision').find((f) => f.id === 't4').selectedOptionIds).toEqual(['yes']);
+  await expect(row).toHaveCount(0);
+  expect(h.backend.rows[0].completed).toBe(true);
+});
+
+test('移动列表决策选项作答后完成并移除', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  const h = await bootApp(page);
+  await h.waitRows(4);
+  h.backend.rows[0].decision = { question: '选择方案', options: [{ id: 'yes', title: '选甲' }], multiSelect: false };
+  h.sendFrame({ type: 'scheduledTaskList', sessionId: SID, scope: 'all', tasks: h.backend.rows.map(rowJson) });
+  await page.evaluate(async () => (await import('/js/mobile/navController.js')).pushPage('todo-apple-list'));
+  const panel = page.locator('.mobile-page[data-page="todo-apple-list"]');
+  await panel.locator('.ta-item-body', { hasText: '待办四' }).click();
+  await panel.locator('.ta-decision-option').first().click();
+  await panel.locator('.ta-decision-submit').click();
+  await expect.poll(() => frames(h.captured, 'completeTodo').some((f) => f.id === 't4')).toBe(true);
+  expect(frames(h.captured, 'answerTodoDecision').find((f) => f.id === 't4').selectedOptionIds).toEqual(['yes']);
+  await expect(panel.locator('.ta-item-body', { hasText: '待办四' })).toHaveCount(0);
+  expect(h.backend.rows[0].completed).toBe(true);
+});
 
 test('旧待办隐藏决策卡结构化内容，普通待办仍显示', async ({ page }) => {
   const h = await bootApp(page);
