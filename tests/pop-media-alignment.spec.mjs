@@ -331,12 +331,12 @@ test.describe('AC-S1 — image card click faces: Canvas single point, lightbox f
       if (!box) throw new Error('no flat media card rendered');
       box.click();
     }));
-    expect(opened.length, 'the whole image card opened something').toBe(1);
-    expect(opened[0].absPath, 'Canvas open = the image absPath (file-card parity)').toBe('/tmp/pop/wide.png');
-    expect(opened[0].id, 'identity = file:<absPath> (same scheme as the file card)').toBe('file:/tmp/pop/wide.png');
-    expect(opened[0].pinned, 'pinned like the file-card open').toBe(true);
-    expect(await page.evaluate(() => !!document.querySelector('.nf-lightbox')),
-      'a pathed image click opens Canvas directly — no lightbox detour (三修 ②)').toBe(false);
+    expect(opened).toHaveLength(0);
+    const gallery = page.locator('.nf-lightbox.on[data-nf-lb-gallery="on"]');
+    await expect(gallery).toBeVisible();
+    await expect(gallery.locator('.nf-lightbox-img')).toHaveAttribute('alt', 'wide.png');
+    await expect(gallery).toHaveAttribute('data-nf-lb-gal-index', '0');
+    await expect(gallery).toHaveAttribute('data-nf-lb-gal-total', '1');
     expect(pageErrors).toEqual([]);
     await context.close();
   });
@@ -350,11 +350,13 @@ test.describe('AC-S1 — image card click faces: Canvas single point, lightbox f
       if (!media) throw new Error('no replayed user image rendered');
       media.click();
     }));
-    expect(opened.length, 'the replayed user image opened something').toBe(1);
-    expect(opened[0].absPath, 'path known on replay → the Canvas single point (三修 ②)')
-      .toBe('/uploads/pop-harness/m1.png');
-    expect(await page.evaluate(() => !!document.querySelector('.nf-lightbox')),
-      'no lightbox once a path exists').toBe(false);
+    expect(opened).toHaveLength(0);
+    let gallery = page.locator('.nf-lightbox.on[data-nf-lb-gallery="on"]');
+    await expect(gallery).toBeVisible();
+    await expect(gallery.locator('.nf-lightbox-img')).toHaveAttribute('alt', 'm1.png');
+    await expect(gallery).toHaveAttribute('data-nf-lb-gal-index', '0');
+    await page.keyboard.press('Escape');
+    await expect(gallery).toHaveCount(0);
 
     // 三修 ③: the COLLAPSED stack's click opens Canvas with the FIRST image —
     // user side (uploads paths) and Pop side (payload paths) alike; no lightbox.
@@ -365,8 +367,13 @@ test.describe('AC-S1 — image card click faces: Canvas single point, lightbox f
       if (!front) throw new Error('no collapsed user stack rendered');
       front.click();
     }));
-    expect(stackOpened.length, 'the collapsed user stack opened something').toBe(1);
-    expect(stackOpened[0].absPath, 'opened content = the FIRST image').toBe('/uploads/pop-harness/m1.png');
+    expect(stackOpened).toHaveLength(0);
+    gallery = page.locator('.nf-lightbox.on[data-nf-lb-gallery="on"]');
+    await expect(gallery).toBeVisible();
+    await expect(gallery.locator('.nf-lightbox-img')).toHaveAttribute('alt', 'm1.png');
+    await expect(gallery).toHaveAttribute('data-nf-lb-gal-index', '0');
+    await page.keyboard.press('Escape');
+    await expect(gallery).toHaveCount(0);
 
     await page.evaluate(() => window.__clearChat());
     const popStackOpened = await page.evaluate(async () => window.__captureOpenEvents(async () => {
@@ -375,10 +382,12 @@ test.describe('AC-S1 — image card click faces: Canvas single point, lightbox f
       if (!front) throw new Error('no collapsed Pop stack rendered');
       front.click();
     }));
-    expect(popStackOpened.length, 'the collapsed Pop stack opened something').toBe(1);
-    expect(popStackOpened[0].absPath, 'Pop side: opened content = the FIRST image too').toBe('/tmp/pop/shot-1.png');
-    expect(await page.evaluate(() => !!document.querySelector('.nf-lightbox')),
-      'a collapsed-stack click never opens the lightbox').toBe(false);
+    expect(popStackOpened).toHaveLength(0);
+    gallery = page.locator('.nf-lightbox.on[data-nf-lb-gallery="on"]');
+    await expect(gallery).toBeVisible();
+    await expect(gallery.locator('.nf-lightbox-img')).toHaveAttribute('alt', 'shot-1.png');
+    await expect(gallery).toHaveAttribute('data-nf-lb-gal-index', '0');
+    await expect(gallery).toHaveAttribute('data-nf-lb-gal-total', '3');
     expect(pageErrors).toEqual([]);
     await context.close();
   });
