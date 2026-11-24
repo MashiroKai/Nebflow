@@ -19,7 +19,7 @@
   background: var(--nf-toggle-accent);
   color: var(--nf-toggle-knob-bg);
 }
-.mp-trimode button:focus-visible { outline: var(--nf-toggle-border) solid var(--nf-toggle-ring); }
+.mp-trimode button:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
 
 /* settingsRows.css — 设置页 iOS 设置行族的**造型唯一标准**
    （settings-ios-rows 批 2026-11-06，作者令「能点击下一个面板的样式都统一成苹果的
