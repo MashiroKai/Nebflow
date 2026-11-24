@@ -146,6 +146,14 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
         _ = assertEquals(wakeZone, Some("Asia/Tokyo"))
         _ <- schedule.set(FreezeScheduleConfig(enabled = false))
         _ <- done.take.timeout(30.seconds)
+        _ <- schedule.set(FreezeScheduleConfig(enabled = true, segments = List(FreezeSegment(format(start), format(end)))))
+        _ <- ref ! AgentCommand.UserInput("system triggers second freeze")
+        _ <- frozen.take.timeout(30.seconds)
+        _ <- ref ! AgentCommand.UserInput("wake without device", clientMessageId = Some("wake-without-zone"))
+        wakeWithoutZone <- captured.take.timeout(30.seconds)
+        _ = assertEquals(wakeWithoutZone, None)
+        _ <- schedule.set(FreezeScheduleConfig(enabled = false))
+        _ <- done.take.timeout(30.seconds)
         _ <- store.flushPendingUiWrites
       yield ()
     }
