@@ -103,6 +103,8 @@ try {
         const result=await measure(s.page,root); assertText(result); assertNoOverlap(result);
       }
       if(width===1280) {
+        await s.page.locator(`${root} .cfp-body`).evaluate(el=>{el.scrollTop=0;});
+        await negativeOverlap(s.page,root,`${root} .cfp-row-title`);
         await s.page.screenshot({path:join(shots,'desktop-1280-long-favorites.png'),animations:'disabled'});
         const title=s.page.locator(`${root} .cfp-row-title`).first();
         await title.evaluate(el=>{el.style.whiteSpace='nowrap';el.style.overflow='hidden';el.style.textOverflow='ellipsis';});
