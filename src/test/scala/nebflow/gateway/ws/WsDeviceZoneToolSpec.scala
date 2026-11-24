@@ -7,7 +7,7 @@ import fs2.Stream
 import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.actor.{ActorSystem, AgentCommand, AgentDef, AgentKind, AgentRecord, AgentStatus}
+import nebflow.actor.{ActorPath, ActorRef, ActorSystem, AgentCommand, AgentDef, AgentKind, AgentRecord, AgentStatus}
 import nebflow.agent.{AgentActor, AgentLibrary, SharedResources, SubAgentTaskStore}
 import nebflow.core.{FileChangeTracker, RateLimiter, SessionStore}
 import nebflow.core.compact.HistoryArchiver
@@ -41,13 +41,17 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
         holdNextText <- Ref.of[IO, Boolean](false)
         streamEntered <- Deferred[IO, Unit]
         releaseStream <- Deferred[IO, Unit]
+        blockTool <- Ref.of[IO, Boolean](false)
+        overrideCall <- Ref.of[IO, Option[Boolean]](None)
+        toolEntered <- Queue.unbounded[IO, Unit]
+        toolRelease <- Queue.unbounded[IO, Unit]
         schedule <- Ref.of[IO, FreezeScheduleConfig](FreezeScheduleConfig(enabled = false))
         calls <- Ref.of[IO, Int](0)
         llm = new LlmHandle[IO]:
           def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new Exception("unexpected send"))
           def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] =
-            Stream.eval(calls.getAndUpdate(_ + 1)).flatMap { n =>
-              if n % 2 == 0 then Stream(StreamChunk.ToolCallChunk(ToolCall(s"zone-call-$n", toolName, JsonObject.empty)), StreamChunk.Done(None, None))
+            Stream.eval((calls.getAndUpdate(_ + 1), overrideCall.getAndSet(None)).tupled).flatMap { (n, overrideTool) =>
+              if overrideTool.getOrElse(n % 2 == 0) then Stream(StreamChunk.ToolCallChunk(ToolCall(s"zone-call-$n", toolName, JsonObject.empty)), StreamChunk.Done(None, None))
               else Stream.eval(holdNextText.getAndSet(false)).flatMap { hold =>
                 val wait = if hold then Stream.eval(streamEntered.complete(()) *> releaseStream.get).drain else Stream.empty
                 wait ++ Stream(StreamChunk.TextDelta("done"), StreamChunk.Done(None, None))
@@ -60,7 +64,9 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
           def summarize(input: JsonObject) = "zone probe"
           def summarizeResult(input: JsonObject, result: String) = result
           def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-            captured.offer(ctx.deviceZone).as(Right("ok"))
+            captured.offer(ctx.deviceZone) *> blockTool.getAndSet(false).flatMap { block =>
+              (if block then toolEntered.offer(()) *> toolRelease.take else IO.unit).as(Right("ok"))
+            }
         _ <- IO(ToolRegistry.registerTool(probe))
         rate <- RateLimiter.create()
         tracker <- FileChangeTracker.create(root.toString)
@@ -189,6 +195,30 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
         _ <- releaseStream.complete(())
         queuedBusy <- captured.take.timeout(30.seconds)
         _ = assertEquals(queuedBusy, Some("Europe/Paris"))
+        _ <- done.take.timeout(30.seconds)
+        barrier <- Queue.unbounded[IO, List[String]]
+        barrierRef = new ActorRef[List[String]]:
+          def path: ActorPath = null
+          def !(msg: List[String]): IO[Unit] = barrier.offer(msg)
+          def ?[R](f: ActorRef[R] => List[String], timeout: Option[FiniteDuration] = Some(30.seconds)): IO[R] =
+            IO.raiseError(new Exception("not used"))
+        // Enter the real registered tool, queue the immediate while it is held,
+        // then use the actor's AskUser unavailable response as a FIFO barrier.
+        _ <- blockTool.set(true)
+        _ <- ref ! AgentCommand.UserInput("boundary start", clientMessageId = Some("boundary-start"),
+          fromUser = true, deviceZone = Some("Asia/Tokyo"))
+        boundaryFirst <- captured.take.timeout(30.seconds)
+        _ = assertEquals(boundaryFirst, Some("Asia/Tokyo"))
+        _ <- toolEntered.take.timeout(30.seconds)
+        _ <- ref ! AgentCommand.ImmediateInput("same-zone injection", fromUser = true, deviceZone = Some("Asia/Tokyo"))
+        _ <- ref ! AgentCommand.AskUser("boundary-fifo", Nil, Some(barrierRef))
+        barrierAnswer <- barrier.take.timeout(30.seconds)
+        _ = assert(nebflow.shared.AskUserDispatch.isFailure(barrierAnswer) && barrierAnswer.head.contains("boundary-fifo"))
+        _ <- overrideCall.set(Some(true))
+        _ <- toolRelease.offer(())
+        boundaryNext <- captured.take.timeout(30.seconds)
+        _ = assertEquals(boundaryNext, Some("Asia/Tokyo"))
+        _ <- overrideCall.set(Some(false))
         _ <- done.take.timeout(30.seconds)
         _ <- store.flushPendingUiWrites
       yield ()
