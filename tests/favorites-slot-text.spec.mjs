@@ -69,6 +69,7 @@ async function checkSearch(page, selector, panel, query) {
   const state=await input.evaluate((el,sel)=>{const p=document.querySelector(sel),r=el.getBoundingClientRect();return {value:el.value,start:el.selectionStart,end:el.selectionEnd,scroll:el.scrollLeft,ro:el.readOnly,pw:p.clientWidth,ps:p.scrollWidth,hits:[.05,.5,.95].flatMap(x=>[.05,.5,.95].map(y=>{const hit=document.elementFromPoint(r.left+r.width*x,r.top+r.height*y);return hit===el||el.contains(hit);}))};},panel);
   assert(state.value===query && state.start===query.length && state.end===query.length && state.scroll>0, 'search keyboard value');
   assert(state.ps<=state.pw,'search panel overflow');
+  if(!state.hits.every(Boolean)) console.log('SEARCH-DIAG',JSON.stringify(await input.evaluate(el=>{const r=el.getBoundingClientRect();let p=el,chain=[];while(p){const s=getComputedStyle(p),q=p.getBoundingClientRect();chain.push({tag:p.tagName,id:p.id,cls:String(p.className),display:s.display,visibility:s.visibility,x:q.x,y:q.y,w:q.width,h:q.height});p=p.parentElement;}return {chain,hits:[.05,.5,.95].flatMap(x=>[.05,.5,.95].map(y=>{const hit=document.elementFromPoint(r.left+r.width*x,r.top+r.height*y);return hit?.outerHTML.slice(0,160)||null;}))};})));
   assert(state.hits.every(Boolean),'search obscured');
 }
 async function negativeSearch(page, selector, panel, query) {
