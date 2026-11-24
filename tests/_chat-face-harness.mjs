@@ -87,7 +87,22 @@ export async function bootChat(page, { history = historyFixture(), onWsRoute } =
     const file = normalize(join(WEB, p));
     if (!file.startsWith(WEB)) return route.fulfill({ status: 403, body: 'forbidden' });
     try {
-      return route.fulfill({ status: 200, contentType: MIME[extname(file)] || 'application/octet-stream', body: readFileSync(file) });
+      let body = readFileSync(file);
+      const fault = process.env.ASK_HIT_FAULT;
+      const mutations = {
+        text: ['chat.js', 'fillOptionText(body, label, desc, true);', "fillOptionText(body, label, desc, true); body.querySelector('.option-text').addEventListener('click', e => e.stopPropagation());"],
+        blank: ['chat.js', "btn.className = 'option-btn';", "btn.className = 'option-btn'; btn.addEventListener('click', e => { if (e.target === btn) e.stopImmediatePropagation(); });"],
+        swipe: ['popArtifacts.js', 'Math.abs(dx) > 38', 'Math.abs(dx) > 10000'],
+        expand: ['popArtifacts.js', "pill.addEventListener('click', () => setExpanded(!expanded));", "pill.addEventListener('click', () => {});"],
+        keyboard: ['popArtifacts.js', 'if (!stack.suppressClick) openItem(items[front], front);', 'if (!stack.suppressClick) return;'],
+      };
+      if (fault && mutations[fault] && p.endsWith('/' + mutations[fault][0])) {
+        const [, from, to] = mutations[fault];
+        const text = body.toString();
+        if (text.split(from).length !== 2) throw new Error(`Fault ${fault}: expected exactly one injection site`);
+        body = Buffer.from(text.replace(from, to));
+      }
+      return route.fulfill({ status: 200, contentType: MIME[extname(file)] || 'application/octet-stream', body });
     } catch {
       return route.fulfill({ status: 404, body: 'not found' });
     }
@@ -118,7 +133,7 @@ export async function bootChat(page, { history = historyFixture(), onWsRoute } =
     });
   });
 
-  await page.goto('http://localhost:1/');
+  await page.goto('http://stand-fixture.test/');
   await page.waitForSelector('#chat .row', { timeout: 20000 });
   await page.waitForSelector('#input-bar', { state: 'visible', timeout: 20000 });
   await page.waitForTimeout(600); // 让位反算（chat padding-bottom）落地
