@@ -4159,7 +4159,7 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   width: min(360px, calc(100vw - 32px));
   max-width: calc(100vw - 32px);
   max-height: calc(100vh - 32px);
-  overflow: hidden;
+  overflow-y: auto;
 }
 .nf-term-tip.interactive { pointer-events: auto; }
 .nf-term-tip .term-tip-close,
