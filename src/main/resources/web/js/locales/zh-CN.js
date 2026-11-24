@@ -2825,6 +2825,11 @@ export default {
   'wiki.kindAttachment': '附件',
   'wiki.unresolved': '未解析的引用——所有项目文档库中都没有这个名字的文档',
   'wiki.backlinks': '反向链接',
+  'termPreview.loading': '加载中',
+  'termPreview.unavailable': '词条暂不可用',
+  'termPreview.retry': '重试',
+  'termPreview.close': '关闭',
+  'termPreview.openSource': '打开原文',
   // 词条引用批 batch 2（hover 气泡 + 返回原文档钮）
   'wiki.termSource': '来源：',
   'wiki.termJumpHint': '点击跳转',

@@ -11,6 +11,7 @@ const assert = require('node:assert/strict');
       if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: '<a id="term" href="#">Alias</a>' });
       if (url.pathname === '/termTip.js') return route.fulfill({ contentType: 'text/javascript', body: readFileSync('src/main/resources/web/js/termTip.js', 'utf8') });
       if (url.pathname === '/flowHelpers.js') return route.fulfill({ contentType: 'text/javascript', body: 'export const authHeaders = () => ({})' });
+      if (url.pathname === '/i18n.js') return route.fulfill({ contentType: 'text/javascript', body: 'export const t = (key) => key' });
       if (url.pathname === '/api/wiki/terms/stats') return route.fulfill({ json: { last_rebuild: 'one' } });
       if (url.pathname === '/api/wiki/terms/lookup') return route.fulfill({ json: { available: true, results: [{ name: 'Primary', aliases: ['Alias'], definition: 'derived definition', doc: { project: 'test', rel: 'doc.md' } }] } });
       throw new Error('Unexpected request: ' + url.pathname);
@@ -24,7 +25,7 @@ const assert = require('node:assert/strict');
       a.addEventListener('click', (event) => { event.preventDefault(); tip.termTapExpand(a, null); });
     });
     await page.locator('#term').click();
-    await page.locator('.nf-term-tip .ts').waitFor({ state: 'visible' });
+    await page.waitForFunction(() => document.querySelector('.nf-term-tip .ts').textContent === 'derived definition');
     assert.equal(await page.locator('.nf-term-tip .ts').textContent(), 'derived definition');
     console.log('PASS: derived alias lookup precedes resolved payload');
     await page.evaluate(async () => {
@@ -111,5 +112,17 @@ const assert = require('node:assert/strict');
     await page.evaluate(() => { window.testTip.hideTermTip(); window.testTip.termTapExpand(document.querySelector('#term'), null); });
     await page.waitForFunction(() => window.lookupCount() === 3);
     console.log('PASS: late lookup after version change does not repopulate cache');
+    await page.evaluate(() => {
+      window.testTip.hideTermTip();
+      const a = document.querySelector('#term');
+      a.dataset.wikiTarget = 'unavailable';
+      window.fetch = async () => new Response('{}', { status: 404 });
+      window.testTip.termTapExpand(a, null);
+      window.loadingObserved = [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'termPreview.loading');
+    });
+    assert.equal(await page.evaluate(() => window.loadingObserved), true);
+    await page.waitForFunction(() => [...document.querySelectorAll('.nf-term-tip .ts')].some((el) => el.textContent === 'termPreview.unavailable'));
+    assert.equal(await page.locator('.nf-term-tip .term-tip-retry:not([hidden])').count(), 1);
+    console.log('PASS: loading then unavailable with retry');
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

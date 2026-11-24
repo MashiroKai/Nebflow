@@ -10,6 +10,8 @@
 //     `GET /api/wiki/term?name=` 单查，命中同样出泡。
 // Popover is body-mounted, viewport-clamped, and has no full-screen mobile state.
 
+import { t } from './i18n.js';
+
 let termTipEl = null;
 let termTipLink = null;
 let termTipHost = null;
@@ -30,7 +32,22 @@ function ensureTermTipEl() {
   const el = document.createElement('div');
   el.className = 'nf-term-tip';
   el.style.display = 'none';
-  el.innerHTML = '<div class="tt"></div><div class="ts"></div><div class="td"></div>';
+  el.innerHTML = '<button type="button" class="term-tip-close glass-control"></button><div class="tt"></div><div class="ts" aria-live="polite"></div><div class="td"></div><button type="button" class="term-tip-retry glass-control" hidden></button>';
+  el.setAttribute('role', 'dialog');
+  el.setAttribute('aria-label', t('termPreview.openSource'));
+  const close = el.querySelector('.term-tip-close');
+  close.textContent = '×';
+  close.setAttribute('aria-label', t('termPreview.close'));
+  close.addEventListener('click', () => {
+    const link = termTipLink;
+    hideTermTip();
+    if (link && link.isConnected) link.focus();
+  });
+  const retry = el.querySelector('.term-tip-retry');
+  retry.textContent = t('termPreview.retry');
+  retry.addEventListener('click', () => {
+    if (termTipLink) requestTermTip(termTipLink, termTipHost, 0);
+  });
   // Interacting with the preview must never invoke the document link handler.
   el.addEventListener('click', (e) => e.stopPropagation());
   el.addEventListener('pointerdown', (e) => {
@@ -172,6 +189,7 @@ async function legacyTermInfoFor(a, signal) {
 
 function paintTermTip(a, info) {
   const el = ensureTermTipEl();
+  el.querySelector('.term-tip-retry').hidden = true;
   el.querySelector('.tt').textContent = info.name || '';
   el.querySelector('.ts').textContent = info.definition || '';
   // 气泡的显示字符串 = 词条名 + 定义（term-system-v2 词条视觉面批 2026-11-05，
@@ -199,13 +217,21 @@ function requestTermTip(a, host, delay) {
   ensureTermTipEl(); // bind outside-click cancellation before the request starts
   termTipLink = a;
   termTipHost = host || null;
+  const el = ensureTermTipEl();
+  el.classList.add('interactive');
+  paintTermTip(a, { name: '', definition: t('termPreview.loading') });
+  el.querySelector('.term-tip-close').focus();
   const generation = termTipGeneration;
   const controller = new AbortController();
   termTipAbort = controller;
   termTipTimer = setTimeout(async () => {
     const info = await termInfoFor(a, controller.signal);
     if (generation !== termTipGeneration || termTipLink !== a) return;   // superseded/hidden while fetching
-    if (!info) return;               // not a term after all — stay closed
+    if (!info) {
+      paintTermTip(a, { name: '', definition: t('termPreview.unavailable') });
+      el.querySelector('.term-tip-retry').hidden = false;
+      return;
+    }
     paintTermTip(a, info);
   }, delay);
 }
