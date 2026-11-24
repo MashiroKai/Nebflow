@@ -221,6 +221,31 @@ for (const [label, engine] of [['chromium', chromium], ['webkit(Safari引擎族)
     await browser.close();
   }
 
+  // Cached ticket belongs to the previous gateway generation; the card event
+  // must reach Canvas and the file read must re-mint exactly once.
+  {
+    const { browser, page, ticketMock } = await bootPage(engine, {});
+    await page.evaluate(async (path) => {
+      window.__popEvents = 0;
+      window.addEventListener('workspace-open-item', () => { window.__popEvents++; });
+      await (await import('/js/nfTicket.js')).ticketUrl(path);
+    }, MD_PATH);
+    const oldTicket = ticketMock.tokens.at(-1);
+    let reads = 0;
+    await page.route(/\/api\/nf-file\?/, async (route) => {
+      reads++;
+      const ticket = new URL(route.request().url()).searchParams.get('ticket');
+      if (ticket === oldTicket) return route.fulfill({ status: 403, headers: { 'X-Nf-Reason': 'invalid-ticket' }, body: 'denied' });
+      return route.fulfill({ status: 200, contentType: 'text/markdown', body: MD_BODY });
+    });
+    await page.evaluate(CLICK(MD_PATH, 'notes.md'));
+    await page.waitForFunction(() => !!document.querySelector('[data-nf-error]') || (document.querySelector('.canvas-md-scroll')?.textContent || '').includes('Pop notes'), null, { timeout: 8000 });
+    const result = await state(page, 'file:' + MD_PATH);
+    const events = await page.evaluate(() => window.__popEvents);
+    t('restart cached ticket: event reaches Canvas and one re-mint recovers', events === 1 && /Pop notes/.test(result.textBody || '') && ticketMock.count() === 2 && reads === 2, JSON.stringify({ events, text: result.textBody, mints: ticketMock.count(), reads }));
+    await browser.close();
+  }
+
   // ── 站2b：失败可见 + 重试真重试（403 credential-denied）──
   {
     const denied = {

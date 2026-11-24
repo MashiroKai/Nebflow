@@ -132,6 +132,24 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
     }
   }
 
+  test("a new gateway ticket store rejects tickets issued before restart") {
+    withEnv { env =>
+      IO {
+        val file = env.outside.resolve("x.json")
+        val oldTicket = env.ticketFor(file)
+        val restartedStore = NfTicketStore.unsafeCreate(1800)
+        val req = Request[IO](Method.GET, Uri.unsafeFromString(s"/api/nf-file?path=${url(file)}&ticket=$oldTicket"))
+        val resp = NfFileRoutes.nfFileRoutes(restartedStore, env.policy)(req).value.unsafeRunSync().get
+        assertEquals(resp.status, Status.Forbidden)
+        assertEquals(reasonOf(resp), "invalid-ticket")
+        val freshTicket = restartedStore.issue("spec", file.toRealPath().toString).unsafeRunSync().token
+        val freshReq = Request[IO](Method.GET, Uri.unsafeFromString(s"/api/nf-file?path=${url(file)}&ticket=$freshTicket"))
+        val freshResp = NfFileRoutes.nfFileRoutes(restartedStore, env.policy)(freshReq).value.unsafeRunSync().get
+        assertEquals(freshResp.status, Status.Ok)
+      }
+    }
+  }
+
   // ── A2 ───────────────────────────────────────────────────────────────
   test("A2: a ticket bound to another path is 403 path-mismatch") {
     withEnv { env =>
