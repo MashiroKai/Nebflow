@@ -14,17 +14,28 @@ import java.util.UUID
 
 /** Stored reminder intent; weekly local time is interpreted in the saved region, never the host zone. */
 sealed trait TodoDue
+
 object TodoDue:
   final case class Once(dueAt: Long, zoneId: String, wallClock: String, originalOffset: String) extends TodoDue
   final case class Weekly(dayOfWeek: Int, localTime: String, zoneId: String, wallClock: String) extends TodoDue
 
   given Encoder[TodoDue] = Encoder.instance {
     case Once(at, zone, wall, offset) =>
-      Json.obj("type" -> "once".asJson, "dueAt" -> at.asJson, "zoneId" -> zone.asJson,
-        "wallClock" -> wall.asJson, "originalOffset" -> offset.asJson)
+      Json.obj(
+        "type" -> "once".asJson,
+        "dueAt" -> at.asJson,
+        "zoneId" -> zone.asJson,
+        "wallClock" -> wall.asJson,
+        "originalOffset" -> offset.asJson
+      )
     case Weekly(day, time, zone, wall) =>
-      Json.obj("type" -> "weekly".asJson, "dayOfWeek" -> day.asJson, "localTime" -> time.asJson,
-        "zoneId" -> zone.asJson, "wallClock" -> wall.asJson)
+      Json.obj(
+        "type" -> "weekly".asJson,
+        "dayOfWeek" -> day.asJson,
+        "localTime" -> time.asJson,
+        "zoneId" -> zone.asJson,
+        "wallClock" -> wall.asJson
+      )
   }
 
   given Decoder[TodoDue] = Decoder.instance { c =>
@@ -48,8 +59,10 @@ object TodoDue:
             day <- c.get[Int]("dayOfWeek")
             _ <- valid(day >= 1 && day <= 7, "dayOfWeek must be between 1 and 7")
             time <- c.get[String]("localTime")
-            _ <- valid(Try(LocalTime.parse(time)).toOption.exists(t => t.getSecond == 0 && t.getNano == 0),
-              "localTime must be a valid local hour and minute")
+            _ <- valid(
+              Try(LocalTime.parse(time)).toOption.exists(t => t.getSecond == 0 && t.getNano == 0),
+              "localTime must be a valid local hour and minute"
+            )
           yield Weekly(day, time, zone, wall)
         case _ => Left(DecodingFailure("type must be once or weekly", c.history))
     yield due
@@ -233,7 +246,12 @@ object ScheduledTask:
   // 缺键一律回默认值，老文件零迁移；升级前文件没有 name/kind/condition 键 →
   // 解码 None，没有 idleStreak/reviewFlag 键 → 0/false。
   given Configuration = Configuration.default.withDefaults
-  given Codec[ScheduledTask] = ConfiguredCodec.derived
+  private val derivedCodec: Codec[ScheduledTask] = ConfiguredCodec.derived
+
+  given Codec[ScheduledTask] = Codec.from(
+    derivedCodec,
+    Encoder.instance(t => if t.due.isEmpty then derivedCodec(t).mapObject(_.remove("due")) else derivedCodec(t))
+  )
 
   def create(
     sessionId: String,

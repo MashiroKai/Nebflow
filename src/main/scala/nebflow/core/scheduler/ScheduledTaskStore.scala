@@ -104,7 +104,11 @@ class ScheduledTaskStore(
    * loadUnlocked 的隔离/恢复腿负责，这里静默取空基线），与 new 列表做差量写穿。
    */
   private def saveUnlocked(sessionId: String, tasks: List[ScheduledTask]): IO[Unit] =
-    ensureBaseDir *> IO
+    IO.fromEither(
+      tasks.traverse_(t =>
+        t.due.traverse_(d => d.asJson.as[TodoDue].left.map(e => new IllegalArgumentException(e.getMessage)))
+      )
+    ) *> ensureBaseDir *> IO
       .blocking {
         val f = sessionFile(sessionId)
         val before =
