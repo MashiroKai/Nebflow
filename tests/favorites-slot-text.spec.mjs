@@ -110,10 +110,11 @@ try {
         const dimensions=await tab.evaluate(el=>({sw:el.scrollWidth,cw:el.clientWidth,parent:el.parentElement.scrollWidth,parentWidth:el.parentElement.clientWidth}));
         assert(dimensions.sw<=dimensions.cw && dimensions.parent<=dimensions.parentWidth,'button label overflow');
         assertNoOverlap(await measure(s.page,root));
+        await tab.evaluate(el=>{el.style.whiteSpace='nowrap';el.style.overflowWrap='normal';});
+        const brokenTab=await tab.evaluate(el=>({sw:el.scrollWidth,cw:el.clientWidth,parent:el.parentElement.scrollWidth,parentWidth:el.parentElement.clientWidth}));
+        assert.throws(()=>assert(brokenTab.sw<=brokenTab.cw && brokenTab.parent<=brokenTab.parentWidth,'button label overflow'),/button label overflow/);
+        await tab.evaluate(el=>el.removeAttribute('style'));
       }
-      await tab.evaluate(el=>{el.style.whiteSpace='nowrap';el.style.overflowWrap='normal';});
-      const brokenTab=await tab.evaluate(el=>({sw:el.scrollWidth,cw:el.clientWidth,parent:el.parentElement.scrollWidth,parentWidth:el.parentElement.clientWidth}));
-      assert.throws(()=>assert(brokenTab.sw<=brokenTab.cw && brokenTab.parent<=brokenTab.parentWidth,'button label overflow'),/button label overflow/);
       await tab.evaluate((el,text)=>{el.removeAttribute('style');el.textContent=text;},originalTab);
       console.log(`PASS category label index=${index} width=${width}`);
       }
@@ -125,10 +126,11 @@ try {
           const size=await back.evaluate(el=>({sw:el.scrollWidth,cw:el.clientWidth}));
           assert(size.sw<=size.cw,`back button label overflow ${JSON.stringify(size)}`);
           assertNoOverlap(await measure(s.page,root));
+          await back.evaluate(el=>{el.style.whiteSpace='nowrap';el.style.overflowWrap='normal';});
+          const broken=await back.evaluate(el=>({sw:el.scrollWidth,cw:el.clientWidth}));
+          assert.throws(()=>assert(broken.sw<=broken.cw,'back button label overflow'),/back button label overflow/);
+          await back.evaluate(el=>el.removeAttribute('style'));
         }
-        await back.evaluate(el=>{el.style.whiteSpace='nowrap';el.style.overflowWrap='normal';});
-        const broken=await back.evaluate(el=>({sw:el.scrollWidth,cw:el.clientWidth}));
-        assert.throws(()=>assert(broken.sw<=broken.cw,'back button label overflow'),/back button label overflow/);
         await back.evaluate((el,text)=>{el.removeAttribute('style');el.textContent=text;},original);
         console.log(`PASS back button long label and negative control width=${width}`);
       }
