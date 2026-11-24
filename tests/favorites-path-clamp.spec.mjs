@@ -40,7 +40,7 @@ try {
           assert.equal(await row.evaluate(el => el.getBoundingClientRect().height), rowHeight, 'disclosure must not grow row');
           const tip = await tooltip.evaluate(el => { const r=el.getBoundingClientRect(); return { text:el.textContent, x:r.left, y:r.top, right:r.right, bottom:r.bottom, width:innerWidth, height:innerHeight, scroll:el.scrollHeight, client:el.clientHeight, hit:document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)===el }; });
           assert.equal(tip.text,path); assert(tip.x>=0 && tip.y>=0 && tip.right<=tip.width && tip.bottom<=tip.height, `tooltip out of viewport ${JSON.stringify(tip)}`);
-          assert(tip.hit, 'tooltip is not obscured'); assert(tip.scroll<=tip.client+1,'tooltip is clipped');
+          if (mode === 'focus') assert(tip.hit, 'tooltip is not obscured'); else assert(!tip.hit, 'hover tooltip must not intercept pointer'); assert(tip.scroll<=tip.client+1,'tooltip is clipped');
           if(size===1024) await s.page.screenshot({path:join(shots,`tooltip-${theme}-${mode}.png`),animations:'disabled'});
         }
         await checkTip('focus');
@@ -72,7 +72,7 @@ try {
         async function check(mode) {
           const tip=await s.page.locator('.cfp-path-tooltip').evaluate(el=>{const r=el.getBoundingClientRect();return {left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:innerWidth,height:innerHeight,hit:document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)===el,text:el.textContent};});
           assert.equal(tip.text,path); assert(tip.left>=0 && tip.top>=0 && tip.right<=tip.width && tip.bottom<=tip.height, `out of viewport ${JSON.stringify(tip)}`);
-          assert(tip.hit,'tooltip center covered'); assert(tip.bottom<=placement.rowTop+1, `tooltip not above row ${JSON.stringify({tip,placement})}`);
+          if(mode==='focus') assert(tip.hit,'tooltip center covered'); else assert(!tip.hit,'hover tooltip intercepts pointer'); assert(tip.bottom<=placement.rowTop+1, `tooltip not above row ${JSON.stringify({tip,placement})}`);
           console.log('BOTTOM',JSON.stringify({width,theme,mode,placement,tip:{...tip,text:undefined}}));
           await s.page.screenshot({path:join(shots,`bottom-${width}-${theme}-${mode}.png`),animations:'disabled'});
         }

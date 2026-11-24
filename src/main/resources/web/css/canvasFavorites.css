@@ -190,8 +190,9 @@ body.mobile-layer .mf-strip-chip .mf-cv-star svg { width: 18px; height: 18px; }
   box-shadow: 0 4px 20px #0006;
   overflow-wrap: anywhere;
   white-space: normal;
-  pointer-events: auto;
+  pointer-events: none;
 }
+.cfp-path-tooltip.is-keyboard { pointer-events: auto; }
 .cfp-path-tooltip[hidden] { display: none; }
 .cfp-row-date { flex: none; }
 .cfp-thumb {

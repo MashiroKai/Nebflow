@@ -16,22 +16,18 @@ const PAGE_ID = 'canvas-fav-page';
 /** 无限滚动：每批渲染条数。 */
 const BATCH = 30;
 let pathTooltip;
-let tooltipHideTimer;
-function hidePathTooltip() { clearTimeout(tooltipHideTimer); if (pathTooltip) pathTooltip.hidden = true; }
-function deferHidePathTooltip() { clearTimeout(tooltipHideTimer); tooltipHideTimer = setTimeout(hidePathTooltip, 250); }
-function showPathTooltip(row, path) {
-  clearTimeout(tooltipHideTimer);
+function hidePathTooltip() { if (pathTooltip) pathTooltip.hidden = true; }
+function showPathTooltip(row, path, keyboard = false) {
   if (!pathTooltip) {
     pathTooltip = document.createElement('div');
     pathTooltip.className = 'cfp-path-tooltip';
     pathTooltip.setAttribute('role', 'tooltip');
     pathTooltip.tabIndex = 0;
-    pathTooltip.addEventListener('mouseenter', () => clearTimeout(tooltipHideTimer));
-    pathTooltip.addEventListener('mouseleave', hidePathTooltip);
     pathTooltip.addEventListener('blur', hidePathTooltip);
     document.body.appendChild(pathTooltip);
   }
   pathTooltip.textContent = path;
+  pathTooltip.classList.toggle('is-keyboard', keyboard);
   pathTooltip.hidden = false;
   const anchor = row.getBoundingClientRect();
   const tip = pathTooltip.getBoundingClientRect();
@@ -182,9 +178,9 @@ function buildPage(onClose, onOpened) {
       row.className = 'cfp-row';
       row.dataset.favPath = entry.path;
       row.dataset.kind = favKind(entry.path);
-      row.addEventListener('mouseenter', () => showPathTooltip(row, entry.path));
-      row.addEventListener('mouseleave', deferHidePathTooltip);
-      row.addEventListener('focus', () => { if (row.matches(':focus-visible')) showPathTooltip(row, entry.path); });
+      row.addEventListener('mouseenter', () => { if (matchMedia('(hover: hover)').matches) showPathTooltip(row, entry.path); });
+      row.addEventListener('mouseleave', () => { if (!row.matches(':focus-visible')) hidePathTooltip(); });
+      row.addEventListener('focus', () => { if (row.matches(':focus-visible')) showPathTooltip(row, entry.path, true); });
       row.addEventListener('keydown', (event) => { if (event.key === 'Tab' && !event.shiftKey && pathTooltip && !pathTooltip.hidden) { event.preventDefault(); pathTooltip.focus(); } });
       row.addEventListener('blur', (event) => { if (event.relatedTarget !== pathTooltip) hidePathTooltip(); });
       const main = document.createElement('div');
