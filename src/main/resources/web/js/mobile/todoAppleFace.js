@@ -701,10 +701,9 @@ function buildHome(root, section, nav) {
   const quickCount = el('span', 'dock-badge is-count');
   quickCount.hidden = true;
   quickFab.appendChild(quickCount);
-  const fab = iconBtn('ta-fab g2-fab', 'plus', t('todoapple.newTodo'));
-  fabWrap.append(quickFab, fab);
+  // 2026-11-24: retain quick decisions, but do not render self-create entries.
+  fabWrap.append(quickFab);
   quickFab.addEventListener('click', () => nav.push('todo-quick-decision'));
-  fab.addEventListener('click', () => openCreateSheet(section, null, fab));
 
   /** @returns {void} */
   function render() {
@@ -868,13 +867,6 @@ function buildList(root, section, nav) {
   const itemsBox = elIn(wrap, 'div', 'ta-items');
   const empty = elIn(wrap, 'div', 'ta-empty');
 
-  // White capsule top right: the only backed capability = create a todo into
-  // this list (createItem)
-  const cluster = elIn(section, 'div', 'ta-cluster');
-  const pill = elIn(cluster, 'div', 'ta-pill nf-glass');
-  const addBtn = iconBtn('ta-pill-btn', 'list-plus', t('todoapple.newTodo'));
-  pill.appendChild(addBtn);
-  addBtn.addEventListener('click', () => openCreateSheet(section, listTarget.mode === 'tag' ? listTarget.tagId : null, addBtn));
 
   /** 行 id 台账（只用于「新入场」判据：首帧只登记，之后每次 render 的差集 = 新行）。 */
   const listIds = new Set();

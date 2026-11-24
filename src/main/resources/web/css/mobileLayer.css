@@ -640,7 +640,7 @@ body.mobile-layer .mobile-page {
 }
 /* ① 底右悬浮钮页：浮钮出现即自动加一层钮带（项名 = 页内真实的浮钮类，
    不枚举页 id —— 新页接同族钮类即自动纳入）。 */
-body.mobile-layer .mobile-page:has(:is(.ta-fab, .tfl-fab-add, .reminder-fab-add, .proj-create-fab, [data-plugins-add])) {
+body.mobile-layer .mobile-page:has(:is(.ta-fab, .ta-quick-fab, .tfl-fab-add, .reminder-fab-add, .proj-create-fab, [data-plugins-add])) {
   --mobile-fab-layer: var(--mpage-fab-clearance);
 }
 /* ② 会话页：输入条浮在 dock 之上（另一件浮件，另占一条带）⇒ 末端净空再叠

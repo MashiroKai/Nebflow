@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "change": "frontend-reminder-entry-off",
+  "mappings": [
+    {
+      "requirement": "REO-REQ-001",
+      "scenario": "REO-SCN-001",
+      "implementation": ["src/main/resources/web/js/todoFace.js", "src/main/resources/web/js/mobile/todoAppleFace.js", "src/main/resources/web/css/mobileLayer.css", "openspec/changes/frontend-reminder-entry-off/design.md", "openspec/changes/frontend-reminder-entry-off/proposal.md", "openspec/changes/frontend-reminder-entry-off/tasks.md", "openspec/changes/frontend-reminder-entry-off/specs/reminder-entry-off/spec.md", "openspec/changes/frontend-reminder-entry-off/trace.json"],
+      "tests": [{"path": "tests/todo-create-entry-off.spec.mjs", "name": "creation entry off: PASS"}, {"path": "tests/todo-mobile-topmenu.spec.mjs", "name": "todo mobile top controls"}]
+    }
+  ]
+}

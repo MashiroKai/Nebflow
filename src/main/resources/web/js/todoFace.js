@@ -473,7 +473,7 @@ class TodoFace {
     this.listInner = el('div', 'tfl-list-inner');
     this.listScroll.appendChild(this.listInner);
     this.listWrap.appendChild(this.listScroll);
-    this.buildFab();
+    // 2026-11-24: self-created reminder entrypoints are retired.
     this.buildUndoBar();
     this.footer = el('div', 'tfl-footer');
     if (this.filterWrap) this.panel.append(this.header, this.filterWrap, this.listWrap, this.footer);
@@ -489,7 +489,6 @@ class TodoFace {
     // 写口 / 动效单源零改动，`.mf-drawer` 一族回到与定时任务页逐字同形。
     // ⋯ 菜单（：同批产物）不动，仍随手机页面态建出。
     if (this.mobile) {
-      this.buildCreateSheet();
       // 顶部悬浮「⋯」+ 两级菜单（同一批）：手机页面态顶部唯一入口。
       this.buildTopMenu();
     }
@@ -594,17 +593,13 @@ class TodoFace {
 
   buildFooter() {
     this.footer.textContent = '';
-    if (todoStore.isAllView()) return; // 总条目禁止创建（复刻）
+    if (!this.creating || todoStore.isAllView()) return;
     const btn = el('button', 'tfl-add-btn');
     btn.type = 'button';
     if (this.creating) {
       btn.innerHTML = `<span class="tfl-add-ic tfl-add-ic-done">${CHECK_CIRCLE_SVG}</span>`;
       btn.appendChild(el('span', null, t('todoface.done')));
       btn.addEventListener('click', () => this.saveCreate());
-    } else {
-      btn.innerHTML = `<span class="tfl-add-ic">${PLUS_CIRCLE_SVG}</span>`;
-      btn.appendChild(el('span', null, t('todoface.add')));
-      btn.addEventListener('click', () => this.startCreate());
     }
     this.footer.appendChild(btn);
   }
@@ -824,10 +819,6 @@ class TodoFace {
     if (!panel) return;
     panel.textContent = '';
     const rows = [
-      this.menuRow({
-        icon: 'plus-circle', label: t('todoface.sheetTitle'),
-        onTap: () => { this.closeMenu(); this.startCreate(); },
-      }),
       this.menuRow({
         icon: 'tag', label: t('todoface.menuView'), sub: this.viewLabel(), chevron: true, sep: true,
         onTap: (row) => this.openMenuSub('tags', row),
@@ -1067,8 +1058,7 @@ class TodoFace {
     if (this.isScrollbarClick(e, host)) return;
     // ③ 滚动抑制：位移 > 8px = 拖动/滑屏，不是点击
     if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > BLANK_DRAG_PX) return;
-    // ④ 单一事件源（click）⇒ 触摸端不会双发；此处直接进创建。
-    if (!this.editingTagId && !this.creatingTag) this.startCreate();
+    // Blank clicks no longer start self-creation; edit dismissal above remains.
   }
 
   /** 滚动条命中：指针横/纵向落在宿主的内容盒之外（轨道区）。 */
@@ -1356,8 +1346,7 @@ class TodoFace {
       empty.classList.add('tfl-empty-all');
       empty.textContent = t('todoface.emptyAll');
     } else {
-      empty.textContent = t('todoface.emptyAdd');
-      empty.addEventListener('click', () => this.startCreate());
+      empty.textContent = t('todoface.emptyAll');
     }
     return empty;
   }
@@ -2228,7 +2217,6 @@ class TodoFace {
     if (inputBusy || creating) return; // 文本框消费键（复刻 listKeyboardActive）
     const ids = todoStore.visibleItems().map((it) => it.id);
     if (!ids.length) {
-      if (e.key === 'Enter' && !todoStore.isAllView()) { e.preventDefault(); this.startCreate(); }
       return;
     }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -2244,9 +2232,6 @@ class TodoFace {
     } else if (e.key === 'Enter') {
       e.preventDefault();
       if (!this.selectedId || !ids.includes(this.selectedId)) {
-        // Return 无选中 = 点击列表空白同入口（复刻 activateBlankArea）
-        if (!todoStore.isAllView()) this.startCreate();
-        else if (this.editingId) this.saveEditing();
         return;
       }
       this.startEditing(this.selectedId);
