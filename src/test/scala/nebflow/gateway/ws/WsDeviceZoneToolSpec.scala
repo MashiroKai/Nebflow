@@ -37,6 +37,10 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
         captured <- Queue.unbounded[IO, Option[String]]
         done <- Queue.unbounded[IO, Unit]
         frozen <- Queue.unbounded[IO, Unit]
+        duplicates <- Queue.unbounded[IO, Unit]
+        holdNextText <- Ref.of[IO, Boolean](false)
+        streamEntered <- Deferred[IO, Unit]
+        releaseStream <- Deferred[IO, Unit]
         schedule <- Ref.of[IO, FreezeScheduleConfig](FreezeScheduleConfig(enabled = false))
         calls <- Ref.of[IO, Int](0)
         llm = new LlmHandle[IO]:
@@ -44,7 +48,10 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
           def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] =
             Stream.eval(calls.getAndUpdate(_ + 1)).flatMap { n =>
               if n % 2 == 0 then Stream(StreamChunk.ToolCallChunk(ToolCall(s"zone-call-$n", toolName, JsonObject.empty)), StreamChunk.Done(None, None))
-              else Stream(StreamChunk.TextDelta("done"), StreamChunk.Done(None, None))
+              else Stream.eval(holdNextText.getAndSet(false)).flatMap { hold =>
+                val wait = if hold then Stream.eval(streamEntered.complete(()) *> releaseStream.get).drain else Stream.empty
+                wait ++ Stream(StreamChunk.TextDelta("done"), StreamChunk.Done(None, None))
+              }
             }
         probe = new Tool:
           def name = toolName
@@ -73,6 +80,7 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
           json.hcursor.get[String]("type").toOption match
             case Some("done") => done.offer(())
             case Some("frozen") => frozen.offer(())
+            case Some("messageDuplicate") => duplicates.offer(())
             case _ => IO.unit,
           depth = 0, sessionId = Some(sid), sessionName = Some(sid)), sid)
         _ <- resources.agentRegistry.set(Map(sid -> AgentRecord(sid, ref, AgentKind.Root, sid, status = AgentStatus.Idle)))
@@ -165,6 +173,22 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
         _ <- ref ! AgentCommand.CheckFreezeGate
         thawZone <- captured.take.timeout(30.seconds)
         _ = assertEquals(thawZone, None)
+        _ <- done.take.timeout(30.seconds)
+        _ <- holdNextText.set(true)
+        _ <- ref ! AgentCommand.UserInput("busy first", clientMessageId = Some("busy-start"), fromUser = true,
+          deviceZone = Some("Asia/Tokyo"))
+        firstBusy <- captured.take.timeout(30.seconds)
+        _ = assertEquals(firstBusy, Some("Asia/Tokyo"))
+        _ <- streamEntered.get.timeout(30.seconds)
+        _ <- ref ! AgentCommand.UserInput("busy queued", clientMessageId = Some("busy-queued"), fromUser = true,
+          deviceZone = Some("Europe/Paris"))
+        // The duplicate receipt is emitted by this actor only after it processed
+        // the preceding FIFO enqueue, while its LLM stream remains gated.
+        _ <- ref ! AgentCommand.UserInput("duplicate start", clientMessageId = Some("busy-start"), fromUser = true)
+        _ <- duplicates.take.timeout(30.seconds)
+        _ <- releaseStream.complete(())
+        queuedBusy <- captured.take.timeout(30.seconds)
+        _ = assertEquals(queuedBusy, Some("Europe/Paris"))
         _ <- done.take.timeout(30.seconds)
         _ <- store.flushPendingUiWrites
       yield ()
