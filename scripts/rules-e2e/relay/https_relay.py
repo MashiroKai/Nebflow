@@ -12,7 +12,7 @@ class Relay:
   self.args=args; self.condition=threading.Condition(); self.lock=self.condition; self.count=0; self.seq=0
   self.grace=grace; self.exit_fn=exit_fn; self.stop_fired=False; self.finished=threading.Event(); self.watchdog_lock=threading.Lock(); self.watchdog_started=False
   self.lock_timeout=lock_timeout; self.abort_timeout=abort_timeout; self.append_override=append_override
-  self.rejection_lock=threading.Lock(); self.unrecorded_rejections=0
+  self.rejection_lock=threading.Lock(); self.unrecorded_rejections=0; self.rejections={}
   self.dialer=dialer or (lambda host,port,timeout: http.client.HTTPSConnection(host,port,timeout=timeout,context=ssl.create_default_context()))
   self.routes={}
   allowed=set(args.allow_host)
@@ -132,16 +132,32 @@ class Relay:
      self.sidecar(obj)
    finally: fcntl.flock(ledger.fileno(),fcntl.LOCK_UN)
  def rejection_event(self,obj):
-  done=threading.Event(); outcome=[]
-  def write():
-   try: self.event(obj); outcome.append(True)
-   except Exception: outcome.append(False)
+  obj=dict(obj); obj.setdefault('record_id',uuid.uuid4().hex); identity=obj['record_id']
+  done=threading.Event()
+  with self.rejection_lock: self.rejections[identity]='inflight'
+  def finalize():
+   try:
+    try: self.event(obj)
+    except OSError: pass
+    found=False
+    for path in (self.args.ledger,self.args.ledger+'.abort'):
+     try:
+      with open(path,encoding='utf-8') as f:
+       for line in f:
+        try: found |= json.loads(line).get('record_id')==identity
+        except (ValueError,UnicodeDecodeError): continue
+     except FileNotFoundError: pass
+    if not found:
+     try: self.sidecar(obj); found=True
+     except OSError: pass
+    with self.rejection_lock:
+     self.rejections[identity]='recorded' if found else 'unrecorded'
+     if not found: self.unrecorded_rejections+=1
+    if not found: print('unrecorded rejection',file=sys.stderr,flush=True)
    finally: done.set()
-  threading.Thread(target=write,daemon=True).start()
-  if done.wait(self.lock_timeout+self.abort_timeout) and outcome==[True]: return True
-  with self.rejection_lock: self.unrecorded_rejections+=1
-  print('unrecorded rejection',file=sys.stderr,flush=True)
-  return False
+  threading.Thread(target=finalize,daemon=True).start()
+  if not done.wait(self.lock_timeout+self.abort_timeout): return False
+  with self.rejection_lock: return self.rejections[identity]=='recorded'
  def shutdown_summary(self):
   with self.rejection_lock: count=self.unrecorded_rejections
   print(json.dumps({'unrecorded_rejections':count}),file=sys.stderr,flush=True)
