@@ -139,7 +139,7 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-card {
   min-height: var(--ta-card-h);
   padding: 14px 16px;
   border: none;
-  border-radius: var(--ta-card-radius);
+  border-radius: var(--ds-radius-2xl);
   color: var(--ta-ink);
   text-align: left;
   cursor: pointer;
@@ -154,16 +154,16 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-card {
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-card:active { transform: scale(0.97); }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-card-today {
   /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
-  border-radius: var(--ds-radius-chip); background: var(--ta-c-today); }
+  border-radius: var(--ds-radius-2xl); background: var(--ta-c-today); }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-card-overdue {
   /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
-  border-radius: var(--ds-radius-chip); background: var(--ta-c-overdue); }
+  border-radius: var(--ds-radius-2xl); background: var(--ta-c-overdue); }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-card-all {
   /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
-  border-radius: var(--ds-radius-chip); background: var(--ta-c-all); }
+  border-radius: var(--ds-radius-2xl); background: var(--ta-c-all); }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-card-completed {
   /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
-  border-radius: var(--ds-radius-chip); background: var(--ta-c-done); }
+  border-radius: var(--ds-radius-2xl); background: var(--ta-c-done); }
 /* White outline icon top-left / large white count top-right / white label
    bottom-left (three absolutely positioned pieces forming a triangle) */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-card-ico {
@@ -212,6 +212,7 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-search-input {
   height: 44px;
   box-sizing: border-box;
   padding: var(--ds-input-pad-lg);
+  border-radius: var(--ds-radius-input);
   color: var(--color-text);
   font-size: var(--mfs-body);
   font-family: inherit;
@@ -233,7 +234,7 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-sec-label {
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-listcard {
   flex-shrink: 0;
   margin: 0 var(--mpad-x);
-  border-radius: var(--ta-card-radius);
+  border-radius: var(--ds-radius-2xl);
   background: var(--color-surface);
   box-shadow: var(--cv-shadow);
   overflow: hidden;
@@ -263,7 +264,7 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-row {
    aligns with the text start line) */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-row::after {
   /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
-  border-radius: inherit;
+  border-radius: var(--ds-radius-none);
   content: '';
   position: absolute;
   left: 52px;
@@ -281,13 +282,12 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-dot {
   flex: none;
   width: 24px;
   height: 24px;
-  border-radius: 50%;
+  border-radius: var(--ds-radius-pill);
   background: var(--color-text-muted);
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-dot-all,
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-dot-new {
-  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
-  border-radius: var(--ds-radius-chip);
+  border-radius: var(--ds-radius-pill);
   background: transparent;
   border: 1.5px solid var(--color-text-muted);
 }
@@ -370,7 +370,7 @@ body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-pill {
   align-items: center;
   padding: 0;
   box-sizing: border-box;
-  border-radius: var(--mcap-radius);
+  border-radius: var(--ds-radius-pill);
   pointer-events: auto;
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill[hidden],
@@ -386,7 +386,7 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-slot-spacer {
   left: 0;
   width: var(--band-d, 48px);
   height: var(--band-d, 48px);
-  border-radius: 50%;
+  border-radius: var(--ds-radius-pill);
   visibility: hidden;
   pointer-events: none;
 }
@@ -424,12 +424,16 @@ body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-pill-btn svg
   height: var(--band-icon, 20px);
   display: block;
 }
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-pill-btn.on {
+  border-radius: var(--ds-radius-chip);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-filter-btn.on {
+  border-radius: var(--ds-radius-pill);
+}
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill-btn.on,
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill-btn.on,
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill-btn.on,
 body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-pill-btn.on {
-  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
-  border-radius: var(--ds-radius-chip);
   background: rgb(var(--sapphire) / 0.14);
   color: rgb(var(--sapphire));
   box-shadow: var(--btn-shadow);
@@ -465,7 +469,7 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu-row {
   padding: 0 12px;
   box-sizing: border-box;
   border: none;
-  border-radius: var(--ds-radius-button);
+  border-radius: var(--ds-radius-pill);
   background: transparent;
   color: var(--color-text);
   font-family: inherit;
@@ -474,8 +478,7 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu-row {
   cursor: pointer;
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu-row:active {
-  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
-  border-radius: var(--ds-radius-chip);
+  border-radius: var(--ds-radius-pill);
   background: color-mix(in srgb, var(--color-text) 8%, transparent);
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu-l { flex: 1 1 auto; }
@@ -549,8 +552,7 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab svg {
        亮度权重带 / 单源零字面量) hold by construction; measured composite
        readings live in the batch report (probe-readings.json + color-math). */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-quick-fab {
-  /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
-  border-radius: var(--ds-radius-chip);
+  border-radius: var(--ds-radius-pill);
   position: relative;
   width: var(--band-d, 48px);
   height: var(--band-d, 48px);
@@ -649,7 +651,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-check-circle {
   height: 24px;
   box-sizing: border-box;
   border: 2px solid var(--color-text-muted);
-  border-radius: 50%;
+  border-radius: var(--ds-radius-pill);
   /* 动效收敛批（2026-11-18）：勾选态换色走 token（--dur-2 hover/色彩档 +
      --ease-std），改前是私设的 0.16s ease。 */
   transition: background-color var(--dur-2) var(--ease-std), border-color var(--dur-2) var(--ease-std);
@@ -719,6 +721,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-detail 
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-detail[hidden] { display: none; }
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-question { font-weight: 600; }
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-option {
+  border-radius: var(--ds-radius-pill);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -889,7 +892,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-chip {
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-chip .ta-dot {
   width: 10px;
   height: 10px;
-  border-radius: 50%;
+  border-radius: var(--ds-radius-pill);
   background: var(--color-text-muted);
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-chip .ta-prio {
@@ -956,7 +959,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-reply-error {
 body.mobile-layer .mobile-page:is([data-page="todo-apple-item"], [data-page="todo-quick-decision"]) .ta-save {
   /* 圆钮 = g2-fab 族圆（50%，glass.css 单源），与左上返回钮同形（2026-11-23 作者令「按钮统一是圆的」，
      修正 f62594fc7 沿用的 --ds-radius-chip 6px 方角）。 */
-  border-radius: 50%;
+  border-radius: var(--ds-radius-pill);
   position: absolute;
   top: 0;
   right: 0;
@@ -970,7 +973,7 @@ body.mobile-layer .mobile-page:is([data-page="todo-apple-item"], [data-page="tod
   color: var(--ctl-send-ink);
 }
 body.mobile-layer .mobile-page:is([data-page="todo-apple-item"], [data-page="todo-quick-decision"]) .ta-save:hover {
-  border-radius: 50%;
+  border-radius: var(--ds-radius-pill);
   background: rgb(var(--sapphire));
   transform: none;
 }
@@ -995,7 +998,7 @@ body.mobile-layer .mobile-page:is([data-page="todo-apple-item"], [data-page="tod
   justify-content: space-between;
   padding: 0 var(--ds-space-2);
   box-sizing: border-box;
-  border-radius: var(--mcap-radius);
+  border-radius: var(--ds-radius-pill);
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool {
   position: fixed;
@@ -1063,7 +1066,7 @@ body.mobile-layer .ta-create-sheet {
   overflow-y: auto;
   box-sizing: border-box;
   padding: 12px var(--mpad-x) max(16px, env(safe-area-inset-bottom, 0px));
-  border-radius: var(--ds-radius-xl) var(--ds-radius-xl) 0 0;
+  border-radius: var(--ds-radius-xl) var(--ds-radius-xl) var(--ds-radius-none) var(--ds-radius-none);
   /* 动效收敛批（2026-11-18）：浮层入场 = 站内唯一入场键帧 modalIn + 动效 token
      （--ds-dur-layer / --ds-ease-enter，与 secrets/social/design-system 的 .ds-layer
      同一个「层」档），改前是硬切。 */
@@ -1210,7 +1213,7 @@ body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-flt-chip 
   padding: 0 var(--ds-space-3);
   box-sizing: border-box;
   border: 1px solid var(--glass-border);
-  border-radius: var(--ds-radius-chip);
+  border-radius: var(--ds-radius-pill);
   background: var(--nf-glass-input-bg);
   color: var(--color-text);
   font: inherit;
@@ -1297,7 +1300,7 @@ body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-dot {
   flex: none;
   width: var(--ds-space-2);
   height: var(--ds-space-2);
-  border-radius: 50%;
+  border-radius: var(--ds-radius-pill);
 }
 body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-title {
   margin: 0;
