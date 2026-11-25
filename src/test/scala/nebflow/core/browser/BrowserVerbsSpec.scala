@@ -91,6 +91,15 @@ class BrowserVerbsSpec extends CatsEffectSuite:
     assert(!BrowserTakeoverInput.valid(Json.obj("type" -> "insertText".asJson, "text" -> ("x" * 4097).asJson)))
   }
 
+  test("ACK failure signals without allowing callback exceptions to escape") {
+    val signalled = new java.util.concurrent.CountDownLatch(1)
+    val stream = new BrowserScreencast((method, _) => if method == "Page.screencastFrameAck" then throw new RuntimeException("ack"),
+      () => { signalled.countDown(); throw new RuntimeException("callback") })
+    stream.frame(Json.obj("sessionId" -> 1.asJson, "data" -> "frame".asJson))
+    assert(signalled.await(2, java.util.concurrent.TimeUnit.SECONDS))
+    stream.close()
+  }
+
   test("failure notification is retained when wakeup is unavailable") {
     val signal = new BrowserFailureSignal
     assert(!signal.failed)
