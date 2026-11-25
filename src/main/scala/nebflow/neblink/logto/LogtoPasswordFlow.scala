@@ -423,7 +423,7 @@ object LogtoPasswordFlow:
       r.location match
         case None => IO.pure(Left(Failure.Protocol("redirect", "", s"HTTP ${r.status} without Location")))
         case Some(loc) if consentRound && isConsentLocation(loc) =>
-          consentLeg(send, in, redirectTo, jar)
+          consentLeg(send, in, redirectTo, mergeCookies(jar, r.setCookies))
         case Some(loc) =>
           parseRedirectQuery(loc) match
             case Left(m) => IO.pure(Left(Failure.Protocol("redirect", "", m)))
