@@ -435,6 +435,62 @@ test.describe('统一卡片截图与锚点', () => {
     });
   }
 
+  test('聊天消息真实入口点击词条使用共享卡', async ({ browser }) => {
+    const { context, page } = await boot(browser);
+    await page.evaluate(async () => {
+      const { chatViews, ChatView, setActiveView } = await import('/js/chatView.js');
+      chatViews.primary = new ChatView('primary', { chat: document.getElementById('chat'), attPreview: document.getElementById('attachment-preview'), input: document.getElementById('input'), inputBar: document.getElementById('input-bar') });
+      setActiveView(chatViews.primary);
+      chatViews.primary.setSession('term-fixture');
+      const chat = await import('/js/chat.js');
+      chat.appendAiText('聊天正文 [[GCR]]');
+      chat.finishAi();
+    });
+    await expect(page.locator('#chat .bubble').filter({ hasText: '聊天正文' })).toBeVisible();
+    const link = page.locator('#chat .bubble a.nf-wikilink-term', { hasText: 'GCR' });
+    await expect(link).toBeVisible({ timeout: 5000 });
+    await link.click();
+    await expect(page.locator('.document-term-card')).toBeVisible({ timeout: 5000 });
+    await context.close();
+  });
+
+  test('human真实入口点击词条使用共享卡', async ({ browser }) => {
+    const { context, page } = await boot(browser);
+    await page.evaluate(() => {
+      const host = document.createElement('div');
+      host.className = 'nf-human-card';
+      host.textContent = '术语 [[GCR]]';
+      document.body.append(host);
+    });
+    const link = page.locator('.nf-human-card a.nf-wikilink-term', { hasText: 'GCR' });
+    await expect(link).toBeVisible();
+    await link.click();
+    await expect(page.locator('.document-term-card')).toBeVisible();
+    await expect(page.locator('.document-term-card strong')).toHaveText('GCR');
+    await context.close();
+  });
+
+  test('选区真实入口点击片段使用共享卡', async ({ browser }) => {
+    const { context, page } = await boot(browser);
+    await page.evaluate(() => {
+      const chat = document.getElementById('chat');
+      chat.style.display = 'block';
+      const row = document.createElement('div'); row.className = 'row';
+      row.innerHTML = '<div class="bubble">选区验证文本</div>';
+      chat.append(row);
+      const r = document.createRange(); r.selectNodeContents(row.querySelector('.bubble'));
+      const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.dispatchEvent(new Event('selectionchange'));
+    });
+    await page.locator('.selection-ask-btn').click();
+    const chip = page.locator('.bubble .selection-explain-chip');
+    await expect(chip).toBeVisible();
+    await chip.click();
+    await expect(page.locator('.document-term-card')).toBeVisible();
+    await expect(page.locator('.document-term-card strong')).toHaveText('解释');
+    await context.close();
+  });
+
   test('选区解释共用卡片且不显示词条来源按钮', async ({ browser }) => {
     const { context, page } = await boot(browser);
     await openSourceDoc(page);
