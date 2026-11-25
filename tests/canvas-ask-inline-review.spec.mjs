@@ -254,6 +254,19 @@ try {
   ]));
   await page.waitForSelector(`.canvas-tab-pane[data-tab-id="askreview:${sid}"]`, { timeout: 5000 });
   await sleep(200);
+  // 切回文档时后台审阅 pane 必须隐藏，否则两个 flex 子项平分 Canvas 高度。
+  await page.evaluate(async (id) => {
+    const { setActiveTab } = await import('/js/canvas.js');
+    setActiveTab(id);
+  }, `file:${abs}`);
+  const visiblePanes = await page.evaluate(() => [...document.querySelectorAll('#canvas-content > .canvas-tab-pane')]
+    .filter((pane) => getComputedStyle(pane).display !== 'none')
+    .map((pane) => pane.dataset.tabId));
+  ok('R1-single 切回文档仅一个 pane 显示', visiblePanes.length === 1 && visiblePanes[0] === `file:${abs}`, JSON.stringify(visiblePanes));
+  await page.evaluate(async (id) => {
+    const { setActiveTab } = await import('/js/canvas.js');
+    setActiveTab(id);
+  }, `askreview:${sid}`);
   let rv = await reviewOf(page, sid);
   ok('R1a 审阅页签开：canvas 头部标题（文件名 notes.md + 全量计数 +2 −1 + 审阅状态 1 块待审）',
     rv.open && rv.head.includes('notes.md') && rv.counts.includes('+2') && rv.counts.includes('−1')

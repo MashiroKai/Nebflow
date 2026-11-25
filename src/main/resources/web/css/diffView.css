@@ -616,7 +616,6 @@ span.nf-rcpt-note { cursor: default; }
    --color-success/--color-danger 低饱和底 + 左缘实色条），长未变段折叠，逐块/
    全量接受拒绝，冲突显式条。 */
 .canvas-tab-pane[data-type="askreview"] {
-  display: flex;
   flex-direction: column;
   min-height: 0;
 }
