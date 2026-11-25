@@ -96,6 +96,11 @@ object AskHostLedger:
     }
   }
 
+  def recordTakeoverStreamFailure(id: String): IO[Unit] = append(Json.obj(
+    "correlationId" -> id.asJson, "status" -> "takeover-stream-failed".asJson,
+    "at" -> System.currentTimeMillis().asJson
+  ))
+
   val TakeoverDecision = "人工接管已完成；请重新获取画面后继续，不要重复人工已完成的操作。"
   enum TakeoverFinish:
     case NoLease, Answered, LateClaimed, AlreadyTerminal

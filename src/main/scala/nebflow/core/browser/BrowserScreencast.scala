@@ -5,7 +5,7 @@ import io.circe.syntax.*
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Caller serializes this object's operations away from the CDP listener thread. */
-private[nebflow] final class BrowserScreencast(send: (String, Json) => Unit):
+private[nebflow] final class BrowserScreencast(send: (String, Json) => Unit, onFailure: () => Unit = () => ()):
   private val stopped = new AtomicBoolean(false)
   private val frames = new BrowserFramePump
   private val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
@@ -32,15 +32,20 @@ private[nebflow] final class BrowserScreencast(send: (String, Json) => Unit):
       data <- c.get[String]("data").toOption
     do
       val metadata = c.downField("metadata").focus.getOrElse(Json.obj())
-      val startDrain = frames.offer(id, Json.obj("data" -> data.asJson, "metadata" -> metadata).noSpaces)
-      if startDrain then executor.execute(() => drain())
+      try
+        val startDrain = frames.offer(id, Json.obj("data" -> data.asJson, "metadata" -> metadata).noSpaces)
+        if startDrain then executor.execute(() => drain())
+      catch case _: Exception => fail()
 
   private def drain(): Unit =
     var next = frames.nextAck()
     while next.nonEmpty do
       try send("Page.screencastFrameAck", Json.obj("sessionId" -> next.get.asJson))
-      catch case _: Exception => failure.set(true)
+      catch case _: Exception => fail()
       next = frames.nextAck()
+
+  private def fail(): Unit =
+    if failure.compareAndSet(false, true) then onFailure()
 
   def take(): Option[String] = frames.takeFrame()
 
