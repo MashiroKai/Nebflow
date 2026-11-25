@@ -13,7 +13,15 @@ async function boot(page, history = []) {
     if (p.startsWith('/api/')) return route.fulfill({ status:200, contentType:'application/json', body:'{}' });
     const f = normalize(join(web,p)); if (!f.startsWith(web)) return route.fulfill({ status:403, body:'' });
     try { const baseFile = process.env.HUMAN_BASE === '1' && ['/js/chat.js','/js/persistence.js','/js/outputTag.js'].includes(p);
-      const body = baseFile || (process.env.BUFFER_BASE === '1' && p === '/js/chat.js') ? execFileSync('git', ['show', `4976bf692:src/main/resources/web${p}`], { cwd:web }) : readFileSync(f); return route.fulfill({ status:200, contentType:mime[extname(f)] || 'application/octet-stream', body }); } catch { return route.fulfill({ status:404, body:'' }); }
+      let body = baseFile || (process.env.BUFFER_BASE === '1' && p === '/js/chat.js') ? execFileSync('git', ['show', `4976bf692:src/main/resources/web${p}`], { cwd:web }) : readFileSync(f);
+      const mutant = process.env.RULE_MUTANT;
+      if (mutant === '1' && p === '/js/turnGroup.js') body = body.toString().replace("view.nfBareProcessRows || chat.id === 'chat'", 'view.nfBareProcessRows');
+      if (mutant === '2' && p === '/js/workline.js') body = body.toString().replace('const wl = ensureRow(view);\n  if (!wl) return;\n  if (!wl.item || wl.kind !== \'thinking\')', "const wl = null;\n  if (!wl) return;\n  if (!wl.item || wl.kind !== 'thinking')");
+      if (mutant === '3' && p === '/js/chat.js') body = body.toString().replace("if (_aiBodyStream && view.id !== 'primary')", 'if (_aiBodyStream)');
+      if (mutant === '4' && p === '/js/turnGroup.js') body = body.toString().replace("if (header.closest('#chat')) {\n    const stack", "if (false) {\n    const stack");
+      if (mutant === '5' && p === '/js/outputTag.js') body = body.toString().replace("if (mainChat || bubble.closest('#chat')) bubble.querySelectorAll('details.nf-human-details').forEach(el => el.remove());", '');
+      if (mutant === '5' && p === '/js/chat.js') body = body.toString().replace("if (activeView.dom.chat.id === 'chat') bubble.querySelectorAll('details.nf-human-details').forEach(el => el.remove());", '');
+      return route.fulfill({ status:200, contentType:mime[extname(f)] || 'application/octet-stream', body }); } catch { return route.fulfill({ status:404, body:'' }); }
   });
   await page.routeWebSocket(/\/ws/, ws => {
     const config = () => ws.send(JSON.stringify({ type:'configData', config:'{}', configured:true, onboarding:'done' }));
