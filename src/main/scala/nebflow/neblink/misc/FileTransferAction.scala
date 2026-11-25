@@ -371,11 +371,24 @@ object FileTransferAction:
    *   4. 块摘要不符 ⇒ **不写**、`CHUNK_DIGEST_MISMATCH`；
    *   5. 末块 ⇒ 接收端**自算**整件摘要比对，不符 ⇒ **删文件** + `WHOLE_DIGEST_MISMATCH`。
    */
-  private def chunkedPut(
+  private[neblink] trait ChunkPutOps:
+    def ensureParent(path: os.Path): Either[String, Unit] = ensureParentDir(path)
+    def append(path: os.Path, bytes: Array[Byte]): Unit = os.write.append(path, bytes)
+    def hash(path: os.Path): String = ChunkedTransfer.hashFileStreaming(path)
+    def remove(path: os.Path): Unit = os.remove.all(path)
+    def restore(path: os.Path, backup: java.nio.file.Path): Unit =
+      java.nio.file.Files.copy(backup, path.toNIO, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+      ()
+    def release(path: os.Path): Unit = { streamClaims.remove(path.toString); () }
+
+  private object DefaultChunkPutOps extends ChunkPutOps
+
+  private[neblink] def chunkedPut(
     params: JsonObject,
     path: os.Path,
     contentB64: String,
-    overwrite: Boolean
+    overwrite: Boolean,
+    ops: ChunkPutOps = DefaultChunkPutOps
   ): Either[String, Json] =
     // 零块形态（跨设备附件批 2026-11-05）：`totalBytes == 0` 的整件 = **空文件**，此时
     // `content` 缺席是**合法**的（base64("") = ""）——不能当成缺参拒绝，否则 0 字节附件
@@ -544,6 +557,43 @@ object FileTransferAction:
               // （改前 = 显式 `OFFSET_OUT_OF_RANGE` 拒绝 ⇒ 该腿的断点续传物理不可行）。
               // 🔴 只在**本次流拥有该文件**时截（上方 `existing > 0 && !owned` 已 fail-closed 拒绝
               // 别人的件）——「收端永不覆盖/删除既有件」的口径不放松。
+              var settled = false
+              def releaseOnce(): Unit =
+                if !settled then
+                  settled = true
+                  ops.release(path)
+              try {
+              ops.ensureParent(path) match
+                case Left(reason) =>
+                  releaseOnce()
+                  return Left(reason)
+                case Right(_) => ()
+              val existedBefore = os.exists(path)
+              val backup =
+                if existedBefore then
+                  val tmp = java.nio.file.Files.createTempFile("stand-chunk-rollback-", ".tmp")
+                  try java.nio.file.Files.copy(path.toNIO, tmp, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                  catch
+                    case e: Exception =>
+                      try java.nio.file.Files.deleteIfExists(tmp)
+                      catch case cleanup: Exception => e.addSuppressed(cleanup)
+                      throw e
+                  Some(tmp)
+                else None
+              def rollback(): Unit =
+                var failure: Exception = null
+                try
+                  backup match
+                    case Some(saved) => ops.restore(path, saved)
+                    case None => if os.exists(path) then os.remove(path)
+                catch case e: Exception => failure = e
+                try releaseOnce()
+                catch
+                  case e: Exception =>
+                    if failure == null then failure = e else failure.addSuppressed(e)
+                if failure != null then throw failure
+              var primary: Throwable = null
+              try {
               val baseBytes =
                 if derivedOffset < existing then
                   val raf = new java.io.RandomAccessFile(path.toNIO.toFile, "rw")
@@ -554,18 +604,17 @@ object FileTransferAction:
               // 跨设备附件批（2026-11-05）：建父目录（`os.write.append` 不建 ⇒ 改前嵌套路径
               // 首块必 `NoSuchFileException`）。与 legacy 整件 put 的 `createFolders = true`
               // 语义对齐；**只在缺目录时建**，既有件零触碰（收端全保护口径不变）。
-              ensureParentDir(path).flatMap { _ =>
-              os.write.append(path, payload)
+              ops.append(path, payload)
               // 本流从零创建了该文件 ⇒ 登记归属（后续块 / 末块清理才敢动它）。
               if baseBytes == 0L then streamClaims.put(path.toString, streamKey(totalBytes, chunkSize))
               val nowBytes = baseBytes + payload.length
               if nowBytes >= totalBytes then
                 // 唯一比对点：自算整件摘要（流式），不符 ⇒ 删文件（绝不 commit）。
-                val computedWhole = ChunkedTransfer.hashFileStreaming(path)
+                val computedWhole = ops.hash(path)
                 if computedWhole != wholeSha then
                   if ownsNow then
-                    os.remove.all(path)
-                    streamClaims.remove(path.toString)
+                    ops.remove(path)
+                    releaseOnce()
                     Left(
                       AttachContract
                         .AttachError(
@@ -596,13 +645,30 @@ object FileTransferAction:
                         .noSpaces
                     )
                 else
-                  streamClaims.remove(path.toString)
+                  releaseOnce()
                   Right(chunkAckJson(nowBytes, computedChunk, Some(computedWhole), totalBytes))
                 end if
               else Right(chunkAckJson(nowBytes, computedChunk, None, totalBytes))
 
               end if
-              }
+              } catch
+                case e: Exception =>
+                  primary = e
+                  try rollback()
+                  catch case cleanup: Exception => e.addSuppressed(cleanup)
+                  throw e
+              finally
+                backup.foreach { saved =>
+                  try java.nio.file.Files.deleteIfExists(saved)
+                  catch
+                    case cleanup: Exception =>
+                      if primary != null then primary.addSuppressed(cleanup) else throw cleanup
+                }
+              } catch
+                case e: Exception =>
+                  try releaseOnce()
+                  catch case cleanup: Exception => e.addSuppressed(cleanup)
+                  throw e
 
             end if
 
