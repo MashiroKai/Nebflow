@@ -84,6 +84,25 @@ for (const width of [390, 1280]) for (const theme of ['light', 'dark']) {
   });
 }
 
+test('主会话工作线和摘要不可点击，注入消息按序直接显示', async ({ page }) => {
+  await boot(page);
+  await frame(page,{type:'thinkingDelta', delta:'思考中'});
+  await expect(page.locator('#chat .nf-workline .nf-chevron')).toHaveCount(0);
+  await page.evaluate(async () => { const m = await import('/js/chat.js'); m.renderInjectedBubble('补充一', 'mail', Date.now(), 'mail'); m.renderInjectedBubble('补充二', 'mail', Date.now(), 'mail'); });
+  await expect(page.locator('#chat [data-nf-injection-stack]')).toHaveCount(0);
+  const injections = page.locator('#chat .bubble.injected');
+  await expect(injections).toHaveCount(2);
+  await expect(injections.nth(0)).toBeVisible();
+  await expect(injections.nth(1)).toBeVisible();
+  await expect(injections.nth(0)).toContainText('补充一');
+  await expect(injections.nth(1)).toContainText('补充二');
+  await frame(page,{type:'textDelta', isRoot:true, delta:'<report>结论</report>'});
+  await frame(page,{type:'done'});
+  await expect(page.locator('#chat .turn-header[role="button"]')).toHaveCount(0);
+  await expect(page.locator('#chat .turn-header [class*="chevron"]')).toHaveCount(0);
+  await expect(injections.nth(0)).toBeVisible();
+});
+
 test('仅思考不产生正文空气泡', async ({ page }) => {
   await boot(page);
   await frame(page,{type:'thinkingDelta', delta:'思考内容'});

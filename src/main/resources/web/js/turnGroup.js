@@ -283,6 +283,12 @@ function injectionRowsForHeader(header) {
 }
 
 function syncInjectionStack(header) {
+  if (header.closest('#chat')) {
+    const stack = header.nextElementSibling;
+    if (stack?.hasAttribute('data-nf-injection-stack')) stack.remove();
+    for (const row of injectionRowsForHeader(header)) row.classList.remove('nf-injection-stack-hidden');
+    return;
+  }
   const rows = injectionRowsForHeader(header);
   let stack = header.nextElementSibling;
   if (!stack || !stack.hasAttribute('data-nf-injection-stack')) stack = null;
@@ -375,6 +381,15 @@ function scopeFromHeader(header) {
 /** Persistent two-state toggle: click the header to expand / re-collapse.
  *  State rides on the header's dataset; the header text is never rewritten. */
 function bindHeaderToggle(header) {
+  if (header.closest('#chat')) {
+    header.querySelector('.nf-chevron')?.remove();
+    header.removeAttribute('role');
+    header.removeAttribute('tabindex');
+    header.removeAttribute('aria-expanded');
+    header.onclick = null;
+    header.onkeydown = null;
+    return;
+  }
   header.setAttribute('role', 'button');
   header.setAttribute('tabindex', '0');
   const toggle = () => {

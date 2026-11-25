@@ -252,7 +252,7 @@ function ensureRow(view) {
   if (!motion(view)) row.classList.add('nf-static');
   row.setAttribute('role', 'status');
   row.setAttribute('aria-live', 'polite');
-  row.appendChild(chevronSvg());
+  if (view.id !== 'primary') row.appendChild(chevronSvg());
   const slot = document.createElement('div');
   slot.className = 'nf-wl-slot';
   row.appendChild(slot);
