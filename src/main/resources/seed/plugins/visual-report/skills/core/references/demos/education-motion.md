@@ -42,7 +42,7 @@
 
 渲染栈：**three.js 0.186.1**，经 `motion-toolkit` 构建器内联为**自包含 HTML**（5.9 MB，双击即开、离线可用）。操作：拖拽旋转、滚轮缩放、点击画面或「下一步 ▶」分步推进（← → 键可用），右上 ①–⑥ 圆点可直达，URL `?step=N` 可跳第 N 步。每步：焦点元件呼吸高亮（其余减淡）、底部旁白字幕、电容液位与电流珠速度按 $i$ 实时联动、电容上方标签实时显示百分比与电压。交互件为**文件交付**（core §2 白名单路径；Pop 只挂静态图源，core §3）：
 
-- `~/.nebflow/plots/education-motion/20261004_edu_rc_charge_3d.html`
+- [动画版（3D 交互，原路径；本次离线构建缺少 three，文件待恢复）](~/.nebflow/plots/education-motion/20261004_edu_rc_charge_3d.html)
 
 旁白字幕文案（形态②③逐字共用，数值由公式实时复算）：
 
@@ -59,7 +59,7 @@
 
 渲染栈：**Remotion 4.0.532**（react 19.0.0）+ 本机 Chrome 154.0.8037.93，经 `render-remotion.mjs` 封装渲染。产物 `20261004_edu_rc_charge_steps.mp4`：1280×720 / h264 / 30fps / 400 帧 / **13.33 s** / 482,887 B。内容：片头声明示例值 → ①–⑥ 分步推进（曲线逐帧由 $u_C(t)$ 实时采样绘制、每步步末弹出值牌）→ 复盘段（1τ 63.2% → 5τ 99.3% 里程碑）；底部旁白字幕与形态②逐字同源，右上内嵌 schemdraw 暗色原理图。视频件同为**文件交付**：
 
-- `~/.nebflow/plots/education-motion/20261004_edu_rc_charge_steps.mp4`
+- [动画版（分步视频，原路径；本次未能离线重建，文件待恢复）](~/.nebflow/plots/education-motion/20261004_edu_rc_charge_steps.mp4)
 
 **可用性与替代口径说明**：本机 Remotion 通路实测可用（motion-toolkit 冒烟 + 本片完整渲染，exit 0），**未触发降级链**；若不可用则按 motion-toolkit §4 降级：matplotlib FuncAnimation + imageio-ffmpeg 出 MP4 ⇒ PillowWriter 出 GIF ⇒ 静态多帧 PNG，并在本页改写替代口径与原因。
 
