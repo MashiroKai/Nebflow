@@ -726,6 +726,9 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-option 
   gap: 12px;
   min-height: 44px;
 }
+body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-option input {
+  accent-color: rgb(var(--sapphire));
+}
 /* 选项长说明（决策选项 {id,title,detail} 的 detail 段；作者 2026-11-21 23:48 报障
    同一处渲染修复的配套：标题与说明分两段显示，说明用次级文字色）。 */
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-option-detail {
@@ -736,11 +739,20 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-option-
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-status,
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-submit { color: var(--color-text-muted); }
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-submit {
+  appearance: none;
   min-height: 44px;
-  border: 0;
-  border-radius: var(--ds-radius-xl);
-  padding: 0 16px;
-  background: var(--color-surface);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--ds-radius-pill);
+  padding: 0 var(--ds-space-4);
+  background: var(--nf-glass-input-bg);
+  box-shadow: var(--btn-shadow);
+  color: var(--color-text);
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-body);
+  font-weight: 500;
+}
+body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-submit:focus-visible {
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
 }
 /* Empty state: vertically + horizontally centered, neutral grey */
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-empty {

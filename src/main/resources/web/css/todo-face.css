@@ -836,6 +836,17 @@
   white-space: pre-line;
   overflow-wrap: anywhere;
 }
+/* 标题按钮保留标题字体与展开语义，不采用浏览器默认按钮框。 */
+button.tfl-row-title {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+button.tfl-row-title:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); }
+
 /* 决策详情复用移动决策卡的选项语言，限定在待办行内。 */
 .tfl-row-detail .ta-qd-opts { display: flex; flex-direction: column; gap: var(--ds-space-2); }
 .tfl-row-detail .ta-qd-opt {

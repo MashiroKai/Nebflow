@@ -16,6 +16,16 @@ try {
       assert.notEqual(style.font, 'Arial', `${theme}/${width} ${selector} font`);
       if (selector !== '.ta-qd-opt-input') assert.notEqual(style.background, 'rgb(239, 239, 239)', `${theme}/${width} ${selector} background`);
     }
+    await page.evaluate(() => { document.body.insertAdjacentHTML('beforeend', '<div class="tfl-row"><button class="tfl-row-title" aria-expanded="false">决策</button></div><div class="mobile-layer"><div class="mobile-page" data-page="todo-apple-list"><div class="ta-decision-detail"><label class="ta-decision-option"><input type="checkbox"></label><button class="ta-decision-submit">提交</button></div></div></div>'); document.body.classList.add('mobile-layer'); });
+    const title = await page.locator('button.tfl-row-title').evaluate(el => { const c = getComputedStyle(el); return { border: c.borderStyle, width: c.borderWidth, align: c.textAlign, background: c.backgroundColor }; });
+    assert.equal(title.width, '0px', 'decision title border');
+    assert.equal(title.align, 'left', 'decision title alignment');
+    assert.equal(title.background, 'rgba(0, 0, 0, 0)', 'decision title background');
+    const mobile = await page.locator('.mobile-page .ta-decision-submit').evaluate(el => { const c = getComputedStyle(el); return { border: c.borderStyle, font: c.fontFamily }; });
+    assert.equal(mobile.border, 'solid', 'mobile submit border');
+    assert.ok(mobile.font.includes('SF Pro Text'), 'mobile submit design font');
+    const accent = await page.locator('.ta-decision-option input').evaluate(el => getComputedStyle(el).accentColor);
+    assert.notEqual(accent, 'auto', 'mobile choice accent');
     const image = await page.locator('.cfg-select').evaluate(el => getComputedStyle(el).backgroundImage);
     assert.notEqual(image, 'none', 'search caret');
     await page.close();
