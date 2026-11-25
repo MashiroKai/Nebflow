@@ -1,1 +1,18 @@
-{"panel":"desktop-todo","route":"desktop:todo/inbox","viewportGroups":[{"width":1280,"height":800,"themes":["light","dark"],"dpr":[1]}],"elements":[{"id":"todo-list","selector":".ta-rows","properties":["borderRadius","backgroundColor","color","padding","border"],"box":false},{"id":"todo-row","selector":".ta-row","properties":["borderRadius","backgroundColor","color","fontSize","fontWeight","padding","border"],"box":false}]}
+{
+  "panel": "desktop-todo",
+  "route": "desktop:todo/capsule → expanded card",
+  "viewportGroups": [{"width":1280,"height":800,"themes":["light","dark"],"dpr":[1]}],
+  "elements": [
+    {"id":"card","selector":"#task-list .tfl-card[data-state=open]","properties":["borderRadius","backgroundColor","color","boxShadow","padding","border"],"box":false},
+    {"id":"header","selector":"#task-list .tfl-header","properties":["borderRadius","backgroundColor","color","fontSize","fontWeight","padding","border"],"box":false},
+    {"id":"count","selector":"#task-list .tfl-capsule-count","properties":["borderRadius","backgroundColor","color","fontSize","fontWeight","padding","border"],"box":false},
+    {"id":"filter-button","selector":"#task-list .tfl-filter-toggle","properties":["borderRadius","backgroundColor","color","boxShadow","fontSize","fontWeight","height","padding","border"],"box":false},
+    {"id":"collapse-button","selector":"#task-list .tfl-collapse-btn","properties":["borderRadius","backgroundColor","color","boxShadow","fontSize","fontWeight","height","padding","border"],"box":false},
+    {"id":"list","selector":"#task-list .tfl-list","properties":["borderRadius","backgroundColor","color","padding","border"],"box":false},
+    {"id":"row","selector":"#task-list .tfl-row","properties":["borderRadius","backgroundColor","color","fontSize","fontWeight","padding","border"],"box":false},
+    {"id":"row-dot","selector":"#task-list .tfl-row-dot","properties":["borderRadius","backgroundColor","color","boxShadow","height","padding","border"],"box":false},
+    {"id":"row-title","selector":"#task-list .tfl-row-title","properties":["borderRadius","backgroundColor","color","fontSize","fontWeight","padding","border"],"box":false},
+    {"id":"row-badge","selector":"#task-list .tfl-row-badge","properties":["borderRadius","backgroundColor","color","fontSize","fontWeight","padding","border"],"box":false},
+    {"id":"row-due","selector":"#task-list .tfl-row-due","properties":["borderRadius","backgroundColor","color","fontSize","fontWeight","padding","border"],"box":false}
+  ]
+}
