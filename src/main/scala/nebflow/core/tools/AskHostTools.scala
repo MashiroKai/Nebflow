@@ -89,7 +89,10 @@ object AskHostLedger:
     id: String, root: String, session: String, registry: nebflow.core.browser.BrowserTakeoverRegistry
   ): IO[Either[String, Unit]] = IO.blocking {
     journalLock.synchronized {
-      AskHostTool.admitBrowserTakeover(true, root, requestStateSync(id), session, registry)
+      val current = requestStateSync(id)
+      val admitted = AskHostTool.admitBrowserTakeover(true, root, current, session, registry)
+      if admitted.isRight && current.exists(_.terminal.exists(_.isInstanceOf[Terminal.TimedOut])) then registry.disableInput(id)
+      admitted
     }
   }
 
@@ -285,6 +288,7 @@ object AskHostLedger:
               "at" -> System.currentTimeMillis().asJson
             )
           )
+          nebflow.core.browser.BrowserSessions.takeoverRegistry.disableInput(id)
           waiters.remove(id)
           answered.remove(id)
           true
@@ -318,6 +322,7 @@ object AskHostLedger:
               "at" -> System.currentTimeMillis().asJson
             )
           )
+          nebflow.core.browser.BrowserSessions.takeoverRegistry.disableInput(id)
           waiters.remove(id)
           answered.remove(id)
           true

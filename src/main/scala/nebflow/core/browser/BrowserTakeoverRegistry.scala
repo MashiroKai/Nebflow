@@ -8,6 +8,7 @@ final class BrowserTakeoverRegistry:
   private final class State:
     var owner: Option[String] = None
     var lease: Option[String] = None
+    var inputEnabled = false
   private val states = new ConcurrentHashMap[String, State]()
   private def state(session: String): State = states.computeIfAbsent(session, _ => new State)
 
@@ -29,7 +30,14 @@ final class BrowserTakeoverRegistry:
         case None => Left("该浏览器会话没有归属记录")
         case Some(existing) if existing != owner => Left("浏览器会话归属不匹配")
         case _ if s.lease.nonEmpty => Left("浏览器会话已有接管")
-        case _ => s.lease = Some(request); Right(())
+        case _ => s.lease = Some(request); s.inputEnabled = true; Right(())
+    }
+
+  def withInput[A](session: String, request: String)(body: => A): Either[String, A] =
+    val s = state(session)
+    s.synchronized {
+      if !s.lease.contains(request) || !s.inputEnabled then Left("接管输入未授权")
+      else Right(body)
     }
 
   def holds(session: String, request: String): Boolean =
@@ -48,7 +56,12 @@ final class BrowserTakeoverRegistry:
     val s = state(session)
     s.synchronized { s.owner = None; s.lease = None }
 
+  def disableInput(request: String): Unit =
+    states.values().asScala.foreach { s =>
+      s.synchronized { if s.lease.contains(request) then s.inputEnabled = false }
+    }
+
   def finish(request: String): Unit =
     states.values().asScala.foreach { s =>
-      s.synchronized { if s.lease.contains(request) then s.lease = None }
+      s.synchronized { if s.lease.contains(request) then { s.inputEnabled = false; s.lease = None } }
     }

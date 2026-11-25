@@ -1129,9 +1129,13 @@ class WebSocketRoutes(
                         (OwnerIdentity.localAnchor, tokenRef.get.flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))).tupled.flatMap { (currentOwner, currentCred) =>
                           val currentSubject = currentCred.collect { case Credential.ViaSession(record) => record.accountSub }
                           if BrowserTakeoverAuth.allowed(currentSubject, currentOwner.map(_.sub)) &&
-                              BrowserTakeoverAuth.validOrigin(origin, host, HealthRoutes.allowedProbeOrigins) &&
-                              nebflow.core.browser.BrowserSessions.takeoverRegistry.holds(session, id) then
-                            message.hcursor.downField("event").focus.traverse_(event => IO.blocking(stream.input(event)).attempt.void)
+                              BrowserTakeoverAuth.validOrigin(origin, host, HealthRoutes.allowedProbeOrigins) then
+                            message.hcursor.downField("event").focus.traverse_ { event =>
+                              IO.blocking(nebflow.core.browser.BrowserSessions.takeoverRegistry.withInput(session, id)(stream.input(event))).attempt.flatMap {
+                                case Right(Right(_)) => IO.unit
+                                case _ => send(Json.obj("type" -> "status".asJson, "error" -> "接管输入未授权".asJson))
+                              }
+                            }
                           else send(Json.obj("type" -> "status".asJson, "error" -> "接管输入未授权".asJson))
                         }
                       })
