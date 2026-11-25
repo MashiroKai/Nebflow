@@ -3465,6 +3465,13 @@ body:not(.mobile-layer) .option-preview-media {
   border-color: var(--ask-green);
 }
 
+/* 手机消息问答选项沿用决策页的胶囊形；确认和取消保持原样。 */
+@media (max-width: 768px) {
+  #chat .option-box .option-btn {
+    border-radius: var(--ds-radius-pill);
+  }
+}
+
 /* onboarding 候选 chips = 1px 细线胶囊（透明底，radius 999） */
 .chip-row .option-btn {
   display: inline-flex;

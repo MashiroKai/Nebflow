@@ -1288,7 +1288,7 @@ body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-chip {
   gap: var(--ds-space-1);
   min-height: var(--ds-space-6);
   padding: 0 var(--ds-space-2);
-  border-radius: var(--ds-radius-chip);
+  border-radius: var(--ds-radius-pill);
   background: color-mix(in srgb, var(--color-text) 8%, transparent);
   color: var(--color-text-muted);
   font-size: var(--mfs-min);
@@ -1819,7 +1819,7 @@ body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt {
   min-height: var(--mtap);
   padding: var(--ds-space-3) var(--ds-space-4);
   border: 1px solid rgb(var(--sapphire) / 0.25);
-  border-radius: var(--ds-radius-card-md);
+  border-radius: var(--ds-radius-pill);
   background: rgb(var(--sapphire) / 0.04);
   transition: background-color var(--dur-2) ease, border-color var(--dur-2) ease,
     color var(--dur-2) ease;
