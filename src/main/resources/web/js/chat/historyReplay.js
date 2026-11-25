@@ -247,7 +247,11 @@ export function replayHistoryPageInitialLoad(msg, view) {
         // 仅剩 pendingRestore 时取其落盘的 isRoot）。root ⇒ 报告面（与主腿同款）；
         // 非 root / 缺戳 ⇒ 下方原全文渲染逐字不变。
         const txtRoot = state.sessionTexts[sid] ? state.sessionTextIdentity[sid] === true : pd?.isRoot === true;
-        if (!applyReplayFace(activeView.stream.currentAiBubble, activeView.stream.aiText, { root: txtRoot, streaming: isStillBusy, cache: !isStillBusy })) {
+        if (isStillBusy && activeView.id === 'primary') {
+          // Restore the buffer, not its visible face: finishAi owns the boundary paint.
+          activeView.stream.currentAiBubble._nfIsRoot = txtRoot;
+          activeView.stream.currentAiBubble._nfText = activeView.stream.aiText;
+        } else if (!applyReplayFace(activeView.stream.currentAiBubble, activeView.stream.aiText, { root: txtRoot, streaming: isStillBusy, cache: !isStillBusy })) {
           activeView.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText, true, { cache: !isStillBusy }) + (isStillBusy ? '<span class="cursor"></span>' : '');
         }
         row.appendChild(activeView.stream.currentAiBubble);
