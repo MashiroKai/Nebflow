@@ -84,6 +84,51 @@ object AskHostLedger:
       }
       requests.values.toList
 
+  /** Lock order: journalLock then session registry; local ledger reads only, no external IO. */
+  private[nebflow] def admitTakeoverCurrent(
+    id: String, root: String, session: String, registry: nebflow.core.browser.BrowserTakeoverRegistry
+  ): IO[Either[String, Unit]] = IO.blocking {
+    journalLock.synchronized {
+      val current = requestStateSync(id)
+      val admitted = AskHostTool.admitBrowserTakeover(true, root, current, session, registry)
+      if admitted.isRight && current.exists(_.terminal.exists(_.isInstanceOf[Terminal.TimedOut])) then registry.disableInput(id)
+      admitted
+    }
+  }
+
+  def recordTakeoverStreamFailure(id: String): IO[Unit] = append(Json.obj(
+    "correlationId" -> id.asJson, "status" -> "takeover-stream-failed".asJson,
+    "at" -> System.currentTimeMillis().asJson
+  ))
+
+  val TakeoverDecision = "人工接管已完成；请重新获取画面后继续，不要重复人工已完成的操作。"
+  enum TakeoverFinish:
+    case NoLease, Answered, LateClaimed, AlreadyTerminal
+
+  private[nebflow] def finishTakeover(
+    id: String, session: String, registry: nebflow.core.browser.BrowserTakeoverRegistry
+  ): IO[TakeoverFinish] = IO.blocking {
+    journalLock.synchronized {
+      if !registry.holds(session, id) then TakeoverFinish.NoLease
+      else
+        val state = requestStateSync(id)
+        val result = state match
+          case Some(s) if s.terminal.isEmpty =>
+            appendSync(Json.obj("correlationId" -> id.asJson, "decision" -> TakeoverDecision.asJson,
+              "status" -> "answered".asJson, "at" -> System.currentTimeMillis().asJson))
+            answered.put(id, TakeoverDecision)
+            TakeoverFinish.Answered
+          case Some(s) if s.terminal.exists(_.isInstanceOf[Terminal.TimedOut]) && s.lateReplies.isEmpty =>
+            appendSync(Json.obj("correlationId" -> id.asJson, "status" -> "takeover-late-claimed".asJson,
+              "at" -> System.currentTimeMillis().asJson))
+            TakeoverFinish.LateClaimed
+          case _ => TakeoverFinish.AlreadyTerminal
+        registry.finish(id)
+        result
+    }
+  }.flatTap(result => if result == TakeoverFinish.Answered then
+    waiters.get(id).traverse_(_.complete(TakeoverDecision).void) else IO.unit)
+
   /** Recreate in-process waiters and satisfy any request whose decision was journaled before a crash. */
   def restoreWaiter(id: String): IO[Deferred[IO, String]] =
     Deferred[IO, String].flatMap { candidate =>
@@ -158,6 +203,7 @@ object AskHostLedger:
               case "unavailable" => unavailable = Some(str("reason"))
               case "delivered" => delivered = true
               case "late-reply" => late += str("decision")
+              case "takeover-late-claimed" => late += TakeoverDecision
               case _ => ()
         }
       }
@@ -247,6 +293,7 @@ object AskHostLedger:
               "at" -> System.currentTimeMillis().asJson
             )
           )
+          nebflow.core.browser.BrowserSessions.takeoverRegistry.disableInput(id)
           waiters.remove(id)
           answered.remove(id)
           true
@@ -280,6 +327,7 @@ object AskHostLedger:
               "at" -> System.currentTimeMillis().asJson
             )
           )
+          nebflow.core.browser.BrowserSessions.takeoverRegistry.disableInput(id)
           waiters.remove(id)
           answered.remove(id)
           true
@@ -340,6 +388,7 @@ object AskHostLedger:
               "workerSession" -> row.pending.workerSession.asJson,
               "rootSession" -> row.pending.rootSession.asJson,
               "sourceAgent" -> row.pending.sourceAgent.asJson,
+              "browserTakeover" -> AskHostTool.isBrowserTakeover(row.question).asJson,
               "engineOwned" -> true.asJson
             ),
             Some(row.pending.correlationId)
@@ -437,6 +486,31 @@ end AskHostLedger
 
 object AskHostTool extends Tool:
   val name = "AskHost"
+
+  private[nebflow] def isBrowserTakeover(question: String): Boolean =
+    question.linesIterator.nextOption().contains("[BU-TAKEOVER]")
+
+  private[nebflow] def takeoverSession(question: String): Option[String] =
+    if !isBrowserTakeover(question) then None
+    else
+      val names = question.linesIterator.drop(1).filter(_.startsWith("session: ")).map(_.stripPrefix("session: ")).toList
+      names match
+        case name :: Nil if nebflow.core.browser.BrowserPolicy.validSessionName(name) => Some(name)
+        case _ => None
+
+  private[nebflow] def admitBrowserTakeover(
+    trustedRoot: Boolean,
+    rootSession: String,
+    state: Option[AskHostLedger.RequestState],
+    browserSession: String,
+    registry: nebflow.core.browser.BrowserTakeoverRegistry
+  ): Either[String, Unit] =
+    state match
+      case Some(s) if trustedRoot && s.pending.rootSession == rootSession && isBrowserTakeover(s.question) &&
+          takeoverSession(s.question).contains(browserSession) &&
+          (s.terminal.isEmpty || s.terminal.exists(_.isInstanceOf[AskHostLedger.Terminal.TimedOut])) && s.lateReplies.isEmpty =>
+        registry.begin(browserSession, s.pending.workerSession, s.pending.correlationId)
+      case _ => Left("接管请求未授权或已结束")
 
   val description =
     "Ask the trusted Nebula root for a decision. The root can answer or reject; use AskUserQuestion there if clarification is needed. This blocks until its correlated reply arrives."
@@ -566,6 +640,7 @@ object AskHostTool extends Tool:
                       "workerSession" -> worker.asJson,
                       "rootSession" -> root.asJson,
                       "sourceAgent" -> agent.name.asJson,
+                      "browserTakeover" -> isBrowserTakeover(question).asJson,
                       "engineOwned" -> true.asJson
                     )
                     val event =
@@ -733,7 +808,7 @@ object AskHostReplyTool extends Tool:
    * Idempotent: the mailbox identity is stable (`askhost-late-reply-<id>`), so a repeated
    * send cannot duplicate the injection ([[nebflow.core.mail.SessionMailbox]] dedup).
    */
-  private def deliverLateReply(
+  private[nebflow] def deliverLateReply(
     resources: nebflow.core.AgentRuntimePort,
     ctx: ToolContext,
     p: AskHostLedger.Pending,

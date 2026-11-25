@@ -36,6 +36,18 @@ import nebflow.core.root.RootLayer
  */
 class OwnerGateBootSpec extends munit.FunSuite:
 
+  test("browser takeover requires a session credential matching a present owner anchor"):
+    assert(!BrowserTakeoverAuth.allowed(None, Some("owner")))
+    assert(!BrowserTakeoverAuth.allowed(Some("owner"), None))
+    assert(!BrowserTakeoverAuth.allowed(Some("other"), Some("owner")))
+    assert(BrowserTakeoverAuth.allowed(Some("owner"), Some("owner")))
+
+  test("browser takeover origin rejects cross-site and malformed origins"):
+    assert(BrowserTakeoverAuth.validOrigin(Some("http://localhost"), "localhost", Set.empty))
+    assert(!BrowserTakeoverAuth.validOrigin(Some("http://evil.example"), "localhost", Set.empty))
+    assert(!BrowserTakeoverAuth.validOrigin(Some("http://localhost/path"), "localhost", Set.empty))
+    assert(!BrowserTakeoverAuth.validOrigin(None, "localhost", Set.empty))
+
   private val ServedSub = "logto|user-A"
   private val OwnerSub = "logto|user-B"
 

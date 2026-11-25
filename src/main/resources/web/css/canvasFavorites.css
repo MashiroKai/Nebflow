@@ -130,7 +130,7 @@ body.mobile-layer .mf-strip-chip .mf-cv-star svg { width: 18px; height: 18px; }
 .cfp-back { flex: none; height: auto; min-height: var(--ds-page-back-size); overflow-wrap: anywhere; }
 .cfp-title { flex: 1; min-width: 0; margin: 0; text-align: center; overflow-wrap: anywhere; font-size: 17px; font-weight: 600; }
 .cfp-search { padding: var(--ds-space-2) var(--ds-space-6); flex: none; }
-/* 搜索字段由消息面板共用的 sf-field 构建。 */
+/* 搜索字段由消息面板共用的 sf-field 构建，圆角由输入面单源提供。 */
 .cfp-tabs {
   display: flex;
   flex-wrap: wrap;

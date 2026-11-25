@@ -86,6 +86,7 @@ class WebSocketRoutes(
 ):
   private val logger = NebflowLogger.forName("nebflow.ws")
   private val attachmentOwnerStore = OwnerStore.forDataRoot(PathUtil.dataRoot.toNIO)
+  private val browserTakeoverTickets = new nebflow.core.browser.BrowserTakeoverTickets(() => System.currentTimeMillis(), 120000L)
 
   /**
    * #295 热更：setSttConfig 写配置后重建服务并替换此 Ref——transcribe 立即
@@ -1070,6 +1071,103 @@ class WebSocketRoutes(
       ) <+> ExternalOpenRoutes.externalOpenRoutes(tokenRef, sessions, nfPathPolicy) <+> NfOfficeRoutes
       .officeRoutes(nfTicketStore, nfPathPolicy) <+> NfFileRoutes.nfReachRoutes <+> HttpRoutes
       .of[IO] {
+        case req @ GET -> Root / "ws" / "browser-takeover" =>
+          val origin = req.headers.headers.find(_.name.toString.equalsIgnoreCase("Origin")).map(_.value)
+          val host = req.headers.headers.find(_.name.toString.equalsIgnoreCase("Host")).map(_.value).getOrElse("")
+          (tokenRef.get.flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth)), OwnerIdentity.localAnchor).tupled.flatMap { (cred, anchor) =>
+            val subject = cred.collect { case Credential.ViaSession(record) => record.accountSub }
+            if !BrowserTakeoverAuth.allowed(subject, anchor.map(_.sub)) || !BrowserTakeoverAuth.validOrigin(origin, host, HealthRoutes.allowedProbeOrigins) then
+              Forbidden("接管未授权")
+            else
+              for
+                outbound <- Queue.bounded[IO, WebSocketFrame](16)
+                started <- Ref.of[IO, Boolean](false)
+                send = (j: Json) => outbound.offer(WebSocketFrame.Text(j.noSpaces))
+                settler = new TakeoverSettler.Settler[IO](
+                  { case (_, _, stream, unsubscribe) => IO(unsubscribe()).attempt.void *> IO.blocking(stream.close()).attempt.void },
+                  id => IO(nebflow.core.browser.BrowserSessions.takeoverRegistry.finish(id)).void,
+                  id => AskHostLedger.recordTakeoverStreamFailure(id),
+                  (id, session) => AskHostLedger.requestState(id).flatMap { current =>
+                    AskHostLedger.finishTakeover(id, session, nebflow.core.browser.BrowserSessions.takeoverRegistry).flatMap { result =>
+                      if result == AskHostLedger.TakeoverFinish.LateClaimed then
+                        current.traverse_ { s =>
+                          val ctx = ToolContext(projectRoot = os.pwd.toString, sharedResources = Some(sharedResources))
+                          AskHostReplyTool.deliverLateReply(sharedResources, ctx, s.pending, id, AskHostLedger.TimeoutOutcome, AskHostLedger.TakeoverDecision).void
+                        }
+                      else IO.unit
+                    }
+                  },
+                  send, 5.seconds, (msg, error) => logger.warn(s"$msg: ${error.getMessage}")
+                )
+                receive: Pipe[IO, WebSocketFrame, Unit] = incoming => incoming.evalMap {
+                  case WebSocketFrame.Text(text, _) if text.length <= 16384 =>
+                    val message = parsedJson(text)
+                    message.hcursor.get[String]("type").getOrElse("") match
+                      case "start" =>
+                        val ticket = message.hcursor.get[String]("ticket").getOrElse("")
+                        val binding = browserTakeoverTickets.inspect(ticket)
+                        started.get.flatMap { already =>
+                          if already then send(Json.obj("type" -> "status".asJson, "error" -> "此连接已启动接管".asJson))
+                          else binding match
+                            case None => send(Json.obj("type" -> "status".asJson, "error" -> "接管票无效或已过期".asJson))
+                            case Some(b) => AskHostLedger.requestState(b.request).flatMap {
+                              case None => send(Json.obj("type" -> "status".asJson, "error" -> "请求不存在".asJson))
+                              case Some(snapshot) =>
+                                AskHostLedger.admitTakeoverCurrent(b.request, snapshot.pending.rootSession, b.session, nebflow.core.browser.BrowserSessions.takeoverRegistry).flatMap {
+                                  case Left(error) => send(Json.obj("type" -> "status".asJson, "error" -> error.asJson))
+                                  case Right(_) if browserTakeoverTickets.consume(ticket, _ => true).isEmpty =>
+                                    IO(nebflow.core.browser.BrowserSessions.takeoverRegistry.finish(b.request)) *>
+                                      send(Json.obj("type" -> "status".asJson, "error" -> "接管票已使用或过期".asJson))
+                                  case Right(_) =>
+                                    IO.uncancelable { _ => IO.blocking {
+                                      val page = nebflow.core.browser.BrowserSessions.takeoverPage(b.session)
+                                      lazy val stream: nebflow.core.browser.BrowserScreencast = new nebflow.core.browser.BrowserScreencast((method, params) => { page.send(method, params); () }, () => settler.markFailed(stream))
+                                      val unsubscribe = page.subscribe("Page.screencastFrame")(stream.frame)
+                                      try stream.start()
+                                      catch
+                                        case e: Throwable =>
+                                          unsubscribe()
+                                          stream.close()
+                                          throw e
+                                      (b.request, b.session, stream, unsubscribe)
+                                    }.attempt.flatMap {
+                                      case Left(_) => IO(nebflow.core.browser.BrowserSessions.takeoverRegistry.finish(b.request)) *> send(Json.obj("type" -> "status".asJson, "error" -> "画面流启动失败；可在运行 stand 的机器前操作真实浏览器窗口".asJson))
+                                      case Right(active) => settler.register(active) *> started.set(true) *>
+                                        settler.current.flatMap {
+                                          case Some(_) => send(Json.obj("type" -> "status".asJson, "ready" -> true.asJson, "timedOut" -> snapshot.terminal.isDefined.asJson))
+                                          case None => IO.unit
+                                        }
+                                    } }
+                                }
+                            }
+                        }
+                      case "input" => settler.current.flatMap(_.traverse_ { case (id, session, stream, _) =>
+                        (OwnerIdentity.localAnchor, tokenRef.get.flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))).tupled.flatMap { (currentOwner, currentCred) =>
+                          val currentSubject = currentCred.collect { case Credential.ViaSession(record) => record.accountSub }
+                          if BrowserTakeoverAuth.allowed(currentSubject, currentOwner.map(_.sub)) &&
+                              BrowserTakeoverAuth.validOrigin(origin, host, HealthRoutes.allowedProbeOrigins) then
+                            message.hcursor.downField("event").focus.traverse_ { event =>
+                              IO.blocking(nebflow.core.browser.BrowserSessions.takeoverRegistry.withInput(session, id)(stream.input(event))).attempt.flatMap {
+                                case Right(Right(_)) => IO.unit
+                                case _ => send(Json.obj("type" -> "status".asJson, "error" -> "接管输入未授权".asJson))
+                              }
+                            }
+                          else send(Json.obj("type" -> "status".asJson, "error" -> "接管输入未授权".asJson))
+                        }
+                      })
+                      case "finish" => settler.finish.flatMap {
+                        case TakeoverSettler.Outcome.NothingToSettle => send(Json.obj("type" -> "status".asJson, "error" -> "接管租约不存在".asJson))
+                        case TakeoverSettler.Outcome.SettledAsFailure => IO.unit
+                        case TakeoverSettler.Outcome.SettledNormally => send(Json.obj("type" -> "finish".asJson))
+                      }
+                      case _ => IO.unit
+                  case _ => IO.unit
+                }.onFinalize(settler.finalizer)
+                frames = TakeoverSettler.framePump(settler, 200.millis) { case (_, _, stream, _) => IO(stream.take()) }
+                  .map(data => WebSocketFrame.Text(Json.obj("type" -> "frame".asJson, "frame" -> io.circe.parser.parse(data).getOrElse(Json.obj())).noSpaces))
+                response <- wsb.build(Stream.fromQueueUnterminated(outbound).merge(frames), receive)
+              yield response
+          }
         case req @ GET -> Root / "ws" =>
           // Phase 3b: the unified GatewayAuth criterion under WsAuth — session
           // cookie first, then Bearer (file token; a WsAuth registration note:
@@ -1278,6 +1376,23 @@ class WebSocketRoutes(
                                 // 门户身份透传批（方案 A1）：本连接的会话身份随帧进消息
                                 // 分发（两处消费点：typeless 腿 + immediateInput 腿——
                                 // 后者经 wsDispatchContext 闭包）。Bearer 轨恒 None。
+                                else if parsedJson(text).hcursor.get[String]("type").toOption.contains("browserTakeoverTicket") then
+                                  val origin = req.headers.headers.find(_.name.toString.equalsIgnoreCase("Origin")).map(_.value)
+                                  val host = req.headers.headers.find(_.name.toString.equalsIgnoreCase("Host")).map(_.value).getOrElse("")
+                                  val requestId = parsedJson(text).hcursor.get[String]("correlationId").toOption.getOrElse("")
+                                  (OwnerIdentity.localAnchor, AskHostLedger.requestState(requestId)).tupled.flatMap { (anchor, state) =>
+                                    val owner = BrowserTakeoverAuth.allowed(sessionIdentity.map(_.accountSub), anchor.map(_.sub))
+                                    val allowedOrigin = BrowserTakeoverAuth.validOrigin(origin, host, HealthRoutes.allowedProbeOrigins)
+                                    val eligible = state.filter(s => (s.terminal.isEmpty || s.terminal.exists(_.isInstanceOf[AskHostLedger.Terminal.TimedOut])) && s.lateReplies.isEmpty)
+                                      .flatMap(s => AskHostTool.takeoverSession(s.question).map(session => (s, session)))
+                                      .filter { case (s, session) => nebflow.core.browser.BrowserSessions.takeoverRegistry.ownedBy(session, s.pending.workerSession) }
+                                    if !owner || !allowedOrigin || eligible.isEmpty then
+                                      perConnJsonSend(Json.obj("type" -> "browserTakeoverTicketResult".asJson, "correlationId" -> requestId.asJson, "error" -> "接管请求未授权或不可用".asJson))
+                                    else
+                                      val (s, session) = eligible.get
+                                      val ticket = browserTakeoverTickets.issue(s.pending.correlationId, s.pending.workerSession, session)
+                                      perConnJsonSend(Json.obj("type" -> "browserTakeoverTicketResult".asJson, "correlationId" -> requestId.asJson, "ticket" -> ticket.asJson))
+                                  }
                                 else handleMessage(text, perConnJsonSend, watchSession, sessionIdentity, Some(cred))
                               handled.handleErrorWith { e =>
                                 logger.error(s"WebSocket message handler error: ${e.getMessage}", e)

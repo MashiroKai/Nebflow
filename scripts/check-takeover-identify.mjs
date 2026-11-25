@@ -39,10 +39,13 @@
 //   H. write rejection carries a REAL save-failure message on the server, while the
 //      client retains unsynced reader state silently (862f93c9e1);
 //   I. the writer seat is a SILENT PREEMPTIVE seat (申请即授予 + 定向通知被顶下的写者).
+//      Browser takeover viewer glue is a separate surface, allowed only in marked blocks;
+//      the console takeover surface remains forbidden in canvas.
 //
 // Usage: node scripts/check-takeover-identify.mjs
 
 import { existsSync, readFileSync } from 'node:fs';
+import { stripBrowserTakeoverGlue } from './lib/browser-takeover-glue.mjs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -209,8 +212,13 @@ if (!/function captureSeatDraft\s*\(/.test(canvasJs)) {
 if (!/captureSeatDraft\(\)/.test(canvasJs)) {
   fail('I: captureSeatDraft is never called — the seat-loss hook is unwired');
 }
-if (/takeover/i.test(canvasJs)) {
-  fail('I: canvas.js still references the console-takeover surface — the canvas producer must carry none of it');
+try {
+  const { outside } = stripBrowserTakeoverGlue(canvasJs);
+  if (/takeover/i.test(outside)) {
+    fail('I: canvas.js still references the console-takeover surface — the canvas producer must carry none of it');
+  }
+} catch (error) {
+  fail(`I: ${error.message}`);
 }
 
 if (failures.length > 0) {
@@ -223,5 +231,6 @@ if (failures.length > 0) {
 console.log(
   `check-takeover-identify: PASS — identity declared in-band as "${frameType}" (client emit ↔ receive-pipe intercept), ` +
   `handshake ?clientId= rail intact, console retake restored and isolated from canvas, ` +
-  `refusal preserves unsynced reader state, writer seat silently preemptive (displaced writer notified → draft)`
+  `refusal preserves unsynced reader state, writer seat silently preemptive (displaced writer notified → draft); ` +
+  `marked browser takeover viewer glue is a separate surface, console takeover remains forbidden in canvas`
 );

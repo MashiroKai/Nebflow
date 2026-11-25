@@ -594,6 +594,13 @@ function flushPendingSends() {
   }
 }
 
+/** Sensitive one-shot requests must never enter the reconnect queue. */
+export function sendWsIfOpen(msg) {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return false;
+  state.ws.send(typeof msg === 'string' ? msg : JSON.stringify(msg));
+  return true;
+}
+
 /** @param {WSOutgoingMessage | string} msg */
 export function sendWs(msg) {
   if (state.ws && state.ws.readyState === WebSocket.OPEN) {

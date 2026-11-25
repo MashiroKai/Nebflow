@@ -765,6 +765,18 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
   // （diff 块挂载点在 delegate 卡分支内胶囊旁相邻组——见上「diff 统计块」段；
   //   载荷/点击/aria-pressed 语义承继，右缘贴卡对齐随版式批②退役。）
   bubble.appendChild(content);
+  if (source === 'askhost' && /^\[AskHost request ([0-9a-f-]+) from [^\n]+\]\n\[BU-TAKEOVER\](?:\n|$)/.test(trimmed)) {
+    const requestId = trimmed.match(/^\[AskHost request ([0-9a-f-]+) from /)[1];
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = '打开浏览器接管';
+    button.addEventListener('click', async event => {
+      event.stopPropagation();
+      const { requestBrowserTakeover } = await import('../viewers/browserTakeover.js');
+      requestBrowserTakeover(requestId);
+    });
+    bubble.appendChild(button);
+  }
   row.appendChild(bubble);
 
   // Timestamp + copy button (unified v1.2 footer pill). History restore may
