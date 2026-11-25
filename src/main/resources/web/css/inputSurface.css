@@ -112,9 +112,6 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes,
      焦点规则（指针压回中性 / 键盘给内缩环），此处写 none 会把它们一起盖掉。 */
 }
 
-/* 收藏搜索输入面的既有圆角由输入面单源承载。 */
-.cfp-search-input { border-radius: var(--nf-field-radius-thin); }
-
 /* ── 下拉档：盒式 + 原生箭头 ─────────────────────────────────────────────
    箭头 = 两条 currentColor 渐变（4px 角），不新增色相；取消原生外观后
    才由本文件画箭头（`appearance:none` 只能在这里写）。
