@@ -17,6 +17,11 @@ private[nebflow] final class BrowserTakeoverTickets(now: () => Long, ttlMillis: 
     Base64.getUrlEncoder.withoutPadding().encodeToString(raw)
   }
 
+  def inspect(token: String): Option[Binding] = synchronized {
+    val raw = try Base64.getUrlDecoder.decode(token) catch case _: IllegalArgumentException => Array.emptyByteArray
+    entries.find { case (secret, binding) => MessageDigest.isEqual(secret, raw) && binding.expires > now() }.map(_._2)
+  }
+
   def consume(token: String, allowed: Binding => Boolean): Option[Binding] = synchronized {
     val raw = try Base64.getUrlDecoder.decode(token) catch case _: IllegalArgumentException => Array.emptyByteArray
     val index = entries.indexWhere { case (secret, _) => MessageDigest.isEqual(secret, raw) }

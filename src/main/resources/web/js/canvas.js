@@ -2198,6 +2198,16 @@ export async function openWorkspaceItem(item) {
   // 分支）同受此闸：恢复一个「文件不可读」骨架也是复活。
   const viaRestore = requestedFilePaths.delete(absPath) || requestedFilePaths.delete(item.path);
 
+  if (itemType === 'browser-takeover') {
+    if (!item.correlationId || !item.ticket) return;
+    if (tabs.has(id)) { setActiveTab(id); return; }
+    const entry = openTab(id, '浏览器人工接管', { type: 'browser-takeover' });
+    if (!entry) return;
+    const { mountBrowserTakeover } = await import('./viewers/browserTakeover.js');
+    entry.paneEl._nfViewerDispose = mountBrowserTakeover(entry.paneEl, item.ticket, item.correlationId);
+    return;
+  }
+
   // URL type — render the page in a sandboxed iframe. Handled before all
   // file logic: URL tabs have no absPath (scheduleFileRefresh skips them)
   // and are excluded from persistTabs (a restored URL tab would be a dead
@@ -6274,7 +6284,7 @@ function collectSerializableTabs() {
     // branch would re-open them as empty dead panes (canvas-tab-restore
     // has no renderer for type 'url'). Losing URL tabs across a reload is
     // acceptable per spec.
-    if (t.type === 'url') continue;
+    if (t.type === 'url' || t.type === 'browser-takeover') continue;
     // Skip retired panel tabs (2026-09-05 旧 UI 退役): the legacy
     // Teams/Flows panels no longer exist client-side — persisting them
     // would re-open dead panes on every reload.

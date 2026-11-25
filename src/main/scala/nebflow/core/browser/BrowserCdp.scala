@@ -43,7 +43,7 @@ final class CdpConnection private (
 
   def isOpen: Boolean = !closedFlag.get()
 
-  private[browser] def subscribe(method: String)(callback: Json => Unit): () => Unit =
+  private[nebflow] def subscribe(method: String)(callback: Json => Unit): () => Unit =
     events.subscribe(method, callback)
 
   def send(method: String, params: Json = Json.obj(), timeout: FiniteDuration = 15.seconds): Json =
