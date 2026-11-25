@@ -1610,7 +1610,7 @@ final class ExecutionCommitStore private (
       case ExecutionEvent.Suspended(reason)
           if reason.nonEmpty && state.phase != "suspended" && state.phase != "cancelled" &&
             state.phase != "terminal-prepared" && state.phase != "terminal" =>
-        Right(state.copy(phase = "suspended"))
+        Right(state.copy(phase = "suspended", suspensionReason = Some(reason)))
       case ExecutionEvent.CancelRequested(reason)
           if reason.nonEmpty && state.phase != "cancelled" &&
             state.phase != "terminal-prepared" && state.phase != "terminal" =>
@@ -1623,6 +1623,7 @@ final class ExecutionCommitStore private (
         Right(
           state.copy(
             phase = "authorized",
+            suspensionReason = None,
             attemptId = attempt,
             incarnationId = incarnation,
             runnerStopped = false,

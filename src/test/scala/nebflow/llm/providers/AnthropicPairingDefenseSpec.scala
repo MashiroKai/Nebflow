@@ -43,6 +43,14 @@ class AnthropicPairingDefenseSpec extends FunSuite:
           case _ => None
       }
 
+  test("delegation metadata stays internal while Anthropic sees original call") {
+    val use = ContentBlock.ToolUse("ask-id", "ask_edit", io.circe.JsonObject.empty, Some(Json.obj("tool" -> Json.fromString("Edit"))))
+    val wire = messages(List(Message(MessageRole.Assistant, Right(List(use))), Message(MessageRole.User, Right(List(ContentBlock.ToolResult("ask-id", "ok")))))).map(_.noSpaces).mkString
+    assert(wire.contains("ask_edit"))
+    assert(wire.contains("ask-id"))
+    assert(!wire.contains("delegatedTo"))
+  }
+
   test("orphaned head tool_result (no preceding tool_use) is replaced, not sent") {
     // The exact Manager-session shape: history STARTS with a user(tool_result)
     // whose tool_use id is NOT present anywhere earlier (cleanup truncated the

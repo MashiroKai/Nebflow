@@ -481,6 +481,65 @@ class AgentRoundRecoverySpec extends CatsEffectSuite:
     yield ()
   }
 
+  test("protected actor persists Ask delegation refusal and exposes it in verified state") {
+    val system = ActorSystem("protected-ask-refusal")
+    val sid = "ask-protected-refusal"
+    val reason = "受保护执行模式下的 Ask 委托暂未支持"
+    for
+      root <- IO.blocking(os.temp.dir(prefix = "protected-ask-refusal-"))
+      suspended <- Deferred[IO, ExecutionTransition]
+      _ <- (IO.blocking(os.makeDir.all(root / "sessions")) *>
+        ExecutionCommitStore.resource((root / "sessions").toNIO).use { store =>
+          val authority = new ExecutionCommitPort:
+            def admit(a: ExecutionAdmission) = store.admit(a)
+            def observe(s: String, e: String) = store.observe(s, e)
+            def reconcileAdmission(a: ExecutionAdmission) = store.reconcileAdmission(a)
+            def transition(c: ExecutionTransition) = store.transition(c).flatTap { result =>
+              c.event match
+                case ExecutionEvent.Suspended(_) => suspended.complete(c).void
+                case _ => IO.unit
+            }
+            override def acceptInput(c: ExecutionTransition) = store.acceptInput(c)
+            def reconcileTransition(c: ExecutionTransition) = store.reconcileTransition(c)
+            def observeChain(s: String, e: String) = store.observeChain(s, e)
+            override def commitRound(c: ExecutionTransition) = store.commitRound(c)
+          val admission = ExecutionAdmission(sid, "run", "admission", "request", "attempt", "incarnation", "owner", "business", "audit", Json.fromString("initial"), "initial")
+          val llm = new LlmHandle[IO]:
+            def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new IllegalStateException("unexpected send"))
+            def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] =
+              Stream(StreamChunk.ToolCallChunk(ToolCall("ask-call", "ask_write", JsonObject("path" -> Json.fromString((root / "other.md").toString), "content" -> Json.fromString("changed")))), StreamChunk.Done(None, None))
+          for
+            bound <- ExecutionCommitPort.admitHandle(authority, admission)
+            handle = bound.toOption.get
+            _ <- store.transition(ExecutionTransition(sid, "run", "start", "start", handle.ref, "attempt", "incarnation", ExecutionEvent.AttemptStarted))
+            _ <- (store.registerRunner(ExecutionRunner.Attempt(sid, "run", "attempt", "incarnation")), Dispatcher.parallel[IO]).tupled.use { (registered, dispatcher) =>
+              val runner = registered.toOption.get
+              (for
+                limiter <- RateLimiter.create()
+                tracker <- FileChangeTracker.create(root.toString)
+                locks <- FileLockManager.create
+                thinking <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
+                overrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
+                muted <- Ref.of[IO, Boolean](false)
+                base = SharedResources(llm = llm, dispatcher = dispatcher, sessionStore = SessionStore(root / "sessions", root / "tasks"), projectRoot = root, thinkingConfigRef = thinking, rateLimiter = limiter, fileChangeTracker = tracker, contextWindow = 100000, agentLibrary = new AgentLibrary(root / "agents"), taskStore = FileTaskStore, historyArchiver = null, fileLockManager = locks, sessionModelOverrides = overrides, providerRegistry = null, healthMonitor = null, actorSystem = system, voiceMutedRef = muted)
+                resources = base.copy(executionCommitPort = authority, protectedExecutions = Map(sid -> handle), protectedRunners = Map(sid -> runner))
+                definition = AgentDef("ask", "ask", tools = Nil, category = "standalone")
+                actor <- system.spawn(AgentActor(definition, resources, _ => IO.unit, 1, sessionId = Some(sid)), sid)
+                _ <- actor ! AgentCommand.UserInput("write", clientMessageId = Some("input"))
+                event <- suspended.get.timeout(30.seconds)
+                _ = assertEquals(event.event, ExecutionEvent.Suspended(reason))
+                observed <- store.observeChain(sid, "run")
+                state = observed.asInstanceOf[ExecutionChainObservation.Verified].state
+                _ = assertEquals(state.phase, "suspended")
+                _ = assertEquals(state.suspensionReason, Some(reason))
+                _ = assert(!os.exists(root / "other.md"))
+              yield ()).guarantee(system.stopAll)
+            }
+          yield ()
+        }).guarantee(system.stopAll *> IO.blocking(os.remove.all(root)))
+    yield ()
+  }
+
   test("checkpoint rejects unrepresented queued state") {
     val state = AgentState().copy(execution = nebflow.actor.ExecutionContext(outstandingSubagentResults = 1))
     assertEquals(ProtectedAgentExecution.checkpoint(state), Left("unsupported-checkpoint-state"))

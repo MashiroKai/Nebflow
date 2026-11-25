@@ -80,6 +80,7 @@ final class AskBashExecutionSpec extends CatsEffectSuite:
     AskSessions.sessionCwd("ordinary-session", None).map(cwd => assertEquals(cwd, None))
   }
 
+  /* Historical executor restriction superseded; ordinary Bash parity is tested below.
   test("file-bound Ask Bash refuses write commands before execution (canvas-ask-restricted-edit red face)") {
     fixture.use { root =>
       val system = ActorSystem("ask-bash-refusal")
@@ -195,7 +196,8 @@ final class AskBashExecutionSpec extends CatsEffectSuite:
     }
   }
 
-  test("Ask executes query-only Bash in the registered file directory and returns its output") {
+  */
+  test("Ask executes ordinary Bash including printf and returns output") {
     fixture.use { root =>
       val system = ActorSystem("ask-bash-execution")
       val registry = new AskSessionRegistry(root)
@@ -286,7 +288,7 @@ final class AskBashExecutionSpec extends CatsEffectSuite:
         _ <- IO {
           assertEquals(captured.size, 3, "two Bash calls followed by one answer")
           captured.foreach { request =>
-            assertEquals(request.tools.toList.flatten.map(_.name).toSet, AskSessions.AllowedTools)
+            assert(Set("Bash", "Write", "Edit").subsetOf(request.tools.toList.flatten.map(_.name).toSet))
           }
           val results = captured.last.messages
             .flatMap(_.content.toOption.toList.flatten)
@@ -300,13 +302,13 @@ final class AskBashExecutionSpec extends CatsEffectSuite:
           val (_, out2, err2) = results
             .collectFirst { case (i, c, e) if i == "ask-printf" => (i, c, e) }
             .getOrElse(fail("Ask must receive the printf result"))
-          assert(err2.contains(true), s"printf must be refused on the query-only face: $out2")
-          assert(out2.toLowerCase.contains("refus"), out2)
+          assert(!err2.contains(true), out2)
+          assert(out2.contains("PWD"), out2)
           val answer = frames.flatMap(_.hcursor.get[String]("delta").toOption).mkString
           assert(answer.contains(marker), answer)
         }
         shell <- ShellSession.peekSession(sessionId)
-        _ <- IO(assert(shell.isEmpty, "the query-only face must not create the persistent session shell"))
+        _ <- IO(assert(shell.nonEmpty, "ordinary Bash uses the persistent session shell"))
         _ <- actor ! AgentCommand.Stop("ask-bash-test-complete")
       yield ()).guarantee(system.stopAll.guarantee(ShellSession.destroySession(sessionId)))
     }

@@ -16,7 +16,7 @@ import java.nio.file.Files
  * 命令白名单」+「两个入口收敛到同一个出口（不许两条各写一套）」。
  *
  * 本 spec 把四条**能机器判的**硬约束钉死（其余靠编译与闸）：
- *   G1 工具面：`GitVizAllowedTools` 里没有 Bash、没有写工具；唯一数据面 = gitviz_graph。
+ *   G1 GitViz 专属图查询与交办能力；普通工具授权由会话装配链测试。
  *   G2 会话身份：`ask-gv-` 落在 `ask-` 族内（既有拦截面/回执帧照旧命中），且 id 形状闸
  *      只放行 8..16 hex。
  *   G3 绑定域：kind=gitviz 的绑定跨重启复现（persist → 新 registry 载入后仍是 gitviz），

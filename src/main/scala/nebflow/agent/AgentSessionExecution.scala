@@ -1959,7 +1959,11 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                       current.ref,
                       admission.attemptId,
                       admission.incarnationId,
-                      nebflow.shared.ExecutionEvent.Suspended("tool-pipeline-review-required")
+                      nebflow.shared.ExecutionEvent.Suspended(
+                        if msg.contains("受保护执行模式下的 Ask 委托暂未支持") then
+                          "受保护执行模式下的 Ask 委托暂未支持"
+                        else "tool-pipeline-review-required"
+                      )
                     )
                   )
                   .flatMap(result =>

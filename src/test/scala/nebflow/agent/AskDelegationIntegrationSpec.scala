@@ -1,6 +1,6 @@
 package nebflow.agent
 
-import cats.effect.{IO, Ref}
+import cats.effect.{Deferred, IO, Ref}
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
@@ -28,7 +28,7 @@ class AskDelegationIntegrationSpec extends FunSuite:
         else Stream(StreamChunk.TextDelta("done"), StreamChunk.Done(None, None))
       }
 
-  private def runCase(remote: Boolean, bound: Boolean): Unit =
+  private def runCase(remote: Boolean, bound: Boolean, edit: Boolean = false, approval: Boolean = false, isolateReview: Boolean = false): Unit =
     val system = ActorSystem("ask-delegation-integration")
     val root = os.temp.dir()
     val prevRoot = PathUtil.dataRoot
@@ -43,6 +43,9 @@ class AskDelegationIntegrationSpec extends FunSuite:
       val registry = new AskSessionRegistry(root / "data")
       val binding = registry.bind(file.toString, "bound.md").unsafeRunSync()
       AskEditReviews.resetForTest(binding.id)
+      if isolateReview then
+        val change = AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", _ => Right("bound-changed")).unsafeRunSync()
+        assert(change.isRight)
       val sources = new AskContextSources:
         def fileStat(p: String) = IO.pure(None)
         def fileText(p: String) = IO.pure(None)
@@ -52,10 +55,13 @@ class AskDelegationIntegrationSpec extends FunSuite:
         def graphVersion = IO.pure("")
       AskGatewayServices.install(AskServices(registry, sources, new AskPromptCache))
       val hookConfig = root / nebflow.shared.Branding.configFileName
-      os.write(hookConfig, """{"hooks":{"PostToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"echo '{\"additional_context\":\"WRITE-HOOK-PROBE\"}'","timeout":10}]}]}}""")
+      os.write(hookConfig, """{"hooks":{"PostToolUse":[{"matcher":"Write|Edit","hooks":[{"type":"command","command":"echo '{\"additional_context\":\"WRITE-HOOK-PROBE\"}'","timeout":10}]}]}}""")
+      if approval then os.write.over(PathUtil.configJsonWritePath(PathUtil.dataRoot), """{"safety":{"defaultMode":"confirm-edits"}}""", createFolders = true)
       val target = if bound || remote then file else other
       val device = if remote then "peer-unavailable" else "local"
-      val call = ToolCall("ask-call-1", "ask_write", JsonObject("path" -> target.toString.asJson, "content" -> "changed".asJson, "device" -> device.asJson))
+      val input = if edit then JsonObject("path" -> target.toString.asJson, "old_str" -> "alpha".asJson, "new_str" -> "changed".asJson, "device" -> device.asJson)
+        else JsonObject("path" -> target.toString.asJson, "content" -> "changed".asJson, "device" -> device.asJson)
+      val call = ToolCall("ask-call-1", if edit then "ask_edit" else "ask_write", input)
       val program = for
         requests <- IO.ref(List.empty[LlmRequest])
         events <- IO.ref(List.empty[Json])
@@ -77,20 +83,42 @@ class AskDelegationIntegrationSpec extends FunSuite:
           voiceMutedRef = muted, hookEngine = HookEngine(HooksConfigLoader.load(root))
         )
         definition = nebflow.actor.AgentDef(name = "ask", description = "test", tools = Nil, category = "standalone")
+        card <- Deferred[IO, Json]
+        hub <- system.spawn(InteractionHub(), "test-hub")
+        _ <- resources.interactionHubRef.set(Some(hub))
+        _ <- hub ! InteractionHubCommand.RegisterRoot(binding.id, (j: Json) =>
+          if j.hcursor.downField("type").as[String].contains("askPermission") then card.complete(j).void else IO.unit)
         actor <- system.spawn(AgentActor(definition, resources, j => events.update(_ :+ j), 0, sessionId = Some(binding.id), projectRoot = Some(root.toString)), binding.id)
         _ <- resources.agentRegistry.update(_ + (binding.id -> AgentRecord(binding.id, actor, AgentKind.Root, binding.id, None)))
         _ <- actor ! AgentCommand.ImmediateInput("execute", fromUser = true)
+        _ <- if approval then for
+          frame <- card.get.timeout(20.seconds)
+          _ = assertEquals(frame.hcursor.get[String]("toolName").toOption, Some(if edit then "Edit" else "Write"))
+          _ = assertEquals(os.read(target), "alpha")
+          requestId <- IO.fromEither(frame.hcursor.get[String]("requestId"))
+          _ <- hub ! InteractionHubCommand.Answered(InteractionAnswered(requestId, binding.id, Json.obj("approved" -> true.asJson)))
+        yield () else IO.unit
         _ <- Stream.repeatEval(requests.get).filter(_.size >= 2).head.compile.drain.timeout(30.seconds)
         reqs <- requests.get
         frames <- events.get
+        _ <- resources.sessionStore.flushPendingMessages
+        persisted <- SessionStore(root / "sessions", root / "tasks-ui").loadMessagesForSession(binding.id)
       yield
         val blocks = reqs(1).messages.flatMap(_.content.toOption.toList.flatten)
         val use = blocks.collectFirst { case u: ContentBlock.ToolUse if u.id == call.id => u }
         assert(use.nonEmpty, s"missing original ToolUse: $blocks")
-        assertEquals(use.get.name, "ask_write")
+        assertEquals(use.get.name, call.name)
+        val savedUse = persisted.flatMap(_.content.toOption.toList.flatten).collectFirst { case u: ContentBlock.ToolUse if u.id == call.id => u }
+        assertEquals(savedUse, use)
         if !bound || remote then
-          assertEquals(use.get.delegatedTo.flatMap(_.hcursor.downField("tool").as[String].toOption), Some("Write"))
-          assertEquals(AskEditReviews.reviewFor(binding.id), None)
+          assertEquals(use.get.delegatedTo.flatMap(_.hcursor.downField("tool").as[String].toOption), Some(if edit then "Edit" else "Write"))
+          if isolateReview then
+            assertEquals(AskEditReviews.reviewFor(binding.id).map(_.path), Some(file.toNIO.toRealPath().toString))
+            assertEquals(AskEditReviews.reviewFor(binding.id).map(_.changes.size), Some(1))
+            assert(AskEditReviews.reject(binding.id, None).unsafeRunSync().isRight)
+            assertEquals(os.read(file), "alpha")
+            assertEquals(os.read(other), "changed")
+          else assertEquals(AskEditReviews.reviewFor(binding.id), None)
           if remote then assertEquals(os.read(file), "alpha") else assertEquals(os.read(other), "changed")
         else
           assertEquals(use.get.delegatedTo, None)
@@ -106,8 +134,11 @@ class AskDelegationIntegrationSpec extends FunSuite:
       system.stopAll.attempt.void.unsafeRunSync()
       nebflow.core.LlmLogWriter.setEnabled(prevLog)
       PathUtil.setDataRoot(prevRoot)
-      os.remove.all(root)
+      try os.remove.all(root)
+      catch case _: java.nio.file.DirectoryNotEmptyException => ()
 
+  test("拒绝绑定审阅不回滚非绑定文件") { runCase(remote = false, bound = false, isolateReview = true) }
+  test("非绑定 ask_edit 经普通 Edit 审批和 hook") { runCase(remote = false, bound = false, edit = true, approval = true) }
   test("本机非绑定写入走普通路径") { runCase(remote = false, bound = false) }
   test("远端未证明绑定走普通路径") { runCase(remote = true, bound = false) }
   test("本机绑定文件保留审阅") { runCase(remote = false, bound = true) }

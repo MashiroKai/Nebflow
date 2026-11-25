@@ -16,22 +16,16 @@ final class AskEditFaceSpec extends FunSuite:
     assert(AskSessions.AllowedTools.contains("ask_write"))
   }
 
-  test("EF1b: direct Edit/Write stay outside the closed Ask face") {
-    assert(!AskSessions.AllowedTools.contains("Edit"), "Ask must not expose direct Edit")
-    assert(!AskSessions.AllowedTools.contains("Write"), "Ask must not expose direct Write")
-  }
+  // Ordinary Edit/Write authorization is tested through DualModeToolFaceSpec.
 
   test("EF2: ask_edit/ask_write are registered tools") {
     assert(ToolRegistry.TOOL_MAP.contains("ask_edit"), "ask_edit must be registered in ToolRegistry")
     assert(ToolRegistry.TOOL_MAP.contains("ask_write"), "ask_write must be registered in ToolRegistry")
   }
 
-  test("EF3: Ask system prompt documents the query-only Bash face and proposal tools") {
+  test("EF3: prompt retains context without obsolete Bash restriction") {
     val prompt = AskContextAssembler.promptFor("notes.md", "/tmp/notes.md", "CONTEXT-BLOCK")
-    assert(prompt.contains("QUERY-ONLY"), "prompt must describe Bash as query-only")
-    assert(prompt.contains("fail-closed"), "prompt must describe Bash as fail-closed")
-    assert(prompt.contains("ask_edit"), "prompt must document ask_edit")
-    assert(prompt.contains("ask_write"), "prompt must document ask_write")
-    assert(prompt.contains("CONTEXT-BLOCK"), "context block must be appended")
+    assert(!prompt.contains("QUERY-ONLY"))
+    assert(prompt.contains("CONTEXT-BLOCK"))
   }
 end AskEditFaceSpec
