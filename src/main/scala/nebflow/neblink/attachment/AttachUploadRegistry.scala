@@ -1,9 +1,8 @@
 package nebflow.neblink.attachment
 
+import cats.effect.{IO, Ref}
 import nebflow.neblink.core.*
 import nebflow.neblink.social.*
-
-import cats.effect.{IO, Ref}
 
 /**
  * 在飞附件上传的**取消位**登记表（attachcl 批，2026-09-16）。

@@ -1,7 +1,8 @@
 package nebflow.shared
 
-import java.util.concurrent.{Executors, ScheduledExecutorService, ThreadFactory, TimeUnit}
 import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
+import java.util.concurrent.{Executors, ScheduledExecutorService, ThreadFactory, TimeUnit}
+
 import scala.collection.mutable
 
 /**

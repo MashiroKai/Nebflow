@@ -144,7 +144,8 @@ object AskBashGuard:
         segments += toks
         tokens.clear()
         Right(segments.result())
-    while i < command.length do
+    var error: Option[String] = None
+    while i < command.length && error.isEmpty do
       val c = command.charAt(i)
       if inSingle then
         if c == '\'' then inSingle = false else cur.append(c)
@@ -160,20 +161,22 @@ object AskBashGuard:
           case '"' =>
             inDouble = true; i += 1
           case '\\' =>
-            if i + 1 >= command.length then return Left("trailing backslash")
+            if i + 1 >= command.length then error = Some("trailing backslash")
             else
               cur.append(command.charAt(i + 1)); i += 2
           case '|' =>
             endSegment() match
-              case Left(why) => return Left(why)
-              case Right(_) => ()
-            i += 1
+              case Left(why) => error = Some(why)
+              case Right(_) => i += 1
           case ch if ch.isWhitespace => endToken(); i += 1
           case ch => cur.append(ch); i += 1
       end if
     end while
-    if inSingle || inDouble then Left("unterminated quote")
-    else endSegment()
+    error match
+      case Some(why) => Left(why)
+      case None =>
+        if inSingle || inDouble then Left("unterminated quote")
+        else endSegment()
   end splitPipeline
 
   /** 单段校验：首词白名单 + git 子命令闸 + 参数黑名单。 */

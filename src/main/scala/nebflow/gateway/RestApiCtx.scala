@@ -1,19 +1,18 @@
 /* 从 RestApiRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
-import nebflow.neblink.core.*
-import nebflow.neblink.identity.*
-import nebflow.neblink.portal.*
-import nebflow.neblink.relay.*
-import nebflow.neblink.social.*
-
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, parser}
 import nebflow.agent.SharedResources
 import nebflow.core.SessionStore
+import nebflow.neblink.core.*
+import nebflow.neblink.identity.*
 import nebflow.neblink.logto.*
+import nebflow.neblink.portal.*
+import nebflow.neblink.relay.*
+import nebflow.neblink.social.*
 import nebflow.shared.{NebflowLogger, NebflowServiceConfig, PeerInfo}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*

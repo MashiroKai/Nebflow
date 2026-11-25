@@ -7,6 +7,7 @@ import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.sql.{Connection, DriverManager, PreparedStatement, ResultSet}
 import java.util.concurrent.ConcurrentHashMap
+
 import scala.collection.mutable.ListBuffer
 import scala.util.control.NonFatal
 

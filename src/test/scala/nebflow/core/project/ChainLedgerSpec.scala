@@ -489,6 +489,17 @@ class ChainLedgerSpec extends CatsEffectSuite:
     end for
   }
 
+  test("corrupt gzip cold round is skipped without crashing") {
+    val dir = os.temp.dir(prefix = "chain-bad-gzip-")
+    val arch = dir / ChainLedger.ArchiveDirName
+    for
+      _ <- IO.blocking(os.makeDir.all(arch))
+      _ <- IO.blocking(os.write(arch / "round-1.json.gz", "not gzip"))
+      store <- ChainLedgerStore.open("bad-gzip", dir / ChainLedger.FileName, arch)
+      rounds <- store.readRounds
+    yield assertEquals(rounds, Nil)
+  }
+
   // ── T11 集成：FlowMapStore 拍点接线 ────────────────────────
 
   test("T11 集成：出生 → 合并显式改号（别名）+ 轴(a) 归档绑定同刻翻 archived") {

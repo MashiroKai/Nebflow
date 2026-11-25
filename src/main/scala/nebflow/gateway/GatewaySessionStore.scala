@@ -1,21 +1,19 @@
 package nebflow.gateway
 
-import nebflow.neblink.portal.*
-
-import cats.effect.{IO, Ref}
-import cats.effect.unsafe.implicits.global
 import cats.effect.std.Semaphore
-import java.nio.channels.FileChannel
-import java.nio.file.StandardOpenOption
+import cats.effect.unsafe.implicits.global
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
+import nebflow.neblink.portal.*
 import nebflow.shared.Branding
 import org.http4s.{ResponseCookie, SameSite}
 
+import java.nio.channels.FileChannel
+import java.nio.file.StandardOpenOption
 import java.security.SecureRandom
 import java.util.Base64
-import java.util.concurrent.ScheduledThreadPoolExecutor
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.{ScheduledThreadPoolExecutor, TimeUnit}
 
 /**
  * One console session record: the value of the HttpOnly session cookie the

@@ -60,7 +60,12 @@ class FileTransferChunkSpec extends CatsEffectSuite:
     val payload = "0123456789abcdef".getBytes("UTF-8")
     os.write(p, original)
     var releases = 0
+    var restores = 0
+    var removes = 0
     val ops = new FileTransferAction.ChunkPutOps:
+      override def restore(path: os.Path, backup: java.nio.file.Path): Unit =
+        restores += 1
+        super.restore(path, backup)
       override def ensureParent(path: os.Path): Either[String, Unit] =
         if stage == "mkdir" && path == p then Left("injected mkdir") else super.ensureParent(path)
       override def append(path: os.Path, bytes: Array[Byte]): Unit =
@@ -72,6 +77,7 @@ class FileTransferChunkSpec extends CatsEffectSuite:
         if stage == "hash" && path == p then throw new java.io.IOException("injected hash")
         else super.hash(path)
       override def remove(path: os.Path): Unit =
+        removes += 1
         if stage == "remove" && path == p then throw new java.io.IOException("injected remove")
         else super.remove(path)
       override def release(path: os.Path): Unit =
@@ -84,12 +90,89 @@ class FileTransferChunkSpec extends CatsEffectSuite:
       assert(result.isFailure || result.toOption.exists(_.isLeft), s"expected failure: $result")
       assertEquals(os.read.bytes(p).toList, original.toList, s"$stage must restore original bytes")
       assertEquals(releases, 1, s"$stage must release claim exactly once")
+      if stage == "mkdir" then
+        assertEquals(result.toOption, Some(Left("injected mkdir")))
+        assertEquals(restores, 0, "mkdir failure must not restore")
+        assertEquals(removes, 0, "mkdir failure must not remove")
     finally os.remove.all(dir)
 
-  test("fault mkdir rolls back and releases claim") { faultCase("mkdir") }
+  test("fault mkdir leaves file untouched and releases claim") { faultCase("mkdir") }
+
+  test("non-final chunk keeps ownership for the next chunk") {
+    val dir = os.temp.dir(prefix = "chunk-owner-")
+    val p = dir / "file"
+    val first = "0123456789abcdef".getBytes("UTF-8")
+    val second = "fedcba9876543210".getBytes("UTF-8")
+    val whole = ChunkedTransfer.sha256Hex(first ++ second)
+    var releases = 0
+    val ops = new FileTransferAction.ChunkPutOps:
+      override def release(path: os.Path): Unit =
+        releases += 1
+        super.release(path)
+    val one = putParams(p.toString, first, 0, 32L, whole)
+    val two = putParams(p.toString, second, 1, 32L, whole)
+    try
+      assert(FileTransferAction.chunkedPut(one, p, b64(first), true, ops).isRight)
+      assertEquals(releases, 0, "non-final chunk must retain claim")
+      assert(FileTransferAction.chunkedPut(two, p, b64(second), true, ops).isRight, "next chunk must remain owned")
+      assertEquals(releases, 1)
+      assertEquals(os.read.bytes(p).toList, (first ++ second).toList)
+    finally os.remove.all(dir)
+  }
   test("fault append rolls back and releases claim") { faultCase("append") }
   test("fault hash rolls back and releases claim") { faultCase("hash") }
   test("fault remove rolls back and releases claim") { faultCase("remove") }
+
+  test("rejected chunk keeps claim and permits retry without writes") {
+    val dir = os.temp.dir(prefix = "chunk-retry-owner-")
+    val p = dir / "file"
+    val first = "0123456789abcdef".getBytes("UTF-8")
+    val second = "fedcba9876543210".getBytes("UTF-8")
+    val whole = ChunkedTransfer.sha256Hex(first ++ second)
+    var releases = 0
+    val ops = new FileTransferAction.ChunkPutOps:
+      override def release(path: os.Path): Unit =
+        releases += 1
+        super.release(path)
+    val one = putParams(p.toString, first, 0, 32L, whole)
+    val two = putParams(p.toString, second, 1, 32L, whole)
+    try
+      assert(FileTransferAction.chunkedPut(one, p, b64(first), true, ops).isRight)
+      val before = os.list(dir).map(_.last).toSet
+      val bad = two.add("chunkSha256", "bad".asJson)
+      assert(FileTransferAction.chunkedPut(bad, p, b64(second), true, ops).isLeft)
+      assertEquals(os.read.bytes(p).toList, first.toList)
+      assertEquals(os.list(dir).map(_.last).toSet, before)
+      assertEquals(releases, 0, "pre-write rejection must retain claim")
+      assert(FileTransferAction.chunkedPut(two, p, b64(second), true, ops).isRight, "correct retry must remain owned")
+    finally os.remove.all(dir)
+  }
+
+  test("unowned request never releases or deletes another stream claim") {
+    val dir = os.temp.dir(prefix = "chunk-other-owner-")
+    val p = dir / "file"
+    val first = "0123456789abcdef".getBytes("UTF-8")
+    val second = "fedcba9876543210".getBytes("UTF-8")
+    val whole = ChunkedTransfer.sha256Hex(first ++ second)
+    var releases = 0
+    var removes = 0
+    val ops = new FileTransferAction.ChunkPutOps:
+      override def release(path: os.Path): Unit =
+        releases += 1
+        super.release(path)
+      override def remove(path: os.Path): Unit =
+        removes += 1
+        super.remove(path)
+    try
+      assert(FileTransferAction.chunkedPut(putParams(p.toString, first, 0, 32L, whole), p, b64(first), true, ops).isRight)
+      val foreign = putParams(p.toString, second, 1, 48L, whole)
+      assert(FileTransferAction.chunkedPut(foreign, p, b64(second), true, ops).isLeft)
+      assertEquals(releases, 0, "foreign request must not release claim")
+      assertEquals(removes, 0)
+      assertEquals(os.read.bytes(p).toList, first.toList)
+      assert(FileTransferAction.chunkedPut(putParams(p.toString, second, 1, 32L, whole), p, b64(second), true, ops).isRight)
+    finally os.remove.all(dir)
+  }
 
   test("rollback failure preserves original exception and settles claim once") {
     val dir = os.temp.dir(prefix = "chunk-cleanup-fault-")
@@ -185,6 +268,21 @@ class FileTransferChunkSpec extends CatsEffectSuite:
   }
 
   // ===== 分块形态（relay 腿接收端）=====
+
+  test("relay chunk returns parent creation failure without modifying the blocking file") {
+    withTmp { dir =>
+      val blocker = dir / "blocker"
+      val target = blocker / "nested" / "chunk.bin"
+      val bytes = Array.tabulate[Byte](Chunk)(_.toByte)
+      for
+        _ <- IO.blocking(os.write(blocker, "keep"))
+        result <- FileTransferAction.handle(putParams(target.toString, bytes, 0, Chunk.toLong, ChunkedTransfer.sha256Hex(bytes)))
+      yield
+        assert(result.isLeft, result.toString)
+        assertEquals(os.read(blocker), "keep")
+        assert(!os.exists(target))
+    }
+  }
 
   test("relay 分块：逐块 put ⇒ 双侧整件摘要一致，块回执带接收端**自算**摘要") {
     withTmp { dir =>

@@ -3,8 +3,7 @@ package nebflow.core.delegate
 import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.actor.{ActorRef, AgentCommand, AgentEvent}
-import nebflow.core.AgentRuntimePort
-import nebflow.core.GitWorktrees
+import nebflow.core.{AgentRuntimePort, GitWorktrees}
 import nebflow.shared.NebflowLogger
 
 import scala.util.Try

@@ -1,12 +1,11 @@
 package nebflow.neblink.misc
 
-import nebflow.neblink.core.*
-import nebflow.neblink.relay.*
-
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.dropbox.{ChunkedTransfer, DropboxUtil}
+import nebflow.neblink.core.*
+import nebflow.neblink.relay.*
 import nebflow.shared.{AttachContract, PathUtil}
 
 /**
@@ -558,6 +557,17 @@ object FileTransferAction:
               // （改前 = 显式 `OFFSET_OUT_OF_RANGE` 拒绝 ⇒ 该腿的断点续传物理不可行）。
               // 🔴 只在**本次流拥有该文件**时截（上方 `existing > 0 && !owned` 已 fail-closed 拒绝
               // 别人的件）——「收端永不覆盖/删除既有件」的口径不放松。
+              var settled = false
+              def releaseOnce(): Unit =
+                if !settled then
+                  settled = true
+                  ops.release(path)
+              try {
+              ops.ensureParent(path) match
+                case Left(reason) =>
+                  releaseOnce()
+                  return Left(reason)
+                case Right(_) => ()
               val existedBefore = os.exists(path)
               val backup =
                 if existedBefore then
@@ -570,11 +580,6 @@ object FileTransferAction:
                       throw e
                   Some(tmp)
                 else None
-              var settled = false
-              def releaseOnce(): Unit =
-                if !settled then
-                  settled = true
-                  ops.release(path)
               def rollback(): Unit =
                 var failure: Exception = null
                 try
@@ -599,9 +604,6 @@ object FileTransferAction:
               // 跨设备附件批（2026-11-05）：建父目录（`os.write.append` 不建 ⇒ 改前嵌套路径
               // 首块必 `NoSuchFileException`）。与 legacy 整件 put 的 `createFolders = true`
               // 语义对齐；**只在缺目录时建**，既有件零触碰（收端全保护口径不变）。
-              ops.ensureParent(path) match
-                case Left(reason) => throw new IllegalStateException(reason)
-                case Right(_) => ()
               ops.append(path, payload)
               // 本流从零创建了该文件 ⇒ 登记归属（后续块 / 末块清理才敢动它）。
               if baseBytes == 0L then streamClaims.put(path.toString, streamKey(totalBytes, chunkSize))
@@ -662,6 +664,11 @@ object FileTransferAction:
                     case cleanup: Exception =>
                       if primary != null then primary.addSuppressed(cleanup) else throw cleanup
                 }
+              } catch
+                case e: Exception =>
+                  try releaseOnce()
+                  catch case cleanup: Exception => e.addSuppressed(cleanup)
+                  throw e
 
             end if
 

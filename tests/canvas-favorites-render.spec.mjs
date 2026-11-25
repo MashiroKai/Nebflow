@@ -135,10 +135,12 @@ async function desktopCase(browser, failures) {
   check('desktop: aria-pressed=true', (await btn.getAttribute('aria-pressed')) === 'true');
   await shot(s.page, '#canvas-panel .canvas-header', 'desktop-capsule-on.png', 'desktop capsule on');
 
-  const rows = s.page.locator('#canvas-fav-section .canvas-fav-row');
-  check('desktop: 侧边栏收藏区出现条目', (await rows.count()) === 1, `count=${await rows.count()}`);
-  check('desktop: 条目标题为快照 a.md', ((await textOf(s.page, '#canvas-fav-section .canvas-fav-row')) || '').includes('a.md'));
-  await shot(s.page, '#canvas-fav-section', 'sidebar-with-entry.png', 'sidebar with entry');
+  await s.page.click('#favorites-btn');
+  const rows = s.page.locator('#panel-favorites .cfp-row');
+  check('desktop: 独立收藏面板出现条目', (await rows.count()) === 1, `count=${await rows.count()}`);
+  check('desktop: 条目标题为快照 a.md', ((await textOf(s.page, '#panel-favorites .cfp-row')) || '').includes('a.md'));
+  check('desktop: 文件面板无紧凑收藏区', await s.page.locator('#canvas-fav-section').count() === 0);
+  await shot(s.page, '#panel-favorites', 'sidebar-with-entry.png', 'sidebar with entry');
 
   // 去重（重复收藏置顶、保留 savedAt）：经存储注入重复条目，渲染面须归一化成一条。
   await s.page.evaluate(() => {
@@ -170,9 +172,9 @@ async function desktopCase(browser, failures) {
     window.dispatchEvent(new Event('nebflow-favorites-change'));
   });
   await settle(s.page, 150);
-  const emptyText = await textOf(s.page, '#canvas-fav-section');
+  const emptyText = await textOf(s.page, '#panel-favorites');
   check('sidebar: 空态文案', emptyText.includes('还没有收藏'), emptyText.slice(0, 60));
-  await shot(s.page, '#canvas-fav-section', 'sidebar-empty.png', 'sidebar empty');
+  await shot(s.page, '#panel-favorites', 'sidebar-empty.png', 'sidebar empty');
   await s.close();
 }
 

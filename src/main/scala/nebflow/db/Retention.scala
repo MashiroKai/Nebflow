@@ -1,7 +1,7 @@
 package nebflow.db
 
-import io.circe.{Decoder, Encoder, Json}
 import io.circe.syntax.*
+import io.circe.{Decoder, Encoder, Json}
 
 import java.nio.file.Path
 

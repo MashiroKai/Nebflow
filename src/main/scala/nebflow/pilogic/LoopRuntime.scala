@@ -3,8 +3,8 @@ package nebflow.pilogic
 import cats.effect.Concurrent
 import cats.effect.kernel.Clock
 import cats.syntax.all.*
-import io.circe.{Decoder, DecodingFailure, Encoder, HCursor, Json}
 import io.circe.syntax.*
+import io.circe.{Decoder, DecodingFailure, Encoder, HCursor, Json}
 
 /**
  * 位点 payload 编解码单源（增量轮：Json 载体形状的位点专属 Event/Value 面——每位点

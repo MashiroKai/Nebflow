@@ -2,8 +2,7 @@ package nebflow.core.hotrestart
 
 import cats.effect.IO
 import cats.syntax.all.*
-import nebflow.shared.Branding
-import nebflow.shared.NebflowLogger
+import nebflow.shared.{Branding, NebflowLogger}
 
 /**
  * 安装目录的**版本留存 + 指针**布局（hotupdate 批 2 G4 · 设计 §6②）。

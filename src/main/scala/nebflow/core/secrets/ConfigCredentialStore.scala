@@ -1,11 +1,11 @@
 package nebflow.core.secrets
 
-import java.nio.charset.StandardCharsets
-import java.nio.file.{Files, StandardCopyOption, StandardOpenOption}
-import java.nio.file.attribute.PosixFilePermissions
-import java.util.UUID
-
 import nebflow.core.CredentialFileAcl
+
+import java.nio.charset.StandardCharsets
+import java.nio.file.attribute.PosixFilePermissions
+import java.nio.file.{Files, StandardCopyOption, StandardOpenOption}
+import java.util.UUID
 
 /** Draft primitive for config credentials. Callers must not log values or exception messages. */
 object ConfigCredentialStore:

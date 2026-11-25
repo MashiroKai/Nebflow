@@ -134,14 +134,15 @@ object DelegateTerminalTtl:
     nowMs: Long,
     worktrees: DelegateWorktreeRegistry.Snapshot
   ): Verdict =
-    if rec.pinnedAt.isDefined then return Pinned
-    val managed = WorkspaceLedger.default.snapshot
-    if managed.workspaces.exists(_.owner == rec.id) || managed.mergers.exists(_.delegateId == rec.id) then
-      return InFlight
-    // 存量 worktree 归属：只有**现场仍在**（目录在盘 ∧ 仍被 git 登记）才认作在飞。
-    if DelegateWorktreeRegistry.presenceOf(rec, worktrees) == DelegateWorktreeRegistry.Presence.Live then
-      return InFlight
-    verdict(rec, taskOpt, nowMs, DelegateVisibility.readOf(rec.id))
+    if rec.pinnedAt.isDefined then Pinned
+    else
+      val managed = WorkspaceLedger.default.snapshot
+      if managed.workspaces.exists(_.owner == rec.id) || managed.mergers.exists(_.delegateId == rec.id) then
+        InFlight
+      // 存量 worktree 归属：只有**现场仍在**（目录在盘 ∧ 仍被 git 登记）才认作在飞。
+      else if DelegateWorktreeRegistry.presenceOf(rec, worktrees) == DelegateWorktreeRegistry.Presence.Live then
+        InFlight
+      else verdict(rec, taskOpt, nowMs, DelegateVisibility.readOf(rec.id))
   end verdict
 
   /** 判读本体（读数由调用方给定——纯形，spec 可直驱；见 [[verdict]] 注两条重算）。 */

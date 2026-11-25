@@ -1,11 +1,12 @@
 package nebflow.gateway
 
 import cats.effect.IO
-import io.circe.{Json, parser}
 import io.circe.syntax.*
+import io.circe.{Json, parser}
 
-import java.nio.file.{Files, Path, StandardCopyOption}
 import java.nio.file.attribute.PosixFilePermission
+import java.nio.file.{Files, Path, StandardCopyOption}
+
 import scala.jdk.CollectionConverters.*
 import scala.util.control.NonFatal
 

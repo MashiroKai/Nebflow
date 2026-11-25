@@ -1,8 +1,6 @@
 /* 从 WebSocketRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
-import nebflow.neblink.core.*
-
 import cats.effect.std.{Dispatcher, Queue}
 import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
@@ -22,6 +20,7 @@ import nebflow.core.tools.{ToolContext, ToolRegistry}
 import nebflow.gateway.NfFilePolicy.*
 import nebflow.gateway.WsDispatch.{inboundEnvelope, parsedJson}
 import nebflow.llm.*
+import nebflow.neblink.core.*
 import nebflow.service.*
 import nebflow.shared.*
 import org.http4s.*

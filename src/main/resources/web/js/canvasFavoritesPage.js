@@ -5,10 +5,12 @@
 // （标题 + 摘要两行 + 来源 + 日期 + 右侧缩略图 / 类型角标）；点条目 = canvas 打开。
 // 数据与失效判定复用 canvasFavorites.js（单源）；分类/过滤纯逻辑在 canvasFavoritesCore.js。
 import { t } from './i18n.js';
+import { createIconsIn } from './utils.js';
 import {
-  loadFavorites, openFavorite, onFavoritesChange, syncFavoritesFromEngine, checkFavoriteStatus,
+  loadFavorites, openFavorite, onFavoritesChange, syncFavoritesFromEngine, checkFavoriteStatus, removeFavoriteFromPage,
 } from './canvasFavorites.js';
 import { favKind, presentTabs, filterFavorites, extOf } from './canvasFavoritesCore.js';
+import { buildFieldShell } from './socialSearchCore.js';
 
 const PAGE_ID = 'canvas-fav-page';
 /** 无限滚动：每批渲染条数。 */
@@ -97,11 +99,12 @@ function buildPage(onClose, onOpened) {
   const search = document.createElement('div');
   search.className = 'cfp-search';
   const input = document.createElement('input');
-  input.type = 'search';
-  input.className = 'cfp-search-input nf-field';
-  input.placeholder = t('canvas.favPage.search');
-  input.setAttribute('aria-label', t('canvas.favPage.search'));
-  search.appendChild(input);
+  input.type = 'text';
+  input.autocomplete = 'off';
+  input.className = 'cfp-search-input';
+  const { shell } = buildFieldShell(input, { placeholder: t('canvas.favPage.search') });
+  search.appendChild(shell);
+  if (typeof lucide !== 'undefined') createIconsIn(search);
 
   // 分类 tab（仅实际存在的类型）。
   const tabs = document.createElement('div');
@@ -161,7 +164,7 @@ function buildPage(onClose, onOpened) {
       meta.className = 'cfp-row-meta';
       const src = document.createElement('span');
       src.className = 'cfp-row-src';
-      src.textContent = KIND_LABEL[favKind(entry.path)]();
+      src.textContent = entry.path;
       const date = document.createElement('span');
       date.className = 'cfp-row-date';
       date.textContent = formatDate(entry.savedAt);
@@ -175,7 +178,24 @@ function buildPage(onClose, onOpened) {
           onOpened?.();                        // 手机端：切到 canvas 页（桌面无回调）
         });
       });
-      list.appendChild(row);
+      const container = document.createElement('div');
+      container.className = 'cfp-row-container';
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'canvas-fav-btn is-on cfp-remove';
+      remove.title = t('canvas.fav.remove');
+      remove.setAttribute('aria-label', t('canvas.fav.remove'));
+      const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      icon.setAttribute('viewBox', '0 0 24 24');
+      icon.setAttribute('aria-hidden', 'true');
+      icon.classList.add('canvas-fav-ic');
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', 'M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6-4.9-4.6 6.6-.8z');
+      icon.appendChild(path);
+      remove.appendChild(icon);
+      remove.addEventListener('click', () => { void removeFavoriteFromPage(entry); });
+      container.append(row, remove);
+      list.appendChild(container);
       // 失效判定（与侧栏同口径：仅 404/410 判失效）：置灰 + 「已失效」角标，点击仅给提示。
       void checkFavoriteStatus(entry.path).then((status) => {
         if (status !== 'missing' || !row.isConnected) return;
@@ -232,7 +252,8 @@ function buildPage(onClose, onOpened) {
 export function mountFavoritesSidebar() {
   const panel = document.getElementById('panel-favorites');
   if (!panel || panel.firstElementChild) return;
-  const built = buildPage(() => { void import('./activityBar.js').then((m) => m.showSidePanel('files')); });
+  const built = buildPage(() => {});
+  built.el.querySelector('.cfp-back')?.remove();
   built.el.id = 'canvas-fav-sidebar-page';
   built.el.classList.add('cfp-sidebar', 'is-open');
   built.el.removeAttribute('role');
@@ -251,10 +272,15 @@ function onKey(e) {
  *  @param {{ onOpened?: () => void }} [opts] 条目打开成功后的回调（手机端 = 切到 canvas 页）。 */
 export function openFavoritesPage(opts = {}) {
   if (current) return;
+  const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const built = buildPage(() => closeFavoritesPage(), opts.onOpened);
   document.body.appendChild(built.el);
-  current = built;
-  requestAnimationFrame(() => built.el.classList.add('is-open'));
+  current = { ...built, previousFocus };
+  requestAnimationFrame(() => {
+    built.el.classList.add('is-open');
+    const back = built.el.querySelector('.cfp-back');
+    if (back instanceof HTMLElement) back.focus();
+  });
   document.addEventListener('keydown', onKey);
   void syncFavoritesFromEngine();   // 打开即与引擎真源对齐（同步完成派发变更 ⇒ 页内重绘）
 }
@@ -264,7 +290,9 @@ export function closeFavoritesPage() {
   if (!current) return;
   current.dispose();
   current.el.remove();
+  const previousFocus = current.previousFocus;
   current = null;
+  if (previousFocus?.isConnected) previousFocus.focus();
   document.removeEventListener('keydown', onKey);
 }
 

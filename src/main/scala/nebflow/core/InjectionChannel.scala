@@ -1,12 +1,13 @@
 package nebflow.core
 
 import cats.effect.IO
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import nebflow.shared.{NebflowLogger, UiMessage}
 
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+
 import scala.collection.mutable
 
 /**

@@ -1,9 +1,9 @@
 package nebflow.neblink.social
 
 import cats.effect.IO
-import io.circe.{Decoder, Encoder, Json}
 import io.circe.parser.decode
 import io.circe.syntax.*
+import io.circe.{Decoder, Encoder, Json}
 import nebflow.shared.PathUtil
 
 /**

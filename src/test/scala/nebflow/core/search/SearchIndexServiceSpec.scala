@@ -19,6 +19,44 @@ import munit.CatsEffectSuite
  */
 class SearchIndexServiceSpec extends CatsEffectSuite:
 
+  test("migration done phase skips source backfill on re-entry") {
+    val destination = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
+    val source = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
+    try
+      val setup = destination.createStatement()
+      try
+        setup.execute("CREATE TABLE search_index_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)")
+        setup.execute("INSERT INTO search_index_meta(key,value) VALUES('phase','done')")
+      finally setup.close()
+      SearchIndexMigration.migrate(destination, source)
+      val query = destination.createStatement()
+      try
+        val rows = query.executeQuery("SELECT value FROM search_index_meta WHERE key='phase'")
+        assert(rows.next())
+        assertEquals(rows.getString(1), "done")
+      finally query.close()
+    finally
+      destination.close()
+      source.close()
+  }
+
+  test("snapshot main dispatch writes an empty snapshot database") {
+    val tmpRoot = java.nio.file.Paths.get("/tmp").toRealPath()
+    val dir = java.nio.file.Files.createTempDirectory(tmpRoot, "snapshot-dispatch-")
+    val sessions = java.nio.file.Files.createDirectory(dir.resolve("sessions"))
+    val output = dir.resolve("snapshot.sqlite")
+    try
+      SearchIndexMigration.main(Array("--snapshot", output.toString, sessions.toString))
+      assert(java.nio.file.Files.exists(output), "snapshot dispatch must create its output")
+    finally
+      os.remove.all(os.Path(dir))
+  }
+
+  test("migration main rejects invalid argument shapes") {
+    intercept[IllegalArgumentException] { SearchIndexMigration.main(Array.empty[String]) }
+    intercept[IllegalArgumentException] { SearchIndexMigration.main(Array("a", "b", "--snapshot")) }
+  }
+
   private val face = "test-face"
 
   /**

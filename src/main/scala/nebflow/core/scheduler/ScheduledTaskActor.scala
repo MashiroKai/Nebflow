@@ -3,9 +3,8 @@ package nebflow.core.scheduler
 import cats.effect.std.Dispatcher
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import io.circe.Json
 import io.circe.syntax.*
-import io.circe.JsonObject
+import io.circe.{Json, JsonObject}
 import nebflow.actor.AgentCommand
 import nebflow.core.{InjectionChannel, SessionStorePort}
 import nebflow.shared.{NebflowLogger, UiMessage}

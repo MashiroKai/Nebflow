@@ -1,13 +1,11 @@
 package nebflow.cli
 
-import nebflow.neblink.identity.*
-
 import cats.effect.IO
 import cats.syntax.all.*
-import io.circe.{Json, parser}
 import io.circe.syntax.*
-
+import io.circe.{Json, parser}
 import nebflow.core.root.{LoginGuard, Refusal}
+import nebflow.neblink.identity.*
 
 /**
  * headless 登录三命令 —— `login`（统一登录·路径② 无头密码登录）/ `logout` /

@@ -1,8 +1,6 @@
 /* 从 AgentCore.scala 迁出(行为保持重构,2026-09-25)。 */
 package nebflow.agent
 
-import nebflow.neblink.core.*
-
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
@@ -16,6 +14,7 @@ import nebflow.core.hooks.*
 import nebflow.core.project.{NodeRoles, ProjectRuntimeRegistry, ProjectStore}
 import nebflow.core.tools.*
 import nebflow.llm.{Fallback, TurnBudgetExceeded}
+import nebflow.neblink.core.*
 import nebflow.shared.given
 import nebflow.shared.{NebflowLogger, *}
 
@@ -2844,6 +2843,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
 
   end routeWebSearchThroughProvider
 
+  // scalafix:off DisableSyntax
   protected def buildAllowedToolSet(
     agentDef: AgentDef,
     depth: Int = 0,
@@ -3040,6 +3040,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     (withDelegateMail ++ pluginEngineGrant) -- nebflow.core.ask.AskSessions.AskExclusiveTools
 
   end buildAllowedToolSet
+  // scalafix:on DisableSyntax
 
   protected def buildToolList(
     agentDef: AgentDef,

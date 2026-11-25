@@ -197,7 +197,7 @@ export async function createSession(browser, opts = {}) {
     // 文件树固定夹具：真实实例总能答 listDir，打桩不答就会永远停在
     // 「加载中…」（explorer.js:881-940 的有界等待只管超时，不管内容）。
     // 答上它，侧栏才是产品的常态而不是打桩的破绽。
-    const EXPLORER_ENTRIES = [
+    const EXPLORER_ENTRIES = cfg.explorerEntries || [
       { name: 'docs', type: 'dir' },
       { name: 'src', type: 'dir' },
       { name: 'README.md', type: 'file', size: 2048, mtime: 1757000000000 },
@@ -225,7 +225,7 @@ export async function createSession(browser, opts = {}) {
       onopen = null; onmessage = null; onclose = null; onerror = null;
     }
     Object.defineProperty(window, 'WebSocket', { value: MockWS });
-  }, { locale: opts.locale ?? 'zh-CN', autoRespond: opts.autoRespond !== false, clock: opts.clock ?? 0 });
+  }, { locale: opts.locale ?? 'zh-CN', autoRespond: opts.autoRespond !== false, clock: opts.clock ?? 0, explorerEntries: opts.explorerEntries ?? null });
 
   const stubs = opts.apiStubs || {};
   await page.route('**/*', (route) => {

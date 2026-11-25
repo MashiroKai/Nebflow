@@ -1,13 +1,12 @@
 package nebflow.neblink.relay
 
-import nebflow.neblink.core.*
-import nebflow.neblink.social.*
-
 import cats.effect.IO
 import cats.effect.kernel.Ref
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.neblink.core.*
+import nebflow.neblink.social.*
 import nebflow.shared.NebflowLogger
 
 import scala.concurrent.duration.*

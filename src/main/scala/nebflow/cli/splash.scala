@@ -45,11 +45,19 @@ object Splash:
 
   def render(facts: TerminalFacts): String =
     val env = facts.env
-    if !facts.interactive || env.get("CI").exists(_.nonEmpty) then return ""
+    if !facts.interactive || env.get("CI").exists(_.nonEmpty) then ""
+    else renderInteractive(facts, env)
+  end render
+
+  private def renderInteractive(facts: TerminalFacts, env: Map[String, String]): String =
     val noColor = env.get("NO_COLOR").exists(_.nonEmpty)
     val term = env.getOrElse("TERM", "")
     val plain = noColor || term == "dumb"
-    if facts.columns < payload("columns").toInt + 2 then return "\n  Stand\n\n"
+    if facts.columns < payload("columns").toInt + 2 then "\n  Stand\n\n"
+    else renderWide(env, plain, term)
+  end renderInteractive
+
+  private def renderWide(env: Map[String, String], plain: Boolean, term: String): String =
     val theme = setting(env, "BANNER_THEME").filter(Set("dark", "light")).getOrElse {
       if env.get("COLORFGBG").flatMap(_.split(';').lastOption).flatMap(_.toIntOption).exists(_ >= 7)
       then "light"
@@ -111,5 +119,5 @@ object Splash:
         }
         rows.mkString("\n", "\n", "\n\n")
     end match
-  end render
+  end renderWide
 end Splash

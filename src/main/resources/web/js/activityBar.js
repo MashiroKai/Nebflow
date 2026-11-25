@@ -256,7 +256,15 @@ function initSidePanels() {
     favoritesButton.title = label;
     favoritesButton.setAttribute('aria-label', label);
   }
-  void import('./canvasFavoritesPage.js').then((m) => m.mountFavoritesSidebar());
+  const favoritesPage = import('./canvasFavoritesPage.js').then((m) => m.mountFavoritesSidebar());
+  favoritesButton?.addEventListener('click', () => {
+    void favoritesPage.then(() => {
+      if (document.getElementById('panel-favorites')?.classList.contains('active')) {
+        const search = document.querySelector('#panel-favorites .cfp-search-input');
+        if (search instanceof HTMLElement) search.focus();
+      }
+    });
+  });
   // 待办分家批（2026-10-30 作者令）的 todo 侧边栏槽随改版批（2026-10-31）退役：
   // 待办不占单独侧边栏空间——入口 = 消息列表顶部「待办事项」行，内页 =
   // #todo-page（scheduled-task.js 渲染核）。

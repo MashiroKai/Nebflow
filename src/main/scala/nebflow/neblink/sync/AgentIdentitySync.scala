@@ -1,14 +1,13 @@
 package nebflow.neblink.sync
 
-import nebflow.neblink.core.*
-import nebflow.neblink.social.*
-
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.device.{DeviceHmac, DeviceRegistry}
 import nebflow.core.entity.AgentIdentityStore
+import nebflow.neblink.core.*
+import nebflow.neblink.social.*
 import nebflow.shared.NebflowLogger
 
 import java.util.Base64

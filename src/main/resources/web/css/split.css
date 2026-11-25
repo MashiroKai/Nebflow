@@ -242,6 +242,11 @@
   background: rgba(128, 128, 128, 0.07);
 }
 
+/* Filtering uses the hidden attribute; the tree item's flex rule must not override it. */
+.explorer-item[hidden] {
+  display: none;
+}
+
 /* ── Multi-select selection state (aligned with .session-item.selected) ── */
 .explorer-item.selected {
   background: rgba(128, 128, 128, 0.08);
@@ -408,6 +413,7 @@
   opacity: 0.4;
 }
 .explorer-empty {
+  overflow-wrap: anywhere;
   padding: var(--ds-space-1) var(--ds-space-5);
   font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);

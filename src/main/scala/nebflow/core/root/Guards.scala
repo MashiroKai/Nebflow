@@ -1,7 +1,6 @@
 package nebflow.core.root
 
 import cats.effect.IO
-
 import nebflow.cli.SingleInstanceGuard
 import nebflow.gateway.GatewayConfig
 import nebflow.shared.{Defaults, PathUtil}

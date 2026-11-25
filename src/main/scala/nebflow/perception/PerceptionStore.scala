@@ -1,15 +1,16 @@
 package nebflow.perception
 
+import io.circe.generic.semiauto.*
 import io.circe.parser
 import io.circe.syntax.*
-import io.circe.generic.semiauto.*
+import nebflow.perception.PerceptionModel.*
 import nebflow.shared.PathUtil
 import os.Path
-import PerceptionModel.*
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.attribute.{PosixFilePermission, PosixFilePermissions}
 import java.nio.file.{Files, Path as JPath, StandardOpenOption}
+
 import scala.jdk.CollectionConverters.*
 
 /**

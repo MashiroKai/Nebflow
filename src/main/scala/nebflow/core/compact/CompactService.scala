@@ -3,8 +3,8 @@ package nebflow.core.compact
 import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.core.hooks.*
-import nebflow.shared.{NebflowLogger, *}
 import nebflow.prompts.PromptCatalog
+import nebflow.shared.{NebflowLogger, *}
 
 /**
  * Inline context compaction — reuses the agent's own LLM call with cached
