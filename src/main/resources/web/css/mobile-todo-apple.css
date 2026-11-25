@@ -212,7 +212,6 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-search-input {
   height: 44px;
   box-sizing: border-box;
   padding: var(--ds-input-pad-lg);
-  border-radius: var(--ds-radius-input);
   color: var(--color-text);
   font-size: var(--mfs-body);
   font-family: inherit;

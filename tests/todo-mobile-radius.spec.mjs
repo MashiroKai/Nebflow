@@ -61,7 +61,7 @@ async function mobile(width, theme) {
     await home(s);
     for (const [label, sel, value] of [ ['cards','.ta-card','18px'], ['listcard','.ta-listcard','18px'], ['dots','.ta-dot','999px'], ['pill-home','.ta-pill-btn','999px'], ['quick-fab','.ta-quick-fab','999px'] ]) await probe(s.page,label,sel,value,combo);
     await s.page.locator('.mobile-page.live .ta-pill-btn').nth(0).click();
-    await probe(s.page,'search','.ta-search-input','8px',combo);
+    await probe(s.page,'search','.ta-search-input','12px',combo);
     await probe(s.page,'pill-selected','.ta-pill-btn.on','999px',combo);
     await s.page.locator('.mobile-page.live .ta-pill-btn').nth(0).click();
     await s.page.locator('.mobile-page.live .ta-pill-btn').nth(1).click();
