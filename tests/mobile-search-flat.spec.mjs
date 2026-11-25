@@ -708,8 +708,10 @@ for (const colorScheme of ['light', 'dark']) {
           });
           await expect(bar).toHaveClass(/g2-fab/);
           await expect.poll(() => bar.evaluate(el => getComputedStyle(el).borderRadius)).toBe('50%');
-          const box = await bar.boundingBox();
-          expect({ width: Math.round(box.width), height: Math.round(box.height) }).toEqual({ width: 48, height: 48 });
+          await expect.poll(async () => {
+            const box = await bar.boundingBox();
+            return { width: Math.round(box.width), height: Math.round(box.height) };
+          }).toEqual({ width: 48, height: 48 });
           if (EVID) {
             mkdirSync(EVID, { recursive: true });
             await page.screenshot({ path: join(EVID, `contract-${pageId}-${colorScheme}-dpr${deviceScaleFactor}.png`) });
