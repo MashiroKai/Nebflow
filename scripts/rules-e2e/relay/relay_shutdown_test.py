@@ -511,8 +511,12 @@ server.serve_forever()'''
   self.process_fault_matrix('deadline','slow',False)
  def test_process_deadline_slow_locked(self):
   self.process_fault_matrix('deadline','slow',True)
+ def test_process_dns_limit_free(self): self.process_fault_matrix('limit','dns',False)
+ def test_process_dns_limit_locked(self): self.process_fault_matrix('limit','dns',True)
+ def test_process_dns_deadline_free(self): self.process_fault_matrix('deadline','dns',False)
+ def test_process_dns_deadline_locked(self): self.process_fault_matrix('deadline','dns',True)
  def process_fault_matrix(self,trigger,fault,lock_held):
-  if fault!='slow': raise ValueError('fault driver not implemented')
+  if fault not in ('slow','dns'): raise ValueError('fault driver not implemented')
   if trigger not in ('limit','deadline','double'): raise ValueError('invalid trigger')
   double_trigger=trigger=='double'; deadline_first=trigger=='deadline'
   # Slow upload remains in body reading, before reservation; another complete
@@ -562,7 +566,19 @@ m.Relay.__init__=init; m.Relay.event=observed;''')
   threading.Thread(target=hold,daemon=True).start()''')
   # Deadline first rejects new requests; it cannot wake a second watchdog.
   # The positive-order double-trigger case verifies watchdog deduplication.
-  read_fd,write_fd=os.pipe(); self.addCleanup(lambda:os.close(read_fd)); self.addCleanup(lambda:os.close(write_fd))
+  read_fd,write_fd=os.pipe(); dns_read,dns_write=os.pipe(); release_read,release_write=os.pipe()
+  for fd in (read_fd,write_fd,dns_read,dns_write,release_read,release_write): self.addCleanup(os.close,fd)
+  if fault=='dns':
+   code=code.replace(' original_init(self,args,**kw)\n',''' original_init(self,args,**kw)
+ import os,socket
+ resolve=socket.getaddrinfo; first=[True]
+ def injected(host,*args,**kwargs):
+  if host=="localhost" and first[0]:
+   first[0]=False; log("dns-enter"); os.write(int(os.environ["DNS_FD"]),b"D"); os.read(int(os.environ["RELEASE_FD"]),1)
+  return resolve(host,*args,**kwargs)
+ socket.getaddrinfo=injected
+ self.dialer=lambda h,p,t:http.client.HTTPConnection("localhost",12345,timeout=t)
+''',1)
   if deadline_first:
    code=code.replace('m.Relay.start_watchdog=watch_observed','''m.Relay.start_watchdog=watch_observed
 import os
@@ -570,15 +586,19 @@ old_deadline=m.Relay.deadline
 def deadline_observed(self):
  old_deadline(self); log("deadline-complete"); os.write(int(os.environ["SIGNAL_FD"]),b"D")
 m.Relay.deadline=deadline_observed''')
-  ev=pathlib.Path(os.environ['RELAY_EVIDENCE_DIR']); prefix=ev/('round17-deadline-locked' if lock_held else 'round17-deadline-free') if deadline_first else ev/('round14-lock-held' if lock_held else 'round13-double-trigger' if double_trigger else 'round7-process-limit-slow'); ledger=self.path
+  ev=pathlib.Path(os.environ['RELAY_EVIDENCE_DIR']); prefix=ev/('round21-dns-'+trigger+('-locked' if lock_held else '-free')) if fault=='dns' else ev/('round17-deadline-locked' if lock_held else 'round17-deadline-free') if deadline_first else ev/('round14-lock-held' if lock_held else 'round13-double-trigger' if double_trigger else 'round7-process-limit-slow'); ledger=self.path
   with open(str(prefix)+'-stderr.log','w') as err:
-   p=subprocess.Popen([sys.executable,'-B','-c',code,str(pathlib.Path(m.__file__)),str(up.getsockname()[1]),'--route','one,example.com,/v1,FAKE_KEY','--allow-host','example.com','--port','0','--ledger',str(ledger),'--limit','2' if deadline_first else '1','--seconds','0.5' if double_trigger or deadline_first else '30','--timeout','5'],stdout=subprocess.PIPE,stderr=err,text=True,pass_fds=(write_fd,),env={'PATH':'/usr/bin:/bin','FAKE_KEY':'fake-only','SIGNAL_FD':str(write_fd)})
+   p=subprocess.Popen([sys.executable,'-B','-c',code,str(pathlib.Path(m.__file__)),str(up.getsockname()[1]),'--route','one,example.com,/v1,FAKE_KEY','--allow-host','example.com','--port','0','--ledger',str(ledger),'--limit','2' if deadline_first else '1','--seconds','0.5' if double_trigger or deadline_first else '30','--timeout','5'],stdout=subprocess.PIPE,stderr=err,text=True,pass_fds=(write_fd,dns_write,release_read),env={'PATH':'/usr/bin:/bin','FAKE_KEY':'fake-only','SIGNAL_FD':str(write_fd),'DNS_FD':str(dns_write),'RELEASE_FD':str(release_read)})
    slow=first=None
    try:
     port=json.loads(p.stdout.readline())['port']; self.assertNotEqual(port,6138)
     def connect(trace,length,body):
      c=socket.create_connection(('127.0.0.1',port),timeout=2); c.settimeout(2); c.sendall(('POST /one/chat HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Length: %d\r\nX-Stand-Trace-Id: %s\r\n\r\n'%(port,length,trace)).encode()+body); return c
-    slow=connect('slow',100,b'x'); first=connect('reserve',2,b'{}'); self.assertTrue(accepted.wait(3))
+    slow=connect('slow',100,b'x'); first=connect('reserve',2,b'{}')
+    if fault=='slow': self.assertTrue(accepted.wait(3))
+    else:
+     import select
+     self.assertTrue(select.select([dns_read],[],[],3)[0]); self.assertEqual(os.read(dns_read,1),b'D')
     if deadline_first:
      import select
      self.assertTrue(select.select([read_fd],[],[],3)[0]); self.assertEqual(os.read(read_fd,1),b'D')
@@ -601,7 +621,7 @@ m.Relay.deadline=deadline_observed''')
     if p.poll() is None: p.terminate(); p.wait(timeout=3)
     p.stdout.close()
   lines=[json.loads(x) for x in pathlib.Path(str(prefix)+'-stderr.log').read_text().splitlines()]; obs=[x for x in lines if 'observation' in x]
-  names=[x['observation'] for x in obs]; expected=['ledger-fsynced','response-written','slow-enter','force-entry-slow-active','exit-call']+(['watch-deadline','deadline-complete'] if deadline_first else ['watch-handle']+(['watch-deadline'] if double_trigger else []))+(['lock-held'] if lock_held else []); self.assertCountEqual(names,expected); self.assertLess(names.index('ledger-fsynced'),names.index('response-written')); self.assertLess(names.index('force-entry-slow-active'),names.index('exit-call')); self.assertEqual([x['seq'] for x in obs],list(range(len(obs)))); self.assertEqual([x['monotonic'] for x in obs],sorted(x['monotonic'] for x in obs)); self.assertEqual(lines[-2]['sealed'],not lock_held)
+  names=[x['observation'] for x in obs]; expected=['ledger-fsynced','response-written','slow-enter','force-entry-slow-active','exit-call']+(['dns-enter'] if fault=='dns' else [])+(['watch-deadline','deadline-complete'] if deadline_first else ['watch-handle']+(['watch-deadline'] if double_trigger else []))+(['lock-held'] if lock_held else []); self.assertCountEqual(names,expected); self.assertLess(names.index('ledger-fsynced'),names.index('response-written')); self.assertLess(names.index('force-entry-slow-active'),names.index('exit-call')); self.assertEqual([x['seq'] for x in obs],list(range(len(obs)))); self.assertEqual([x['monotonic'] for x in obs],sorted(x['monotonic'] for x in obs)); self.assertEqual(lines[-2]['sealed'],not lock_held)
   if lock_held:
    summary=lines[-2]; self.assertEqual((summary['recorded_lower_bound'],summary['unrecorded_upper_bound'],summary['reserved_snapshot']),(1,0,1)); self.assertIsNone(summary['inflight']); self.assertTrue(summary['possible_extra_record_after_exit']); self.assertLess(names.index('lock-held'),names.index('exit-call'))
   else: self.assertEqual(lines[-2]['still_inflight_at_exit'],0)
