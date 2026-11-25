@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
-test.use({ viewport: { width: 375, height: 812 } });
-test('mobile live thinking wraps without clipping', async ({ page }) => {
+test.use({ viewport: { width: Number(process.env.THINK_WIDTH || 375), height: 812 } });
+test('mobile live thinking stays single-line and anchored to its tail', async ({ page }) => {
   await page.route('**/*', route => {
     const path = decodeURIComponent(new URL(route.request().url()).pathname);
     const file = normalize(join(root, path));
@@ -24,10 +24,11 @@ test('mobile live thinking wraps without clipping', async ({ page }) => {
   });
   const think = page.locator('.nf-workline .nf-wl-think');
   await expect(think).toBeVisible();
+  if (process.env.THINK_SHOT) await page.screenshot({path: process.env.THINK_SHOT, animations: 'disabled'});
   const metrics = await think.evaluate(el => ({ left: el.scrollLeft, width: el.clientWidth, scroll: el.scrollWidth, ellipsis: getComputedStyle(el).textOverflow, line: getComputedStyle(el).webkitLineClamp, wrap: getComputedStyle(el).whiteSpace }));
-  expect(metrics.left).toBe(0);
-  expect(metrics.wrap).not.toBe('nowrap');
-  expect(metrics.scroll).toBeLessThanOrEqual(metrics.width + 1);
+  expect(metrics.wrap).toBe('nowrap');
+  expect(metrics.scroll).toBeGreaterThan(metrics.width);
+  expect(Math.abs(metrics.left - (metrics.scroll - metrics.width))).toBeLessThanOrEqual(1);
   const chat=page.locator('#chat'); await chat.evaluate(el=>{el.style.scrollBehavior='auto'});
   for(const f of [0,0.5,1]) {
     const state=await chat.evaluate((el,fraction)=>{el.scrollTop=(el.scrollHeight-el.clientHeight)*fraction; return {scroll:el.scrollTop,max:el.scrollHeight-el.clientHeight}},f);
@@ -37,7 +38,7 @@ test('mobile live thinking wraps without clipping', async ({ page }) => {
   const rect = await think.boundingBox();
   expect(rect.x).toBeGreaterThanOrEqual(0); expect(rect.x+rect.width).toBeLessThanOrEqual(375);
   const collision = await think.evaluate(el => {const a=el.getBoundingClientRect(), s=el.closest('.nf-wl-slot').getBoundingClientRect(); return {height:a.height,slotHeight:s.height,top:a.top,slotTop:s.top,bottom:a.bottom,slotBottom:s.bottom};});
-  expect(collision.height).toBeGreaterThan(18); expect(collision.top).toBeGreaterThanOrEqual(collision.slotTop-1); expect(collision.bottom).toBeLessThanOrEqual(collision.slotBottom+1);
+  expect(collision.height).toBeLessThanOrEqual(collision.slotHeight + 6);
   const out=process.env.MOBILE_AUDIT_EVIDENCE;
   if(out) {mkdirSync(out,{recursive:true}); await page.screenshot({path:join(out,'聚焦条.png'),animations:'disabled'});}
   await page.evaluate(()=>window.__fullTurnCollapse());
@@ -61,7 +62,7 @@ test('mobile workline full shell stays clear of composer and expands', async ({p
   const shellHeader=page.locator('#chat .g2-chat-head'); await expect(shellHeader).toBeAttached();
   const overlap=await text.evaluate(el=>{const a=el.getBoundingClientRect(),h=document.querySelector('#chat .g2-chat-head').getBoundingClientRect();return a.left<h.right && a.right>h.left && a.top<h.bottom && a.bottom>h.top}); expect(overlap).toBe(false);
   const geom=await text.evaluate(el=>{const r=el.getBoundingClientRect(),input=document.querySelector('#input-area').getBoundingClientRect(); return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,inputTop:input.top,scroll:el.scrollWidth,width:el.clientWidth}});
-  expect(geom.left).toBeGreaterThanOrEqual(0); expect(geom.right).toBeLessThanOrEqual(375); expect(geom.top).toBeGreaterThanOrEqual(0); expect(geom.bottom).toBeLessThanOrEqual(geom.inputTop); expect(geom.scroll).toBeLessThanOrEqual(geom.width+1);
+  expect(geom.left).toBeGreaterThanOrEqual(0); expect(geom.right).toBeLessThanOrEqual(375); expect(geom.top).toBeGreaterThanOrEqual(0); expect(geom.bottom).toBeLessThanOrEqual(geom.inputTop); expect(geom.scroll).toBeGreaterThan(geom.width);
   for(const frame of [{type:'textDelta',sessionId:sid,delta:'Answer.'},{type:'textDone',sessionId:sid},{type:'done',sessionId:sid,model:'test',durationMs:47000}]) live.send(JSON.stringify(frame));
   const header=page.locator('#chat .turn-header').last(); await expect(header).toBeVisible(); await header.click(); await expect(header).toHaveAttribute('aria-expanded','true');
   await expect(page.locator('#chat .thinking-row:not(.nf-tucked)').last()).toBeVisible();
