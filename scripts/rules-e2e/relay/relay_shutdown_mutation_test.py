@@ -7,6 +7,7 @@ mutations={
  'bounds':("math.isfinite(v) and v > 0", "True", 'test_positive_finite_bounds'),
  'short':("if not chunk: raise ValueError('short body')", "if not chunk: break", 'test_short_body_rejected'),
  'body-deadline':("body_deadline-time.monotonic()", "self.args.timeout", 'test_slow_upload_total_deadline'),
+ 'seal':("if self.sealed: return False", "if False: return False", 'test_seal_prevents_main_and_sidecar_append'),
  'once':("if self.watchdog_started: return", "if False: return", 'test_watchdog_only_starts_once'),
  'limit-stop':("if final: self.start_watchdog()", "if final: pass", 'test_limit_hard_stop_ledger_lock'),
  'premature-finalize':("if not done.wait(self.lock_timeout+self.abort_timeout): return False", "if not done.wait(self.lock_timeout+self.abort_timeout):\n   with self.rejection_lock: self.rejections[identity]='unrecorded'\n   return False", 'test_late_results_after_429'),

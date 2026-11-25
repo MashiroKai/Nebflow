@@ -164,6 +164,13 @@ server.serve_forever()'''
       self.assertTrue(relay.rejection_lock.wait_for(lambda:list(relay.rejections.values())!=['inflight'],timeout=2))
       self.assertEqual(list(relay.rejections.values()),['recorded' if result else 'unrecorded'])
     relay.ledger.close(); relay.owner.close()
+ def test_seal_prevents_main_and_sidecar_append(self):
+  relay=m.Relay(args(self.path)); self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
+  with relay.append_lock: relay.sealed=True
+  before=self.path.read_bytes()
+  self.assertIs(relay.event({'seq':1,'status':'reserved'}),False)
+  self.assertIs(relay.sidecar({'seq':2,'status':'reserved'}),False)
+  self.assertEqual(self.path.read_bytes(),before); self.assertFalse(pathlib.Path(str(self.path)+'.abort').exists())
  def test_watchdog_only_starts_once(self):
   relay=m.Relay(args(self.path),grace=1,exit_fn=lambda code:None)
   self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)

@@ -13,6 +13,8 @@ class Relay:
   self.grace=grace; self.exit_fn=exit_fn; self.stop_fired=False; self.finished=threading.Event(); self.watchdog_lock=threading.Lock(); self.watchdog_started=False
   self.lock_timeout=lock_timeout; self.abort_timeout=abort_timeout; self.append_override=append_override
   self.rejection_lock=threading.Condition(); self.unrecorded_rejections=0; self.rejections={}
+  self.append_lock=threading.RLock()
+  with self.append_lock: self.sealed=False
   self.dialer=dialer or (lambda host,port,timeout: http.client.HTTPSConnection(host,port,timeout=timeout,context=ssl.create_default_context()))
   self.routes={}
   allowed=set(args.allow_host)
@@ -67,6 +69,8 @@ class Relay:
       ledger.write((json.dumps(synthetic,separators=(',',':'))+'\n').encode()); ledger.flush(); os.fsync(ledger.fileno())
    finally: fcntl.flock(ledger.fileno(),fcntl.LOCK_UN)
  def sidecar(self,obj):
+  return self.append_record(obj,sidecar=True)
+ def _sidecar_unlocked(self,obj):
   data=(json.dumps(obj,separators=(',',':'))+'\n').encode()
   if self.append_override is not None: return self.append_override(data)
   fd=os.open(self.args.ledger+'.abort',os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600)
@@ -110,6 +114,13 @@ class Relay:
     os.replace(path,path+'.archived.'+uuid.uuid4().hex)
    finally: fcntl.flock(ledger.fileno(),fcntl.LOCK_UN)
  def event(self,obj):
+  return self.append_record(obj)
+ def append_record(self,obj,sidecar=False):
+  with self.append_lock:
+   if self.sealed: return False
+   if sidecar: return self._sidecar_unlocked(obj)
+   return self._event_unlocked(obj)
+ def _event_unlocked(self,obj):
   obj=dict(obj); obj.setdefault('record_id',uuid.uuid4().hex)
   # Separate open descriptions serialize both threads and processes.
   with open(self.args.ledger,'a',encoding='utf-8') as ledger:
@@ -181,6 +192,12 @@ class Relay:
    except OSError: pass
   writer=threading.Thread(target=record_abort,daemon=True); writer.start()
   writer.join(self.abort_timeout)
+  if self.append_lock.acquire(timeout=self.abort_timeout):
+   try:
+    self.sealed=True
+    print(json.dumps({'sealed':True}),file=sys.stderr,flush=True)
+   finally: self.append_lock.release()
+  else: print(json.dumps({'sealed':False}),file=sys.stderr,flush=True)
   self.shutdown_summary(); self.exit_fn(2)
  def handle(self,h):
   start=time.monotonic(); parsed=urllib.parse.urlsplit(h.path); parts=parsed.path.split('/'); route=parts[1] if len(parts)>1 else ''; target=self.routes.get(route)
