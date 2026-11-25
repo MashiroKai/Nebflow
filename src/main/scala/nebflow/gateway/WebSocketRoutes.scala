@@ -1145,50 +1145,29 @@ class WebSocketRoutes(
                       // applied backpressure, so its queue grew without bound while
                       // the event loop kept paying "serialize + offer" for it.
                       //
-                      // Overflow policy (plan OD-1, per-frame class):
-                      //  · streaming increment (textDelta/thinkingDelta/…): drop the
-                      //    OLDEST frame and enqueue the new one. A stream increment is
-                      //    superseded by later ones, so losing the middle of a stream
-                      //    costs at most a few rendered characters — never final state.
-                      //  · control/status frame: do NOT drop. A dropped control frame
-                      //    is a silent lie (e.g. a lost `configUpdated` leaves the UI
-                      //    showing "saved"); a throttled one delays it. So the
-                      //    connection is torn down instead: the client reconnects and
-                      //    re-syncs from scratch (ws.js owns the reconnect + onReconnect
-                      //    resync leg), which is a visible, recoverable failure rather
-                      //    than a silent one.
-                      // The class is computed once per event inside WsHub (see there).
-                      outbound <- Queue.bounded[IO, WebSocketFrame](OutboundQueueCapacity)
+                      // The bounded FIFO retains the classification supplied by WsHub.
+                      // Only the oldest stream entry may be evicted; control entries
+                      // are never removed by an overflow. Full without a candidate
+                      // closes through the existing overflow signal.
+                      outbound <- WsOutboundBuffer.create(OutboundQueueCapacity)
                       outboundOverflowClosed <- Deferred[IO, Unit]
+                      logConnId = java.util.UUID.randomUUID().toString.take(8)
+                      overflowDrops = new java.util.concurrent.atomic.AtomicLong(0L)
+                      overflowCloses = new java.util.concurrent.atomic.AtomicLong(0L)
                       // console-reconnect-stability（2026-10-28）：pong 旁路队列——
                       // 大帧阵发时心跳应答不再排在本连接 bulk FIFO 之后（机制见
                       // [[ConsolePongLane]]）。有界 16；道满回落既有 FIFO。
                       pongLane <- Queue.bounded[IO, WebSocketFrame](ConsolePongLane.Capacity)
 
                       perConnWsSend = (text: String, isStream: Boolean) =>
-                        outbound
-                          .tryOffer(WebSocketFrame.Text(text))
-                          .flatMap {
-                            case true => IO.unit
-                            case false if isStream =>
-                              // Full queue + droppable frame ⇒ evict oldest, then take
-                              // the slot this frame just vacated. `tryTake` returning
-                              // None (a reader drained it concurrently) is fine — the
-                              // retry below either succeeds or is counted, never loops.
-                              outbound.tryTake *> outbound.tryOffer(WebSocketFrame.Text(text)).void *>
-                                IO(wsHub.noteOverflowDrop())
-                            case false =>
-                              // Full queue + control frame ⇒ tear this connection down.
-                              // The teardown rides the queue's own stream (see
-                              // `sendStream`), so there is no process-wide state and no
-                              // cross-connection leak.
-                              IO(wsHub.noteOverflowClose()) *>
-                                logger.warn(
-                                  "WebSocket outbound queue full on a non-stream frame — closing " +
-                                    s"this connection (capacity $OutboundQueueCapacity)"
-                                ) *>
-                                outboundOverflowClosed.complete(()).void
-                          }
+                        outbound.enqueue(WebSocketFrame.Text(text), isStream).flatMap {
+                          case WsOutboundBuffer.Accepted => IO.unit
+                          case WsOutboundBuffer.Evicted =>
+                            IO { overflowDrops.incrementAndGet(); wsHub.noteOverflowDrop() }
+                          case WsOutboundBuffer.Full =>
+                            IO { overflowCloses.incrementAndGet(); wsHub.noteOverflowClose() } *>
+                              outboundOverflowClosed.complete(()).void
+                        }
                       // 在带身份声明（握手 query 不可靠批 2026-11-03）：本连接的实例
                       // 键读数——初值 = 握手腿（query 可用时已是身份键；隧道脸无 query
                       // = 会话退路键）。identify 帧到达后经 onIdentify 迁移并写回，
@@ -1310,7 +1289,14 @@ class WebSocketRoutes(
                           wsHub.unregister(hubConnId) *> watchSession.close() *>
                             // 控制台单实例批：连接出账（只摘连接账——掉线 ≠ 让位，owner
                             // 不动、零出帧；#960 判死回收经本 finalizer 同样不触发提示）。
-                            takeover.onDisconnect(hubConnId)
+                            takeover.onDisconnect(hubConnId) *>
+                            IO((overflowDrops.get(), overflowCloses.get())).flatMap { case (drops, closes) =>
+                              if drops + closes == 0 then IO.unit
+                              else logger.warn(
+                                s"WebSocket outbound overflow conn=$logConnId capacity=$OutboundQueueCapacity " +
+                                  s"evicted=$drops full=$closes"
+                              )
+                            }
                         )
                       )
 
@@ -1331,7 +1317,7 @@ class WebSocketRoutes(
                       sendStream = zombie.guardedSend(
                         ConsolePongLane.prioritized(
                           data = Stream
-                            .fromQueueUnterminated(outbound)
+                            .repeatEval(outbound.take)
                             .handleErrorWith { e =>
                               Stream.eval(logger.debug(s"WebSocket send stream closed: ${e.getMessage}")).drain
                             },
@@ -1346,7 +1332,7 @@ class WebSocketRoutes(
                               s"slot released (heartbeat dead-detection)"
                           )
                       )
-                      _ <- logger.info("WebSocket client connected")
+                      _ <- logger.info(s"WebSocket client connected conn=$logConnId")
                       // 控制台在用判据（工作过程中开新标签页批 2026-11-05）：连接建立
                       // = 「控制台真的在用」的服务端事实之一，落一笔标记件（节流写，
                       // 绝不失败）——boot/focus 两条开门腿据此抑制自动开门。
@@ -1371,8 +1357,7 @@ class WebSocketRoutes(
                         io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
                       })
                       sttNode <- SttService.serverConfigNode(sttSvc)
-                      _ <- outbound.offer(
-                        WebSocketFrame.Text(
+                      _ <- perConnWsSend(
                           io.circe.Json
                             .obj(
                               "type" -> "serverConfig".asJson,
@@ -1414,8 +1399,8 @@ class WebSocketRoutes(
                                 io.circe.Json.obj("fleetUpdate" -> fleetSnapshot)
                               else io.circe.Json.obj()
                             )
-                            .noSpaces
-                        )
+                            .noSpaces,
+                        false
                       )
                       activeMeta <- sessionStore.getActiveMeta
                       agentName = activeMeta.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
