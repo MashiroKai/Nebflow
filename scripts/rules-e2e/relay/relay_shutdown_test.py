@@ -557,12 +557,20 @@ def force_observed(self): log("force-entry-slow-active" if slow_active.is_set() 
 m.Relay.force_after_grace=force_observed
 m.Relay.__init__=init; m.Relay.event=observed;''')
   if lock_held:
+   code=code.replace('import threading\nslow_active=threading.Event()','import threading\nresponse_sent=threading.Event(); lock_held_evt=threading.Event()\nslow_active=threading.Event()')
+   code=code.replace(' result=event(self,obj)\n',''' if obj.get("status")=="rejected-limit":
+  log("ledger-enter")
+  if response_sent.is_set() and not lock_held_evt.wait(5):
+   log("lock-handshake-timeout"); raise RuntimeError("lock handshake timed out")
+ result=event(self,obj)
+''',1)
    code=code.replace(' old_exit=self.exit_fn',' global relay_instance\n relay_instance=self\n old_exit=self.exit_fn')
    code=code.replace(' if status==429: log("response-written")',''' if status==429:
-  log("response-written")
-  import threading
+  response_sent.set(); log("response-written")
   def hold():
-   with relay_instance.append_lock: log("lock-held"); threading.Event().wait()
+   lock_held_evt.clear()
+   with relay_instance.append_lock:
+    lock_held_evt.set(); log("lock-held"); threading.Event().wait()
   threading.Thread(target=hold,daemon=True).start()''')
   # Deadline first rejects new requests; it cannot wake a second watchdog.
   # The positive-order double-trigger case verifies watchdog deduplication.
@@ -621,7 +629,7 @@ m.Relay.deadline=deadline_observed''')
     if p.poll() is None: p.terminate(); p.wait(timeout=3)
     p.stdout.close()
   lines=[json.loads(x) for x in pathlib.Path(str(prefix)+'-stderr.log').read_text().splitlines()]; obs=[x for x in lines if 'observation' in x]
-  names=[x['observation'] for x in obs]; expected=['ledger-fsynced','response-written','slow-enter','force-entry-slow-active','exit-call']+(['dns-enter'] if fault=='dns' else [])+(['watch-deadline','deadline-complete'] if deadline_first else ['watch-handle']+(['watch-deadline'] if double_trigger else []))+(['lock-held'] if lock_held else []); self.assertCountEqual(names,expected); self.assertLess(names.index('ledger-fsynced'),names.index('response-written')); self.assertLess(names.index('force-entry-slow-active'),names.index('exit-call')); self.assertEqual([x['seq'] for x in obs],list(range(len(obs)))); self.assertEqual([x['monotonic'] for x in obs],sorted(x['monotonic'] for x in obs)); self.assertEqual(lines[-2]['sealed'],not lock_held)
+  names=[x['observation'] for x in obs]; expected=['ledger-fsynced','response-written','slow-enter','force-entry-slow-active','exit-call']+(['dns-enter'] if fault=='dns' else [])+(['watch-deadline','deadline-complete'] if deadline_first else ['watch-handle']+(['watch-deadline'] if double_trigger else []))+(['lock-held','ledger-enter'] if lock_held else []); self.assertCountEqual(names,expected); self.assertLess(names.index('ledger-fsynced'),names.index('response-written')); self.assertLess(names.index('force-entry-slow-active'),names.index('exit-call')); self.assertEqual([x['seq'] for x in obs],list(range(len(obs)))); self.assertEqual([x['monotonic'] for x in obs],sorted(x['monotonic'] for x in obs)); self.assertEqual(lines[-2]['sealed'],not lock_held)
   if lock_held:
    summary=lines[-2]; self.assertEqual((summary['recorded_lower_bound'],summary['unrecorded_upper_bound'],summary['reserved_snapshot']),(1,0,1)); self.assertIsNone(summary['inflight']); self.assertTrue(summary['possible_extra_record_after_exit']); self.assertLess(names.index('lock-held'),names.index('exit-call'))
   else: self.assertEqual(lines[-2]['still_inflight_at_exit'],0)
