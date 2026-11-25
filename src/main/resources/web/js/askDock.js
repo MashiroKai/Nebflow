@@ -91,7 +91,7 @@
 
 import { key } from './branding.js';
 import state from './state.js';
-import { sendWs, setAskFrameSink, onReconnect } from './ws.js';
+import { sendWs, setAskFrameSink, onReconnect, onDisconnect } from './ws.js';
 import { activeCanvasEntry, activeCanvasPane } from './canvas.js';
 import { isAskableFile, isPdfFile } from './mdHtmlGate.js';
 // PDF note/ask 批残留面收口（文本层批 2026-11-19）：侧边栏面板全链已删净（见
@@ -480,7 +480,7 @@ function buildDialog() {
     onQueued: (s, sent) => { noteAskQueued(s, !sent); },
     // 帧事实喂入口（状态可见性与失败上报批）：内核 consume 每收一帧就回调一次
     //（通用挂钩，内核不知道帧语义）；本文件按 msg.type 记事实/上报/重投影。
-    onFrame: (kind, msg, s) => { onKernelFrame(msg, kind, s); },
+    onFrame: (kind, msg, s) => { onKernelFrame(kind, msg, s); },
     // 草稿变化即时重投影：「待发送 ⇄ 空闲」这一拍不必等 1s 节拍（状态可见性批）。
     onInput: () => { syncTurnStatus(); },
     // 中止动作（取消 ≠ 失败）：canvas 档自己收口回合事实（settleTurn({cancel:true})）
@@ -549,6 +549,15 @@ function canvasFrameKind(msg) {
 function buildStateLine() {
   const stateText = h('span', { class: 'ask-state-text' });
   const stateNext = h('span', { class: 'ask-state-next' });
+  const retry = h('button', { type: 'button', class: 'ask-state-retry' }, [tt('重试', 'Retry')]);
+  retry.hidden = true;
+  retry.addEventListener('click', () => {
+    const s = activeSession();
+    if (!s || !state.connected) return;
+    s.recoveryUnknown = true;
+    askOpen(s);
+    syncTurnStatus();
+  });
   const stateDiag = h('button', {
     type: 'button',
     class: 'ask-state-diag',
@@ -573,7 +582,7 @@ function buildStateLine() {
     'data-ask-state-line': true,
     role: 'status',
     'aria-live': 'polite',
-  }, [stateText, stateNext, stateDiag]);
+  }, [stateText, stateNext, retry, stateDiag]);
   line.hidden = true;
   return line;
 }
@@ -705,6 +714,7 @@ function ensureInner() {
     stateLine: dock.querySelector('[data-ask-state-line]'),
     stateText: dock.querySelector('.ask-state-text'),
     stateNext: dock.querySelector('.ask-state-next'),
+    stateRetry: dock.querySelector('.ask-state-retry'),
     stateDiag: dock.querySelector('.ask-state-diag'),
     // 转交状态行（ask-scope 批）：唯一写点 = renderHandoff()。
     handoff: dock.querySelector('[data-ask-handoff]'),
@@ -1164,9 +1174,15 @@ function wireObserversOnce() {
       seatRaf = requestAnimationFrame(() => { seatRaf = 0; syncSeat(); });
     }).observe(document.body, { childList: true, subtree: true });
   }
+  onDisconnect(() => {
+    for (const s of sessions.values()) {
+      if (s.busy || s.turn?.inflight) s.recoveryUnknown = true;
+    }
+    syncTurnStatus();
+  });
   onReconnect(() => {
-    // WS 重连：会话状态标脏，下次打开时 askOpen 重新回放（服务端为权威）。
     for (const s of sessions.values()) s.stateSent = false;
+    syncTurnStatus();
     // 持久化缺陷批：断连期间没推上去的记事本编辑在重连后补推（含「本机离线写过
     // 内容」这一常见形态——不补推就等于那个文件在引擎侧永远是空的）。
     resyncNotesAfterReconnect();
@@ -2114,6 +2130,7 @@ function settleTurn(s, outcome) {
   if (!s) return;
   const t = turnOf(s);
   const o = outcome || {};
+  s.recoveryUnknown = false;
   t.inflight = false;
   t.queued = false;
   t.settledAt = Date.now();
@@ -2183,8 +2200,8 @@ function reportAskFailure(s, raw) {
 function noteAskQueued(s, queued) {
   const t = turnOf(s);
   if (!t) return;
-  t.queued = !!queued;
-  syncTurnStatus();
+  s.recoveryUnknown = false;
+  armTurn(s, { queued });
 }
 
 /** 最近一次投影结论（reportAskFailure 读它决定是否弹 toast——投影只读一次）。 */
@@ -2199,6 +2216,9 @@ function syncTurnStatus() {
   const s = activeSession();
   const now = Date.now();
   const turn = s ? s.turn : null;
+  const recovering = !!s?.recoveryUnknown;
+  el.stateRetry.hidden = !recovering;
+  el.stateRetry.disabled = !state.connected;
   const turnState = askTurnState({
     connected: !!state.connected,
     open: isOpen(),
@@ -2206,7 +2226,8 @@ function syncTurnStatus() {
     turn,
     now,
   });
-  const view = askStateView(turnState, { lang: uiLang(), turn, now });
+  const projected = askStateView(turnState, { lang: uiLang(), turn, now });
+  const view = recovering ? { ...projected, quiet: false, tone: 'warn', detail: '', hint: '', diagnostic: '', label: state.connected ? tt('连接中断，状态未知', 'Connection interrupted; status unknown') : tt('连接中断，正在重连', 'Connection interrupted; reconnecting') } : projected;
   const hint = view.hint || '';
   const diag = view.diagnostic || '';
   // 分隔符**跟随前一段**（见 ASK_SEP）：有后续段才补一枚，补在前一段的文本尾巴上。
@@ -2234,10 +2255,9 @@ function askSilenceWatch(now) {
   for (const s of sessions.values()) {
     const t = s.turn;
     if (t && t.inflight && now - (t.lastFrameAt || 0) > ASK_SILENCE_MS) {
-      reportAskFailure(s, {
-        message: tt('等待响应超时：长时间没有任何流式帧', 'Timed out: no stream frame for a long time'),
-        timedOut: true,
-      });
+      reportAskFailure(s, { message: 'Connection interrupted', timedOut: true });
+      s.recoveryUnknown = true;
+      syncTurnStatus();
     }
   }
 }
