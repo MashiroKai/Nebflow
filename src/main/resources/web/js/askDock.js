@@ -217,7 +217,7 @@ const ICONS = {
     ]),
 };
 
-/** @type {Map<string, {sid: string, fileName: string, msgs: Array<{role: string, text: string}>, stateSent: boolean, unread: boolean, busy?: boolean, recoveryUnknown?: boolean, lastFrameAt?: number, mailAddress?: string, turn?: object|null, handoff?: {ok: boolean, task: string, paths: Array<string>, reason: string, expected: string, summary: string, error: string}|null}>} */
+/** @type {Map<string, {sid: string, fileName: string, msgs: Array<{role: string, text: string}>, stateSent: boolean, unread: boolean, busy?: boolean, recoveryUnknown?: boolean, askBufferedText?: string, lastFrameAt?: number, mailAddress?: string, turn?: object|null, handoff?: {ok: boolean, task: string, paths: Array<string>, reason: string, expected: string, summary: string, error: string}|null}>} */
 const sessions = new Map(); // key: absPath
 let el = null; // 组件内部节点引用 { fab, dock, col, colwrap, inputRow, resize, input, send, stop }（建一次，跨宿主迁移复用）
 let root = null; // 组件宿主元素 <nf-ask-dock>（迁移时搬它）
@@ -1177,7 +1177,11 @@ function wireObserversOnce() {
   }
   onDisconnect(() => {
     for (const s of sessions.values()) {
-      if (s.busy || s.turn?.inflight) s.recoveryUnknown = true;
+      if (s.busy || s.turn?.inflight) {
+        s.recoveryUnknown = true;
+        // Reconnect replays the authoritative transcript; never append stale partial text to it.
+        s.askBufferedText = '';
+      }
     }
     syncTurnStatus();
   });
@@ -2339,7 +2343,7 @@ function consumeFrame(msg) {
     if (s.sid && s.sid === sid) { entry = s; break; }
   }
   if (!entry) return; // 本页未见过的 ask 会话（其它设备/页面）——忽略。
-  if (['thinking', 'thinkingDelta', 'toolCallDetected', 'toolStart', 'toolArgDelta', 'toolEnd'].includes(msg.type)) {
+  if (['thinking', 'thinkingDelta', 'toolCallDetected', 'toolStart', 'toolArgDelta', 'toolEnd', 'roundComplete'].includes(msg.type)) {
     dlg.processWorkline(entry, msg);
     if (entry.busy) turnOf(entry).lastFrameAt = Date.now();
   }
@@ -2393,11 +2397,8 @@ function consumeFrame(msg) {
       // 单开第三种记录形状）；卡的来源工具在 ask 面由授权单点决定（唯一 HTML 卡
       // 生产者 = Card），渲染时按常量标源即可。
       const cardMsg = { role: 'card', text: cardContent };
-      // 落列位置 = 当前流式 ai 泡**之前**：卡是这一拍的中间产物，末位必须仍是 ai
-      // 泡，流式增量腿（内核 updateStreaming 认末元素为 ai 泡）判据不受影响。
-      const tail = entry.msgs[entry.msgs.length - 1];
-      if (tail && tail.role === 'ai') entry.msgs.splice(entry.msgs.length - 1, 0, cardMsg);
-      else entry.msgs.push(cardMsg);
+      // 工具开始已收口前一条正文；卡按事件顺序排在它之后、下一条正文之前。
+      entry.msgs.push(cardMsg);
       // 卡载荷落 localStorage 转录持久面（作者令 2026-11-19「要留存」）：卡行与
       // user/ai 同族进 PERSISTED_ROLES，写穿单点 = persistSession（SESS_MAX_MSGS
       // 容量闸照旧 60 行、私密模式/quota 仍静默降级）。与内核 consume 的每一拍同律：
