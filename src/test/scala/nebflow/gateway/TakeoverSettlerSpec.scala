@@ -114,11 +114,12 @@ class TakeoverSettlerSpec extends CatsEffectSuite:
     TestControl.executeEmbed(for
       entered <- Deferred[IO, Unit]
       resume <- Deferred[IO, Unit]
-      count <- Ref.of[IO, Int](0)
+      count <- Ref.of[IO, Counts](Counts())
       stream <- IO(new BrowserScreencast((_, _) => ()))
-      s = new Settler[IO](_ => entered.complete(()) *> resume.get *> count.update(_ + 1), _ => IO.unit,
-        _ => IO.unit, (_, _) => IO.unit, _ => IO.unit, 5.seconds, (_, _) => IO.unit)
-      _ <- s.register(("id", "session", stream, () => ()))
+      s = new Settler[IO](_ => entered.complete(()) *> resume.get *> count.update(c => c.copy(release = c.release + 1)),
+        _ => count.update(c => c.copy(lease = c.lease + 1)),
+        _ => count.update(c => c.copy(record = c.record + 1)), (_, _) => IO.unit, _ => IO.unit, 5.seconds, (_, _) => IO.unit)
+      _ <- s.register(("id", "session", stream, () => ())) *> IO(s.markFailed(stream))
       fiber <- s.finish.start
       _ <- entered.get
       cancel <- fiber.cancel.start
@@ -126,6 +127,45 @@ class TakeoverSettlerSpec extends CatsEffectSuite:
       _ <- resume.complete(())
       _ <- cancel.joinWithNever
       n <- count.get
-      _ = assertEquals(n, 1)
+      _ = assertEquals(n, Counts(1, 1, 1, 0))
+    yield ())
+  }
+
+  test("frame pump settles failure at the next 200ms tick") {
+    TestControl.executeEmbed(for
+      f <- fixture()
+      _ <- f.s.register(f.active)
+      ready <- Deferred[IO, Unit]
+      pump <- (fs2.Stream.eval(ready.complete(())) >> framePump(f.s, 200.millis)(_ => IO.pure(None: Option[String]))).compile.drain.start
+      _ <- ready.get
+      _ <- IO.cede
+      _ <- IO(f.s.markFailed(f.stream))
+      frame <- f.queue.take.timeoutTo(201.millis, IO.pure(Json.Null))
+      c <- f.counts.get
+      _ <- pump.cancel
+      _ = assertEquals(c, Counts(1, 1, 1, 0))
+      _ = assertEquals(frame.hcursor.get[String]("error").toOption, Some("画面流故障，接管已停止"))
+    yield ())
+  }
+
+  test("simultaneous tick and finish settle a failed stream only once") {
+    TestControl.executeEmbed(for
+      f <- fixture()
+      gate <- Deferred[IO, Unit]
+      tickReady <- Deferred[IO, Unit]
+      finishReady <- Deferred[IO, Unit]
+      _ <- f.s.register(f.active) *> IO(f.s.markFailed(f.stream))
+      tick <- (tickReady.complete(()) *> gate.get *> f.s.tick).start
+      finish <- (finishReady.complete(()) *> gate.get *> f.s.finish).start
+      _ <- tickReady.get *> finishReady.get *> gate.complete(())
+      _ <- tick.joinWithNever
+      outcome <- finish.joinWithNever
+      c <- f.counts.get
+      frame <- f.queue.tryTake
+      extra <- f.queue.tryTake
+      _ = assert(Set(Outcome.NothingToSettle, Outcome.SettledAsFailure).contains(outcome))
+      _ = assertEquals(c, Counts(1, 1, 1, 0))
+      _ = assert(frame.nonEmpty)
+      _ = assertEquals(extra, None)
     yield ())
   }

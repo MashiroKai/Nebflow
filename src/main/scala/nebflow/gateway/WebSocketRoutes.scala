@@ -1163,9 +1163,8 @@ class WebSocketRoutes(
                       case _ => IO.unit
                   case _ => IO.unit
                 }.onFinalize(settler.finalizer)
-                frames = Stream.awakeEvery[IO](200.millis).evalMap(_ =>
-                  settler.tick *> settler.current.flatMap(_.traverse { case (_, _, stream, _) => IO(stream.take()) })
-                ).collect { case Some(Some(data)) => WebSocketFrame.Text(Json.obj("type" -> "frame".asJson, "frame" -> io.circe.parser.parse(data).getOrElse(Json.obj())).noSpaces) }
+                frames = TakeoverSettler.framePump(settler, 200.millis) { case (_, _, stream, _) => IO(stream.take()) }
+                  .map(data => WebSocketFrame.Text(Json.obj("type" -> "frame".asJson, "frame" -> io.circe.parser.parse(data).getOrElse(Json.obj())).noSpaces))
                 response <- wsb.build(Stream.fromQueueUnterminated(outbound).merge(frames), receive)
               yield response
           }

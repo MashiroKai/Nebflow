@@ -12,6 +12,11 @@ private[nebflow] object TakeoverSettler:
   enum Outcome:
     case NothingToSettle, SettledAsFailure, SettledNormally
 
+  def framePump[F[_]: Async, A](settler: Settler[F], interval: FiniteDuration)(take: Active => F[Option[A]]): fs2.Stream[F, A] =
+    fs2.Stream.awakeEvery[F](interval).evalMap(_ =>
+      settler.tick *> settler.current.flatMap(_.traverse(take))
+    ).collect { case Some(Some(frame)) => frame }
+
   final class Settler[F[_]: Async](
       releaseResources: Active => F[Unit],
       releaseLease: String => F[Unit],
