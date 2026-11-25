@@ -292,7 +292,7 @@ echo ~/.nebflow/docs/<域>/report.html
 
 ## Markdown 编写规则（图片嵌入 / 可跳转目录 / LaTeX 公式）
 
-**① 图片与材料尽量嵌入，不要只给路径。** 用图语法把载体内联进正文：`![信号对比](</abs/path/chart.svg>)`。反例 = 路径文本冒充内容（`图表见 /abs/path/chart.svg`）——路径/文件清单只能作附录或清单件（取证批次的 `MANIFEST.md` / `index.json`）。大图集（> 20 张）：正文只嵌**决策相关子集**（对照拼图 `cmp-*`、逐项配对图 `adj-*`），全量清单进附录。内嵌路径须落在可服务面：`<ws>/.nebflow/evidence*/**` 或 `~/.nebflow/{projects,uploads,plots,workspace-items,voice-models}/**`（`~/.nebflow/docs/**` 会被拒）。
+**① 正文图件内嵌 PNG。** 手机宽度下坐标轴、图例与图注须可读；PDF/SVG 仅作可选下载或放大入口，不作正文主入口。vault 文档沿用 `attachments/` 或 `assets/` 的 vault 相对路径。大图集正文嵌决策相关子集，其余作附录。
 
 **② 内容多加可跳转目录。** 触发阈值 = 文档含 ≥3 个二级章节，或正文 > 6,000 字符；在正文开头列锚点目录，标题即锚点，标题改名时目录同批更新：
 

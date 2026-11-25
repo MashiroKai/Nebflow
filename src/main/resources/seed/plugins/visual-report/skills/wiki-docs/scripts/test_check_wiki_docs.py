@@ -46,6 +46,16 @@ spec = importlib.util.spec_from_file_location("check_wiki_docs", SCRIPT)
 MOD = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(MOD)
 
+class PngLatexDisciplineTests(unittest.TestCase):
+    def test_pdf_without_png_and_unformatted_math(self):
+        issues = MOD.collect_png_latex_issues('[放大](attachments/chart.pdf)\n数值 ≥ 3，面积 cm⁻²')
+        self.assertEqual([i['rule'] for i in issues], ['png-primary', 'latex-math'])
+
+    def test_exclusions_and_png(self):
+        text = '![图](attachments/chart.png) [下载](attachments/chart.svg)\n$ x ≥ 3 $\n`²`\n> 原文 ∑\n```\n√\n```'
+        self.assertEqual(MOD.collect_png_latex_issues(text), [])
+
+
 PNG_1PX = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAwAB/wH+3wAAAABJRU5ErkJggg=="
 )
