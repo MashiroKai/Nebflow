@@ -19,7 +19,7 @@ import { probeNearPath } from './nearpath.js';
 // deviceRoster/branding，无 ws.js 回边——零环）。
 // 接管误报根修批（2026-11-02）：同一模块的 deviceClientId 也是 ws 握手要带的
 // 实例身份（`?clientId=`）——同一条零环依赖，不新增边。
-import { refreshAutoBinding, deviceClientId } from './deviceIdentity.js';
+import { refreshAutoBinding, deviceClientId, deviceTimeZone } from './deviceIdentity.js';
 // 断连风暴修复批（2026-11-04 作者报障「一直弹 连接断开 正在重连」）：退避的
 // 「何时归零」抽成纯件——flap（握手成功但几秒必死）不得再清零退避。纯逻辑、
 // 零依赖叶子（零环），机制级判据见 scripts/tests/ws-backoff.test.mjs。
@@ -1458,7 +1458,7 @@ export function connect() {
       // 自动化验跑落**观察位**（看得见内容但不夺作者手机端的控制权，不弹接管框）；
       // 缺这个位，每次临时 profile 的新 clientId 都会把作者顶出去一次。
       const automated = (typeof navigator !== 'undefined' && navigator.webdriver === true) ? true : undefined;
-      if (cid) sendWs(automated ? { type: 'takeoverIdentify', clientId: cid, automated } : { type: 'takeoverIdentify', clientId: cid });
+      if (cid) sendWs({ type: 'takeoverIdentify', clientId: cid, automated, timeZone: deviceTimeZone() });
     } catch (_) { /* 取不到身份 ⇒ 省略该帧（服务端落会话退路，行为同本批之前） */ }
     // 离线期间入队的 WS 命令按序补发（观察项① 收口；先于以下引导命令）。
     flushPendingSends();

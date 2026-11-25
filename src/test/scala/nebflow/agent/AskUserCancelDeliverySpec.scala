@@ -38,7 +38,7 @@ class AskUserCancelDeliverySpec extends CatsEffectSuite:
       lazy val behavior: nebflow.actor.Behavior[nebflow.actor.AgentCommand] =
         Behaviors.receiveMessage[nebflow.actor.AgentCommand] {
           // arity 对齐 ImmediateInput（text/blocks/source/eventType/sender/senderTeam/delivery/fromUser/project/windowItems）
-          case nebflow.actor.AgentCommand.ImmediateInput(text, _, source, eventType, _, _, _, fromUser, _, _, _) =>
+          case nebflow.actor.AgentCommand.ImmediateInput(text, _, source, eventType, _, _, _, fromUser, _, _, _, _) =>
             seen.update(_ :+ ((text, source, eventType, fromUser))).as(behavior)
           case _ => IO.pure(behavior)
         }

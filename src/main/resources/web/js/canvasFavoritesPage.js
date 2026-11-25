@@ -15,6 +15,29 @@ import { buildFieldShell } from './socialSearchCore.js';
 const PAGE_ID = 'canvas-fav-page';
 /** 无限滚动：每批渲染条数。 */
 const BATCH = 30;
+let pathTooltip;
+function hidePathTooltip() { if (pathTooltip) pathTooltip.hidden = true; }
+function showPathTooltip(row, path, keyboard = false) {
+  if (!pathTooltip) {
+    pathTooltip = document.createElement('div');
+    pathTooltip.className = 'cfp-path-tooltip';
+    pathTooltip.setAttribute('role', 'tooltip');
+    pathTooltip.tabIndex = 0;
+    pathTooltip.addEventListener('blur', hidePathTooltip);
+    document.body.appendChild(pathTooltip);
+  }
+  pathTooltip.textContent = path;
+  pathTooltip.classList.toggle('is-keyboard', keyboard);
+  pathTooltip.hidden = false;
+  const anchor = row.getBoundingClientRect();
+  const tip = pathTooltip.getBoundingClientRect();
+  const margin = 8;
+  const left = Math.max(margin, Math.min(anchor.right + margin, innerWidth - tip.width - margin));
+  const below = anchor.bottom + margin;
+  const top = Math.max(margin, Math.min(below + tip.height <= innerHeight - margin ? below : anchor.top - tip.height - margin, innerHeight - tip.height - margin));
+  pathTooltip.style.left = `${left}px`;
+  pathTooltip.style.top = `${top}px`;
+}
 
 const TAB_LABEL = {
   note: () => t('canvas.favPage.tab.note'),
@@ -155,6 +178,11 @@ function buildPage(onClose, onOpened) {
       row.className = 'cfp-row';
       row.dataset.favPath = entry.path;
       row.dataset.kind = favKind(entry.path);
+      row.addEventListener('mouseenter', () => { if (matchMedia('(hover: hover)').matches) showPathTooltip(row, entry.path); });
+      row.addEventListener('mouseleave', () => { if (!row.matches(':focus-visible')) hidePathTooltip(); });
+      row.addEventListener('focus', () => { if (row.matches(':focus-visible')) showPathTooltip(row, entry.path, true); });
+      row.addEventListener('keydown', (event) => { if (event.key === 'Tab' && !event.shiftKey && pathTooltip && !pathTooltip.hidden) { event.preventDefault(); pathTooltip.focus(); } });
+      row.addEventListener('blur', (event) => { if (event.relatedTarget !== pathTooltip) hidePathTooltip(); });
       const main = document.createElement('div');
       main.className = 'cfp-main';
       const h = document.createElement('div');
@@ -165,6 +193,12 @@ function buildPage(onClose, onOpened) {
       const src = document.createElement('span');
       src.className = 'cfp-row-src';
       src.textContent = entry.path;
+      src.title = entry.path;
+      src.addEventListener('click', (event) => {
+        if (!matchMedia('(hover: none)').matches) return;
+        event.stopPropagation();
+        src.classList.toggle('is-expanded');
+      });
       const date = document.createElement('span');
       date.className = 'cfp-row-date';
       date.textContent = formatDate(entry.savedAt);
@@ -232,6 +266,7 @@ function buildPage(onClose, onOpened) {
 
   // 无限滚动：接近底部时追加下一批。
   body.addEventListener('scroll', () => {
+    hidePathTooltip();
     if (body.scrollTop + body.clientHeight >= body.scrollHeight - 80 && state.shown < state.items.length) {
       renderBatch();
     }

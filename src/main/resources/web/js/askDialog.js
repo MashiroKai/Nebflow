@@ -29,6 +29,7 @@
 // 落盘 / 拖拽改尺寸状态机 / 画布专属帧（askNote*/askEdit*/askHandoffAck）。
 
 import { h } from './dom.js';
+import { startWorklineDots, thinkingWorklineItem, startWorklineItem, worklineToolDetail, doneWorklineItem, failWorklineItem, removeWorkline } from './workline.js';
 import { askBubbleClass, chatComposerClass } from './chatUi.js';
 import { renderMarkdownWithMath, createIconsIn } from './utils.js';
 // 图片附件（ask 附图批）：压缩管线 = 主会话同款（input/attachments.js 单点导出），
@@ -127,12 +128,19 @@ function setMarkdownHtml(node, text, streaming) {
  * @property {number} [lastFrameAt]
  * @property {string} [mailAddress]
  * @property {string} [replyState]
+ * @property {any} [askWorklineView]
+ * @property {string} [askThinking]
+ * @property {string} [askTool]
+ * @property {string} [askToolDetail]
+ * @property {string} [askLastKind]
+ * @property {Array<{kind:string,text:string,name?:string}>} [askProcess]
  */
 
 /**
  * @typedef {Object} AskDialogCfg
  * @property {(zh: string, en: string) => string} tt 双语
  * @property {string} placeholder 输入条 placeholder
+ * @property {boolean} [workline] Canvas workline opt-in
  * @property {() => AskSession|null} activeSession 当前会话
  * @property {(s: AskSession) => boolean} canSubmit 发送前硬闸
  * @property {() => Promise<AskSession|null>} ensureSession 取/建会话
@@ -478,6 +486,11 @@ export function createAskDialog(cfg) {
       // 收回（状态行的 DONE 驻留到期即隐，正是作者「看不到已回复」的根因）。
       // 态 = 会话内存里的 replyState（arm/settle 点写），刷新后不回放。
       // 必须在建池/建索引**之前**插入（插入会平移 desired 下标）。
+      if (cfg.workline && s && s.askProcess && s.askProcess.length) {
+        let at = -1;
+        desired.forEach((d, i) => { if (d.kind === 'bubble' && d.role === 'user') at = i; });
+        if (at >= 0) desired.splice(at + 1, 0, { kind: 'process', items: s.askProcess });
+      }
       if (s && s.replyState) {
         let at = -1;
         desired.forEach((d, i) => { if (d.kind === 'bubble' && d.role === 'user') at = i; });
@@ -533,6 +546,11 @@ export function createAskDialog(cfg) {
             h('span', { class: 'ask-time-divider-label' },
               [timeDividerLabel(d.ts, Date.now(), formatHm, tt)]),
           ]);
+        } else if (d.kind === 'process') {
+          const details = h('details', { class: 'ask-process-details' });
+          details.appendChild(h('summary', {}, [tt('查看完整过程', 'View full process')]));
+          for (const item of d.items) details.appendChild(h('pre', {}, [item.text]));
+          node = details;
         } else if (d.kind === 'mark') {
           const label = {
             working: tt('处理中…', 'Working…'),
@@ -575,6 +593,15 @@ export function createAskDialog(cfg) {
           node = b;
         }
         col.insertBefore(node, ref);
+      }
+      if (cfg.workline && s && s.busy) {
+        dlg.appendTyping();
+        const view = s.askWorklineView;
+        if (s.askLastKind === 'thinking' && s.askThinking) thinkingWorklineItem(view, s.askThinking);
+        if (s.askLastKind === 'tool' && s.askTool) {
+          startWorklineItem(view, s.askTool);
+          if (s.askToolDetail) worklineToolDetail(view, s.askToolDetail);
+        }
       }
       // 落列后的跟随/计数由调用点经 settleCol/snapCol 单点决定（本函数只建 DOM）。
     },
@@ -624,6 +651,18 @@ export function createAskDialog(cfg) {
 
     // ── 思考指示 / typing ─────────────────────────────────────────────────
     appendTyping() {
+      if (cfg.workline) {
+        dlg.removeTyping();
+        const host = h('div', { class: 'ask-workline-host' });
+        col.appendChild(host);
+        typingNode = host;
+        const s = cfg.activeSession();
+        if (s) {
+          s.askWorklineView = { dom: { chat: host }, motionEnabled: () => true };
+          startWorklineDots(s.askWorklineView);
+        }
+        return;
+      }
       dlg.removeTyping();
       const tp = h('div', {
         class: 'ask-stream-line',
@@ -642,13 +681,58 @@ export function createAskDialog(cfg) {
       if (dlg.colFollows()) col.scrollTop = col.scrollHeight;
       typingNode = tp;
     },
+    processWorkline(s, msg) {
+      if (!cfg.workline || !s || !s.busy) return;
+      s.lastFrameAt = Date.now();
+      if (!s.askProcess) s.askProcess = [];
+      if (msg.type === 'thinkingDelta') {
+        if (s.askLastKind !== 'thinking') s.askThinking = '';
+        s.askLastKind = 'thinking';
+        s.askThinking = (s.askThinking || '') + (msg.delta || '');
+        let item = s.askProcess[s.askProcess.length - 1];
+        if (!item || item.kind !== 'thinking') { item = { kind: 'thinking', text: '' }; s.askProcess.push(item); }
+        item.text += msg.delta || '';
+      }
+      if (msg.type === 'toolCallDetected' || msg.type === 'toolStart') {
+        s.askLastKind = 'tool';
+        s.askTool = msg.label || msg.toolName || msg.name || 'Tool';
+        s.askToolDetail = '';
+        const last = s.askProcess[s.askProcess.length - 1];
+        if (!last || last.kind !== 'tool' || last.name !== s.askTool) s.askProcess.push({ kind: 'tool', name: s.askTool, text: s.askTool });
+      }
+      if (msg.type === 'toolArgDelta') {
+        s.askToolDetail = (s.askToolDetail || '') + (msg.delta || '');
+        const item = s.askProcess[s.askProcess.length - 1];
+        if (item && item.kind === 'tool') item.text = item.name + '\n' + s.askToolDetail;
+      }
+      if (msg.type === 'toolEnd') {
+        const item = s.askProcess[s.askProcess.length - 1];
+        if (item && item.kind === 'tool') item.text += '\n' + (msg.summary || msg.content || '');
+      }
+      if (s !== cfg.activeSession() || !dlg.isOpen()) return;
+      if (!typingNode || !typingNode.isConnected) dlg.appendTyping();
+      const view = s.askWorklineView;
+      if (!view) return;
+      if (msg.type === 'thinkingDelta') {
+        thinkingWorklineItem(view, s.askThinking);
+      }
+      if (msg.type === 'toolCallDetected' || msg.type === 'toolStart') startWorklineItem(view, s.askTool);
+      if (msg.type === 'toolArgDelta') worklineToolDetail(view, s.askToolDetail);
+      if (msg.type === 'toolEnd' && s.askTool) {
+        const finish = msg.isError ? failWorklineItem : doneWorklineItem;
+        finish(view, s.askTool, msg.summary || msg.label || s.askTool);
+      }
+    },
     updateTypingText(text) {
+      if (cfg.workline) { dlg.removeTyping(); dlg.updateStreaming(cfg.activeSession()); return; }
       if (!typingNode || !typingNode.isConnected || typeof text !== 'string') return;
       if (!text) return; // 思考期保持 spinner：首个非空 token 才换相
       typingNode.textContent = text;
       typingNode.scrollLeft = typingNode.scrollWidth;
     },
     removeTyping() {
+      const s = cfg.activeSession();
+      if (cfg.workline && s && s.askWorklineView) removeWorkline(s.askWorklineView);
       if (typingNode && typingNode.isConnected) typingNode.remove();
       typingNode = null;
     },
@@ -674,6 +758,7 @@ export function createAskDialog(cfg) {
       input.value = '';
       input.style.height = 'auto';
       // ④ 双泡修复批 2026-10-31：发问时**不再预压空 ai 泡**——等待期只有 typing。
+      if (cfg.workline) { s.askThinking = ''; s.askTool = ''; s.askToolDetail = ''; s.askLastKind = ''; s.askProcess = []; }
       const userRow = { role: 'user', text: v, ts: Date.now() };
       if (picked.length) userRow.images = picked.map((p) => ({ name: p.name, url: p.url }));
       s.msgs.push(userRow);

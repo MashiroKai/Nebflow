@@ -864,6 +864,22 @@ function buildRow(r, isTriggered) {
     detail.appendChild(buildDecisionPanel(r));
   }
 
+  if (r.due && r.due.zoneId && r.due.wallClock) {
+    const dueInfo = document.createElement('div');
+    dueInfo.className = 'reminder-due-zone';
+    const region = String(r.due.zoneId);
+    dueInfo.textContent = `${r.due.wallClock} · ${region}`;
+    const deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const instant = r.due.type === 'once' ? r.due.dueAt : r.nextDueAt;
+    if (deviceZone && deviceZone !== region && Number.isFinite(instant)) {
+      const converted = new Intl.DateTimeFormat(undefined, {
+        timeZone: deviceZone, dateStyle: 'medium', timeStyle: 'short'
+      }).format(new Date(instant));
+      dueInfo.textContent += ` / ${converted} · ${deviceZone}`;
+    }
+    detail.appendChild(dueInfo);
+  }
+
   const facts = document.createElement('div');
   facts.className = 'reminder-row-facts';
   const addFact = (iconName, label, value) => {
@@ -1137,10 +1153,28 @@ function buildTodoInlineCreate() {
         placeholder="${t('todo.projectPlaceholder')}" autocomplete="off"
         value="${escapeHtml(projectPrefill)}">
     </div>
+    ${editing?.due ? `<div class="reminder-inline-project"><label for="todo-inline-zone">Creation time zone (IANA)</label>
+      <input type="text" id="todo-inline-zone" autocomplete="off">
+      <button type="button" data-role="correct-zone">Correct zone</button>
+      <div data-role="zone-error" aria-live="polite"></div></div>` : ''}
     <div class="reminder-form-actions">
       <button type="button" class="reminder-form-btn" data-role="cancel">${t('task.sheetCancel')}</button>
       <button type="button" class="reminder-form-btn reminder-form-btn-primary" data-role="confirm">${editing ? t('task.save') : t('task.sheetDone')}</button>
     </div>`;
+
+  const zoneInput = /** @type {HTMLInputElement | null} */ (wrap.querySelector('#todo-inline-zone'));
+  if (zoneInput) zoneInput.value = String(editing?.due?.zoneId || '');
+  wrap.querySelector('[data-role="correct-zone"]')?.addEventListener('click', () => {
+    const zone = zoneInput?.value.trim();
+    const error = wrap.querySelector('[data-role="zone-error"]');
+    if (!zone || !editing || !wsReady()) {
+      if (error) error.textContent = !zone ? 'Enter an IANA time zone' : 'Connection unavailable';
+      return;
+    }
+    if (error) error.textContent = '';
+    sendWs({ type: 'updateScheduledTask', sessionId: editing.sessionId || state.activeSessionId,
+      id: editing.id, creationZone: zone });
+  });
 
   // 确认类按钮统一右对齐（schedule-todo-unify 批：与定时任务面同一组按钮规格）。
   wrap.querySelector('[data-role="cancel"]')?.addEventListener('click', (e) => {
@@ -1822,6 +1856,10 @@ onMessage('scheduledTaskCreated', (msg) => {
 // these with msgType: 'createScheduledTask'. Roll back the optimistic temp
 // row so the list never shows a task the server refused to persist.
 onMessage('error', (msg) => {
+  if (msg.msgType === 'updateScheduledTask' && editingTodo && msg.id === editingTodo.id) {
+    const error = document.querySelector('[data-role="zone-error"]');
+    if (error) error.textContent = msg.message || 'Update failed';
+  }
   // 决策作答被拒（期 3）：就地在该行的作答面板给出码对应文案，恢复提交键。
   if (msg.msgType === 'answerTodoDecision') {
     const row = document.querySelector(`.reminder-row[data-id="${msg.id}"]`);

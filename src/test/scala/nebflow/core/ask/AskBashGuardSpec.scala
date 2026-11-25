@@ -210,6 +210,13 @@ final class AskBashGuardSpec extends CatsEffectSuite:
     assertEquals(AskBashGuard.validate("cat x | | grep y"), Left("empty pipeline segment"))
   }
 
+  test("pipeline token limit error wins over a later trailing backslash") {
+    val tooMany = "grep " + (1 to 64).map(i => s"w$i").mkString(" ")
+    val atLimit = "grep " + (1 to 63).map(i => s"w$i").mkString(" ")
+    assertEquals(AskBashGuard.validate(tooMany + " | grep x\\"), Left("segment has more than 64 tokens"))
+    assert(AskBashGuard.validate(atLimit).isRight)
+  }
+
   // ── 执行器：argv 直执行（cwd / 管道 / 环境钉 / 失败面） ───────────────────
   private def tempDir(name: String): os.Path =
     os.Path(os.temp.dir(prefix = s"ask-guard-$name-").toNIO.toRealPath())

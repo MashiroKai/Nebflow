@@ -380,6 +380,7 @@ class DeviceMailSpec extends FunSuite:
             fromUser,
             _,
             _,
+            _,
             _
           ) => // W1 shim: +2 slots (windowItems, notifypack-b; clientMessageId, P3-mailbox)
         assertEquals(text, "[DEVICE-MAIL · from KAI-MBP]\nhello B")

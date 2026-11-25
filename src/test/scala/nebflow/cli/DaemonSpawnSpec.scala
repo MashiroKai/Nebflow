@@ -216,6 +216,18 @@ class DaemonSpawnSpec extends FunSuite:
     assertEquals(DaemonSpawn.awaitReadyCore(() => true, () => true, deadlineMs = 0, pollMs = 0), Right(()))
   }
 
+  test("awaitReadyCore stops immediately after a ready probe") {
+    val calls = scala.collection.mutable.ListBuffer.empty[String]
+    val result = DaemonSpawn.awaitReadyCore(
+      () => { calls += "probe"; true },
+      () => { calls += "alive"; true },
+      deadlineMs = 0,
+      pollMs = 0
+    )
+    assertEquals(result, Right(()))
+    assertEquals(calls.toList, List("alive", "probe"))
+  }
+
   test("awaitReadyCore: never-ready live child hits the deadline as TimedOut") {
     assertEquals(
       DaemonSpawn.awaitReadyCore(() => false, () => true, deadlineMs = 0, pollMs = 0),

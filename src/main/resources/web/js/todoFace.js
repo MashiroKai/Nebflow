@@ -42,6 +42,7 @@ import { isImeComposing } from './imeGuard.js';
 import { bindComposerKeys } from './input/composer.js';
 import { sessionShowsNodeEntries } from './taskList.js';
 import { todoStore, TAG_COLOR_PRESETS, PRIORITY_COLORS, PRIORITY_LABEL_KEYS } from './todoStore.js';
+import { sendWs, onMessage } from './ws.js';
 import { isAskRow, buildAskCardForRow, buildDecisionOption, decisionOptionLabel } from './askTodoQuestion.js';
 // 时间滚轮选择器（time-wheel-picker 实施批 2026-11-03，作者令 22:16/22:20）：
 // 待办截止时刻从裸 `<input type="datetime-local">` 收编为同款点选面。交互单源
@@ -310,6 +311,16 @@ function dueText(ms) {
   return `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
 }
 
+function formatCreationZone(rule, nextDueAt) {
+  let text = `${rule.wallClock} · ${rule.zoneId}`;
+  const deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const instant = rule.type === 'once' ? rule.dueAt : nextDueAt;
+  if (deviceZone && deviceZone !== rule.zoneId && Number.isFinite(instant)) {
+    text += ` / ${new Intl.DateTimeFormat(undefined, { timeZone: deviceZone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(instant))} · ${deviceZone}`;
+  }
+  return text;
+}
+
 function dueInputValue(ms) {
   const d = new Date(ms);
   const p = (n) => String(n).padStart(2, '0');
@@ -403,6 +414,25 @@ class TodoFace {
     this.hitKey = null;
     this.hitFollow = null;
     this.hitNav = null;
+    this.unsubZoneError = onMessage('error', (msg) => {
+      if (msg.msgType !== 'updateScheduledTask' || msg.id !== this.pendingZoneId) return;
+      const status = this.root?.querySelector('.tfl-creation-zone-status');
+      if (status) status.textContent = msg.message || 'Zone correction failed';
+      this.pendingZoneId = null;
+    });
+    this.unsubZoneUpdated = onMessage('scheduledTaskUpdated', (msg) => {
+      if (msg.task?.id !== this.pendingZoneId) return;
+      this.pendingZoneId = null;
+      const info = this.root?.querySelector('.tfl-creation-zone-info');
+      const input = this.root?.querySelector('.tfl-creation-zone-input');
+      const status = this.root?.querySelector('.tfl-creation-zone-status');
+      const due = msg.task.due;
+      if (due && info && input) {
+        info.textContent = formatCreationZone(due, msg.task.nextDueAt);
+        input.value = due.zoneId;
+      }
+      if (status) status.textContent = 'Saved';
+    });
     this.unsub = todoStore.subscribe(() => this.onStoreChange());
     this.buildDom();
     if (this.expanded) this.panel.classList.add('tfl-panel-open');
@@ -1413,6 +1443,9 @@ class TodoFace {
       titleline.appendChild(foldBtn);
       main.appendChild(detail);
     }
+    if (item.dueRule?.zoneId && item.dueRule?.wallClock && !editing) {
+      main.appendChild(el('span', 'tfl-row-creation-zone', formatCreationZone(item.dueRule, item.nextDueAt)));
+    }
     if (item.due != null && !editing) {
       const due = el('span', 'tfl-row-due');
       due.innerHTML = CLOCK_SVG;
@@ -1991,6 +2024,25 @@ class TodoFace {
     });
     dueRow.append(dueLabel, toggle, dueHolder);
     panel.appendChild(dueRow);
+    if (item.dueRule?.zoneId && item.dueRule?.wallClock) {
+      const info = el('div', 'tfl-creation-zone-info', formatCreationZone(item.dueRule, item.nextDueAt));
+      const input = el('input', 'tfl-creation-zone-input');
+      input.value = item.dueRule.zoneId;
+      input.setAttribute('aria-label', 'Creation time zone (IANA)');
+      const button = el('button', 'tfl-creation-zone-submit', 'Correct zone');
+      button.type = 'button';
+      const status = el('div', 'tfl-creation-zone-status');
+      status.setAttribute('aria-live', 'polite');
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const zone = input.value.trim();
+        if (!zone || !item.sessionId) { status.textContent = 'Time zone and session required'; return; }
+        this.pendingZoneId = item.id;
+        const sent = sendWs({ type: 'updateScheduledTask', id: item.id, sessionId: item.sessionId, creationZone: zone });
+        status.textContent = sent ? 'Saving…' : 'Queued until connected';
+      });
+      panel.append(info, input, button, status);
+    }
     this.editDraft = { notesEl: detailEl, dueInput, get hasDue() { return hasDue; } };
     return panel;
   }
@@ -2946,6 +2998,8 @@ class TodoFace {
     clearTimeout(this.hitTimer);
     this.closeItemBox(true);
     this.unsub();
+    this.unsubZoneError();
+    this.unsubZoneUpdated();
     this.unbindOutsideClose();
     this.unbindTagPopoverDismiss();
     if (this.cancelMorph) this.cancelMorph();

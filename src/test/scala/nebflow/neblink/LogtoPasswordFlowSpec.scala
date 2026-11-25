@@ -469,14 +469,14 @@ class LogtoPasswordFlowSpec extends CatsEffectSuite:
           LogtoPasswordFlow.Resp(200, Nil, None, s"""{"redirectTo":"$endpoint/oidc/auth/resume?x=1"}""")
         else if req.url.contains("/oidc/auth/resume") then
           val n = resumes.incrementAndGet()
-          if mode == "loop" || n == 1 then LogtoPasswordFlow.Resp(302, Nil, Some("/consent?i=I1"), "")
+          if mode == "loop" || n == 1 then LogtoPasswordFlow.Resp(302, List("_interaction=I2; Path=/", "_session=S1; Path=/"), Some("/consent?i=I1"), "")
           else
-            assertEquals(jar, "_interaction=I1; _consent=K1")
+            assertEquals(jar, "_interaction=I2; _session=S1; _consent=K1")
             LogtoPasswordFlow.Resp(303, Nil, Some(s"$redirectUri?code=cc&state=$state"), "")
         else if req.url == s"$endpoint/api/interaction/consent" then
           assertEquals(req.method, "POST")
           assertEquals(req.body, "{}")
-          assertEquals(jar, "_interaction=I1")
+          assertEquals(jar, "_interaction=I2; _session=S1")
           if mode == "rejected" then
             LogtoPasswordFlow.Resp(400, Nil, None, """{"code":"session.not_found","message":"Session not found."}""")
           else LogtoPasswordFlow.Resp(204, List("_consent=K1; Path=/"), None, "")

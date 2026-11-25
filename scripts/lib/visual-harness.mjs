@@ -140,6 +140,8 @@ export async function createSession(browser, opts = {}) {
   // scripts/verify-unified-panel.cjs:136 用过 DSF=2，那是人眼评审用途）。
   const page = await browser.newPage({
     viewport: { width, height },
+    hasTouch: opts.hasTouch ?? false,
+    isMobile: opts.isMobile ?? false,
     deviceScaleFactor: 1,
     colorScheme,
     locale: opts.locale ?? 'zh-CN',

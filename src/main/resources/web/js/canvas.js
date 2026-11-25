@@ -2150,7 +2150,7 @@ async function openOptimisticFile({ id, title, absPath, pinned }) {
   return previewWithProgress({
     id,
     title,
-    fileName: title,
+    fileName: (absPath && absPath.split('/').pop()) || title,
     absPath,
     pinned,
     cacheKey: 'nf:' + absPath,

@@ -239,6 +239,7 @@
   /* 阴影吸收（值重定批 §3.3 D 组）：两档都是**既有单源的别名**，不复制值——
      Apple「唯一投影」纪律（M7）不采，理由：玻璃浮件靠浮影分层，投影是功能
      不是装饰。文字位禁 box-shadow 判据另记（非 token）。 */
+  --ds-shadow-favorites-path: 0 4px 20px #0006;
   --ds-shadow-float: var(--cv-shadow);            /* 浮件三档栈（悬浮控件单源，亮暗已在 sapphire.css） */
   --ds-shadow-press: var(--ig-shadow-press);      /* 墨玻璃按压影单源（glass.css） */
   /* 按钮面统一阴影 = canvas 基准配方（作者令 2026-11-22 22:54「以 canvas 为准统一」）。

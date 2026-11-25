@@ -129,7 +129,7 @@ final class WsDispatchCtx(
   browseEntryCapImpl: Int,
   resolveExplorerBaseRootImpl: (String, Option[String]) => IO[String],
   admitWorkOrRefuseImpl: (io.circe.Json => IO[Unit]) => IO[Unit] => IO[Unit],
-  handleUserTextImpl: (String, String, String, Boolean, Option[nebflow.bridge.ResolvedDevice], Option[String]) => IO[
+  handleUserTextImpl: (String, String, String, Boolean, Option[nebflow.bridge.ResolvedDevice], Option[String], Option[String]) => IO[
     Unit
   ],
   /** device-provenance 批：帧 `device` 键 → 花名册解析读数（缺席 ⇒ None ⇒ 不标注）。 */
@@ -259,9 +259,10 @@ final class WsDispatchCtx(
     device: Option[nebflow.bridge.ResolvedDevice] = None,
     // P3 磁盘邮箱批（作者 2026-11-05 10:46）：客户端幂等键（cid）加性尾参——
     // `userMessage` 腿原本在网关处把 cid 蒸发掉，主腿因此没有幂等面。
-    clientMessageId: Option[String] = None
+    clientMessageId: Option[String] = None,
+    deviceZone: Option[String] = None
   ): IO[Unit] =
-    handleUserTextImpl(sessionId, content, source, fromUser, device, clientMessageId)
+    handleUserTextImpl(sessionId, content, source, fromUser, device, clientMessageId, deviceZone)
 
   /** canvas ask 附图批：附图提问腿（见构造参数 handleAskUserTextImpl 的注释）。 */
   def handleAskUserText(

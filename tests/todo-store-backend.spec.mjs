@@ -37,7 +37,7 @@ const OTHER_SID = 'todo-store-other';
 const T0 = Date.now();
 const H = 3600_000;
 
-test.use({ viewport: { width: 1280, height: 800 }, colorScheme: 'light' });
+test.use({ viewport: { width: 1280, height: 800 }, colorScheme: 'light', timezoneId: 'America/New_York' });
 
 /** 收件箱夹具（后端 listTaskJson 形状 + 本批新增三键）。
  *  · t1/t4 同为 priority 3（t4 triggerAt 更早 ⇒ 后端序把 t4 排前，证明排序按
@@ -99,6 +99,7 @@ const rowJson = (r) => ({
   repeat: r.repeat, enabled: r.enabled, kind: r.kind, name: r.name, detail: r.detail ?? null, missCount: r.missCount,
   sessionId: r.sessionId, project: r.project,
   priority: r.priority, completed: !!r.completed, completedAt: r.completedAt ?? null, decision: r.decision ?? null,
+  due: r.due ?? null, nextDueAt: r.nextDueAt ?? null,
 });
 
 /** 有状态 WS 夹具后端：按 WsTasksWorkspaceHandlers 口径处理写帧并回帧。 */
@@ -200,6 +201,11 @@ async function bootApp(page) {
           if (typeof m.detail === 'string') row.detail = m.detail || null;
           if (typeof m.priority === 'number') row.priority = Math.min(3, Math.max(0, m.priority));
           if (typeof m.project === 'string') row.project = m.project || null;
+          if (m.creationZone === 'Invalid/Zone') {
+            send({ type: 'error', msgType: 'updateScheduledTask', id: m.id, message: 'Invalid time zone' });
+            break;
+          }
+          if (typeof m.creationZone === 'string' && row.due) row.due = { ...row.due, zoneId: m.creationZone };
           send({ type: 'scheduledTaskUpdated', sessionId: row.sessionId, task: rowJson(row) });
           break;
         }
@@ -424,13 +430,42 @@ test('null 来源不回填当前会话且不可错误寻址', async ({ page }) =
   const h = await bootApp(page);
   await h.waitRows(4);
   h.sendFrame({ type: 'scheduledTaskList', sessionId: SID, scope: 'all', tasks: [{ id: 'unknown', kind: 'todo', content: '来源未知', sessionId: null, project: null }] });
-  await h.waitRows(1);
-  const row = await page.evaluate(async () => (await import('/js/todoStore.js')).todoStore.allItems()[0]);
+  await expect.poll(async () => page.evaluate(async () =>
+    (await import('/js/todoStore.js')).todoStore.allItems().map((item) => item.id)
+  )).toEqual(['unknown']);
+  const row = await page.evaluate(async () => (await import('/js/todoStore.js')).todoStore.allItems().find((item) => item.id === 'unknown'));
   expect(row.sessionId).toBeNull();
   const count = frames(h.captured, 'completeTodo').length;
   await page.evaluate(async () => (await import('/js/todoStore.js')).todoStore.completeItem('unknown'));
   expect(frames(h.captured, 'completeTodo')).toHaveLength(count);
   expect((await page.evaluate(async () => (await import('/js/todoStore.js')).todoStore.allItems()[0])).completed).toBe(false);
+});
+
+test('creation zone is visible in active editor and correction sends a separate frame', async ({ page }) => {
+  const h = await bootApp(page);
+  const row = h.backend.rows.find((x) => x.id === 't4');
+  row.due = { type: 'once', dueAt: Date.parse('2035-01-01T09:00:00Z'), zoneId: 'Europe/London', wallClock: '2035-01-01T09:00', originalOffset: null };
+  h.sendFrame({ type: 'scheduledTaskList', sessionId: SID, scope: 'all', tasks: h.backend.rows.map(rowJson) });
+  await h.waitRows(4);
+  await page.locator('.tfl-capsule').click();
+  const itemRow = page.locator('.tfl-row[data-id="t4"]');
+  await expect(itemRow.locator('.tfl-row-creation-zone')).toContainText('Europe/London');
+  await expect(itemRow.locator('.tfl-row-creation-zone')).toContainText('America/New_York');
+  await itemRow.locator('.tfl-row-main').click();
+  const panel = page.locator('.tfl-row[data-id="t4"] .tfl-edit-panel');
+  await expect(panel.locator('.tfl-creation-zone-info')).toContainText('Europe/London');
+  await expect(panel.locator('.tfl-creation-zone-info')).toContainText('2035-01-01T09:00');
+  await expect(panel.locator('.tfl-creation-zone-info')).toContainText('America/New_York');
+  await panel.locator('.tfl-creation-zone-input').fill('Invalid/Zone');
+  await panel.locator('.tfl-creation-zone-submit').click();
+  await expect(panel.locator('.tfl-creation-zone-status')).toHaveText('Invalid time zone');
+  await expect(panel.locator('.tfl-creation-zone-info')).toContainText('Europe/London');
+  await panel.locator('.tfl-creation-zone-input').fill('Asia/Tokyo');
+  await panel.locator('.tfl-creation-zone-submit').click();
+  await expect.poll(() => frames(h.captured, 'updateScheduledTask').at(-1)?.creationZone).toBe('Asia/Tokyo');
+  await expect(panel.locator('.tfl-creation-zone-status')).toHaveText('Saved');
+  await expect(panel.locator('.tfl-creation-zone-info')).toContainText('Asia/Tokyo');
+  await expect(panel.locator('.tfl-creation-zone-info')).toContainText('America/New_York');
 });
 
 test('① 首次挂载惰性拉真源：listScheduledTasks{scope:"all"} 一发 + 渲染面取到回执数据（后端排序权威，chips 行序不参与）', async ({ page }) => {

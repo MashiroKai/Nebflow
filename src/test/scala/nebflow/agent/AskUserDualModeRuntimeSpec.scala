@@ -482,8 +482,8 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
     yield ()).unsafeRunSync()
   }
 
-  // Pending contract: cross-worker AskHost grouping identity awaits ruling; preserve assertions.
-  test("后台执行 agent 通过 AskHost 将关联请求投递到 root mailbox".tag(munit.Tag("pending-contract")).ignore) {
+  // 作者 2026-11-25 裁定跨 worker 合并无使用场景、是伪需求；原合并断言来自 937303ad。
+  test("AskHost 按 worker session 和 toolCallId 独立投递与回复") {
     val system = ActorSystem("askhost-root-route")
     val tmp = os.temp.dir()
     os.makeDir.all(tmp / "data")
@@ -549,26 +549,42 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
           groupedContext.copy(sessionId = Some("askhost-worker-2"))
         )
         .start
-      _ <- IO.sleep(500.millis)
-      groupedRows <- AskHostLedger.recover
-      _ = assertEquals(groupedRows.size, 1, "同链同项目同问题必须只有一条待答")
-      pending <- waitForMailbox("askhost-root-session")
+      pending <- {
+        def awaitTwo(remaining: Int): IO[List[SessionMailbox.Entry]] =
+          SessionMailbox.scanPending("askhost-root-session").flatMap { entries =>
+            if entries.size >= 2 then IO.pure(entries)
+            else if remaining <= 0 then IO.pure(entries)
+            else IO.sleep(50.millis) >> awaitTwo(remaining - 1)
+          }
+        awaitTwo(100)
+      }
+      rows <- AskHostLedger.recover
+      _ = assertEquals(rows.size, 2, "不同 worker 的请求必须独立记录")
+      _ = assertEquals(pending.size, 2, "不同 worker 的请求必须分别投递")
+      byWorker = pending.map(entry => entry.event.metadata("workerSession").flatMap(_.asString).get -> entry).toMap
+      _ = assertEquals(byWorker.keySet, Set("askhost-worker-session", "askhost-worker-2"))
+      firstEntry = byWorker("askhost-worker-session")
+      secondEntry = byWorker("askhost-worker-2")
+      firstEvent = firstEntry.event
+      secondEvent = secondEntry.event
+      correlationId = firstEvent.correlationId.getOrElse(fail(s"AskHost event lacks correlation: $firstEvent"))
+      secondCorrelationId = secondEvent.correlationId.getOrElse(fail(s"AskHost event lacks correlation: $secondEvent"))
+      _ = assertNotEquals(correlationId, secondCorrelationId)
+      _ = pending.foreach { entry =>
+        val event = entry.event
+        val id = event.correlationId.getOrElse(fail(s"AskHost event lacks correlation: $event"))
+        assertEquals(event.source, "askhost")
+        assertEquals(event.eventType, "request")
+        assertEquals(event.metadata("rootSession").flatMap(_.asString), Some("askhost-root-session"))
+        assertEquals(event.metadata("sourceAgent").flatMap(_.asString), Some(executorName))
+        assertEquals(event.metadata("engineOwned").flatMap(_.asBoolean), Some(true))
+        assertEquals(event.metadata("correlationId").flatMap(_.asString), Some(id))
+        assert(entry.identity.contains(id), s"mailbox identity not correlated: $entry")
+      }
       (injected, held) <- MailboxDrain.drainBarrierFace("askhost-root-session", outstanding = 1)
       _ = assertEquals(held, 0)
-      _ = assertEquals(injected.map(_.source), List("askhost"))
+      _ = assertEquals(injected.map(_.source), List("askhost", "askhost"))
       _ = assert(MailboxDrain.mailboxMessage(injected).toString.contains("Choose a safe option"))
-      _ = assertEquals(pending.size, 1, "合并请求不可重复投递")
-      entry = pending.head
-      event = entry.event
-      _ = assertEquals(event.source, "askhost")
-      _ = assertEquals(event.eventType, "request")
-      _ = assertEquals(event.metadata("workerSession").flatMap(_.asString), Some("askhost-worker-session"))
-      _ = assertEquals(event.metadata("rootSession").flatMap(_.asString), Some("askhost-root-session"))
-      _ = assertEquals(event.metadata("sourceAgent").flatMap(_.asString), Some(executorName))
-      _ = assertEquals(event.metadata("engineOwned").flatMap(_.asBoolean), Some(true))
-      correlationId = event.correlationId.getOrElse(fail(s"AskHost event lacks correlation: $event"))
-      _ = assertEquals(event.metadata("correlationId").flatMap(_.asString), Some(correlationId))
-      _ = assert(entry.identity.contains(correlationId), s"mailbox identity not correlated: $entry")
       rootContext = ToolContext(
         projectRoot = tmp.toString,
         sessionId = Some("askhost-root-session"),
@@ -579,7 +595,14 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
       replyInput = JsonObject("correlationId" -> correlationId.asJson, "decision" -> "Use option A".asJson)
       firstReply <- AskHostReplyTool.call(replyInput, rootContext)
       result <- fiber.joinWithNever
+      stillWaiting <- second.join.map(Some(_)).timeoutTo(200.millis, IO.pure(None))
+      _ = assertEquals(stillWaiting, None, "第一条回复不能唤醒第二个 worker")
+      secondReply <- AskHostReplyTool.call(
+        JsonObject("correlationId" -> secondCorrelationId.asJson, "decision" -> "Use option B".asJson),
+        rootContext
+      )
       result2 <- second.joinWithNever
+      _ = assert(secondReply.isRight, s"second reply failed: $secondReply")
       _ <- AskHostLedger.markDelivered(correlationId)
       duplicateReply <- AskHostReplyTool.call(replyInput, rootContext)
       conflictReply <- AskHostReplyTool.call(
@@ -593,7 +616,7 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
         Right("Use option A"),
         s"correlated AskHost reply did not complete the worker call (correlation=$correlationId)"
       )
-      _ = assertEquals(result2, Right("Use option A"))
+      _ = assertEquals(result2, Right("Use option B"))
     yield ()
     check
       .guarantee(IO {

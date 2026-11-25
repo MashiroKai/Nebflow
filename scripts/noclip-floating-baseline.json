@@ -3,6 +3,16 @@
   "generatedAt": "2026-11-18",
   "static": [
     {
+      "key": "src/main/resources/web/css/canvasFavorites.css::text-truncation::.cfp-row-src",
+      "file": "src/main/resources/web/css/canvasFavorites.css",
+      "line": 178,
+      "rule": "text-truncation",
+      "selector": ".cfp-row-src",
+      "severity": "exempt",
+      "reason": "作者 2026-11-25 裁定：保留折叠、手机可点开",
+      "owner": "favorites-path-clamp"
+    },
+    {
       "key": "src/main/resources/web/css/ask.css::cap-without-scroll::.ask-media-rm",
       "file": "src/main/resources/web/css/ask.css",
       "line": 1038,

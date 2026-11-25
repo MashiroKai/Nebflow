@@ -1243,50 +1243,29 @@ class WebSocketRoutes(
                       // applied backpressure, so its queue grew without bound while
                       // the event loop kept paying "serialize + offer" for it.
                       //
-                      // Overflow policy (plan OD-1, per-frame class):
-                      //  · streaming increment (textDelta/thinkingDelta/…): drop the
-                      //    OLDEST frame and enqueue the new one. A stream increment is
-                      //    superseded by later ones, so losing the middle of a stream
-                      //    costs at most a few rendered characters — never final state.
-                      //  · control/status frame: do NOT drop. A dropped control frame
-                      //    is a silent lie (e.g. a lost `configUpdated` leaves the UI
-                      //    showing "saved"); a throttled one delays it. So the
-                      //    connection is torn down instead: the client reconnects and
-                      //    re-syncs from scratch (ws.js owns the reconnect + onReconnect
-                      //    resync leg), which is a visible, recoverable failure rather
-                      //    than a silent one.
-                      // The class is computed once per event inside WsHub (see there).
-                      outbound <- Queue.bounded[IO, WebSocketFrame](OutboundQueueCapacity)
+                      // The bounded FIFO retains the classification supplied by WsHub.
+                      // Only the oldest stream entry may be evicted; control entries
+                      // are never removed by an overflow. Full without a candidate
+                      // closes through the existing overflow signal.
+                      outbound <- WsOutboundBuffer.create(OutboundQueueCapacity)
                       outboundOverflowClosed <- Deferred[IO, Unit]
+                      logConnId = java.util.UUID.randomUUID().toString.take(8)
+                      overflowDrops = new java.util.concurrent.atomic.AtomicLong(0L)
+                      overflowCloses = new java.util.concurrent.atomic.AtomicLong(0L)
                       // console-reconnect-stability（2026-10-28）：pong 旁路队列——
                       // 大帧阵发时心跳应答不再排在本连接 bulk FIFO 之后（机制见
                       // [[ConsolePongLane]]）。有界 16；道满回落既有 FIFO。
                       pongLane <- Queue.bounded[IO, WebSocketFrame](ConsolePongLane.Capacity)
 
                       perConnWsSend = (text: String, isStream: Boolean) =>
-                        outbound
-                          .tryOffer(WebSocketFrame.Text(text))
-                          .flatMap {
-                            case true => IO.unit
-                            case false if isStream =>
-                              // Full queue + droppable frame ⇒ evict oldest, then take
-                              // the slot this frame just vacated. `tryTake` returning
-                              // None (a reader drained it concurrently) is fine — the
-                              // retry below either succeeds or is counted, never loops.
-                              outbound.tryTake *> outbound.tryOffer(WebSocketFrame.Text(text)).void *>
-                                IO(wsHub.noteOverflowDrop())
-                            case false =>
-                              // Full queue + control frame ⇒ tear this connection down.
-                              // The teardown rides the queue's own stream (see
-                              // `sendStream`), so there is no process-wide state and no
-                              // cross-connection leak.
-                              IO(wsHub.noteOverflowClose()) *>
-                                logger.warn(
-                                  "WebSocket outbound queue full on a non-stream frame — closing " +
-                                    s"this connection (capacity $OutboundQueueCapacity)"
-                                ) *>
-                                outboundOverflowClosed.complete(()).void
-                          }
+                        outbound.enqueue(WebSocketFrame.Text(text), isStream).flatMap {
+                          case WsOutboundBuffer.Accepted => IO.unit
+                          case WsOutboundBuffer.Evicted =>
+                            IO { overflowDrops.incrementAndGet(); wsHub.noteOverflowDrop() }
+                          case WsOutboundBuffer.Full =>
+                            IO { overflowCloses.incrementAndGet(); wsHub.noteOverflowClose() } *>
+                              outboundOverflowClosed.complete(()).void
+                        }
                       // 在带身份声明（握手 query 不可靠批 2026-11-03）：本连接的实例
                       // 键读数——初值 = 握手腿（query 可用时已是身份键；隧道脸无 query
                       // = 会话退路键）。identify 帧到达后经 onIdentify 迁移并写回，
@@ -1376,24 +1355,24 @@ class WebSocketRoutes(
                                 else if takeover.enabled && ConsoleTakeover.isAckFrame(text) then
                                   // 接管通知确认（补推账清账）：客户端渲染后回 at，服务端只认同 at。
                                   ConsoleTakeover.ackAt(text).fold(IO.unit)(at => takeover.ackNotice(hubConnId, at))
-                                else if takeover.enabled && ConsoleTakeover.isIdentifyFrame(text) then
-                                  (ConsoleTakeover.declaredClientId(text), takeoverSession) match
-                                    case (Some(cid), Some(sid)) =>
-                                      // 迁移 + 重裁决（kick 与否在 ConsoleTakeover.settle 内定），
-                                      // 再把本连接实例键写回闸读数（闸随之换轨）。
-                                      // 同端判据批：身份帧同时带自动化声明（webdriver）与握手 UA/
-                                      // 来源 IP——无它们则「同端」与「谁顶了谁」都判不出。
-                                      val meta = ConsoleTakeover.ClientMeta(
-                                        clientId = Some(cid),
-                                        ua = wsUa,
-                                        ip = Some(wsIp),
-                                        automatedDeclared = ConsoleTakeover.declaredAutomated(text)
-                                      )
-                                      takeover.onIdentifyDeclared(sid, hubConnId, Some(meta)).flatMap { h =>
-                                        IO(takeoverHolderRef.set(h))
-                                      }
-                                    // 坏体/无身份/Bearer 轨 ⇒ 静默空转（声明是加速面，不是语义面）。
-                                    case _ => IO.unit
+                                else if ConsoleTakeover.isIdentifyFrame(text) then
+                                  val record = io.circe.parser.parse(text).toOption.fold(IO.unit) { frame =>
+                                    new nebflow.core.scheduler.DeviceZoneReports(nebflow.shared.PathUtil.dataRoot)
+                                      .recordIdentify(frame, authenticated = true, System.currentTimeMillis())
+                                  }
+                                  record *> (if !takeover.enabled then IO.unit else
+                                    (ConsoleTakeover.declaredClientId(text), takeoverSession) match
+                                      case (Some(cid), Some(sid)) =>
+                                        val meta = ConsoleTakeover.ClientMeta(
+                                          clientId = Some(cid),
+                                          ua = wsUa,
+                                          ip = Some(wsIp),
+                                          automatedDeclared = ConsoleTakeover.declaredAutomated(text)
+                                        )
+                                        takeover.onIdentifyDeclared(sid, hubConnId, Some(meta)).flatMap { h =>
+                                          IO(takeoverHolderRef.set(h))
+                                        }
+                                      case _ => IO.unit)
                                 // 门户身份透传批（方案 A1）：本连接的会话身份随帧进消息
                                 // 分发（两处消费点：typeless 腿 + immediateInput 腿——
                                 // 后者经 wsDispatchContext 闭包）。Bearer 轨恒 None。
@@ -1425,7 +1404,14 @@ class WebSocketRoutes(
                           wsHub.unregister(hubConnId) *> watchSession.close() *>
                             // 控制台单实例批：连接出账（只摘连接账——掉线 ≠ 让位，owner
                             // 不动、零出帧；#960 判死回收经本 finalizer 同样不触发提示）。
-                            takeover.onDisconnect(hubConnId)
+                            takeover.onDisconnect(hubConnId) *>
+                            IO((overflowDrops.get(), overflowCloses.get())).flatMap { case (drops, closes) =>
+                              if drops + closes == 0 then IO.unit
+                              else logger.warn(
+                                s"WebSocket outbound overflow conn=$logConnId capacity=$OutboundQueueCapacity " +
+                                  s"evicted=$drops full=$closes"
+                              )
+                            }
                         )
                       )
 
@@ -1446,7 +1432,7 @@ class WebSocketRoutes(
                       sendStream = zombie.guardedSend(
                         ConsolePongLane.prioritized(
                           data = Stream
-                            .fromQueueUnterminated(outbound)
+                            .repeatEval(outbound.take)
                             .handleErrorWith { e =>
                               Stream.eval(logger.debug(s"WebSocket send stream closed: ${e.getMessage}")).drain
                             },
@@ -1461,7 +1447,7 @@ class WebSocketRoutes(
                               s"slot released (heartbeat dead-detection)"
                           )
                       )
-                      _ <- logger.info("WebSocket client connected")
+                      _ <- logger.info(s"WebSocket client connected conn=$logConnId")
                       // 控制台在用判据（工作过程中开新标签页批 2026-11-05）：连接建立
                       // = 「控制台真的在用」的服务端事实之一，落一笔标记件（节流写，
                       // 绝不失败）——boot/focus 两条开门腿据此抑制自动开门。
@@ -1486,8 +1472,7 @@ class WebSocketRoutes(
                         io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
                       })
                       sttNode <- SttService.serverConfigNode(sttSvc)
-                      _ <- outbound.offer(
-                        WebSocketFrame.Text(
+                      _ <- perConnWsSend(
                           io.circe.Json
                             .obj(
                               "type" -> "serverConfig".asJson,
@@ -1529,8 +1514,8 @@ class WebSocketRoutes(
                                 io.circe.Json.obj("fleetUpdate" -> fleetSnapshot)
                               else io.circe.Json.obj()
                             )
-                            .noSpaces
-                        )
+                            .noSpaces,
+                        false
                       )
                       activeMeta <- sessionStore.getActiveMeta
                       agentName = activeMeta.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
@@ -2461,7 +2446,8 @@ class WebSocketRoutes(
                                           None,
                                           clientMessageId,
                                           Some(blocksList).filter(_.nonEmpty),
-                                          chatWidth
+                                          chatWidth,
+                                          deviceZone = nebflow.core.scheduler.TodoDue.deviceZoneFromFrame(json)
                                         )
                                     )
                                   }
@@ -2681,14 +2667,15 @@ class WebSocketRoutes(
     fromUser: Boolean,
     device: Option[nebflow.bridge.ResolvedDevice] = None,
     // P3 磁盘邮箱批：客户端幂等键透传（见 dispatchUserText 同名参数）。
-    clientMessageId: Option[String] = None
+    clientMessageId: Option[String] = None,
+    deviceZone: Option[String] = None
   ): IO[Unit] =
     if sessionId.nonEmpty && content.nonEmpty then
       // 输入框直通退役（2026-09-14 作者令）：输入框文本一律按普通消息投递 ——
       // 不再探 hub 的 pending AskUser 槽位，文本也不再成为卡片答案
       // （[[dispatchUserText]] = 唯一入队路径）。pending 卡保持 pending，
       // 只能在卡片上作答；headless REST (`rest-turn`) 与输入框同腿，形态不变。
-      dispatchUserText(sessionId, content, source, fromUser, device, clientMessageId)
+      dispatchUserText(sessionId, content, source, fromUser, device, clientMessageId, deviceZone = deviceZone)
     else
       // P1 2026-08-27 (frontend c1d57710): the queue "send-now" branch emitted an
       // empty-content frame (attachments dropped), which reached this path and was
@@ -2742,7 +2729,8 @@ class WebSocketRoutes(
     // canvas ask 附图批：UI 行件（UiMessage.User.attachments）与模型侧附加块
     // （vision 块 + 标签线；正文块由本函数按解析后的 content 前置）。缺席 = Nil ⇒ 逐字现状。
     attachments: List[io.circe.Json] = Nil,
-    mediaBlocks: List[ContentBlock] = Nil
+    mediaBlocks: List[ContentBlock] = Nil,
+    deviceZone: Option[String] = None
   ): IO[Unit] =
     logger.info(s"User text ($source) for session $sessionId (${content.length} chars)") *>
       // tool-card-leak-on-reload 批（2026-11-02）：回合内插话判定在**落盘这一瞬**
@@ -2773,7 +2761,8 @@ class WebSocketRoutes(
             device.fold(resolvedContent)(nebflow.bridge.DeviceProvenance.compose(_, resolvedContent)),
             blocks = inputBlocks,
             fromUser = fromUser,
-            clientMessageId = clientMessageId
+            clientMessageId = clientMessageId,
+            deviceZone = deviceZone
           )
         )
       }
