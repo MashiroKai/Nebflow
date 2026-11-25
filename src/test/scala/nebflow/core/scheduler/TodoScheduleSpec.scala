@@ -226,7 +226,7 @@ class TodoScheduleSpec extends CatsEffectSuite:
         ScheduledTask
           .create("s1", "due", future, kind = Some(ScheduledTask.KindTodo))
           .copy(
-            due = Some(TodoDue.Once(scheduled, "Europe/London", "2025-01-01T00:00", "Z")),
+            due = Some(TodoDue.Once(scheduled, "Europe/London", "2025-01-01T00:00", Some("Z"))),
             nextDueAt = Some(scheduled)
           )
       )

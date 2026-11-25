@@ -3,6 +3,7 @@ package nebflow.gateway.ws
 import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, Ref}
 import io.circe.Json
+import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.{SharedResources, SpecResources, StubLlm}
@@ -151,6 +152,24 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
   // ① createScheduledTask 收 priority（钳位落库）
   // ==================================================================
 
+  test("sourced todo due persists its instant and device region without an invented offset") {
+    withRig { (c, res) =>
+      val at = now + 3600000L
+      val frame = s"""{"type":"createScheduledTask","sessionId":"s1","kind":"todo","content":"remind me","triggerAt":$at,"device":{"timeZone":"Asia/Tokyo"}}"""
+      for
+        frames <- send(c, "createScheduledTask", frame)
+        saved <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assertEquals(types(frames), List("scheduledTaskCreated"))
+        assertEquals(saved.size, 1)
+        val due = saved.head.asJson.hcursor.downField("due")
+        assertEquals(due.get[Long]("dueAt").toOption, Some(at))
+        assertEquals(due.get[String]("zoneId").toOption, Some("Asia/Tokyo"))
+        assert(due.downField("originalOffset").focus.forall(_.isNull))
+        assertEquals(saved.head.nextDueAt, Some(at))
+    }
+  }
+
   test("todo due creation without device provenance requests clarification") {
     withRig { (c, res) =>
       val frame = s"""{"type":"createScheduledTask","sessionId":"s1","kind":"todo","content":"remind me","triggerAt":${now + 3600000L}}"""
@@ -176,6 +195,7 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
       yield
         assertEquals(types(frames), List("scheduledTaskCreated"))
         assertEquals(onDisk.length, 1)
+        assertEquals(onDisk.head.due, None)
         assertEquals(onDisk.head.priority, 3, "越界 priority 钳位到 3 后落库")
         val task = rowOf(frames)
         assertEquals(task.hcursor.get[Int]("priority").toOption, Some(3), "created 帧回带 priority")

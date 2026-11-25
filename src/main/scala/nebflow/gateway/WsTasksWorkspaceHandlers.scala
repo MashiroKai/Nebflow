@@ -435,9 +435,16 @@ private[gateway] object WsTasksWorkspaceHandlers:
         crDetail,
         crDecision.toOption.flatten.map(nebflow.core.scheduler.TodoTaxonomy.normalizeDecision)
       )
+      val due = Option.when(crTriggerAt != 0L) {
+        val zone = nebflow.core.scheduler.TodoDue.deviceZoneFromFrame(json).get
+        val wall = java.time.Instant.ofEpochMilli(crTriggerAt).atZone(java.time.ZoneId.of(zone)).toLocalDateTime.toString
+        nebflow.core.scheduler.TodoDue.Once(crTriggerAt, zone, wall, None)
+      }
       val userTodo = todo.copy(
         id = createRequestId.getOrElse(todo.id),
-        source = Some(nebflow.core.scheduler.TodoTaxonomy.SourceUser)
+        source = Some(nebflow.core.scheduler.TodoTaxonomy.SourceUser),
+        due = due,
+        nextDueAt = due.map(_.dueAt)
       )
       (for
         saved <- createRequestId match

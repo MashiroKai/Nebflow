@@ -84,6 +84,16 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
     assertEquals(TodoDue.mergedDeviceZone(List(None, None)), None)
     assertEquals(TodoDue.mergedDeviceZone(Nil), None)
 
+  test("once offset compatibility preserves legacy strings and allows absent offsets while requiring a region"):
+    val decoded = once.as[TodoDue].toOption.get
+    assertEquals(decoded.asJson.hcursor.get[String]("originalOffset").toOption, Some("-05:00"))
+    val noOffset = once.mapObject(_.remove("originalOffset"))
+    assert(noOffset.as[TodoDue].isRight, "missing originalOffset must decode")
+    assertEquals(noOffset.as[TodoDue].toOption.get.asJson.hcursor.get[Option[String]]("originalOffset").toOption, Some(None))
+    assert(once.deepMerge(Json.obj("originalOffset" -> Json.Null)).as[TodoDue].isRight)
+    assert(once.deepMerge(Json.obj("originalOffset" -> Json.fromString("invalid"))).as[TodoDue].isLeft)
+    assert(once.mapObject(_.remove("zoneId")).as[TodoDue].isLeft)
+
   test("legacy record has no due setting and old encoded fields retain their values"):
     val task = legacy.as[ScheduledTask].toOption.get
     val encoded = task.asJson
@@ -104,7 +114,7 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       TodoDue.Weekly(3, "07:00", "Not/AZone", "2025-01-01T07:00"),
       TodoDue.Weekly(3, "25:60", "America/New_York", "2025-01-01T07:00"),
       TodoDue.Weekly(0, "07:00", "America/New_York", "2025-01-01T07:00"),
-      TodoDue.Once(1L, "America/New_York", "", "-05:00")
+      TodoDue.Once(1L, "America/New_York", "", Some("-05:00"))
     )
     rules.traverse_ { rule =>
       val dir = os.temp.dir(prefix = "todo-due-invalid-")
@@ -522,7 +532,7 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
   test("tick refuses to overwrite a stale destination session copy"):
     val dir = os.temp.dir(prefix = "tick-stale-destination-")
     val store = new ScheduledTaskStore(dir)
-    val due = TodoDue.Once(1000L, "Europe/London", "1970-01-01T00:00:01", "Z")
+    val due = TodoDue.Once(1000L, "Europe/London", "1970-01-01T00:00:01", Some("Z"))
     val stale = legacy.as[ScheduledTask].toOption.get.copy(sessionId = "s2", due = Some(due), nextDueAt = Some(1000L))
     val latest = stale.copy(revision = 1L, content = "latest")
     for
@@ -542,7 +552,7 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
       .toOption
       .get
       .copy(
-        due = Some(TodoDue.Once(1000L, "Europe/London", "1970-01-01T00:00:01", "Z")),
+        due = Some(TodoDue.Once(1000L, "Europe/London", "1970-01-01T00:00:01", Some("Z"))),
         dueRuleVersion = 2L,
         nextDueAt = Some(1000L)
       )

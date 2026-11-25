@@ -38,7 +38,7 @@ object TodoDue:
       case Some(zone) => deviceZone(Some(zone)).toRight("Please clarify a valid IANA time zone")
       case None => deviceZone(device).toRight("Please clarify the creation time zone")
 
-  final case class Once(dueAt: Long, zoneId: String, wallClock: String, originalOffset: String) extends TodoDue
+  final case class Once(dueAt: Long, zoneId: String, wallClock: String, originalOffset: Option[String]) extends TodoDue
   final case class Weekly(dayOfWeek: Int, localTime: String, zoneId: String, wallClock: String) extends TodoDue
 
   given Encoder[TodoDue] = Encoder.instance {
@@ -73,8 +73,8 @@ object TodoDue:
         case "once" =>
           for
             at <- c.get[Long]("dueAt")
-            offset <- c.get[String]("originalOffset")
-            _ <- valid(Try(ZoneOffset.of(offset)).isSuccess, "originalOffset must be a valid UTC offset")
+            offset <- c.get[Option[String]]("originalOffset")
+            _ <- valid(offset.forall(value => Try(ZoneOffset.of(value)).isSuccess), "originalOffset must be a valid UTC offset")
           yield Once(at, zone, wall, offset)
         case "weekly" =>
           for
