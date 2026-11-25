@@ -2880,7 +2880,8 @@ def collect_png_latex_issues(text):
         line = re.sub(r'\b\d+(?:\.\d+)?\s*×\s*\d+(?:\.\d+)?\b', ' ', line)
         has_power = re.search(r'(?<!\d)10⁻?[⁰¹²³⁴⁵⁶⁷⁸⁹]+', line)
         special = '=' in line and re.search(r'[∑∫√∏∂∇]', line)
-        equation = re.search(rf'(?<![\w/])(?:{binary}\s*=\s*{operand}|{operand}\s*=\s*{binary})(?![\w/])', line)
+        equation_line = re.sub(r'(?<![\w.])\d+(?:\.\d+)?\s*[+*/^·×-]\s*\d+(?:\.\d+)?\s*=\s*\d+(?:\.\d+)?', ' ', line) if '|' in line else line
+        equation = re.search(rf'(?<![\w/])(?:{binary}\s*=\s*{operand}|{operand}\s*=\s*{binary})(?![\w/])', equation_line)
         fraction = re.search(rf'\(\s*{binary}\s*\)\s*/\s*\(\s*{binary}\s*\)', line)
         if has_power or special or equation or fraction:
             issues.append({'rule': 'latex-math', 'line': number, 'detail': '疑似公式须写在 LaTeX 定界符内'})

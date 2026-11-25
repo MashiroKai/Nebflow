@@ -59,7 +59,7 @@ class PngLatexDisciplineTests(unittest.TestCase):
 
     def test_precision_exclusions_and_forms(self):
         scan = MOD.collect_png_latex_issues
-        for line in ('date: 2026-11-03', '# x + y = z', 'A / B / C', 'cm² m/s² keV/µm', '375×812', '[x+y=z](https://x/a)', 'attachments/a+b=c.png'):
+        for line in ('date: 2026-11-03', '# x + y = z', 'A / B / C', 'cm² m/s² keV/µm', '375×812', '| 10 / 5 = 2 |', '[x+y=z](https://x/a)', 'attachments/a+b=c.png'):
             self.assertEqual(scan(line), [], line)
         for line in ('10⁻³', '∑ x = y', 'x + y = z', '(a + b)/(c - d)'):
             self.assertEqual([x['rule'] for x in scan(line)], ['latex-math'], line)
