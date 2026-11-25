@@ -405,6 +405,17 @@ private[gateway] object WsTasksWorkspaceHandlers:
           "message" -> v.message.asJson
         )
       )
+    else if crKindTodo && crTriggerAt != 0L && nebflow.core.scheduler.TodoDue
+        .requireCreationZone(None, nebflow.core.scheduler.TodoDue.deviceZoneFromFrame(json))
+        .isLeft then
+      wsSend(
+        io.circe.Json.obj(
+          "type" -> "error".asJson,
+          "msgType" -> "createScheduledTask".asJson,
+          "requestId" -> createRequestId.asJson,
+          "message" -> "Please clarify the creation time zone".asJson
+        )
+      )
     else if crKindTodo && crSessionId.nonEmpty && crContent.nonEmpty then
       val surfaceAt = nebflow.core.scheduler.ScheduledTask.nextTodoSurfaceAt(
         System.currentTimeMillis(),

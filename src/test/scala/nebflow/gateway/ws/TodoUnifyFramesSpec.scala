@@ -151,6 +151,19 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
   // ① createScheduledTask 收 priority（钳位落库）
   // ==================================================================
 
+  test("todo due creation without device provenance requests clarification") {
+    withRig { (c, res) =>
+      val frame = s"""{"type":"createScheduledTask","sessionId":"s1","kind":"todo","content":"remind me","triggerAt":${now + 3600000L}}"""
+      for
+        frames <- send(c, "createScheduledTask", frame)
+        saved <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assertEquals(types(frames), List("error"))
+        assert(frames.head.hcursor.get[String]("message").toOption.exists(_.toLowerCase.contains("clarif")))
+        assertEquals(saved, Nil)
+    }
+  }
+
   test("① createScheduledTask(kind=todo, priority=7) ⇒ 落库 3（钳位）+ created 帧带三键") {
     withRig { (c, res) =>
       for
