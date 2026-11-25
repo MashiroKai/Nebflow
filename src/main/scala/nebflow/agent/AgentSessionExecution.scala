@@ -1474,6 +1474,10 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             )
           }
         else IO.unit
+      _ <- if sessionIdOpt.exists(resources.protectedExecutions.contains) &&
+          result.toolCalls.exists(c => c.name == "ask_edit" || c.name == "ask_write") then
+        IO.raiseError(new IllegalStateException("受保护执行模式下的 Ask 委托暂未支持"))
+      else IO.unit
       normalizedCalls <- result.toolCalls.traverse { call =>
         val sid = state.sessionId.getOrElse("")
         val isAskEdit = nebflow.core.ask.AskSessions.isAskSession(sid) &&
@@ -1483,7 +1487,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           nebflow.core.ask.AskGatewayServices.instance match
             case None => IO.pure(call)
             case Some(services) => services.registry.byId(sid).map {
-              case Some(binding) if !nebflow.core.ask.AskPathBoundary.isBoundDocument(
+              case Some(binding) if call.input("device").flatMap(_.asString).exists(d => d.nonEmpty && !d.equalsIgnoreCase("local")) ||
+                  state.session.sessionDevice.nonEmpty || !nebflow.core.ask.AskPathBoundary.isBoundDocument(
                     binding.file, call.input("path").flatMap(_.asString).getOrElse("")
                   ) =>
                 val rename = if call.name == "ask_edit" then
@@ -1495,6 +1500,16 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 call.copy(name = if call.name == "ask_edit" then "Edit" else "Write", input = mapped, rawArguments = None)
               case _ => call
             }
+      }
+      _ <- normalizedCalls.zip(result.toolCalls).traverse_ { (actual, original) =>
+        if actual.name == original.name then IO.unit
+        else IO(logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "tool-delegation", Json.obj(
+          "toolUseId" -> original.id.asJson,
+          "originalTool" -> original.name.asJson,
+          "delegatedTo" -> actual.name.asJson,
+          "path" -> actual.input("file_path").getOrElse(Json.Null),
+          "device" -> actual.input("device").getOrElse(Json.Null)
+        ).noSpaces))
       }
       (filteredCalls, droppedCalls) =
         // WebSearch P0: kimi's native $web_search tool call bypasses the
@@ -1782,6 +1797,10 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         val r = ToolExecResult(s"Tool not available: ${call.name}", isError = true)
         logToolStructured(call, toolCtx, r).as((call, r))
       }
+      originalCallsById = result.toolCalls.map(c => c.id -> c).toMap
+      transcriptResults = (guardedBatch ++ droppedResults).map { (call, output) =>
+        (originalCallsById.getOrElse(call.id, call), output)
+      }
       // ── Block 3 循环检测器（supervision trio §D2-A，2026-08-27）────────
       // guardBatch 之后、ToolsComplete 之前的单一 choke point——一切 kind 的
       // AgentActor 工具轮都过此环。Root 例外（D3）：depth==0 的 L1 降级为
@@ -1824,7 +1843,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           // 不用独立的 LoopFreezeDetected 消息：ToolsComplete 链式 dispatch 会
           // 递增 currentTurnId，后续消息 stale 丢弃，冻结永不落地（wiring 实证）。
           ctx.self ! ToolsComplete(
-            guardedBatch ++ droppedResults,
+            transcriptResults,
             result.text,
             replyTo,
             None,
@@ -1854,7 +1873,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         case w: nebflow.core.processor.LoopGuard.Verdict.Warn =>
           // L0：正常续轮 + loopReminder（下一轮 user system-reminder 注入，D3）
           ctx.self ! ToolsComplete(
-            guardedBatch ++ droppedResults,
+            transcriptResults,
             result.text,
             replyTo,
             None,
@@ -1865,7 +1884,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           )
         case nebflow.core.processor.LoopGuard.Verdict.Pass =>
           ctx.self ! ToolsComplete(
-            guardedBatch ++ droppedResults,
+            transcriptResults,
             result.text,
             replyTo,
             None,
