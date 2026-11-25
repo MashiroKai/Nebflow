@@ -37,6 +37,7 @@ import io
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -45,6 +46,58 @@ SCRIPT = HERE / "check_wiki_docs.py"
 spec = importlib.util.spec_from_file_location("check_wiki_docs", SCRIPT)
 MOD = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(MOD)
+
+class PngLatexDisciplineTests(unittest.TestCase):
+    def test_pdf_embedding_and_formula(self):
+        scan = MOD.collect_png_latex_issues
+        self.assertEqual([x['rule'] for x in scan('![图](<attachments/%E4%B8%AD.pdf>)\nx = a + b')], ['png-primary', 'latex-math'])
+        self.assertEqual(scan('![[attachments/%E4%B8%AD.pdf|论文]]')[0]['rule'], 'png-primary')
+        for tag, attr in [('img', 'src'), ('embed', 'src'), ('object', 'data'), ('iframe', 'src')]:
+            self.assertEqual(scan(f'<{tag} {attr}="图.pdf">')[0]['rule'], 'png-primary')
+
+    def test_exemptions(self):
+        text = '[下载](attachments/a.pdf)\n![图](attachments/a.svg)\n![图](attachments/a.png)\n375×812，cm²，m/s²，≤12\n~~~\n∑x\n~~~\n`x = a + b`\n> x = a + b\n$x = a + b$'
+        self.assertEqual(MOD.collect_png_latex_issues(text), [])
+
+    def test_precision_exclusions_and_forms(self):
+        scan = MOD.collect_png_latex_issues
+        for line in ('date: 2026-11-03', '# x + y = z', 'A / B / C', 'cm² m/s² keV/µm', '375×812', '| 10 / 5 = 2 |', '[x+y=z](https://x/a)', 'attachments/a+b=c.png'):
+            self.assertEqual(scan(line), [], line)
+        for line in ('10⁻³', '∑ x = y', 'x + y = z', '(a + b)/(c - d)'):
+            self.assertEqual([x['rule'] for x in scan(line)], ['latex-math'], line)
+
+    def test_end_to_end_report_then_clear(self):
+        import json
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            name = 'sample__20261126_000500.md'
+            write(root, name, doc('![图](attachments/a.pdf)\n\nx + y = z'))
+            def run():
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out), unittest.mock.patch.object(sys, 'argv', ['checker', '--root', str(root), '--json']):
+                    code = MOD.main()
+                return code, json.loads(out.getvalue())
+            code, result = run()
+            self.assertEqual(code, 1)
+            self.assertIn('png-primary', {x['rule'] for x in result['violations']})
+            self.assertIn('latex-math', {x['rule'] for x in result['advisories']})
+            write(root, 'attachments/a.png', '', binary=True)
+            write(root, name, doc('![图](attachments/a.png)\n\n$x + y = z$'))
+            code, result = run()
+            self.assertNotIn('png-primary', {x['rule'] for x in result['violations']})
+            self.assertNotIn('latex-math', {x['rule'] for x in result.get('advisories', [])})
+
+    def test_new_and_legacy_scope_and_switch(self):
+        with tempfile.TemporaryDirectory() as root:
+            write(root, 'old__20261125_000000.md', doc('![图](attachments/a.pdf)\n\nx = a + b'))
+            write(root, 'new__20261126_000500.md', doc('![图](attachments/a.pdf)\n\nx = a + b'))
+            notices = []
+            violations = validate(Path(root), strict=True, advisories=notices)
+            self.assertTrue(any(x['rule'] == 'png-primary' and x['file'].startswith('new') for x in violations))
+            self.assertTrue(any(x['rule'] == 'latex-math' and x['file'].startswith('new') for x in notices))
+            self.assertFalse(any(x['rule'] in ('png-primary', 'latex-math') and x['file'].startswith('old') for x in violations))
+            self.assertTrue(any(x['rule'] == 'latex-math' and x['file'].startswith('old') for x in notices))
+
 
 PNG_1PX = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAwAB/wH+3wAAAABJRU5ErkJggg=="
@@ -767,7 +820,7 @@ class RuleTableHygiene(unittest.TestCase):
         nums = [int(i[1:]) for i in ids]
         self.assertEqual(sorted(nums), nums,
                          f"RULES 表必须按号升序：实际 {ids}（让号后别把新号插回表中间）")
-        self.assertEqual(list(range(1, len(nums) + 1)), nums,
+        self.assertEqual(list(range(1, 21)) + [23, 24], nums,
                          f"规则号必须 R1..R{len(nums)} 连续无跳号：实际 {ids}"
                          "（确实要留空号，在此处写明理由并把断言改成显式豁免）")
 

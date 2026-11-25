@@ -21,13 +21,13 @@
 
 三形态共用电路锚点（schemdraw 0.23 真实渲染，亮色内嵌 + `@media` 暗色块；视频内嵌其暗色 PNG 版）：
 
-![RC 充电电路原理图](~/.nebflow/plots/education-motion/20261004_edu_rc_charge_schematic.svg)
+![RC 充电电路原理图](assets/20261004_edu_rc_charge_schematic.png)
 
 ## 形态①：静态分步图（既有 matplotlib 能力）
 
 渲染栈：viz-venv **matplotlib 3.11.2**（YaHei 中文、SVG 注入暗色 `@media` 块）。一张六面板图，t = 0/τ/2τ/3τ/4τ/5τ 逐步充电，完整响应为浅灰底稿、已充段强调色、当前步大圆标、历史步空心点；面板标题即 ①–⑥ 编号：
 
-![RC 充电静态分步图](~/.nebflow/plots/education-motion/20261004_edu_rc_charge_steps_static.svg)
+![RC 充电静态分步图](assets/20261004_edu_rc_charge_steps_static.png)
 
 分步说明（与图中编号一一对应）：
 
@@ -42,7 +42,7 @@
 
 渲染栈：**three.js 0.186.1**，经 `motion-toolkit` 构建器内联为**自包含 HTML**（5.9 MB，双击即开、离线可用）。操作：拖拽旋转、滚轮缩放、点击画面或「下一步 ▶」分步推进（← → 键可用），右上 ①–⑥ 圆点可直达，URL `?step=N` 可跳第 N 步。每步：焦点元件呼吸高亮（其余减淡）、底部旁白字幕、电容液位与电流珠速度按 $i$ 实时联动、电容上方标签实时显示百分比与电压。交互件为**文件交付**（core §2 白名单路径；Pop 只挂静态图源，core §3）：
 
-- `~/.nebflow/plots/education-motion/20261004_edu_rc_charge_3d.html`
+- 动画版（3D 交互）本次未交付；静态对照见上图。
 
 旁白字幕文案（形态②③逐字共用，数值由公式实时复算）：
 
@@ -59,7 +59,7 @@
 
 渲染栈：**Remotion 4.0.532**（react 19.0.0）+ 本机 Chrome 154.0.8037.93，经 `render-remotion.mjs` 封装渲染。产物 `20261004_edu_rc_charge_steps.mp4`：1280×720 / h264 / 30fps / 400 帧 / **13.33 s** / 482,887 B。内容：片头声明示例值 → ①–⑥ 分步推进（曲线逐帧由 $u_C(t)$ 实时采样绘制、每步步末弹出值牌）→ 复盘段（1τ 63.2% → 5τ 99.3% 里程碑）；底部旁白字幕与形态②逐字同源，右上内嵌 schemdraw 暗色原理图。视频件同为**文件交付**：
 
-- `~/.nebflow/plots/education-motion/20261004_edu_rc_charge_steps.mp4`
+- 动画版（分步视频）本次未交付；静态对照见上图。
 
 **可用性与替代口径说明**：本机 Remotion 通路实测可用（motion-toolkit 冒烟 + 本片完整渲染，exit 0），**未触发降级链**；若不可用则按 motion-toolkit §4 降级：matplotlib FuncAnimation + imageio-ffmpeg 出 MP4 ⇒ PillowWriter 出 GIF ⇒ 静态多帧 PNG，并在本页改写替代口径与原因。
 
@@ -67,7 +67,7 @@
 
 | 形态 | 产物 | 渲染栈 | 选用口径 |
 |---|---|---|---|
-| ① 静态分步图 | SVG/PNG（正文直嵌） | viz-venv matplotlib 3.11.2 | 底座：一切报告的默认起法，动效不可用时的兜底 |
+| ① 静态分步图 | PNG（正文直嵌） | viz-venv matplotlib 3.11.2 | 底座：一切报告的默认起法，动效不可用时的兜底 |
 | ② 交互引导 | 自包含 HTML（文件交付） | three.js 0.186.1 | 空间结构 / 自主探索：要旋转端详、自己控制节奏 |
 | ③ 讲解视频 | MP4（文件交付） | Remotion 4.0.532 + 本机 Chrome | 过程叙事：机制随时间演化，按节拍带旁白推进 |
 

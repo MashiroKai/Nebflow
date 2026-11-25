@@ -96,13 +96,14 @@ SCRIPT_SUFFIXES = {".py", ".mjs", ".js", ".ts", ".tsx", ".sh", ".cmd", ".json", 
 #   合并 USTC 主线后按种子实态（20 条）更新——种子先于工具进化，工具期望表随之回灌。
 REQUIRED_RULE_IDS = ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9",
                      "R10", "R11", "R12", "R13", "R14", "R15", "R16",
-                     "R17", "R18", "R19", "R20"]
+                     "R17", "R18", "R19", "R20", "R23", "R24"]  # R21/R22 reserved by installed instance
 REQUIRED_RULE_NAMES = [
     "obsidian-format", "citation-graph", "concept-first-use", "term-registry",
     "doc-naming", "image-outside-vault", "doc-color", "doc-indent", "abbrev-expansion",
     "plain-language", "doc-structure", "image-caption",
     "doc-reference", "bare-image-path", "dangling-term", "detail-fold",
     "bare-name-embed", "fence-embed-vault-relative", "image-required", "stacked-detail",
+    "png-primary", "latex-math",
 ]
 ALLOWLIST_START = "<!-- wiki-abbrev-allowlist:start -->"
 ALLOWLIST_END = "<!-- wiki-abbrev-allowlist:end -->"
