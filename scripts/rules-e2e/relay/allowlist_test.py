@@ -30,7 +30,7 @@ for i,host in enumerate(['api.provider.com.evil.example','evilapi.provider.com',
  try: m.Relay(args(host,i)); checks['reject_'+str(i)]=False
  except ValueError: checks['reject_'+str(i)]=len(calls)==before
 for i,host in enumerate(('open.bigmodel.cn','sub.lrical.com')):
- a=args(host,'real'+str(i)); a.allow_host=[host]; relay=m.Relay(a,dialer=lambda h,p,t: Dial(h,p)); relay.handle(H()); relay.ledger.close()
+ a=args(host,'real'+str(i)); a.allow_host=[host]; relay=m.Relay(a,dialer=lambda h,p,t: Dial(h,p)); H.rfile=__import__('io').BytesIO(b'{}'); relay.handle(H()); relay.ledger.close()
 checks['exact_dial_two_real_hosts']=calls==[('open.bigmodel.cn',443),('sub.lrical.com',443)]
 source=(root/'https_relay.py').read_text()
 import ast

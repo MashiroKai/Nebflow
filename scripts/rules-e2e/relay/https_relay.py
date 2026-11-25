@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Test-only constrained HTTPS relay. Not approved for production use."""
-import argparse, fcntl, http.client, json, os, re, socketserver, ssl, threading, time, urllib.parse, uuid
+import argparse, fcntl, http.client, json, math, os, re, socket, socketserver, ssl, threading, time, urllib.parse, uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 class Server(socketserver.ThreadingMixIn, HTTPServer):
@@ -10,7 +10,7 @@ class Server(socketserver.ThreadingMixIn, HTTPServer):
 class Relay:
  def __init__(self, args, dialer=None, grace=60, exit_fn=os._exit, lock_timeout=5, abort_timeout=5, append_override=None):
   self.args=args; self.condition=threading.Condition(); self.lock=self.condition; self.count=0; self.seq=0
-  self.grace=grace; self.exit_fn=exit_fn; self.stop_fired=False; self.finished=threading.Event()
+  self.grace=grace; self.exit_fn=exit_fn; self.stop_fired=False; self.finished=threading.Event(); self.watchdog_lock=threading.Lock(); self.watchdog_started=False
   self.lock_timeout=lock_timeout; self.abort_timeout=abort_timeout; self.append_override=append_override
   self.dialer=dialer or (lambda host,port,timeout: http.client.HTTPSConnection(host,port,timeout=timeout,context=ssl.create_default_context()))
   self.routes={}
@@ -22,7 +22,7 @@ class Relay:
    if host not in allowed: raise ValueError('route host not allowed')
    if name in self.routes or not os.environ.get(env): raise ValueError('duplicate route or missing key')
    self.routes[name]=(host,base.rstrip('/'),os.environ[env])
-  if not self.routes or not (1 <= args.limit <= 25) or args.seconds <= 0: raise ValueError('invalid bounds')
+  if not self.routes or not (1 <= args.limit <= 25) or not all(math.isfinite(v) and v > 0 for v in (args.seconds,args.timeout)): raise ValueError('invalid bounds')
   self.owner=open(args.ledger+'.lock','a')
   try: fcntl.flock(self.owner.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
   except BlockingIOError:
@@ -138,8 +138,13 @@ class Relay:
   return False
  def fire_stop(self,fire):
   if fire and self.stop_callback: threading.Thread(target=self.stop_callback,daemon=True).start()
+ def start_watchdog(self):
+  with self.watchdog_lock:
+   if self.watchdog_started: return
+   self.watchdog_started=True
+   threading.Thread(target=self.force_after_grace,daemon=True).start()
  def deadline(self):
-  threading.Thread(target=self.force_after_grace,daemon=True).start()
+  self.start_watchdog()
   with self.condition:
    self.stopping=True; fire=self.maybe_stop()
   self.fire_stop(fire)
@@ -170,13 +175,22 @@ class Relay:
    h.send_error(400); return
   host,base,key=target; path=base+'/'+('/'.join(parts[2:])); length=h.headers.get('Content-Length','')
   if not length.isdecimal() or int(length)>10485760: h.send_error(400); return
-  body=h.rfile.read(int(length)); final=False
+  try:
+   if hasattr(h,'connection'): h.connection.settimeout(self.args.timeout)
+   body=h.rfile.read(int(length))
+   if len(body)!=int(length): raise ValueError('short body')
+  except (OSError,ValueError):
+   h.send_error(400,'incomplete request body'); return
+  finally:
+   if hasattr(h,'connection'): h.connection.settimeout(None)
+  final=False
   with self.lock:
    self.seq+=1; seq=self.seq
    rejected=self.stopping or self.count>=self.args.limit
    if not rejected:
     self.count+=1; self.inflight+=1; self.active[seq]=trace[0]; self.drained.clear(); final=self.count==self.args.limit
     if final: self.stopping=True
+  if final: self.start_watchdog()
   if rejected:
    self.event({'seq':seq,'status':'rejected-limit','method':'POST','host':host,'path':path,'dial':False,'time':time.time(),'rule_id':None,'trace_id':trace[0]}); h.send_error(429); return
   try:
