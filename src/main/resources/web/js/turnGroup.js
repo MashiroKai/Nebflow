@@ -297,11 +297,9 @@ function syncInjectionStack(header) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'pill ds-media-stack__pill';
-    const label = document.createElement('span');
-    label.className = 'nf-injection-stack-label';
     const count = document.createElement('span');
     count.className = 'nf-injection-stack-count';
-    button.append(label, count);
+    button.append(count);
     stack.append(button);
     header.after(stack); // single anchoring decision
     button.onclick = () => {
@@ -314,7 +312,6 @@ function syncInjectionStack(header) {
   const button = stack.firstElementChild;
   stack.hidden = forced;
   button.setAttribute('aria-expanded', String(expanded));
-  button.firstElementChild.textContent = expanded ? '收起' : '展开';
   const count = button.lastElementChild;
   if (count.textContent !== String(rows.length)) {
     const digit = document.createElement('span');

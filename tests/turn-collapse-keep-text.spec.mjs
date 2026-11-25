@@ -190,7 +190,8 @@ for (const width of [390, 1280]) {
     const withInjection = await geometry(msgs);
     const stack = page.locator('[data-nf-injection-stack]');
     expect(await stack.evaluate(el => ({ children: el.children.length, nodes: el.childNodes.length, gap: getComputedStyle(el).gap }))).toEqual({ children: 1, nodes: 1, gap: 'normal' });
-    await expect(stack.locator('.nf-injection-stack-face')).toHaveCount(0);
+    await expect(stack.locator('.nf-injection-stack-face, .nf-injection-stack-label')).toHaveCount(0);
+    await expect(stack.locator('button')).toHaveText('1');
     const withoutInjection = await geometry(msgs.filter(m => !m.injected));
     expect(withInjection).toEqual(withoutInjection);
     await context.close();
@@ -203,14 +204,27 @@ for (const scheme of ['light', 'dark']) for (const width of [390, 1280]) {
     await page.evaluate(() => window.__liveTurn());
     const button = page.locator('[data-nf-injection-stack] button');
     await expect(button).toBeVisible();
+    await expect(button).toHaveText('1');
+    await expect(button).toHaveAttribute('aria-expanded', 'false');
+    await expect(button).toHaveRole('button');
     const bubbles = page.locator('#chat .bubble.injected');
     const visibleBoxes = () => bubbles.evaluateAll(els => els.filter(el => {
       const r = el.getBoundingClientRect(), s = getComputedStyle(el);
       return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
     }).length);
+    if (process.env.NB_TOGGLE_SHOT_DIR) await page.screenshot({ path: path.join(process.env.NB_TOGGLE_SHOT_DIR, `${scheme}-${width}-collapsed.png`), animations: 'disabled' });
     if (scheme === 'dark' && width === 390 && process.env.NB_INJECTION_SHOT) {
       await page.screenshot({ path: process.env.NB_INJECTION_SHOT, animations: 'disabled' });
     }
+    expect(await visibleBoxes()).toBe(0);
+    await button.focus();
+    await page.keyboard.press('Enter');
+    await expect(button).toHaveAttribute('aria-expanded', 'true');
+    await expect(button).toHaveText('1');
+    expect(await visibleBoxes()).toBe(1);
+    if (process.env.NB_TOGGLE_SHOT_DIR) await page.screenshot({ path: path.join(process.env.NB_TOGGLE_SHOT_DIR, `${scheme}-${width}-expanded.png`), animations: 'disabled' });
+    await page.keyboard.press('Space');
+    await expect(button).toHaveAttribute('aria-expanded', 'false');
     expect(await visibleBoxes()).toBe(0);
     await button.click();
     expect(await visibleBoxes()).toBe(1);
