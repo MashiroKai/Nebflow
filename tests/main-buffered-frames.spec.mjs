@@ -66,10 +66,16 @@ for (const width of [390, 1280]) for (const theme of ['light', 'dark']) {
     await boot(page);
     await page.evaluate(async t => { document.documentElement.setAttribute('data-theme', t); const chat = await import('/js/chat.js'); chat.renderUserBubble('请整理结果', [], Date.now()); }, theme);
     await expect(page.locator('#chat .row.user')).toBeVisible();
+    await page.locator('#chat .row.user').evaluate(el => Promise.all(el.getAnimations({subtree:true}).map(a => a.finished.catch(() => {}))));
     await frame(page,{type:'thinkingDelta', delta:'正在整理相关文件'});
     await frame(page,{type:'textDelta', isRoot:true, delta:'<report>这是一条完整的回复，结束后一次显示。</report>'});
     await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
     const dir = process.env.BUFFER_SHOTS;
+    if (width === 390 && theme === 'dark') console.log('DARK-DIAGNOSTIC', JSON.stringify(await page.evaluate(() => {
+      const el = document.querySelector('#chat .row.user');
+      const chain = []; for (let p = el; p; p = p.parentElement) { const s = getComputedStyle(p); chain.push({ selector: p.tagName.toLowerCase() + (p.id ? '#' + p.id : '') + (p.className && typeof p.className === 'string' ? '.' + p.className.trim().replace(/\s+/g, '.') : ''), opacity:s.opacity, filter:s.filter, backdropFilter:s.backdropFilter, animation:s.animationName, transform:s.transform }); }
+      return chain;
+    })));
     if (dir) await page.screenshot({ path:`${dir}/${process.env.BUFFER_BASE === '1' ? 'base' : 'after'}-${width}-${theme}-running.png` });
     await frame(page,{type:'done'});
     await expect(page.locator('#chat .bubble.ai').last()).toBeVisible();
