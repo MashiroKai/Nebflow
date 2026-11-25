@@ -51,6 +51,7 @@ class WeixinAskLegSpec extends CatsEffectSuite:
     val injected: Ref[IO, List[(String, String)]] = Ref.unsafe[IO, List[(String, String)]](Nil)
     val forwarded: Ref[IO, List[(String, String, Json)]] = Ref.unsafe[IO, List[(String, String, Json)]](Nil)
     val closed: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+    val onClose: Ref[IO, String => IO[Unit]] = Ref.unsafe[IO, String => IO[Unit]](_ => IO.unit)
 
     val mediaInjected
       : Ref[IO, List[(String, List[nebflow.bridge.BridgeAttachment], Option[nebflow.bridge.BridgeOrigin])]] =
@@ -78,7 +79,8 @@ class WeixinAskLegSpec extends CatsEffectSuite:
 
     override def forwardInteractionAnswer(requestId: String, rootSessionId: String, payload: Json): IO[Unit] =
       forwarded.update(_ :+ ((requestId, rootSessionId, payload)))
-    override def closeInteractionRequest(requestId: String): IO[Unit] = closed.update(_ :+ requestId)
+    override def closeInteractionRequest(requestId: String): IO[Unit] =
+      closed.update(_ :+ requestId) *> onClose.get.flatMap(_(requestId))
     def interruptAgent(sessionId: String): IO[Unit] = IO.unit
     def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
     def listSessions: IO[List[SessionMeta]] = IO.pure(sessions)
@@ -503,6 +505,7 @@ class WeixinAskLegSpec extends CatsEffectSuite:
         IO.raiseError(new UnsupportedOperationException("tell-only"))
     val test = for
       hub <- system.spawn(nebflow.agent.InteractionHub(), "hub")
+      _ <- ctx.onClose.set(rid => (hub ! nebflow.actor.InteractionHubCommand.CloseRequest(rid)).void)
       _ <- p.start(ctx)
       _ <- hub ! nebflow.actor.InteractionHubCommand.RegisterRoot("s1", (frame: Json) =>
         if frame.hcursor.get[String]("type").toOption.contains("askUser") then
