@@ -346,12 +346,21 @@ class ProcessManagerSpec extends FunSuite:
       val pid = selfPid()
       ProcessManager.writePid(pid)
       PidMeta.writeFreshFor(PidMeta.StartedByLauncher, PidMeta.ModeDaemon, pid)
-      val (deps, rec) = stubDeps(isAliveOverride = Some(_ => true))
+      var portReads = 0
+      var sweeps = 0
+      val (deps, rec) = stubDeps(
+        isAliveOverride = Some(_ => true),
+        portsOf = _ => { portReads += 1; Nil },
+        homeSweep = () => { sweeps += 1; Nil }
+      )
       runStop(ProcessManager.StopOptions(), deps) match
         case ProcessManager.StopOutcome.Failed(reason) => assert(reason.contains("did not exit"), reason)
         case other => fail(s"expected Failed, got $other")
-      assert(rec.destroyed.contains(pid)) // graceful leg attempted
-      assert(rec.destroyed.contains(pid)) // graceful leg requested; no force-kill dependency exists
+      assertEquals(rec.destroyed.toList, List(pid))
+      assertEquals(portReads, 1, "failed stop must skip post-stop port confirmation")
+      assertEquals(sweeps, 0, "failed stop must skip residue sweep")
+      assert(os.exists(PathUtil.dataRoot / ".pid"))
+      assert(os.exists(PathUtil.dataRoot / ".pid.meta"))
     }
   }
 
@@ -376,13 +385,18 @@ class ProcessManagerSpec extends FunSuite:
       val pid = selfPid()
       ProcessManager.writePid(pid)
       PidMeta.writeFreshFor(PidMeta.StartedByLauncher, PidMeta.ModeDaemon, pid)
+      var sweeps = 0
       val (deps, rec) = stubDeps(
         portsOf = _ => List(8110),
-        listenerAliveResult = true // never releases
+        listenerAliveResult = true, // never releases
+        homeSweep = () => { sweeps += 1; Nil }
       )
-      val out = runStop(ProcessManager.StopOptions(), deps)
+      val out = runStop(ProcessManager.StopOptions(), deps.copy(drainTimeoutMs = 0L))
       assert(out.isInstanceOf[ProcessManager.StopOutcome.Failed], out.toString)
       assert(rec.probedPorts.contains(8110))
+      assertEquals(sweeps, 0, "busy port must skip residue sweep")
+      assert(os.exists(PathUtil.dataRoot / ".pid"))
+      assert(os.exists(PathUtil.dataRoot / ".pid.meta"))
     }
   }
 

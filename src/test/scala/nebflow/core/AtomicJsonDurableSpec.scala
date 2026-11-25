@@ -107,6 +107,9 @@ class AtomicJsonDurableSpec extends CatsEffectSuite:
       dir <- IO(os.temp.dir())
       f = dir / "state.json"
       _ <- IO(os.makeDir(AtomicJson.journalPathOf(f)))
+      read <- IO(AtomicJson.readAll(f))
       bytes <- IO(AtomicJson.noteBytes(f))
-    yield assertEquals(bytes, 0L)
+    yield
+      assertEquals(read.records.map(_.note), List.empty[String])
+      assertEquals(bytes, 0L)
 end AtomicJsonDurableSpec

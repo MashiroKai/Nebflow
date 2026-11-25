@@ -101,6 +101,9 @@ class SearchIndexServiceSpec extends CatsEffectSuite:
       try
         val query = result.createStatement()
         try
+          val tables = query.executeQuery("SELECT name FROM sqlite_master WHERE type='table' AND name='search_hits'")
+          assert(tables.next(), "ordinary dispatch must initialize the search index")
+          tables.close()
           val rows = query.executeQuery("SELECT count(*) FROM search_hits")
           assert(rows.next())
           assertEquals(rows.getInt(1), 0)

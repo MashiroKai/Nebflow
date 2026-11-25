@@ -126,6 +126,17 @@ class DbWriteFaceSpec extends FunSuite:
     assertEquals(seen, frame)
     assertEquals(Files.readString(f), s"older\n$frame\n")
 
+  test("prepareAppend finds the last frame beyond a multi-block torn tail"):
+    val dir = Files.createTempDirectory("db-tail-long-torn")
+    val f = dir.resolve("stream.jsonl")
+    val torn = "x" * 8193
+    Files.writeString(f, s"older\nlast-frame\n$torn")
+    val seen = scala.collection.mutable.ListBuffer.empty[String]
+    val state = WriteFace.prepareAppend(f, line => { seen += line; Right(()) })
+    assertEquals(state, WriteFace.TailState.RepairedTornTail(8193L))
+    assertEquals(seen.toList, List("last-frame"))
+    assertEquals(Files.readString(f), "older\nlast-frame\n")
+
   test("appendDurable rejects multi-line records (framing constraint)"):
     val dir = Files.createTempDirectory("db-v1-append")
     intercept[IllegalArgumentException] {
