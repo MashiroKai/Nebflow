@@ -29,6 +29,7 @@
 // 落盘 / 拖拽改尺寸状态机 / 画布专属帧（askNote*/askEdit*/askHandoffAck）。
 
 import { h } from './dom.js';
+import { startWorklineDots, thinkingWorklineItem, startWorklineItem, worklineToolDetail, doneWorklineItem, failWorklineItem, removeWorkline } from './workline.js';
 import { askBubbleClass, chatComposerClass } from './chatUi.js';
 import { renderMarkdownWithMath, createIconsIn } from './utils.js';
 // 图片附件（ask 附图批）：压缩管线 = 主会话同款（input/attachments.js 单点导出），
@@ -624,6 +625,18 @@ export function createAskDialog(cfg) {
 
     // ── 思考指示 / typing ─────────────────────────────────────────────────
     appendTyping() {
+      if (cfg.workline) {
+        dlg.removeTyping();
+        const host = h('div', { class: 'ask-workline-host' });
+        col.appendChild(host);
+        typingNode = host;
+        const s = cfg.activeSession();
+        if (s) {
+          s.askWorklineView = { dom: { chat: host }, motionEnabled: () => true };
+          startWorklineDots(s.askWorklineView);
+        }
+        return;
+      }
       dlg.removeTyping();
       const tp = h('div', {
         class: 'ask-stream-line',
@@ -642,13 +655,37 @@ export function createAskDialog(cfg) {
       if (dlg.colFollows()) col.scrollTop = col.scrollHeight;
       typingNode = tp;
     },
+    processWorkline(s, msg) {
+      if (!cfg.workline || !s || !s.busy) return;
+      s.lastFrameAt = Date.now();
+      if (msg.type === 'thinkingDelta') s.askThinking = (s.askThinking || '') + (msg.delta || '');
+      if (msg.type === 'toolCallDetected' || msg.type === 'toolStart') {
+        s.askTool = msg.label || msg.toolName || msg.name || 'Tool';
+        s.askToolDetail = '';
+      }
+      if (msg.type === 'toolArgDelta') s.askToolDetail = (s.askToolDetail || '') + (msg.delta || '');
+      if (s !== cfg.activeSession() || !dlg.isOpen()) return;
+      if (!typingNode || !typingNode.isConnected) dlg.appendTyping();
+      const view = s.askWorklineView;
+      if (!view) return;
+      if (msg.type === 'thinkingDelta') thinkingWorklineItem(view, s.askThinking);
+      if (msg.type === 'toolCallDetected' || msg.type === 'toolStart') startWorklineItem(view, s.askTool);
+      if (msg.type === 'toolArgDelta') worklineToolDetail(view, s.askToolDetail);
+      if (msg.type === 'toolEnd' && s.askTool) {
+        const finish = msg.isError ? failWorklineItem : doneWorklineItem;
+        finish(view, s.askTool, msg.summary || msg.label || s.askTool);
+      }
+    },
     updateTypingText(text) {
+      if (cfg.workline) { dlg.removeTyping(); return; }
       if (!typingNode || !typingNode.isConnected || typeof text !== 'string') return;
       if (!text) return; // 思考期保持 spinner：首个非空 token 才换相
       typingNode.textContent = text;
       typingNode.scrollLeft = typingNode.scrollWidth;
     },
     removeTyping() {
+      const s = cfg.activeSession();
+      if (cfg.workline && s && s.askWorklineView) removeWorkline(s.askWorklineView);
       if (typingNode && typingNode.isConnected) typingNode.remove();
       typingNode = null;
     },

@@ -486,6 +486,7 @@ function buildDialog() {
     // 中止动作（取消 ≠ 失败）：canvas 档自己收口回合事实（settleTurn({cancel:true})）
     // 并即刻还 UI；内核的 dlg.stopAsk 仍是未挂钩档（选区档）的默认实现。
     onStop: () => { stopAsk(); },
+    workline: true,
     frameKind: canvasFrameKind,
     onUnread: () => syncUnreadDot(),
     onPersist: (s) => persistSession(s),
@@ -2318,6 +2319,10 @@ function consumeFrame(msg) {
     if (s.sid && s.sid === sid) { entry = s; break; }
   }
   if (!entry) return; // 本页未见过的 ask 会话（其它设备/页面）——忽略。
+  if (['thinking', 'thinkingDelta', 'toolCallDetected', 'toolStart', 'toolArgDelta', 'toolEnd'].includes(msg.type)) {
+    dlg.processWorkline(entry, msg);
+    if (entry.busy) turnOf(entry).lastFrameAt = Date.now();
+  }
   switch (msg.type) {
     case 'askHandoffAck': {
       // ask-scope 批（2026-11-18）：转交回执**不再静默**——面板状态行呈现
