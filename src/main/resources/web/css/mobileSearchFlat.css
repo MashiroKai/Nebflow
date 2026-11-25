@@ -205,6 +205,8 @@ body.mobile-layer .mh-search-dock .mh-search-input {
 body.mobile-layer .mh-search-dock.mh-search-collapsed .mh-search-bar {
   width: var(--band-d);
   height: var(--band-d);
+  /* The shared .sf-field radius must not override the collapsed FAB shape. */
+  border-radius: 50%;
   margin-left: calc(100% - var(--ds-space-4) - var(--band-d));
   margin-right: var(--ds-space-4);
   padding-left: 0;

@@ -678,6 +678,23 @@ test('FMA-SCN-003 search uses actual composer material', async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test('expanded search full computed style snapshot', async ({ page }) => {
+  if (!process.env.SEARCH_STYLE_SNAPSHOT) test.skip();
+  await bootApp(page);
+  const snapshots = {};
+  for (const id of ['messages', 'contacts']) {
+    await dockTo(page, id);
+    const bar = page.locator(`.mobile-page[data-page="${id}"] .mh-search-bar`);
+    await expect(bar).toBeVisible();
+    await page.waitForTimeout(700);
+    snapshots[id] = await bar.evaluate(root => [root, ...root.querySelectorAll('*')].map(el => {
+      const style = getComputedStyle(el);
+      return { tag: el.tagName, className: el.getAttribute('class'), properties: Object.fromEntries(Array.from(style).sort().map(k => [k, style.getPropertyValue(k)])) };
+    }));
+  }
+  writeFileSync(process.env.SEARCH_STYLE_SNAPSHOT, JSON.stringify(snapshots, null, 2));
+});
+
 test('default search controls geometry readings', async ({ page }) => {
   await bootApp(page);
   for (const id of ['messages', 'contacts']) {
@@ -689,6 +706,43 @@ test('default search controls geometry readings', async ({ page }) => {
     expect(state.bar.height).toBeGreaterThan(0);
   }
 });
+
+for (const colorScheme of ['light', 'dark']) {
+  for (const deviceScaleFactor of [1, 2]) {
+    test.describe(`search morph contract ${colorScheme} dpr${deviceScaleFactor}`, () => {
+      test.use({ colorScheme, deviceScaleFactor });
+      test('both pages preserve expanded field and collapsed FAB geometry', async ({ page }) => {
+        await bootApp(page);
+        for (const pageId of ['messages', 'contacts']) {
+          await dockTo(page, pageId);
+          const bar = page.locator(`.mobile-page[data-page="${pageId}"] .mh-search-bar`);
+          await expect(bar).toBeVisible();
+          await expect.poll(() => bar.evaluate(el => getComputedStyle(el).borderRadius)).toBe('12px');
+          const scroller = pageId === 'messages' ? '#fm-conversations' : '#fm-contacts-body';
+          await page.locator(`.mobile-page[data-page="${pageId}"] ${scroller}`).evaluate(el => {
+            el.scrollTop = 224;
+            el.dispatchEvent(new Event('scroll'));
+          });
+          await expect(bar).toHaveClass(/g2-fab/);
+          if (process.env.SEARCH7_CAPTURE_BEFORE && EVID) {
+            await page.waitForTimeout(700);
+            mkdirSync(EVID, { recursive: true });
+            await page.screenshot({ path: join(EVID, `before-${pageId}-${colorScheme}-dpr${deviceScaleFactor}.png`) });
+          }
+          await expect.poll(() => bar.evaluate(el => getComputedStyle(el).borderRadius)).toBe('50%');
+          await expect.poll(async () => {
+            const box = await bar.boundingBox();
+            return { width: Math.round(box.width), height: Math.round(box.height) };
+          }).toEqual({ width: 48, height: 48 });
+          if (EVID) {
+            mkdirSync(EVID, { recursive: true });
+            await page.screenshot({ path: join(EVID, `contract-${pageId}-${colorScheme}-dpr${deviceScaleFactor}.png`) });
+          }
+        }
+      });
+    });
+  }
+}
 
 test('mobile-search-flat: messages + contacts（九组判据，双页同源）', async ({ page }) => {
   await bootApp(page);
