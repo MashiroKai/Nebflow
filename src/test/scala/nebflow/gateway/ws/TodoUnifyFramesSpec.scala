@@ -152,6 +152,18 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
   // ① createScheduledTask 收 priority（钳位落库）
   // ==================================================================
 
+  test("user deadline rejects unsupported repeat instead of silently creating once") {
+    withRig { (c, res) =>
+      val frame = s"""{"type":"createScheduledTask","sessionId":"s1","kind":"todo","content":"remind me","triggerAt":${now + 3600000L},"repeat":"daily","device":{"timeZone":"Asia/Tokyo"}}"""
+      for
+        frames <- send(c, "createScheduledTask", frame)
+        saved <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assertEquals(types(frames), List("error"))
+        assertEquals(saved, Nil)
+    }
+  }
+
   test("weekly user deadline rejects non-minute instant with a named error") {
     withRig { (c, res) =>
       val at = (now / 60000L + 60L) * 60000L + 1L

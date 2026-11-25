@@ -416,6 +416,15 @@ private[gateway] object WsTasksWorkspaceHandlers:
           "message" -> "Please clarify the creation time zone".asJson
         )
       )
+    else if crKindTodo && crTriggerAt != 0L && crRepeat.exists(r => r != "once" && r != "weekly") then
+      wsSend(
+        io.circe.Json.obj(
+          "type" -> "error".asJson,
+          "msgType" -> "createScheduledTask".asJson,
+          "requestId" -> createRequestId.asJson,
+          "message" -> "Todo repeat must be once or weekly".asJson
+        )
+      )
     else if crKindTodo && crTriggerAt != 0L && crRepeat.contains("weekly") && crTriggerAt % 60000L != 0L then
       wsSend(
         io.circe.Json.obj(
