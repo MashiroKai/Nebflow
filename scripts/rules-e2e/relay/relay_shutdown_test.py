@@ -189,9 +189,15 @@ server.serve_forever()'''
   t=threading.Thread(target=lambda:relay.event({'seq':7,'status':'reserved','record_id':'pending'}),daemon=True); t.start(); self.assertTrue(entered.wait(1))
   with patch('sys.stderr',new_callable=io.StringIO) as out:
    relay.force_after_grace(); summaries=[json.loads(x) for x in out.getvalue().splitlines()]
-  self.assertEqual(codes,[2]); self.assertTrue(summaries[0]['sealed']); self.assertEqual(summaries[1]['aborted_on_exit'],1); self.assertEqual(summaries[1]['abort_write_unconfirmed'],0)
+  self.assertEqual(codes,[2]); self.assertTrue(summaries[0]['sealed']); self.assertEqual(summaries[1]['abort_write_confirmed'],1); self.assertEqual(summaries[1]['abort_write_unconfirmed'],0)
   self.assertEqual(json.loads(pathlib.Path(str(self.path)+'.abort').read_text())['original_record_id'],'pending')
   release.set(); t.join(2)
+ def test_summary_excludes_prior_run(self):
+  self.path.write_text(json.dumps({'seq':1,'status':'reserved','record_id':'old'})+'\n')
+  relay=m.Relay(args(self.path,3)); self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
+  self.assertTrue(relay.event({'seq':2,'status':'reserved','record_id':'new'}))
+  with patch('sys.stderr',new_callable=io.StringIO) as out: relay.shutdown_summary({})
+  summary=json.loads(out.getvalue()); self.assertEqual((summary['recorded_this_run'],summary['unrecorded_this_run']),(1,0))
  def test_watchdog_only_starts_once(self):
   relay=m.Relay(args(self.path),grace=1,exit_fn=lambda code:None)
   self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)

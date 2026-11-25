@@ -13,7 +13,7 @@ class Relay:
   self.grace=grace; self.exit_fn=exit_fn; self.stop_fired=False; self.finished=threading.Event(); self.watchdog_lock=threading.Lock(); self.watchdog_started=False
   self.lock_timeout=lock_timeout; self.abort_timeout=abort_timeout; self.append_override=append_override
   self.rejection_lock=threading.Condition(); self.unrecorded_rejections=0; self.rejections={}
-  self.append_lock=threading.RLock(); self.append_changed=threading.Condition(self.append_lock); self.sidecar_lock=threading.Lock(); self.append_inflight={}; self._anon=itertools.count(); self.exiting=False
+  self.append_lock=threading.RLock(); self.append_changed=threading.Condition(self.append_lock); self.sidecar_lock=threading.Lock(); self.append_inflight={}; self._run_keys=set(); self._anon=itertools.count(); self.exiting=False
   with self.append_lock: self.sealed=False
   self.dialer=dialer or (lambda host,port,timeout: http.client.HTTPSConnection(host,port,timeout=timeout,context=ssl.create_default_context()))
   self.routes={}
@@ -120,10 +120,11 @@ class Relay:
  def event(self,obj):
   return self.append_record(obj)
  def append_record(self,obj,sidecar=False):
+  obj=dict(obj); obj.setdefault('record_id',uuid.uuid4().hex)
   with self.append_lock:
    if self.sealed: return False
    key=obj.get('record_id') or ('anon',next(self._anon))
-   self.append_inflight[key]=obj.get('seq')
+   self.append_inflight[key]=obj.get('seq'); self._run_keys.add(key)
   try:
    if sidecar: return self._sidecar_unlocked(obj)
    return self._event_unlocked(obj)
@@ -195,17 +196,21 @@ class Relay:
    with self.append_changed:
     self.append_changed.wait_for(lambda:not self.append_inflight,timeout=self.abort_timeout)
     still=dict(self.append_inflight)
-  recorded=self._ledger_record_ids(); attempted=[]
+  recorded=self._ledger_record_ids(); attempted=[]; results=[]; results_lock=threading.Lock()
   def abort(key,seq):
-   try: self.exit_abort({'seq':seq,'status':'aborted-on-exit','record_id':uuid.uuid4().hex,'original_record_id':key})
-   except Exception: pass
+   try: ok=self.exit_abort({'seq':seq,'status':'aborted-on-exit','record_id':uuid.uuid4().hex,'original_record_id':key}) is True
+   except Exception: ok=False
+   with results_lock: results.append(ok)
   for key,seq in still.items():
    if key not in recorded:
     t=threading.Thread(target=abort,args=(key,seq),daemon=True); t.start(); attempted.append(t)
   deadline=time.monotonic()+self.abort_timeout
   for t in attempted: t.join(max(0,deadline-time.monotonic()))
   final=self._ledger_record_ids()
-  summary={'sealed':sealed,'recorded':len(final),'aborted_on_exit':sum(key not in final for key in still),'abort_write_unconfirmed':sum(t.is_alive() for t in attempted),'inflight_upper_bound':None if sealed else len(self.active)}
+  with self.append_lock: run_keys=set(self._run_keys)
+  with self.rejection_lock: unrecorded=self.unrecorded_rejections
+  with results_lock: confirmed=sum(results)
+  summary={'sealed':sealed,'recorded_this_run':len(run_keys & final),'unrecorded_this_run':len(run_keys-final),'still_inflight_at_exit':len(still) if sealed else None,'abort_write_confirmed':confirmed,'abort_write_unconfirmed':len(attempted)-confirmed,'inflight_upper_bound':None if sealed else len(self.active),'unrecorded_rejections':unrecorded}
   print(json.dumps(summary),file=sys.stderr,flush=True)
  def maybe_stop(self):
   # Called with condition held; dispatching the callback is done by the caller.
