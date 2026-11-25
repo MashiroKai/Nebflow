@@ -3953,7 +3953,7 @@ body:not(.mobile-layer) .option-preview-media {
 .nf-injection-stack[hidden], .row.nf-injection-stack-hidden { display: none !important; }
 
 .nf-injection-stack button { display: flex; align-items: center; min-height: 25px; }
-.nf-injection-stack button[aria-expanded="true"] { box-shadow: inset 0 0 0 2px var(--color-text-dim); }
+.nf-injection-stack button[aria-expanded="true"] { background: var(--ds-media-pill-bg-hover); }
 .nf-injection-stack-count { display: inline-flex; align-items: center; justify-content: center; min-width: 3ch; min-height: 19px; text-align: center; font-variant-numeric: tabular-nums; }
 .nf-injection-stack-digit { display: block; animation: nf-injection-count-roll 200ms ease-out; }
 @keyframes nf-injection-count-roll { from { opacity: 0; transform: rotateX(-70deg); } to { opacity: 1; transform: rotateX(0); } }
