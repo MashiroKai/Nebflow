@@ -32,6 +32,10 @@ final class BrowserTakeoverRegistry:
         case _ => s.lease = Some(request); Right(())
     }
 
+  def holds(session: String, request: String): Boolean =
+    val s = state(session)
+    s.synchronized { s.lease.contains(request) }
+
   def ownedBy(session: String, owner: String): Boolean =
     val s = state(session)
     s.synchronized { s.owner.contains(owner) }

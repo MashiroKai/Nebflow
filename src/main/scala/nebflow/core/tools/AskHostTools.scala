@@ -93,6 +93,34 @@ object AskHostLedger:
     }
   }
 
+  val TakeoverDecision = "人工接管已完成；请重新获取画面后继续，不要重复人工已完成的操作。"
+  enum TakeoverFinish:
+    case NoLease, Answered, LateClaimed, AlreadyTerminal
+
+  private[nebflow] def finishTakeover(
+    id: String, session: String, registry: nebflow.core.browser.BrowserTakeoverRegistry
+  ): IO[TakeoverFinish] = IO.blocking {
+    journalLock.synchronized {
+      if !registry.holds(session, id) then TakeoverFinish.NoLease
+      else
+        val state = requestStateSync(id)
+        val result = state match
+          case Some(s) if s.terminal.isEmpty =>
+            appendSync(Json.obj("correlationId" -> id.asJson, "decision" -> TakeoverDecision.asJson,
+              "status" -> "answered".asJson, "at" -> System.currentTimeMillis().asJson))
+            answered.put(id, TakeoverDecision)
+            TakeoverFinish.Answered
+          case Some(s) if s.terminal.exists(_.isInstanceOf[Terminal.TimedOut]) && s.lateReplies.isEmpty =>
+            appendSync(Json.obj("correlationId" -> id.asJson, "status" -> "takeover-late-claimed".asJson,
+              "at" -> System.currentTimeMillis().asJson))
+            TakeoverFinish.LateClaimed
+          case _ => TakeoverFinish.AlreadyTerminal
+        registry.finish(id)
+        result
+    }
+  }.flatTap(result => if result == TakeoverFinish.Answered then
+    waiters.get(id).traverse_(_.complete(TakeoverDecision).void) else IO.unit)
+
   /** Recreate in-process waiters and satisfy any request whose decision was journaled before a crash. */
   def restoreWaiter(id: String): IO[Deferred[IO, String]] =
     Deferred[IO, String].flatMap { candidate =>
@@ -167,6 +195,7 @@ object AskHostLedger:
               case "unavailable" => unavailable = Some(str("reason"))
               case "delivered" => delivered = true
               case "late-reply" => late += str("decision")
+              case "takeover-late-claimed" => late += TakeoverDecision
               case _ => ()
         }
       }
@@ -769,7 +798,7 @@ object AskHostReplyTool extends Tool:
    * Idempotent: the mailbox identity is stable (`askhost-late-reply-<id>`), so a repeated
    * send cannot duplicate the injection ([[nebflow.core.mail.SessionMailbox]] dedup).
    */
-  private def deliverLateReply(
+  private[nebflow] def deliverLateReply(
     resources: nebflow.core.AgentRuntimePort,
     ctx: ToolContext,
     p: AskHostLedger.Pending,

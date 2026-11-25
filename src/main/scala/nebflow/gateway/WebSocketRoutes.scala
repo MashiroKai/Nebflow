@@ -1081,9 +1081,9 @@ class WebSocketRoutes(
             else
               for
                 outbound <- Queue.bounded[IO, WebSocketFrame](16)
-                state <- Ref.of[IO, Option[(String, nebflow.core.browser.BrowserScreencast, () => Unit)]](None)
+                state <- Ref.of[IO, Option[(String, String, nebflow.core.browser.BrowserScreencast, () => Unit)]](None)
                 send = (j: Json) => outbound.offer(WebSocketFrame.Text(j.noSpaces))
-                cleanup = state.getAndSet(None).flatMap(_.traverse_ { case (id, stream, unsubscribe) =>
+                cleanup = state.getAndSet(None).flatMap(_.traverse_ { case (id, _, stream, unsubscribe) =>
                   IO(unsubscribe()) *> IO.blocking(stream.close()).attempt.void *> IO(nebflow.core.browser.BrowserSessions.takeoverRegistry.finish(id))
                 })
                 receive: Pipe[IO, WebSocketFrame, Unit] = _.evalMap {
@@ -1092,7 +1092,7 @@ class WebSocketRoutes(
                     message.hcursor.get[String]("type").getOrElse("") match
                       case "start" =>
                         val ticket = message.hcursor.get[String]("ticket").getOrElse("")
-                        val binding = browserTakeoverTickets.consume(ticket, _ => true)
+                        val binding = browserTakeoverTickets.inspect(ticket)
                         binding match
                           case None => send(Json.obj("type" -> "status".asJson, "error" -> "接管票无效或已过期".asJson))
                           case Some(b) =>
@@ -1101,6 +1101,9 @@ class WebSocketRoutes(
                               case Some(snapshot) =>
                                 AskHostLedger.admitTakeoverCurrent(b.request, snapshot.pending.rootSession, b.session, nebflow.core.browser.BrowserSessions.takeoverRegistry).flatMap {
                                   case Left(error) => send(Json.obj("type" -> "status".asJson, "error" -> error.asJson))
+                                  case Right(_) if browserTakeoverTickets.consume(ticket, _ => true).isEmpty =>
+                                    IO(nebflow.core.browser.BrowserSessions.takeoverRegistry.finish(b.request)) *>
+                                      send(Json.obj("type" -> "status".asJson, "error" -> "接管票已使用或过期".asJson))
                                   case Right(_) =>
                                     IO.blocking {
                                       val page = nebflow.core.browser.BrowserSessions.takeoverPage(b.session)
@@ -1110,22 +1113,39 @@ class WebSocketRoutes(
                                         ()
                                       }
                                       try stream.start()
-                                      catch case e: Throwable => unsubscribe(); throw e
-                                      (b.request, stream, unsubscribe)
+                                      catch
+                                        case e: Throwable =>
+                                          unsubscribe()
+                                          throw e
+                                      (b.request, b.session, stream, unsubscribe)
                                     }.attempt.flatMap {
                                       case Left(_) => IO(nebflow.core.browser.BrowserSessions.takeoverRegistry.finish(b.request)) *> send(Json.obj("type" -> "status".asJson, "error" -> "画面流启动失败；可在运行 stand 的机器前操作真实浏览器窗口".asJson))
                                       case Right(active) => state.set(Some(active)) *> send(Json.obj("type" -> "status".asJson, "ready" -> true.asJson, "timedOut" -> snapshot.terminal.isDefined.asJson))
                                     }
                                 }
                             }
-                      case "input" => state.get.flatMap(_.traverse_ { case (_, stream, _) =>
+                      case "input" => state.get.flatMap(_.traverse_ { case (_, _, stream, _) =>
                         message.hcursor.downField("event").focus.traverse_(event => IO.blocking(stream.input(event)).attempt.void)
                       })
-                      case "finish" => cleanup *> send(Json.obj("type" -> "finish".asJson))
+                      case "finish" => state.getAndSet(None).flatMap {
+                        case None => send(Json.obj("type" -> "status".asJson, "error" -> "接管租约不存在".asJson))
+                        case Some((id, session, stream, unsubscribe)) =>
+                          AskHostLedger.requestState(id).flatMap { current =>
+                            AskHostLedger.finishTakeover(id, session, nebflow.core.browser.BrowserSessions.takeoverRegistry).flatMap { result =>
+                              IO(unsubscribe()) *> IO.blocking(stream.close()).attempt.void *>
+                                (if result == AskHostLedger.TakeoverFinish.LateClaimed then
+                                  current.traverse_ { s =>
+                                    val ctx = ToolContext(projectRoot = os.pwd.toString, sharedResources = Some(sharedResources))
+                                    AskHostReplyTool.deliverLateReply(sharedResources, ctx, s.pending, id, AskHostLedger.TimeoutOutcome, AskHostLedger.TakeoverDecision).void
+                                  }
+                                else IO.unit) *> send(Json.obj("type" -> "finish".asJson))
+                            }
+                          }
+                      }
                       case _ => IO.unit
                   case _ => IO.unit
                 }.onFinalize(cleanup)
-                frames = Stream.awakeEvery[IO](200.millis).evalMap(_ => state.get.flatMap(_.traverse { case (_, stream, _) => IO(stream.take()) })).collect { case Some(Some(data)) => WebSocketFrame.Text(Json.obj("type" -> "frame".asJson, "data" -> data.asJson).noSpaces) }
+                frames = Stream.awakeEvery[IO](200.millis).evalMap(_ => state.get.flatMap(_.traverse { case (_, _, stream, _) => IO(stream.take()) })).collect { case Some(Some(data)) => WebSocketFrame.Text(Json.obj("type" -> "frame".asJson, "data" -> data.asJson).noSpaces) }
                 response <- wsb.build(Stream.fromQueueUnterminated(outbound).merge(frames), receive)
               yield response
           }
