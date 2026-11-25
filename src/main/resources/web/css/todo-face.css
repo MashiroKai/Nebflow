@@ -836,6 +836,67 @@
   white-space: pre-line;
   overflow-wrap: anywhere;
 }
+/* 标题按钮保留标题字体与展开语义，不采用浏览器默认按钮框。 */
+button.tfl-row-title {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+button.tfl-row-title:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); }
+
+/* 决策详情复用移动决策卡的选项语言，限定在待办行内。 */
+.tfl-row-detail .ta-qd-opts { display: flex; flex-direction: column; gap: var(--ds-space-2); }
+.tfl-row-detail .ta-qd-opt {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-2) var(--ds-space-3);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--ds-radius-input);
+  background: var(--nf-glass-input-bg);
+  color: var(--color-text);
+  font-family: var(--ds-font-ui);
+  cursor: pointer;
+}
+.tfl-row-detail .ta-qd-opt::before {
+  content: '';
+  position: absolute;
+  left: var(--ds-space-3);
+  width: var(--ds-space-4);
+  height: var(--ds-space-4);
+  box-sizing: border-box;
+  border: 1px solid var(--color-text-muted);
+  border-radius: var(--ds-radius-badge);
+  pointer-events: none;
+}
+.tfl-row-detail .ta-qd-opt:has(input[type="radio"])::before { border-radius: var(--ds-radius-pill); }
+.tfl-row-detail .ta-qd-opt:has(.ta-qd-opt-input:checked)::before { background: rgb(var(--sapphire)); border-color: rgb(var(--sapphire)); box-shadow: inset 0 0 0 3px var(--color-surface); }
+.tfl-row-detail .ta-qd-opt:has(.ta-qd-opt-input:checked) {
+  border-color: rgb(var(--sapphire) / 0.35);
+  background: color-mix(in srgb, rgb(var(--sapphire)) 14%, transparent);
+}
+.tfl-row-detail .ta-qd-opt:has(.ta-qd-opt-input:focus-visible) { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); }
+.tfl-row-detail .ta-qd-opt-body { min-width: 0; display: flex; flex-direction: column; overflow-wrap: anywhere; }
+.tfl-row-detail .ta-decision-submit {
+  appearance: none;
+  margin-top: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-4);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--ds-radius-pill);
+  background: var(--nf-glass-input-bg);
+  box-shadow: var(--btn-shadow);
+  color: var(--color-text);
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-body);
+  font-weight: 500;
+  cursor: pointer;
+}
+.tfl-row-detail .ta-decision-submit:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); }
+.tfl-row-detail .ta-decision-submit:disabled { opacity: 0.5; cursor: default; }
 .tfl-row-notes {
   font: 400 var(--ds-fs-meta)/1.35 ui-monospace, SFMono-Regular, monospace;
   color: color-mix(in srgb, var(--color-text, #000) 35%, transparent);
