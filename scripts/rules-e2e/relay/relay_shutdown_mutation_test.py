@@ -4,6 +4,13 @@ import pathlib, sys, types, unittest
 import relay_shutdown_test as tests
 source=(pathlib.Path(__file__).parent/'https_relay.py').read_text()
 mutations={
+ 'N1':('if self.sealed: return None','if False: return None','test_seal_prevents_main_and_sidecar_append'),
+ 'N2':('self.append_inflight[key]=seq if key is not None and seq is not None else tag','pass # no inflight registration','test_hard_stop_records_pending_abort'),
+ 'N3':('   return self._event_unlocked(obj)\n  finally: leave()','   with self.append_lock: return self._event_unlocked(obj)\n  finally: leave()','test_admission_lock_not_held_during_io'),
+ 'N4':('  finally: leave()\n def _event_unlocked','  finally: pass\n def _event_unlocked','test_writer_leaves_after_seal'),
+ 'N5':("if not self.sealed: raise RuntimeError('abort before sealing')","if False: raise RuntimeError('abort before sealing')",'test_exit_abort_requires_seal_and_only_writes_sidecar'),
+ 'N6':("if not self.sidecar(synthetic): raise RecoveryAborted('recovery intent not durable')","self.sidecar(synthetic)",'test_repair_sealed_before_intent_preserves_tail'),
+ 'N7':("len(run_keys & final)","len(final)",'test_summary_excludes_prior_run'),
  'bounds':("math.isfinite(v) and v > 0", "True", 'test_positive_finite_bounds'),
  'short':("if not chunk: raise ValueError('short body')", "if not chunk: break", 'test_short_body_rejected'),
  'body-deadline':("body_deadline-time.monotonic()", "self.args.timeout", 'test_slow_upload_total_deadline'),
