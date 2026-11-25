@@ -208,21 +208,25 @@ class Relay:
       except (ValueError,UnicodeDecodeError): continue
    except FileNotFoundError: pass
   return ids
- def shutdown_summary(self,pending=None):
+ def shutdown_summary(self,pending=None,deadline=None):
   sealed=pending is not None; still={}
+  deadline=deadline if deadline is not None else time.monotonic()+2*self.abort_timeout
   if sealed:
    with self.append_changed:
-    self.append_changed.wait_for(lambda:not self.append_inflight,timeout=self.abort_timeout)
+    self.append_changed.wait_for(lambda:not self.append_inflight,timeout=max(0,min(self.abort_timeout,(deadline-time.monotonic())/2)))
     still=dict(self.append_inflight)
   recorded=self._ledger_record_ids(); attempted=[]; results=[]; results_lock=threading.Lock()
-  def abort(key,seq):
-   try: ok=self.exit_abort({'seq':seq,'status':'aborted-on-exit','record_id':uuid.uuid4().hex,'original_record_id':key}) is True
+  def abort(key,seq,trace=None):
+   try: ok=self.exit_abort({'seq':seq,'status':'aborted-on-exit','record_id':uuid.uuid4().hex,'original_record_id':key,'trace_id':trace}) is True
    except Exception: ok=False
    with results_lock: results.append(ok)
   for key,seq in still.items():
    if key not in recorded:
     t=threading.Thread(target=abort,args=(key,seq),daemon=True); t.start(); attempted.append(t)
-  deadline=time.monotonic()+self.abort_timeout
+  if sealed:
+   for seq,trace in self.active.copy().items():
+    if seq in still.values(): continue
+    t=threading.Thread(target=abort,args=(None,seq,trace),daemon=True); t.start(); attempted.append(t)
   for t in attempted: t.join(max(0,deadline-time.monotonic()))
   final=self._ledger_record_ids()
   with self.append_lock: run_keys=set(self._run_keys)
@@ -250,14 +254,16 @@ class Relay:
   self.fire_stop(fire)
  def force_after_grace(self):
   if self.finished.wait(self.grace): return
-  if self.append_lock.acquire(timeout=self.abort_timeout):
+  deadline=time.monotonic()+min(self.abort_timeout,.5)
+  if self.append_lock.acquire(blocking=False):
    try:
     self.sealed=True; pending=dict(self.append_inflight)
    finally: self.append_lock.release()
    print(json.dumps({'sealed':True}),file=sys.stderr,flush=True)
   else:
-   pending=None; print(json.dumps({'sealed':False}),file=sys.stderr,flush=True)
-  self.shutdown_summary(pending); self.exit_fn(2)
+   print(json.dumps({'sealed':False,'recorded_lower_bound':0,'unrecorded_upper_bound':None,'inflight':None,'possible_extra_record_after_exit':True}),file=sys.stderr,flush=True)
+   self.exit_fn(2); return
+  self.shutdown_summary(pending,deadline); self.exit_fn(2)
  def handle(self,h):
   start=time.monotonic(); parsed=urllib.parse.urlsplit(h.path); parts=parsed.path.split('/'); route=parts[1] if len(parts)>1 else ''; target=self.routes.get(route)
   expected_host=f'127.0.0.1:{h.server.server_port}'
