@@ -250,9 +250,10 @@ async function noDigestFaceScenario() {
   await h.flush();
   assert.equal(h.rowCalls().length, 1, 'no-digest engine: row face still loads');
   assert.equal(h.liveSource.listDelegateRows().length, rows.length, 'no-digest engine: rows reach the read port');
-  assert.equal(h.liveSource.getChainByTask(rows[0].taskNo), null, 'no-digest engine: missing chain degrades immediately');
+  const chain = h.liveSource.getChainByTask(rows[0].taskNo);
   await h.advance(1000);
   assert.equal(h.detailCalls().length, 0, 'no-digest engine: no guessed chain details');
+  assert.equal(chain, null, 'no-digest engine: missing chain degrades immediately');
   assert.equal(h.childCalls().length, 0, 'no-digest engine: no per-row children requests');
   assert.ok(h.mirrorUpdates() > 0, 'no-digest engine: row update is broadcast');
 }
