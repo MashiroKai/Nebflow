@@ -510,6 +510,8 @@ server.serve_forever()'''
  def process_limit_slow_order(self,double_trigger,lock_held=False):
   # Slow upload remains in body reading, before reservation; another complete
   # request consumes the limit and remains in flight against the loopback peer.
+  # Accounting is reconciled via reservation + 429 + abort, not the
+  # append-inflight field; unsealed hard stop cannot guarantee an abort.
   up=socket.socket(); up.bind(('127.0.0.1',0)); up.listen(); up.settimeout(3); self.addCleanup(up.close)
   self.assertNotEqual(up.getsockname()[1],6138); accepted=threading.Event(); release=threading.Event(); self.addCleanup(release.set)
   def provider():
@@ -567,7 +569,10 @@ m.Relay.__init__=init; m.Relay.event=observed;''')
     try: closed=slow.recv(1)
     except ConnectionResetError: closed=b''
     self.assertEqual(closed,b''); pathlib.Path(str(prefix)+'-slow-closed.log').write_text('EOF or reset after process exit\n')
-    records=ledger.read_text()+(side.read_text() if side.exists() else ''); self.assertNotIn('"trace_id":"slow"',records)
+    main_records=[json.loads(line) for line in ledger.read_text().splitlines()]; side_records=[json.loads(line) for line in side.read_text().splitlines()] if side.exists() else []
+    self.assertFalse(any(x.get('trace_id')=='slow' for x in main_records+side_records))
+    reservations=[x for x in main_records+side_records if x.get('status')=='reserved' and x.get('trace_id')=='reserve']; self.assertEqual(len(reservations),1)
+    aborts=[x for x in side_records if x.get('status')=='aborted-on-exit' and x.get('trace_id')=='reserve']; self.assertEqual(len(aborts),0 if lock_held else 1)
    finally:
     release.set()
     if slow: slow.close()
@@ -577,7 +582,8 @@ m.Relay.__init__=init; m.Relay.event=observed;''')
   lines=[json.loads(x) for x in pathlib.Path(str(prefix)+'-stderr.log').read_text().splitlines()]; obs=[x for x in lines if 'observation' in x]
   names=[x['observation'] for x in obs]; expected=['ledger-fsynced','response-written','slow-enter','force-entry-slow-active','exit-call','watch-handle']+(['watch-deadline'] if double_trigger else [])+(['lock-held'] if lock_held else []); self.assertCountEqual(names,expected); self.assertLess(names.index('ledger-fsynced'),names.index('response-written')); self.assertLess(names.index('force-entry-slow-active'),names.index('exit-call')); self.assertEqual([x['seq'] for x in obs],list(range(len(obs)))); self.assertEqual([x['monotonic'] for x in obs],sorted(x['monotonic'] for x in obs)); self.assertEqual(lines[-2]['sealed'],not lock_held)
   if lock_held:
-   summary=lines[-2]; self.assertEqual(summary['recorded_lower_bound']+summary['unrecorded_upper_bound'],summary['reserved_snapshot']); self.assertIsNone(summary['inflight']); self.assertTrue(summary['possible_extra_record_after_exit']); self.assertLess(names.index('lock-held'),names.index('exit-call'))
+   summary=lines[-2]; self.assertEqual((summary['recorded_lower_bound'],summary['unrecorded_upper_bound'],summary['reserved_snapshot']),(1,0,1)); self.assertIsNone(summary['inflight']); self.assertTrue(summary['possible_extra_record_after_exit']); self.assertLess(names.index('lock-held'),names.index('exit-call'))
+  else: self.assertEqual(lines[-2]['still_inflight_at_exit'],0)
   if double_trigger:
    stamps={x['observation']:x['monotonic'] for x in obs}; delta=stamps['watch-deadline']-stamps['watch-handle']; self.assertGreater(delta,0); self.assertLess(delta,1)
  def test_watchdog_only_starts_once(self):
