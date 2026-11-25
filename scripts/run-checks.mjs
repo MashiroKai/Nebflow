@@ -32,6 +32,8 @@ if (!weixinTests.length) throw new Error('No weixin-sidecar unit tests found; re
 export const CHECKS = [
   nodeCheck('test-hermetic', 'check-test-hermetic', ['static']),
   nodeCheck('css-structure', 'check-css-structure'),
+  { name: 'ask-option-highlight', profiles: ['frontend'], timeoutMs: 120_000,
+    argv: [process.execPath, 'tests/ask-option-highlight.spec.mjs'] },
   nodeCheck('floating-clearance', 'check-floating-clearance'),
   nodeCheck('floating-discovery', 'check-floating-discovery'),
   nodeCheck('mobile-floating-inventory', 'check-mobile-floating-inventory'),
