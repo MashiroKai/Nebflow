@@ -41,6 +41,13 @@ try {
         } catch (error) { throw new Error(`${panel.panel} ${theme} openStep ${JSON.stringify(step)}: ${error.message}`); }
       }
       await settle(page, 300);
+      if (process.env.APPEARANCE_INVENTORY && theme === 'light') {
+        const nodes = await page.evaluate(() => [...document.querySelectorAll('body *')].filter(el => {
+          const r = el.getBoundingClientRect(), s = getComputedStyle(el);
+          return r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth && s.visibility === 'visible' && s.display !== 'none';
+        }).map(el => ({ tag: el.tagName.toLowerCase(), id: el.id, class: typeof el.className === 'string' ? el.className : '', text: (el.textContent || '').trim().slice(0, 50) })));
+        writeFileSync(`${process.env.APPEARANCE_INVENTORY}/${panel.panel}.json`, JSON.stringify(nodes, null, 2));
+      }
       const elements = {};
       for (const item of panel.elements) {
         const loc = page.locator(item.selector).first();

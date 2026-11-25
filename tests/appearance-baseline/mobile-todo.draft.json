@@ -2,7 +2,7 @@
   "approved": false,
   "approvedBy": null,
   "approvedAt": null,
-  "sourceCommit": "9069622915de92e81219fd5d636a5cafa50bfb1a",
+  "sourceCommit": "06eab9b02d50d3b909afc613e9dbb3014de9c21e",
   "panel": "mobile-todo",
   "viewportNA": {
     "width": 1280,
@@ -17,6 +17,63 @@
         "dpr": 1
       },
       "elements": {
+        "detail": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-detail",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(27, 30, 38)",
+            "padding": "0px",
+            "border": "0px none rgb(27, 30, 38)"
+          }
+        },
+        "title": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-dtitle",
+          "styles": {
+            "color": "rgb(59, 130, 246)",
+            "fontSize": "28px",
+            "fontWeight": "700"
+          }
+        },
+        "items": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-items",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(27, 30, 38)",
+            "padding": "0px 16px",
+            "border": "0px none rgb(27, 30, 38)"
+          }
+        },
+        "item": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-item",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(27, 30, 38)",
+            "padding": "0px",
+            "border": "0px none rgb(27, 30, 38)"
+          }
+        },
+        "check": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-check",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(0, 0, 0)",
+            "height": "48px",
+            "padding": "0px",
+            "border": "0px none rgb(0, 0, 0)"
+          }
+        },
+        "item-title": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-item-title",
+          "styles": {
+            "color": "rgb(27, 30, 38)",
+            "fontSize": "17px",
+            "fontWeight": "400"
+          }
+        },
         "list": {
           "selector": ".mobile-page[data-page=todo-apple-list]",
           "styles": {
@@ -59,6 +116,63 @@
         "dpr": 1
       },
       "elements": {
+        "detail": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-detail",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(232, 234, 237)",
+            "padding": "0px",
+            "border": "0px none rgb(232, 234, 237)"
+          }
+        },
+        "title": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-dtitle",
+          "styles": {
+            "color": "rgb(59, 130, 246)",
+            "fontSize": "28px",
+            "fontWeight": "700"
+          }
+        },
+        "items": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-items",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(232, 234, 237)",
+            "padding": "0px 16px",
+            "border": "0px none rgb(232, 234, 237)"
+          }
+        },
+        "item": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-item",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(232, 234, 237)",
+            "padding": "0px",
+            "border": "0px none rgb(232, 234, 237)"
+          }
+        },
+        "check": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-check",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(0, 0, 0)",
+            "height": "48px",
+            "padding": "0px",
+            "border": "0px none rgb(0, 0, 0)"
+          }
+        },
+        "item-title": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-item-title",
+          "styles": {
+            "color": "rgb(232, 234, 237)",
+            "fontSize": "17px",
+            "fontWeight": "400"
+          }
+        },
         "list": {
           "selector": ".mobile-page[data-page=todo-apple-list]",
           "styles": {
