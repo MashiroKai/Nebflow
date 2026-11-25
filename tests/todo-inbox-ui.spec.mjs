@@ -21,7 +21,7 @@
 //   TIU_OUT=<证据目录> node tests/todo-inbox-ui.spec.mjs
 //   退出码：0 = 全绿；1 = 有红；2 = 无红但有 SKIP（CI 档 SKIP 记 FAIL ⇒ 1）。
 //
-// 数据面 = routeWebSocket 帧桩 + todoStore.__seed 夹具模式；静态面 = page.route 从磁盘
+// 数据面 = 有状态 routeWebSocket 帧桩（不证明真实后端信箱持久化）；静态面 = page.route 从磁盘
 // 注真 web 树。零后端、零 sbt、零宿主实例（不碰 :6138 / :8080 / :8097）。
 // 🔴 诚实申报：headless 里没有系统软键盘/safe-area，①⑥ 的键盘腿只验通道；真机手感
 //    另列「待真机亲验」。
@@ -76,6 +76,18 @@ const probe = {};
 const sentFrames = [];
 const NOISE = /Failed to load resource|fetching the script|ResizeObserver loop completed/i;
 const pageErrors = [];
+// WS 桩仅验证前端帧、回执及编排，不证明真实后端信箱持久化。
+const backend = { rows: [], rejectAnswer: false };
+const capturedFrames = () => sentFrames.map((raw) => { try { return JSON.parse(raw); } catch { return null; } }).filter(Boolean);
+const answerFrames = () => capturedFrames().filter((m) => m.type === 'answerTodoDecision');
+function resetBackend(fx) {
+  backend.rows = fx.itemList.map((item, i) => ({
+    id: item.id, content: item.name, name: item.name, detail: item.detail || '',
+    kind: 'todo', sessionId: SID, project: fx.tagList.find((t) => t.id === item.tagId)?.name || null,
+    priority: item.priority, triggerAt: item.due, createdAt: 1000 + i,
+    completed: false, decision: item.decision ? structuredClone(item.decision) : null,
+  }));
+}
 
 /** 输入框统一契约（作者令 ①「与 ask 的输入框样式功能一致」）—— 一份拒绝集：
  *  任一运行时读数与 ask 的配方分家即红。 */
@@ -118,7 +130,7 @@ function fixture() {
         detail: mdDetail,
         decision: {
           question: '先推进哪一件？',
-          options: ['A 把待办数据模型的字段对齐做完', 'B 先把手机端列表整改发出去', 'C 两个并行'],
+          options: [{ id: 'a', title: 'A 把待办数据模型的字段对齐做完' }, { id: 'b', title: 'B 先把手机端列表整改发出去' }, { id: 'c', title: 'C 两个并行' }],
         },
       },
       {
@@ -193,8 +205,21 @@ async function boot() {
       else if (m.type === 'getSessions' || m.type === 'listSessions') sendSessions();
       else if (m.type === 'getHistory') ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: [], hasMore: false, offset: 0 }));
       else if (m.type === 'ping') ws.send(JSON.stringify({ type: 'pong' }));
-      else if (m.type === 'listScheduledTasks') ws.send(JSON.stringify({ type: 'scheduledTaskList', scope: 'session', tasks: [] }));
-      else if (typeof m.content === 'string' && m.sessionId) ws.send(JSON.stringify({ type: 'done', sessionId: m.sessionId }));
+      else if (m.type === 'listScheduledTasks') ws.send(JSON.stringify({ type: 'scheduledTaskList', scope: m.scope || 'session', sessionId: m.sessionId, tasks: backend.rows.filter((r) => !r.completed) }));
+      else if (m.type === 'answerTodoDecision') {
+        const row = backend.rows.find((r) => r.id === m.id);
+        if (backend.rejectAnswer) ws.send(JSON.stringify({ type: 'error', msgType: m.type, id: m.id, code: 'decision_not_persisted', message: '信箱不可用' }));
+        else if (row?.decision) {
+          row.decision.answer = { selectedOptionIds: m.selectedOptionIds, otherText: m.otherText || null };
+          ws.send(JSON.stringify({ type: 'todoDecisionAnswered', id: row.id, sessionId: row.sessionId, answer: row.decision.answer, task: row }));
+        }
+      } else if (m.type === 'completeTodo') {
+        const row = backend.rows.find((r) => r.id === m.id);
+        if (row && (!row.decision || row.decision.answer)) {
+          row.completed = true;
+          ws.send(JSON.stringify({ type: 'scheduledTaskCompleted', id: row.id, sessionId: row.sessionId, task: row }));
+        } else ws.send(JSON.stringify({ type: 'error', msgType: m.type, id: m.id, code: 'decision_unanswered', message: '先作答' }));
+      } else if (typeof m.content === 'string' && m.sessionId) ws.send(JSON.stringify({ type: 'done', sessionId: m.sessionId }));
     });
   });
 
@@ -204,15 +229,22 @@ async function boot() {
     return s.activeSessionId === rootSid && s.ws && s.ws.readyState === 1;
   }, SID, { timeout: 20000 });
   await page.waitForSelector('body.mobile-layer', { timeout: 15000 });
-  await seed(page, fixture());
-  await page.waitForTimeout(200);
+  const fx = fixture();
+  resetBackend(fx);
+  await page.evaluate(async () => { (await import('/js/todoStore.js')).todoStore.__live(); });
+  await page.waitForFunction(async () => (await import('/js/todoStore.js')).todoStore.openItems().length === 6);
   return { browser, ctx, page };
 }
 
-const seed = (page, fx) => page.evaluate(async (f) => {
-  const store = await import('/js/todoStore.js');
-  store.todoStore.__seed({ tagList: f.tagList, itemList: f.itemList });
-}, fx);
+const seed = async (page, fx) => {
+  resetBackend(fx);
+  await page.evaluate(async () => (await import('/js/todoStore.js')).todoStore.__live());
+  await page.waitForFunction(async () => {
+    const s = (await import('/js/todoStore.js')).todoStore;
+    return s.openItems().length === 6 && s.openItems().some((x) => x.id === 'iu-1' && !x.decision.answer);
+  });
+  await page.waitForTimeout(300);
+};
 
 const push = async (page, id) => {
   await page.evaluate(async (pid) => {
@@ -298,29 +330,34 @@ ok('① 占位/无障碍名 = 「回复这个待办…」（与详情页回复�
 await page.screenshot({ path: join(SHOTS, '01-input-standard.png') });
 
 // 键道（与 ask 同一条 bindComposerKeys）：Enter 发送、Shift+Enter 换行。
-const framesBeforeEnter = userContentFrames().length;
+const framesBeforeEnter = answerFrames().length;
+const chatBeforeEnter = userContentFrames().length;
 await page.locator(`${QP} .ta-qd-answer-input textarea`).click();
 await page.keyboard.type('Enter 直接发送（与 ask 同键道）');
 await page.keyboard.down('Shift');
 await page.keyboard.press('Enter');
 await page.keyboard.up('Shift');
 await page.waitForTimeout(200);
-const framesAfterShiftEnter = userContentFrames().length;
+const framesAfterShiftEnter = answerFrames().length;
 const afterShiftEnter = await page.evaluate(`(() => { const ta = document.querySelector('${QP} .ta-qd-answer-input textarea'); return { value: ta.value }; })()`);
 await page.keyboard.press('Enter');
 await page.waitForTimeout(520);
-const framesAfterEnter = userContentFrames();
+const framesAfterEnter = answerFrames();
 const afterEnter = await page.evaluate(`(() => { const ta = document.querySelector('${QP} .ta-qd-answer-input textarea');
   const card = document.querySelector('${QP} .ta-qd-card'); return { value: ta.value, last: card.dataset.qdAnswerLast || null }; })()`);
 probe.enterKey = { before: framesBeforeEnter, afterShiftEnter: framesAfterShiftEnter, afterEnter: framesAfterEnter, afterShiftEnterValue: afterShiftEnter, afterEnterValue: afterEnter };
 ok('① Shift+Enter = 换行（不发送）：值里出现换行且零新帧',
   /\n/.test(afterShiftEnter.value) && framesAfterShiftEnter === framesBeforeEnter,
   JSON.stringify({ value: afterShiftEnter.value.slice(0, 40), frames: framesAfterShiftEnter }));
-ok('① Enter = 发送（同一条回复链路出真帧，件清空）',
+ok('① Enter = 发送（决策作答帧、输入清空、不重复发送聊天）',
   framesAfterEnter.length === framesBeforeEnter + 1
-  && framesAfterEnter[framesAfterEnter.length - 1].startsWith('#reader-summary-backlog·iu-1 ')
-  && afterEnter.value === '',
+  && framesAfterEnter.at(-1).id === 'iu-1' && framesAfterEnter.at(-1).otherText === 'Enter 直接发送（与 ask 同键道）'
+  && userContentFrames().length === chatBeforeEnter && afterEnter.value === '',
   JSON.stringify({ frames: framesAfterEnter.slice(-1), last: afterEnter.last, value: afterEnter.value }));
+
+// 每次作答会完成卡片；重置数据并等待同一决策卡后再测正文和选项。
+await seed(page, fixture());
+await page.waitForFunction(() => document.querySelector('.mobile-page[data-page="todo-quick-decision"] .ta-qd-card')?.dataset.itemId === 'iu-1');
 
 /* ═══════════════ ② md 渲染（站内唯一管线 + 同一 sanitizer）═══════════════ */
 const md = await page.evaluate(`(() => {
@@ -386,10 +423,10 @@ ok('③ 点选：命中的选项被选中（原生 :checked + 选中态底变化
   JSON.stringify(afterTap));
 ok('③ 选中态有可见样式（sapphire 族合成底，不是纯透明）', /0\.14|rgb/.test(afterTap.rowBg), afterTap.rowBg);
 
-const framesBeforeOptSend = userContentFrames().length;
+const framesBeforeOptSend = answerFrames().length;
 await page.locator(`${QP} .ta-qd-answer-send`).click();
 await page.waitForTimeout(520);
-const framesAfterOptSend = userContentFrames();
+const framesAfterOptSend = answerFrames();
 const afterOptSend = await page.evaluate(`(() => ({
   checked: [...document.querySelectorAll('${QP} .ta-qd-opt')].map((r) => !!r.querySelector('input').checked),
   last: document.querySelector('${QP} .ta-qd-card').dataset.qdAnswerLast || null,
@@ -398,136 +435,84 @@ const afterOptSend = await page.evaluate(`(() => ({
 }))()`);
 rec('E3 只点选、不手输 → 点发送 → 出帧', JSON.stringify(framesAfterOptSend.slice(-1)));
 probe.optionsE2E = { afterTap, afterOptSend, frames: framesAfterOptSend };
-ok('③ 回传链路：只点选也真出帧，帧正文 = #待办名·id + 选中项文本（点选不再只是本地视图态）',
+ok('③ 回传链路：只点选发决策帧，选项 ID 和行会话准确',
   framesAfterOptSend.length === framesBeforeOptSend + 1
-  && framesAfterOptSend[framesAfterOptSend.length - 1] === '#reader-summary-backlog·iu-1 B 先把手机端列表整改发出去'
-  && JSON.parse(afterOptSend.last).picked.length === 1,
+  && framesAfterOptSend.at(-1).id === 'iu-1' && framesAfterOptSend.at(-1).sessionId === SID
+  && JSON.stringify(framesAfterOptSend.at(-1).selectedOptionIds) === '["b"]',
   JSON.stringify({ frame: framesAfterOptSend.slice(-1), last: afterOptSend.last }));
 rec('E4 发出后选中态清空 + 输入框清空 + 无错误行', JSON.stringify(afterOptSend));
 ok('③ 发出后状态收敛：选中清空 + 件清空 + 无错误行',
   afterOptSend.checked.every((v) => v === false) && afterOptSend.value === '' && afterOptSend.error === '',
   JSON.stringify(afterOptSend));
 
-// 手输 + 点选并存：帧正文 = 手输（选项）
+// 每次成功会完成该卡；重置后验证手输与选项共存。
+await seed(page, fixture());
+await page.waitForFunction(() => document.querySelector('.mobile-page[data-page="todo-quick-decision"] .ta-qd-card')?.dataset.itemId === 'iu-1');
+// 手输 + 点选并存：结构化作答帧保留两者。
 await page.evaluate(`(() => { const r = document.querySelectorAll('${QP} .ta-qd-opt')[0].getBoundingClientRect();
   window.__tapA = { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }; })()`);
 const tapA = await page.evaluate(() => window.__tapA);
 await page.touchscreen.tap(tapA.x, tapA.y);
 await page.waitForTimeout(200);
 await page.locator(`${QP} .ta-qd-answer-input textarea`).fill('我选 A');
-const framesBeforeMixed = userContentFrames().length;
+const framesBeforeMixed = answerFrames().length;
 await page.locator(`${QP} .ta-qd-answer-send`).click();
 await page.waitForTimeout(520);
-const framesMixed = userContentFrames();
+const framesMixed = answerFrames();
 rec('E5 手输 + 点选并存 → 出帧', JSON.stringify(framesMixed.slice(-1)));
-ok('③ 手输与点选并存：帧正文 = 手输（选中项）—— 两条输入不互相吞',
-  framesMixed.length === framesBeforeMixed + 1
-  && framesMixed[framesMixed.length - 1] === '#reader-summary-backlog·iu-1 我选 A（A 把待办数据模型的字段对齐做完）',
+ok('③ 手输与点选并存：结构化帧保留文字和选项',
+  framesMixed.length === framesBeforeMixed + 1 && framesMixed.at(-1).otherText === '我选 A'
+  && JSON.stringify(framesMixed.at(-1).selectedOptionIds) === '["a"]',
   JSON.stringify({ frame: framesMixed.slice(-1) }));
 await page.screenshot({ path: join(SHOTS, '03-options-e2e.png') });
 
-/* ═══════════════ ③b 回复链路三态（作者报障批 IMG_1993 的判据腿）═══════════════
-   作者实测事实：待办回复框发送 → 红字「回复未发送，请检查主会话状态和连接后重试」，
-   而主会话实际在线。诊断结论 = 忙态被当成失败（见 js/input.js sendTodoReply 注释）。
-   本段把「失败」与「正常状态」的边界钉成三条可执行腿：
-     · 空闲 ⇒ 出用户帧（new-turn）+ 件清空 + 无红字；
-     · 忙态 ⇒ 出 immediateInput 帧（turn-boundary；引擎最近安全边界注入）+
-       **不显示红字**（这正是 IMG_1993 那条红字）；
-     · 断线 ⇒ 进离线队列（offline）+ 乐观气泡 + 零红字。
-   读数 = `data-ta-reply-last` / `data-qd-answer-last` 机读面（不猜 UI）。 */
-const busySid = await page.evaluate(`(async () => {
-  const s = (await import('/js/state.js')).default;
-  return s.activeSessionId;
-})()`);
-// ① 空闲腿（本段前面的 ③ 已经证明 → 这里只补「目标会话 = 行 sessionId」的读数面）
-const idleRead = await page.evaluate(`(() => {
-  const last = document.querySelector('${QP} .ta-qd-card').dataset.qdAnswerLast;
-  return last ? JSON.parse(last) : null;
-})()`);
-ok('③b 空闲态回复 = 用户帧直发（mode=new-turn、目标会话 = 该待办行的 sessionId）',
-  !!idleRead && idleRead.ok === true && idleRead.mode === 'new-turn' && idleRead.reason == null,
-  JSON.stringify(idleRead));
-
-// ② 忙态腿：注入 busySessionIds（构造「回合进行中」这一真实状态，不靠桩不回 done）
-await page.evaluate(`(async () => {
-  const s = (await import('/js/state.js')).default;
-  s.busySessionIds.add(${JSON.stringify(busySid)});
-  window.__busyInjected = s.busySessionIds.has(${JSON.stringify(busySid)});
-})()`);
-const busyInjected = await page.evaluate(() => window.__busyInjected);
-const immBefore = sentFrames.length;
+/* ③b：2ec7d2126 / 8eca73e4c 改为决策作答真源及信箱投递。
+   忙态不再走聊天注入；错误回执必须保留草稿并阻止完成。WS 桩不证明真实信箱持久化。 */
+const idleRead = JSON.parse(await page.locator(`${QP} .ta-qd-card`).getAttribute('data-qd-answer-last'));
+ok('③b 空闲态作答走信箱编排而非聊天帧', idleRead.ok === true && idleRead.mode === 'mailbox', JSON.stringify(idleRead));
+await seed(page, fixture());
+await page.evaluate(async (sid) => (await import('/js/state.js')).default.busySessionIds.add(sid), SID);
+const busyStart = sentFrames.length;
 await page.locator(`${QP} .ta-qd-answer-input textarea`).fill('忙态也要能发出去');
 await page.locator(`${QP} .ta-qd-answer-send`).click();
-// 回执动效的时长 = --ds-dur-surface 240ms ⇒ 60ms 处读数据态与键帧，再等到落定读终态。
 await page.waitForTimeout(60);
-const busyMid = await page.evaluate(`(() => {
-  const band = document.querySelector('${QP} .ta-qd-answer-input');
-  const cs = getComputedStyle(band.querySelector('.ds-turn-btn--send'));
-  return { sent: band.dataset.taSent || '', animName: cs.animationName, animDur: cs.animationDuration };
-})()`);
+const busyMid = await page.evaluate(`(() => { const band = document.querySelector('${QP} .ta-qd-answer-input'); const cs = getComputedStyle(band.querySelector('.ds-turn-btn--send')); return { sent: band.dataset.taSent || '', animName: cs.animationName, animDur: cs.animationDuration }; })()`);
 await page.waitForTimeout(480);
-const busy = await page.evaluate(`(() => {
-  const card = document.querySelector('${QP} .ta-qd-card');
-  const band = document.querySelector('${QP} .ta-qd-answer-input');
-  const last = card.dataset.qdAnswerLast ? JSON.parse(card.dataset.qdAnswerLast) : null;
-  return { last, error: document.querySelector('${QP} .ta-qd-answer-error').textContent,
-    value: document.querySelector('${QP} .ta-qd-answer-input textarea').value,
-    sentAfter: band.dataset.taSent || '' };
-})()`);
-const busyFrames = sentFrames.slice(immBefore).map((raw) => { try { return JSON.parse(raw); } catch { return null; } })
-  .filter((m) => m && m.type === 'immediateInput');
-probe.replyBusy = { busyInjected, busyMid, busy, busyFrames };
-rec('E6 忙态（busySessionIds 注入）→ 机读读数 + 帧', JSON.stringify({ injected: busyInjected, last: busy.last, frames: busyFrames.map((m) => m.type) }));
-ok('③b 忙态回复走「回合边界注入」腿：immediateInput 帧 + mode=turn-boundary + 件清空 + **零红字**（IMG_1993 根因）',
-  busyInjected === true && busyFrames.length === 1
-  && busyFrames[0].content === '#reader-summary-backlog·iu-1 忙态也要能发出去'
-  && !!busy.last && busy.last.ok === true && busy.last.mode === 'turn-boundary'
-  && busy.error === '' && busy.value === '',
-  JSON.stringify({ injected: busyInjected, frames: busyFrames.map((m) => ({ type: m.type, content: m.content, sessionId: m.sessionId })), last: busy.last, error: busy.error }));
-ok('③b 回复成功有一次轻量回执动画（发送圆钮 taOkPop，token 时长 0.24s；落定后数据态摘除）',
-  busyMid.sent === 'ok' && busyMid.animName === 'taOkPop' && busyMid.animDur === '0.24s'
-  && busy.sentAfter === '',
-  JSON.stringify({ mid: busyMid, after: busy.sentAfter }));
-await page.evaluate(`(async () => {
-  const s = (await import('/js/state.js')).default;
-  s.busySessionIds.clear();
-})()`);
-await page.waitForTimeout(320);
-
-// ③ 断线腿：把 ws 摘成 CLOSED（不真断 socket：只改读数面状态，等价于 send() 的离线支判定）
-const offBefore = await page.evaluate(`(async () => {
-  const s = (await import('/js/state.js')).default;
-  window.__realWs = s.ws;
-  s.ws = { readyState: 3 };
-  return s.messageQueue ? Object.keys(s.messageQueue).length : 0;
-})()`);
-await page.locator(`${QP} .ta-qd-answer-input textarea`).fill('断线时先入队');
+const busyFrames = capturedFrames().slice(busyStart);
+const busyRead = JSON.parse(await page.locator(`${QP} .ta-qd-card`).getAttribute('data-qd-answer-last'));
+const busyAfter = await page.locator(`${QP} .ta-qd-answer-input`).getAttribute('data-ta-sent');
+ok('③b 忙态作答仍走信箱，不发聊天注入，完成跟随作答', busyRead.ok && busyRead.mode === 'mailbox'
+  && busyFrames.some((m) => m.type === 'answerTodoDecision' && m.otherText === '忙态也要能发出去')
+  && busyFrames.findIndex((m) => m.type === 'completeTodo' && m.id === 'iu-1') > busyFrames.findIndex((m) => m.type === 'answerTodoDecision')
+  && !busyFrames.some((m) => m.type === 'immediateInput' || typeof m.content === 'string'), JSON.stringify({ busyRead, busyFrames }));
+ok('③b 回复成功有一次轻量回执动画', busyMid.sent === 'ok' && busyMid.animName === 'taOkPop' && busyMid.animDur === '0.24s' && !busyAfter, JSON.stringify({ busyMid, busyAfter }));
+await page.evaluate(async () => (await import('/js/state.js')).default.busySessionIds.clear());
+await seed(page, fixture());
+backend.rejectAnswer = true;
+const rejectedStart = sentFrames.length;
+await page.locator(`${QP} .ta-qd-answer-input textarea`).fill('失败保留草稿');
 await page.locator(`${QP} .ta-qd-answer-send`).click();
-await page.waitForTimeout(420);
-const offline = await page.evaluate(`(async () => {
-  const card = document.querySelector('${QP} .ta-qd-card');
-  const s = (await import('/js/state.js')).default;
-  s.ws = window.__realWs;
-  const q = s.messageQueue || {};
-  const sid = Object.keys(q).find((k) => (q[k] || []).some((i) => /断线时先入队/.test(i.text || '')));
-  const item = sid ? q[sid].find((i) => /断线时先入队/.test(i.text || '')) : null;
-  return { last: card.dataset.qdAnswerLast ? JSON.parse(card.dataset.qdAnswerLast) : null,
-    error: document.querySelector('${QP} .ta-qd-answer-error').textContent,
-    queued: !!item, offlineFlag: item ? !!item.offline : null, rendered: item ? !!item.rendered : null };
-})()`);
-probe.replyOffline = { offBefore, offline };
-rec('E7 断线 → 离线队列', JSON.stringify({ last: offline.last, queued: offline.queued }));
-ok('③b 断线态回复进既有离线队列（mode=offline + 入队项 offline/rendered 标记 + 零红字）',
-  !!offline.last && offline.last.ok === true && offline.last.mode === 'offline'
-  && offline.queued === true && offline.offlineFlag === true && offline.error === '',
-  JSON.stringify(offline));
+await page.waitForTimeout(300);
+const rejected = await page.evaluate(`(() => ({ value: document.querySelector('${QP} textarea').value, error: document.querySelector('${QP} .ta-qd-answer-error').textContent, last: JSON.parse(document.querySelector('${QP} .ta-qd-card').dataset.qdAnswerLast) }))()`);
+backend.rejectAnswer = false;
+const rejectedFrames = capturedFrames().slice(rejectedStart);
+ok('③b 作答拒绝时保留草稿、显示错误且不完成', rejected.last.ok === false && rejected.last.code === 'decision_not_persisted' && rejected.value === '失败保留草稿' && rejected.error.includes('信箱不可用') && !rejectedFrames.some((m) => m.type === 'completeTodo'), JSON.stringify({ rejected, rejectedFrames }));
+await seed(page, fixture());
 
-/* ═══════════════ ③c 卡片视角「标记完成」真实链路（写 store + 划卡离场 + 自动翻下一张）═══
+/* ═══════════════ ③c 卡片视角「标记完成」链路（写 store + 划卡离场 + 自动翻下一张）═══
    作者追加令：卡片视角要能**直接处理任务**（不是只看）。判据三条：
-     ① 真写 = store 的 openItems 减一（夹具模式下本地写，非夹具模式发 completeTodo 帧，
-        两条腿同一 entry：todoStore.completeItem —— 本 spec 走夹具 ⇒ 断言读口 + 行态）；
+     ① WS 桩回执下 store 的 openItems 减一；
      ② 划卡离场 = `data-qd-done="exit"` 在场且卡片带 qdCardDone 动画（token 时长）；
      ③ 自动翻下一张 = 卡片 `data-item-id` 变成下一条未完成行（牌堆本身只给未完成行）。 */
+// 未作答决策不可手动完成（2ec7d2126）；先验证门控，再模拟已有答案。
+const gateFrames = sentFrames.length;
+await page.locator(`${QP} .ta-save`).click();
+await page.waitForTimeout(150);
+const gateError = await page.locator(`${QP} .ta-qd-answer-error`).textContent();
+ok('③c 未答决策不能完成', !!gateError && !capturedFrames().slice(gateFrames).some((m) => m.type === 'completeTodo'), JSON.stringify({ gateError }));
+backend.rows.find((r) => r.id === 'iu-1').decision.answer = { selectedOptionIds: ['a'] };
+await page.evaluate(async () => (await import('/js/todoStore.js')).todoStore.refresh());
+await page.waitForFunction(async () => !!(await import('/js/todoStore.js')).todoStore.openItems().find((x) => x.id === 'iu-1')?.decision?.answer);
 const deckBefore = await page.evaluate(`(async () => {
   const store = await import('/js/todoStore.js');
   const card = document.querySelector('${QP} .ta-qd-card');
@@ -563,7 +548,8 @@ probe.deckDone = { deckBefore, deckAfter, doneAnim };
 rec('E8 卡片完成：完成前行数 → 点完成 → 行数/卡读数', JSON.stringify({ before: deckBefore, after: deckAfter }));
 ok('③c 卡片「完成」真写 store：openItems 减一 + 读回执（itemId/ok）',
   deckAfter.open === deckBefore.open - 1 && !!deckAfter.last
-  && deckAfter.last.ok === true && deckAfter.last.itemId === deckBefore.itemId,
+  && deckAfter.last.ok === true && deckAfter.last.itemId === deckBefore.itemId
+  && capturedFrames().some((m) => m.type === 'completeTodo' && m.id === deckBefore.itemId && m.sessionId === SID),
   JSON.stringify({ before: deckBefore.open, after: deckAfter.open, last: deckAfter.last }));
 ok('③c 完成动效 = 划卡离场键帧（qdCardDone / token 时长 0.16s / forwards；落定后数据态已摘）',
   doneAnim.idleAnim === 'none' && doneAnim.animName === 'qdCardDone'
@@ -912,6 +898,27 @@ ok('⑦ 详情页回复真出帧（帧正文 = #待办名·id + 回复内容）+
   && detailReply.value === '' && detailReply.error === '',
   JSON.stringify({ frames: replyFrames, last: detailReply.last, error: detailReply.error }));
 await page.screenshot({ path: join(SHOTS, '07-detail-reply-sent.png') });
+// 旧的忙态注入／离线队列契约仍适用于非决策详情回复，而非决策卡。
+await page.evaluate(async (sid) => (await import('/js/state.js')).default.busySessionIds.add(sid), SID);
+const detailBusyStart = sentFrames.length;
+await page.locator(`${detailReplyBox} textarea`).fill('详情忙态回复');
+await page.locator(`${detailReplyBox} .ds-turn-btn--send`).click();
+await page.waitForTimeout(300);
+const detailBusy = await page.evaluate(() => JSON.parse(document.querySelector('.mobile-page[data-page="todo-apple-item"] .ta-reply').dataset.taReplyLast));
+const detailBusyFrames = capturedFrames().slice(detailBusyStart);
+ok('⑦ 详情忙态回复使用 immediateInput 且无错误', detailBusy.ok && detailBusy.mode === 'turn-boundary' && detailBusyFrames.some((m) => m.type === 'immediateInput' && m.sessionId === SID && m.content === '#详情页 md 事项·iu-6 详情忙态回复') && !(await page.locator('.mobile-page[data-page="todo-apple-item"] .ta-reply-error').textContent()), JSON.stringify({ detailBusy, detailBusyFrames }));
+await page.evaluate(async () => { const s = (await import('/js/state.js')).default; s.busySessionIds.clear(); window.__realWs = s.ws; s.ws = { readyState: 3 }; });
+await page.locator(`${detailReplyBox} textarea`).fill('详情断线回复');
+await page.locator(`${detailReplyBox} .ds-turn-btn--send`).click();
+await page.waitForTimeout(300);
+const detailOffline = await page.evaluate(async () => {
+  const s = (await import('/js/state.js')).default;
+  s.ws = window.__realWs;
+  const queued = Object.values(s.messageQueue || {}).flat().find((item) => /详情断线回复/.test(item.text || ''));
+  return { last: JSON.parse(document.querySelector('.mobile-page[data-page="todo-apple-item"] .ta-reply').dataset.taReplyLast), queued: !!queued, offline: !!queued?.offline, rendered: !!queued?.rendered, error: document.querySelector('.mobile-page[data-page="todo-apple-item"] .ta-reply-error').textContent };
+});
+ok('⑦ 详情断线回复进入离线队列且无错误', detailOffline.last.ok && detailOffline.last.mode === 'offline' && detailOffline.queued && detailOffline.offline && detailOffline.rendered && !detailOffline.error, JSON.stringify(detailOffline));
+await page.evaluate(async () => { const s = (await import('/js/state.js')).default; for (const sid of Object.keys(s.messageQueue || {})) s.messageQueue[sid] = s.messageQueue[sid].filter((item) => !/详情断线回复/.test(item.text || '')); });
 
 /* ── ⑦b 卡片视角完成流：翻卡 → 标记完成（划卡离场）→ 自动下一张 ──────────── */
 await page.evaluate(async () => { const nav = await import('/js/mobile/navController.js'); try { nav.popToRoot(); } catch { /* root */ } });
@@ -920,6 +927,10 @@ await push(page, 'tasks');
 await page.locator('.mobile-page[data-page="tasks"] .ta-quick-fab').click();
 await page.waitForSelector(`${QP}.live`, { timeout: 15000 });
 await page.waitForTimeout(700);
+// 第二张决策行已作答，才允许手动完成（2ec7d2126）。
+backend.rows.find((r) => r.id === 'iu-2').decision.answer = { selectedOptionIds: ['x'] };
+await page.evaluate(async () => (await import('/js/todoStore.js')).todoStore.refresh());
+await page.waitForFunction(async () => !!(await import('/js/todoStore.js')).todoStore.openItems().find((x) => x.id === 'iu-2')?.decision?.answer);
 // 翻到第 2 张（真手势：左滑），让 GIF 里先有「翻卡」这一拍
 const deckAtStart = await page.evaluate(`(async () => {
   const store = await import('/js/todoStore.js');
@@ -966,12 +977,10 @@ await page.waitForTimeout(420);
 const LP = '.mobile-page[data-page="todo-apple-list"]';
 const rowsBeforeCreate = await page.evaluate(`document.querySelectorAll('${LP} .ta-item').length`);
 const gifFrames5 = await recordGif(async () => {
-  await page.locator(`${LP} .ta-pill .ta-pill-btn`).click();
-  await page.waitForSelector('.ta-create-sheet', { timeout: 10000 });
-  await page.waitForTimeout(420);
-  await page.locator('.ta-create-title').fill('刚建的新待办（入场动效）');
-  await page.waitForTimeout(320);
-  await page.locator('.ta-create-save').click();
+  // 3ad54e22f 退役自建入口：模拟新增行，只验证列表入场，不冒充 UI 创建。
+  const row = { id: 'srv-new', content: '刚建的新待办（入场动效）', name: '刚建的新待办（入场动效）', detail: '', kind: 'todo', sessionId: SID, project: null, priority: 0, triggerAt: null, createdAt: Date.now(), completed: false };
+  backend.rows.push(row);
+  await page.evaluate(async (task) => (await import('/js/todoStore.js')).todoStore.__hydrate([task]), row);
   // 入场键帧只有 240ms（数据态 280ms 后摘）⇒ 建成后**立刻**轮询抓读数，
   // 不能等到 GIF 录完再读（那时动画已收尾 = 读到 none）。
   const t0 = Date.now();
@@ -1006,7 +1015,7 @@ const enterAnim = await page.evaluate(`(() => {
 })()`);
 probe.createEnter = { rowsBeforeCreate, createEnter, enterAnim };
 rec('E11 新建待办 → 列表新增行', JSON.stringify({ before: rowsBeforeCreate, after: createEnter.rows, freshId: createEnter.freshId }));
-ok('⑦ 新建待办真进列表（行数 +1、新行在场、建面已收）+ 新行带入场键帧（taRowIn，token 时长；落定后数据态摘除）',
+ok('⑦ 模拟新增行进列表（行数 +1、新行在场）并带入场键帧（taRowIn，落定后数据态摘除）',
   createEnter.rows === rowsBeforeCreate + 1 && !!createEnter.freshId && createEnter.sheetOpen === false
   && !!probe.createEnterHit && probe.createEnterHit.anim === 'taRowIn'
   && createEnter.stateAfter === ''
