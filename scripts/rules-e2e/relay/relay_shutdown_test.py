@@ -190,8 +190,31 @@ server.serve_forever()'''
   with patch('sys.stderr',new_callable=io.StringIO) as out:
    relay.force_after_grace(); summaries=[json.loads(x) for x in out.getvalue().splitlines()]
   self.assertEqual(codes,[2]); self.assertTrue(summaries[0]['sealed']); self.assertEqual(summaries[1]['abort_write_confirmed'],1); self.assertEqual(summaries[1]['abort_write_unconfirmed'],0)
+  self.assertEqual(set(summaries[1]),{'sealed','recorded_this_run','unrecorded_this_run','still_inflight_at_exit','abort_write_confirmed','abort_write_unconfirmed','inflight_upper_bound','unrecorded_rejections'})
   self.assertEqual(json.loads(pathlib.Path(str(self.path)+'.abort').read_text())['original_record_id'],'pending')
   release.set(); t.join(2)
+ def test_pending_writer_finishes_during_shutdown_wait(self):
+  codes=[]; relay=m.Relay(args(self.path),grace=.01,abort_timeout=1,exit_fn=codes.append)
+  self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
+  entered=threading.Event(); release=threading.Event(); waiting=threading.Event(); self.addCleanup(release.set)
+  original_event=relay._event_unlocked; original_wait=relay.append_changed.wait_for
+  def gated(obj):
+   entered.set()
+   if not release.wait(3): raise TimeoutError('writer gate')
+   return original_event(obj)
+  def signal_wait(predicate,timeout=None):
+   waiting.set(); return original_wait(predicate,timeout)
+  relay._event_unlocked=gated; relay.append_changed.wait_for=signal_wait
+  writer=threading.Thread(target=lambda:relay.event({'seq':7,'status':'reserved','record_id':'finishes'}),daemon=True)
+  writer.start(); self.assertTrue(entered.wait(1))
+  with patch('sys.stderr',new_callable=io.StringIO) as out:
+   stopper=threading.Thread(target=relay.force_after_grace,daemon=True); stopper.start()
+   self.assertTrue(waiting.wait(2)); release.set(); writer.join(2); stopper.join(2)
+   self.assertFalse(writer.is_alive()); self.assertFalse(stopper.is_alive())
+   lines=[json.loads(line) for line in out.getvalue().splitlines()]
+  self.assertEqual(codes,[2]); self.assertTrue(lines[0]['sealed']); summary=lines[1]
+  self.assertEqual((summary['abort_write_confirmed'],summary['abort_write_unconfirmed'],summary['recorded_this_run'],summary['still_inflight_at_exit']),(0,0,1,0))
+  self.assertFalse(pathlib.Path(str(self.path)+'.abort').exists())
  def test_summary_excludes_prior_run(self):
   self.path.write_text(json.dumps({'seq':1,'status':'reserved','record_id':'old'})+'\n')
   relay=m.Relay(args(self.path,3)); self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
