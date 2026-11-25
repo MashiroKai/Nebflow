@@ -94,20 +94,25 @@ class SessionStoreUiWriteRaceSpec extends CatsEffectSuite:
       _ <- control.tick
       _ <- control.advance(501.millis)
       _ <- control.tick
-      tickUntil = (p: IO[Boolean], n: Int) => {
-        def loop(left: Int): IO[Unit] =
-          if left <= 0 then IO.raiseError(new AssertionError("有界推进耗尽"))
-          else p.flatMap(ok => if ok then IO.unit else control.tick *> IO(Thread.sleep(1)) *> loop(left - 1))
-        loop(n)
+      tickUntil = (name: String, p: IO[Boolean], budget: FiniteDuration) => {
+        def loop(deadline: FiniteDuration): IO[Unit] =
+          p.flatMap { ok =>
+            if ok then IO.unit
+            else IO.monotonic.flatMap { now =>
+              if now >= deadline then IO.raiseError(new AssertionError(s"等待信号 $name 超过截止时间"))
+              else control.tick *> IO.cede *> loop(deadline)
+            }
+          }
+        IO.monotonic.flatMap(now => loop(now + budget))
       }
-      _ <- tickUntil(entered.tryGet.map(_.nonEmpty), 2000)
-      _ <- tickUntil(faDone.get, 100).attempt.void
+      _ <- tickUntil("首次写盘进入", entered.tryGet.map(_.nonEmpty), 5.seconds)
+      _ <- tickUntil("追加完成（可超时）", faDone.get, 100.millis).attempt.void
       _ <- startE.complete(())
-      _ <- tickUntil(feDone.get, 100).attempt.void
+      _ <- tickUntil("显式 flush 完成（可超时）", feDone.get, 100.millis).attempt.void
       _ <- gate.complete(())
-      _ <- tickUntil((faDone.get, feDone.get).mapN(_ && _), 2000)
+      _ <- tickUntil("追加与显式 flush 均完成", (faDone.get, feDone.get).mapN(_ && _), 5.seconds)
       _ <- control.tick *> control.advance(2.seconds)
-      _ <- tickUntil(control.results.map(_.nonEmpty), 2000)
+      _ <- tickUntil("测试程序完成", control.results.map(_.nonEmpty), 5.seconds)
       result <- control.results
       pair <- result match
         case Some(cats.effect.kernel.Outcome.Succeeded(value)) => IO.pure(value)
