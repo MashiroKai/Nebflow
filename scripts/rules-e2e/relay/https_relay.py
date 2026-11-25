@@ -201,7 +201,7 @@ class Relay:
   try:
    h.send_error(429); delivered=True
   finally:
-   with self.rejection_lock: self.rejection_delivery[identity]=delivered
+   with self.rejection_lock: self.rejection_delivery[identity]=delivered; self.rejection_lock.notify_all()
  def exit_abort(self,obj):
   with self.append_lock:
    if not self.sealed: raise RuntimeError('abort before sealing')
@@ -277,7 +277,10 @@ class Relay:
    finally: self.append_lock.release()
    print(json.dumps({'sealed':True}),file=sys.stderr,flush=True)
   else:
-   with self.account_lock: lower,reserved=self.confirmed_reservations,self.count
+   # Monotonic counters: read confirmed first, then reservations. Concurrent
+   # advances can only make the remaining unrecorded upper bound conservative.
+   # Neither the accounting lock nor I/O is required for these reads.
+   lower=self.confirmed_reservations; reserved=self.count
    print(json.dumps({'sealed':False,'recorded_lower_bound':lower,'reserved_snapshot':reserved,'unrecorded_upper_bound':max(0,reserved-lower),'inflight':None,'possible_extra_record_after_exit':True}),file=sys.stderr,flush=True)
    self.exit_fn(2); return
   self.shutdown_summary(pending,deadline); self.exit_fn(2)

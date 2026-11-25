@@ -361,10 +361,80 @@ server.serve_forever()'''
     start=time.monotonic(); relay.force_after_grace(); self.assertLess(time.monotonic()-start,.5); summary=json.loads(out.getvalue())
    self.assertEqual(codes,[2]); self.assertEqual(summary['recorded_lower_bound']+summary['unrecorded_upper_bound'],summary['reserved_snapshot'])
    self.assertGreaterEqual(summary['recorded_lower_bound'],before); self.assertTrue(summary['possible_extra_record_after_exit'])
+   immediate=[json.loads(line) for line in self.path.read_text().splitlines()]
+   side=pathlib.Path(str(self.path)+'.abort'); extra=[json.loads(line) for line in side.read_text().splitlines()] if side.exists() else []
+   persisted=sum(x['status']=='reserved' for x in immediate+extra)
+   self.assertGreaterEqual(persisted,summary['recorded_lower_bound']); self.assertLessEqual(persisted,summary['reserved_snapshot'])
+   self.assertFalse(any(x['status']=='reserved' for x in extra))
    release.set(); unlock.set(); writer.join(2); locker.join(2)
   records=[json.loads(line) for line in self.path.read_text().splitlines()]; persisted=sum(x['status']=='reserved' for x in records)
   self.assertGreaterEqual(persisted,summary['recorded_lower_bound']); self.assertLessEqual(persisted,summary['reserved_snapshot'])
   with relay.account_lock: self.assertGreaterEqual(relay.confirmed_reservations,summary['recorded_lower_bound'])
+ def test_unsealed_account_lock_held(self):
+  codes=[]; relay=m.Relay(args(self.path),grace=0,exit_fn=codes.append); self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
+  held=threading.Event(); release=threading.Event(); self.addCleanup(release.set)
+  def holder():
+   with relay.append_lock,relay.account_lock: held.set(); release.wait(3)
+  t=threading.Thread(target=holder,daemon=True); t.start(); self.assertTrue(held.wait(1))
+  try:
+   with patch('sys.stderr',new_callable=io.StringIO) as out:
+    start=time.monotonic(); relay.force_after_grace(); self.assertLess(time.monotonic()-start,.5); summary=json.loads(out.getvalue())
+   self.assertFalse(summary['sealed']); self.assertEqual(codes,[2]); self.assertEqual(summary['recorded_lower_bound']+summary['unrecorded_upper_bound'],summary['reserved_snapshot'])
+   self.assertEqual(summary['recorded_lower_bound'],0); self.assertEqual(self.path.read_text(),'')
+  finally: release.set(); t.join(2)
+ def test_account_lock_blocks_no_calls(self):
+  import ast
+  tree=ast.parse(pathlib.Path(m.__file__).read_text()); found=0
+  for node in ast.walk(tree):
+   if isinstance(node,ast.With) and any(isinstance(x.context_expr,ast.Attribute) and x.context_expr.attr=='account_lock' for x in node.items):
+    found+=1; self.assertFalse(any(isinstance(x,(ast.Call,ast.With,ast.AsyncWith)) for statement in node.body for x in ast.walk(statement)))
+  self.assertGreater(found,0)
+ def test_rejection_concurrent_reconciliation(self):
+  relay=m.Relay(args(self.path),grace=0,exit_fn=lambda code:None,lock_timeout=2); self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close); relay.stopping=True
+  barrier=threading.Barrier(4); from relay_concurrency_test import H
+  original=relay.event
+  def event(obj):
+   if obj['trace_id']=='fail': return False
+   return original(obj)
+  relay.event=event; errors=[]
+  def request(trace):
+   h=H(trace)
+   def send(*a):
+    if trace=='broken': raise BrokenPipeError()
+   h.send_error=send
+   try: barrier.wait(); relay.handle(h)
+   except BrokenPipeError: pass
+   except Exception as exc: errors.append(exc)
+  threads=[threading.Thread(target=request,args=(trace,)) for trace in ('written','broken','fail')]
+  for t in threads: t.start()
+  barrier.wait()
+  for t in threads: t.join(3); self.assertFalse(t.is_alive())
+  self.assertFalse(errors)
+  with patch('sys.stderr',new_callable=io.StringIO) as out: relay.force_after_grace(); summary=json.loads(out.getvalue().splitlines()[-1])
+  rows=[json.loads(x) for x in self.path.read_text().splitlines()]; ids=[x['record_id'] for x in rows]
+  self.assertEqual(len(ids),len(set(ids))); self.assertEqual(set(ids),{key for key,value in relay.rejections.items() if value=='recorded'})
+  self.assertEqual(len(ids),summary['rejection_recorded_response_written']+summary['rejection_recorded_response_write_failed'])
+  self.assertEqual((summary['rejection_recorded_response_written'],summary['rejection_recorded_response_write_failed'],summary['rejection_unrecorded']),(1,1,1))
+ def test_rejection_response_real_loopback_socket(self):
+  relay=m.Relay(args(self.path),grace=0,exit_fn=lambda code:None); self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close); relay.stopping=True
+  ready=threading.Event(); release=threading.Event()
+  class Handler(m.BaseHTTPRequestHandler):
+   def log_message(self,*a): pass
+   def do_POST(self):
+    if self.headers['X-Stand-Trace-Id']=='closed': ready.set(); release.wait(2)
+    try: relay.handle(self)
+    except (BrokenPipeError,ConnectionResetError): pass
+  server=m.Server(('127.0.0.1',0),Handler); worker=threading.Thread(target=server.serve_forever,daemon=True); worker.start()
+  self.addCleanup(server.server_close); self.addCleanup(server.shutdown); self.addCleanup(release.set)
+  client=socket.create_connection(('127.0.0.1',server.server_port),timeout=2)
+  request=lambda trace:('POST /one/chat HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Length: 2\r\nX-Stand-Trace-Id: %s\r\n\r\n{}'%(server.server_port,trace)).encode()
+  client.sendall(request('closed')); self.assertTrue(ready.wait(1))
+  import struct
+  client.setsockopt(socket.SOL_SOCKET,socket.SO_LINGER,struct.pack('ii',1,0)); client.close(); release.set()
+  with relay.rejection_lock: self.assertTrue(relay.rejection_lock.wait_for(lambda:False in relay.rejection_delivery.values(),timeout=2))
+  conn=http.client.HTTPConnection('127.0.0.1',server.server_port,timeout=2); conn.request('POST','/one/chat',b'{}',{'X-Stand-Trace-Id':'normal'}); self.assertEqual(conn.getresponse().status,429); conn.close()
+  with patch('sys.stderr',new_callable=io.StringIO) as out: relay.force_after_grace(); summary=json.loads(out.getvalue().splitlines()[-1])
+  self.assertEqual((summary['rejection_recorded_response_written'],summary['rejection_recorded_response_write_failed']),(1,1))
  def test_watchdog_only_starts_once(self):
   relay=m.Relay(args(self.path),grace=1,exit_fn=lambda code:None)
   self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
