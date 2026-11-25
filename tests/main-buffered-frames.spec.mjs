@@ -168,6 +168,12 @@ test('忙碌历史尾段显示单行工作线', async ({page}) => {
   await page.evaluate(async () => { const p = await import('/js/persistence.js'); p.restoreFromBackendHistory([{type:'user',text:'请求'}, {type:'tool',label:'Read',content:'历史工具结果'}], {busyTail:true}); });
   await expect(page.locator('#chat .nf-workline')).toHaveCount(1);
   await expect(page.locator('#chat .turn-header')).toHaveCount(0);
+  await frame(page,{type:'thinkingDelta',delta:'恢复后继续思考'});
+  await frame(page,{type:'textDelta',isRoot:true,delta:'<report>恢复后的结论</report>'});
+  await frame(page,{type:'done'});
+  await expect(page.locator('#chat .nf-workline, #chat .turn-header')).toHaveCount(0);
+  await expect(page.locator('#chat .row.thinking-row:not(.nf-tucked), #chat .row.tool:not(.nf-tucked)')).toHaveCount(0);
+  await expect(page.locator('#chat .bubble.ai[data-nf-output]')).toContainText('恢复后的结论');
 });
 test('规则1：主会话没有轮组 badge 或展开控件', async ({page}) => {
   await boot(page); await frame(page,{type:'thinkingDelta',delta:'处理'}); await frame(page,{type:'toolStart',label:'Read',toolId:'a'});
