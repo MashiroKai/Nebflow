@@ -2,11 +2,11 @@
   "approved": false,
   "approvedBy": null,
   "approvedAt": null,
-  "sourceCommit": "fcee53421bebeaf10c4fdd581fded7e386f3f3a7",
+  "sourceCommit": "271c1eb0c77b114af13cdcd29b8d9d6b3f5364db",
   "panel": "desktop-todo",
   "viewportNA": {
     "width": 390,
-    "reason": "手机层隐藏桌面待办 #task-list（css/mobileLayer.css:3205）"
+    "reason": "手机层隐藏桌面待办 #task-list"
   },
   "browser": "151.0.7922.34",
   "variants": {

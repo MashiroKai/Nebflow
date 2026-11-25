@@ -2,6 +2,8 @@
   "panel": "desktop-todo",
   "route": "desktop:todo/capsule → expanded card",
   "viewportGroups": [{"width":1280,"height":800,"themes":["light","dark"],"dpr":[1]}],
+  "viewportNA": {"width":390,"reason":"手机层隐藏桌面待办 #task-list"},
+  "openSteps": [{"action":"todoFixture"},{"action":"wait","selector":"#task-list .tfl-capsule"},{"action":"click","selector":"#task-list .tfl-capsule"},{"action":"wait","selector":"#task-list .tfl-card[data-state=open]"}],
   "elements": [
     {"id":"card","selector":"#task-list .tfl-card[data-state=open]","properties":["borderRadius","backgroundColor","color","boxShadow","padding","border"],"box":false},
     {"id":"header","selector":"#task-list .tfl-header","properties":["borderRadius","backgroundColor","color","fontSize","fontWeight","padding","border"],"box":false},

@@ -1,0 +1,96 @@
+{
+  "approved": false,
+  "approvedBy": null,
+  "approvedAt": null,
+  "sourceCommit": "271c1eb0c77b114af13cdcd29b8d9d6b3f5364db",
+  "panel": "desktop-settings",
+  "viewportNA": {
+    "width": 390,
+    "reason": "手机层使用独立设置页"
+  },
+  "browser": "151.0.7922.34",
+  "variants": {
+    "light": {
+      "viewport": {
+        "width": 1280,
+        "height": 800,
+        "dpr": 1
+      },
+      "elements": {
+        "overlay": {
+          "selector": "#settings-overlay:not(.hidden)",
+          "styles": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(27, 30, 38)",
+            "fontSize": "16px",
+            "fontWeight": "400"
+          },
+          "box": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 800
+          }
+        },
+        "content": {
+          "selector": "#settings-content",
+          "styles": {
+            "borderRadius": "6px",
+            "backgroundColor": "rgb(245, 246, 248)",
+            "color": "rgb(27, 30, 38)",
+            "boxShadow": "none",
+            "padding": "16px 16px 24px",
+            "border": "0px none rgb(27, 30, 38)"
+          },
+          "box": {
+            "x": 361,
+            "y": 126,
+            "width": 558,
+            "height": 613
+          }
+        }
+      }
+    },
+    "dark": {
+      "viewport": {
+        "width": 1280,
+        "height": 800,
+        "dpr": 1
+      },
+      "elements": {
+        "overlay": {
+          "selector": "#settings-overlay:not(.hidden)",
+          "styles": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(232, 234, 237)",
+            "fontSize": "16px",
+            "fontWeight": "400"
+          },
+          "box": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 800
+          }
+        },
+        "content": {
+          "selector": "#settings-content",
+          "styles": {
+            "borderRadius": "6px",
+            "backgroundColor": "rgb(19, 22, 28)",
+            "color": "rgb(232, 234, 237)",
+            "boxShadow": "none",
+            "padding": "16px 16px 24px",
+            "border": "0px none rgb(232, 234, 237)"
+          },
+          "box": {
+            "x": 361,
+            "y": 126,
+            "width": 558,
+            "height": 613
+          }
+        }
+      }
+    }
+  }
+}

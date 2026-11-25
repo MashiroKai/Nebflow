@@ -18,9 +18,8 @@ function valid(id) {
 function capture(id, dest, shotDir) {
   valid(id);
   if (id.endsWith('-messages')) throw new Error('待 #3156 合入 feat/base 后重采');
-  if (id !== 'desktop-todo') throw new Error('尚未实现真实入口和逐元素可见性验证');
   mkdirSync(shotDir, { recursive: true });
-  const result = spawnSync(process.execPath, [join(dir, 'capture-desktop-todo.mjs'), dest, join(shotDir, `${id}-light.png`), join(shotDir, `${id}-dark.png`)], { encoding: 'utf8' });
+  const result = spawnSync(process.execPath, [join(dir, 'collect.mjs'), join(panels, `${id}.json`), dest, join(shotDir, `${id}-light.png`), join(shotDir, `${id}-dark.png`)], { encoding: 'utf8' });
   if (result.status !== 0) throw new Error((result.stderr || result.stdout || `退出码 ${result.status}`).trim());
   return result.stdout.trim();
 }
