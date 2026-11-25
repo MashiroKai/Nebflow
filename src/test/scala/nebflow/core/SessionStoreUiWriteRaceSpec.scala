@@ -1,0 +1,83 @@
+package nebflow.core
+
+import cats.effect.{Deferred, IO, Ref}
+import cats.effect.testkit.TestControl
+import scala.concurrent.duration.*
+import cats.syntax.all.*
+import munit.CatsEffectSuite
+import nebflow.shared.UiMessage
+import java.nio.file.Files
+
+class SessionStoreUiWriteRaceSpec extends CatsEffectSuite:
+  test("concurrent first writers share one session lock and lose no updates"):
+    val root = os.Path(Files.createTempDirectory("ui-first-race"))
+    val store = SessionStore(root / "sessions", root / "tasks")
+    val sid = "first-race"
+    for
+      ready <- Deferred[IO, Unit]
+      gate <- Deferred[IO, Unit]
+      count <- Ref.of[IO, Int](0)
+      _ = store.beforeUiLockInstall = _ => count.updateAndGet(_ + 1).flatMap(n => if n == 2 then ready.complete(()).void else IO.unit) *> gate.get
+      one <- store.appendUiMessages(sid, List(UiMessage.User("one"))).start
+      two <- store.appendUiMessages(sid, List(UiMessage.User("two"))).start
+      _ <- ready.get
+      _ <- gate.complete(())
+      _ <- one.joinWithNever *> two.joinWithNever
+      _ <- store.flushPendingUiWrites
+      rows <- store.getUiMessages(sid, 0, 100).map(_._1)
+      _ = assertEquals(rows.collect { case u: UiMessage.User => u.text }.toSet, Set("one", "two"))
+    yield ()
+
+  test("delayed old flush cannot overwrite a newer flush; disk equals cache"):
+    val root = os.Path(Files.createTempDirectory("ui-flush-race"))
+    val store = SessionStore(root / "sessions", root / "tasks")
+    val sid = "flush-race"
+    for
+      entered <- Deferred[IO, Unit]
+      gate <- Deferred[IO, Unit]
+      startE <- Deferred[IO, Unit]
+      faDone <- Ref.of[IO, Boolean](false)
+      feDone <- Ref.of[IO, Boolean](false)
+      first <- Ref.of[IO, Boolean](true)
+      _ = store.beforeUiFlushWrite = _ => first.getAndSet(false).flatMap(isFirst =>
+        if isFirst then entered.complete(()).void *> IO.uncancelable(_ => gate.get) else IO.unit)
+      program = for
+        _ <- store.appendUiMessages(sid, List(UiMessage.User("one")))
+        _ <- IO.sleep(501.millis)
+        _ <- entered.get
+        fa <- (store.appendUiMessages(sid, List(UiMessage.User("two"))) *> faDone.set(true)).start
+        fe <- (startE.get *> store.flushPendingUiWrites *> feDone.set(true)).start
+        _ <- gate.get
+        _ <- fa.joinWithNever *> fe.joinWithNever
+        _ <- IO.sleep(1500.millis)
+        cached <- store.getUiMessages(sid, 0, 100).map(_._1)
+        cold = SessionStore(root / "sessions", root / "tasks")
+        disk <- cold.getUiMessages(sid, 0, 100).map(_._1)
+      yield (cached, disk)
+      control <- TestControl.execute(program)
+      _ <- control.tick
+      _ <- control.advance(501.millis)
+      _ <- control.tick
+      tickUntil = (p: IO[Boolean], n: Int) => {
+        def loop(left: Int): IO[Unit] =
+          if left <= 0 then IO.raiseError(new AssertionError("有界推进耗尽"))
+          else p.flatMap(ok => if ok then IO.unit else control.tick *> IO(Thread.sleep(1)) *> loop(left - 1))
+        loop(n)
+      }
+      _ <- tickUntil(entered.tryGet.map(_.nonEmpty), 2000)
+      _ <- tickUntil(faDone.get, 100).attempt.void
+      _ <- startE.complete(())
+      _ <- tickUntil(feDone.get, 100).attempt.void
+      _ <- gate.complete(())
+      _ <- tickUntil((faDone.get, feDone.get).mapN(_ && _), 2000)
+      _ <- control.tick *> control.advance(2.seconds)
+      _ <- tickUntil(control.results.map(_.nonEmpty), 2000)
+      result <- control.results
+      pair <- result match
+        case Some(cats.effect.kernel.Outcome.Succeeded(value)) => IO.pure(value)
+        case Some(cats.effect.kernel.Outcome.Errored(error)) => IO.raiseError(error)
+        case _ => IO.raiseError(new AssertionError("测试纤程未完成"))
+      (cached, disk) = pair
+      _ = assertEquals(cached.collect { case u: UiMessage.User => u.text }, List("one", "two"))
+      _ = assertEquals(disk, cached)
+    yield ()
