@@ -43,6 +43,20 @@ class BrowserVerbsSpec extends CatsEffectSuite:
     assert(!registry.isTakingOver("work"))
   }
 
+  test("takeover ticket is single-use, expires, and checks live request and ownership") {
+    var now = 1000L
+    val tickets = new BrowserTakeoverTickets(() => now, 120000L)
+    val a = tickets.issue("req-a", "agent-a", "browser-a")
+    assert(tickets.consume(a, _ => false).isEmpty)
+    assert(tickets.consume(a, _ => true).isDefined)
+    assert(tickets.consume(a, _ => true).isEmpty)
+    val b = tickets.issue("req-b", "agent-b", "browser-b")
+    now += 120001L
+    assert(tickets.consume(b, _ => true).isEmpty)
+    val c = tickets.issue("req-c", "agent-c", "browser-c")
+    assert(tickets.consume(c, t => t.agent == "different-owner").isEmpty)
+  }
+
   test("screencast frames acknowledge every received frame and retain only the newest") {
     val acknowledgements = scala.collection.mutable.ListBuffer.empty[Int]
     val frames = new BrowserFrameBuffer(id => acknowledgements += id)
