@@ -13,7 +13,7 @@ class Relay:
   self.grace=grace; self.exit_fn=exit_fn; self.stop_fired=False; self.finished=threading.Event(); self.watchdog_lock=threading.Lock(); self.watchdog_started=False
   self.lock_timeout=lock_timeout; self.abort_timeout=abort_timeout; self.append_override=append_override
   self.rejection_lock=threading.Condition(); self.unrecorded_rejections=0; self.rejections={}
-  self.append_lock=threading.Lock(); self.sidecar_lock=threading.Lock(); self.append_inflight={}; self._anon=itertools.count(); self.exiting=False
+  self.append_lock=threading.RLock(); self.append_changed=threading.Condition(self.append_lock); self.sidecar_lock=threading.Lock(); self.append_inflight={}; self._anon=itertools.count(); self.exiting=False
   with self.append_lock: self.sealed=False
   self.dialer=dialer or (lambda host,port,timeout: http.client.HTTPSConnection(host,port,timeout=timeout,context=ssl.create_default_context()))
   self.routes={}
@@ -128,7 +128,8 @@ class Relay:
    if sidecar: return self._sidecar_unlocked(obj)
    return self._event_unlocked(obj)
   finally:
-   with self.append_lock: self.append_inflight.pop(key,None)
+   with self.append_changed:
+    self.append_inflight.pop(key,None); self.append_changed.notify_all()
  def _event_unlocked(self,obj):
   obj=dict(obj); obj.setdefault('record_id',uuid.uuid4().hex)
   # Separate open descriptions serialize both threads and processes.
@@ -176,9 +177,36 @@ class Relay:
    if obj.get('status')!='aborted-on-exit': raise ValueError('invalid exit record')
    self.exiting=True
   return self._sidecar_unlocked(obj)
- def shutdown_summary(self):
-  with self.rejection_lock: count=self.unrecorded_rejections
-  print(json.dumps({'unrecorded_rejections':count}),file=sys.stderr,flush=True)
+ def _ledger_record_ids(self):
+  ids=set()
+  for path in (self.args.ledger,self.args.ledger+'.abort'):
+   try:
+    with open(path,'rb') as f:
+     for line in f:
+      try:
+       record=json.loads(line)
+       if record.get('status')!='aborted-on-exit' and record.get('record_id'): ids.add(record['record_id'])
+      except (ValueError,UnicodeDecodeError): continue
+   except FileNotFoundError: pass
+  return ids
+ def shutdown_summary(self,pending=None):
+  sealed=pending is not None; still={}
+  if sealed:
+   with self.append_changed:
+    self.append_changed.wait_for(lambda:not self.append_inflight,timeout=self.abort_timeout)
+    still=dict(self.append_inflight)
+  recorded=self._ledger_record_ids(); attempted=[]
+  def abort(key,seq):
+   try: self.exit_abort({'seq':seq,'status':'aborted-on-exit','record_id':uuid.uuid4().hex,'original_record_id':key})
+   except Exception: pass
+  for key,seq in still.items():
+   if key not in recorded:
+    t=threading.Thread(target=abort,args=(key,seq),daemon=True); t.start(); attempted.append(t)
+  deadline=time.monotonic()+self.abort_timeout
+  for t in attempted: t.join(max(0,deadline-time.monotonic()))
+  final=self._ledger_record_ids()
+  summary={'sealed':sealed,'recorded':len(final),'aborted_on_exit':sum(key not in final for key in still),'abort_write_unconfirmed':sum(t.is_alive() for t in attempted),'inflight_upper_bound':None if sealed else len(self.active)}
+  print(json.dumps(summary),file=sys.stderr,flush=True)
  def maybe_stop(self):
   # Called with condition held; dispatching the callback is done by the caller.
   self.condition.notify_all()
@@ -206,7 +234,7 @@ class Relay:
    print(json.dumps({'sealed':True}),file=sys.stderr,flush=True)
   else:
    pending=None; print(json.dumps({'sealed':False}),file=sys.stderr,flush=True)
-  self.shutdown_summary(); self.exit_fn(2)
+  self.shutdown_summary(pending); self.exit_fn(2)
  def handle(self,h):
   start=time.monotonic(); parsed=urllib.parse.urlsplit(h.path); parts=parsed.path.split('/'); route=parts[1] if len(parts)>1 else ''; target=self.routes.get(route)
   expected_host=f'127.0.0.1:{h.server.server_port}'

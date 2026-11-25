@@ -181,6 +181,17 @@ server.serve_forever()'''
   with relay.append_lock: relay.sealed=True
   self.assertIs(relay.exit_abort(obj),True); self.assertEqual(digest(),before)
   self.assertEqual(json.loads(pathlib.Path(str(self.path)+'.abort').read_text()),obj)
+ def test_hard_stop_records_pending_abort(self):
+  relay=m.Relay(args(self.path),grace=.01,abort_timeout=.05,exit_fn=lambda code:codes.append(code)); codes=[]
+  self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
+  entered=threading.Event(); release=threading.Event(); self.addCleanup(release.set)
+  relay._event_unlocked=lambda obj:(entered.set(),release.wait(2),True)[-1]
+  t=threading.Thread(target=lambda:relay.event({'seq':7,'status':'reserved','record_id':'pending'}),daemon=True); t.start(); self.assertTrue(entered.wait(1))
+  with patch('sys.stderr',new_callable=io.StringIO) as out:
+   relay.force_after_grace(); summaries=[json.loads(x) for x in out.getvalue().splitlines()]
+  self.assertEqual(codes,[2]); self.assertTrue(summaries[0]['sealed']); self.assertEqual(summaries[1]['aborted_on_exit'],1); self.assertEqual(summaries[1]['abort_write_unconfirmed'],0)
+  self.assertEqual(json.loads(pathlib.Path(str(self.path)+'.abort').read_text())['original_record_id'],'pending')
+  release.set(); t.join(2)
  def test_watchdog_only_starts_once(self):
   relay=m.Relay(args(self.path),grace=1,exit_fn=lambda code:None)
   self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
