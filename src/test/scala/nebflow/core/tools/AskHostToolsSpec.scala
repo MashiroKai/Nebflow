@@ -12,6 +12,21 @@ import nebflow.shared.{PathUtil, ThinkingConfig}
 
 class AskHostToolsSpec extends CatsEffectSuite:
 
+  test("takeover admission requires trusted root, outstanding marked request and browser ownership") {
+    val pending = AskHostLedger.Pending("req", "worker", "root", "agent", "call")
+    val marked = AskHostLedger.RequestState(pending, "[BU-TAKEOVER]\nsession: work", None, Nil)
+    val registry = new nebflow.core.browser.BrowserTakeoverRegistry
+    registry.created("work", "worker")
+    assert(AskHostTool.admitBrowserTakeover(false, "root", Some(marked), "work", registry).isLeft)
+    assert(AskHostTool.admitBrowserTakeover(true, "other-root", Some(marked), "work", registry).isLeft)
+    assert(AskHostTool.admitBrowserTakeover(true, "root", Some(marked.copy(question = "ordinary")), "work", registry).isLeft)
+    assert(AskHostTool.admitBrowserTakeover(true, "root", Some(marked.copy(terminal = Some(AskHostLedger.Terminal.Answered("done")))), "work", registry).isLeft)
+    assert(AskHostTool.admitBrowserTakeover(true, "root", Some(marked), "unknown", registry).isLeft)
+    val other = marked.copy(pending = pending.copy(workerSession = "intruder"))
+    assert(AskHostTool.admitBrowserTakeover(true, "root", Some(other), "work", registry).isLeft)
+    assertEquals(AskHostTool.admitBrowserTakeover(true, "root", Some(marked), "work", registry), Right(()))
+  }
+
   test("BU takeover marker is recognized only as the exact leading line") {
     assert(AskHostTool.isBrowserTakeover("[BU-TAKEOVER]\nsession: work\nscreenshot: /tmp/a.png"))
     assert(!AskHostTool.isBrowserTakeover("ordinary [BU-TAKEOVER]"))
