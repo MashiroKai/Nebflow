@@ -2,6 +2,7 @@ package nebflow.social
 
 import cats.effect.IO
 import cats.effect.Ref
+import cats.syntax.all.*
 import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import io.circe.syntax.*
@@ -480,6 +481,59 @@ class WeixinAskLegSpec extends CatsEffectSuite:
       assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Answered("rid-3")) // only the latest is addressed
       assertEquals(fw.map(_._1), List("rid-3"))
     end for
+  }
+
+  test("WI-B1 three hub requests survive Weixin displacement and answer independently") {
+    val system = nebflow.actor.ActorSystem("weixin-three-pending")
+    val out = Out()
+    val ctx = AskCtx(List(meta("wx_a")))
+    val p = new WeixinIlinkBridgePlugin(
+      tmpRoot(),
+      pinnedAllowedIlinkUserIds = None,
+      rootSessionGate = Some(_ => true),
+      send = _ => out.seam
+    )
+    val seen = cats.effect.Deferred.unsafe[IO, Unit]
+    val count = Ref.unsafe[IO, Int](0)
+    val answers = List.fill(3)(cats.effect.Deferred.unsafe[IO, List[String]])
+    def sink(i: Int): nebflow.actor.ActorRef[List[String]] = new nebflow.actor.ActorRef[List[String]]:
+      def path: nebflow.actor.ActorPath = nebflow.actor.ActorPath("weixin-three-pending", List(s"sink-$i"))
+      def !(value: List[String]): IO[Unit] = answers(i).complete(value).void
+      def ?[R](makeMsg: nebflow.actor.ActorRef[R] => List[String], timeout: Option[scala.concurrent.duration.FiniteDuration]): IO[R] =
+        IO.raiseError(new UnsupportedOperationException("tell-only"))
+    val test = for
+      hub <- system.spawn(nebflow.agent.InteractionHub(), "hub")
+      _ <- p.start(ctx)
+      _ <- hub ! nebflow.actor.InteractionHubCommand.RegisterRoot("s1", (frame: Json) =>
+        if frame.hcursor.get[String]("type").toOption.contains("askUser") then
+          p.onAgentEvent("s1", frame) *> count.updateAndGet(_ + 1).flatMap(n => if n == 3 then seen.complete(()).void else IO.unit)
+        else IO.unit
+      )
+      _ <- List(0, 1, 2).traverse_ { i =>
+        val rid = s"three-$i"
+        hub ! nebflow.actor.InteractionHubCommand.Request(nebflow.actor.InteractionRequest(
+          requestId = rid,
+          kind = nebflow.actor.InteractionKind.AskUser,
+          payload = Json.obj("items" -> Json.fromValues(simpleItems)),
+          reply = nebflow.actor.InteractionReply.AskUserReply(Some(sink(i))),
+          rootSessionId = "s1",
+          sourceAgent = "probe",
+          sourceSession = "s1"
+        ))
+      }
+      _ <- seen.get.timeout(scala.concurrent.duration.DurationInt(10).seconds)
+      closed <- ctx.closed.get
+      pending <- hub.?[List[Json]](reply => nebflow.actor.InteractionHubCommand.ListPendingAsks("s1", reply))
+      _ = assertEquals(closed, List.empty)
+      _ = assertEquals(pending.size, 3)
+      _ <- List(1, 0, 2).traverse_ { i =>
+        hub ! nebflow.actor.InteractionHubCommand.Answered(nebflow.actor.InteractionAnswered(
+          s"three-$i", "s1", Json.obj("answers" -> Json.arr(Json.fromString(s"answer-$i")))
+        ))
+      }
+      received <- answers.traverse(_.get.timeout(scala.concurrent.duration.DurationInt(10).seconds))
+    yield assertEquals(received, List(List("answer-0"), List("answer-1"), List("answer-2")))
+    test.guarantee(p.stop *> system.stopAll)
   }
 
   test("WI-B2 askUserClosed clears the slot; a later number is chat again") {
