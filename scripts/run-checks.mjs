@@ -50,6 +50,8 @@ export const CHECKS = [
   // ⇒ FAIL）。判据 O0–O4 与修前同尺，不因面板增多而放宽。
   { name: 'mobile-overlap-sweep', profiles: ['frontend'], timeoutMs: 240_000,
     argv: [process.execPath, 'tests/mobile-overlap-sweep.spec.mjs'] },
+  { name: 'mobile-overlap-contract', profiles: ['frontend'], timeoutMs: 120_000,
+    argv: [process.execPath, '--test', 'tests/mobile-overlap-contract.test.mjs'] },
   // 手机图片「点开大图预览失败」闸（2026-11-23 · IMG_2039）：原图腿败 + 卡面缩略在场 ⇒ 仍开灯箱
   // 不 toast；原图腿通 ⇒ 灯箱图解码；负对照无缩略 ⇒ toast 必现（路径活着）。
   { name: 'mobile-image-preview-fallback', profiles: ['frontend'], timeoutMs: 120_000,
