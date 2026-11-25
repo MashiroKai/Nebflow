@@ -707,6 +707,11 @@ for (const colorScheme of ['light', 'dark']) {
             el.dispatchEvent(new Event('scroll'));
           });
           await expect(bar).toHaveClass(/g2-fab/);
+          if (process.env.SEARCH7_CAPTURE_BEFORE && EVID) {
+            await page.waitForTimeout(700);
+            mkdirSync(EVID, { recursive: true });
+            await page.screenshot({ path: join(EVID, `before-${pageId}-${colorScheme}-dpr${deviceScaleFactor}.png`) });
+          }
           await expect.poll(() => bar.evaluate(el => getComputedStyle(el).borderRadius)).toBe('50%');
           await expect.poll(async () => {
             const box = await bar.boundingBox();
