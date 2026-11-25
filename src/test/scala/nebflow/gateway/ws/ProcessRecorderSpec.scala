@@ -169,6 +169,30 @@ class ProcessRecorderSpec extends CatsEffectSuite:
     }
   }
 
+  test("Canvas root 帧序列经真实 recorder 与分条快照保持消息边界，GitViz 保持合并") {
+    val sid = "ask-display-fixture"
+    val store = mkStore
+    val routes = new WebSocketRoutes(
+      wsb = null, sessionService = null, agentService = null,
+      configService = nebflow.service.ConfigService,
+      configRef = Ref.unsafe[IO, NebflowServiceConfig](NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))),
+      rateLimiter = null, tokenRef = Ref.unsafe[IO, String]("test-token"),
+      sessions = GatewaySessionStore.unsafeCreate(), fileChangeTracker = null,
+      sessionStore = store, wsHub = null, mcpManager = null, sharedResources = mkResources(store)
+    )
+    val events = io.circe.parser.parse(Files.readString(Paths.get("tests/ask-display-frames.json")))
+      .toOption.get.asArray.get.toList
+    val expected = List("前后", "第二条", "第三条长文本：abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", "终结")
+    val send = routes.makeRecordingWsSend(sid, _ => IO.unit)
+    for
+      _ <- events.traverse_(send)
+      rows <- store.getUiMessages(sid, 0, 200).map(_._1)
+    yield
+      def texts(rows: List[Json]): List[String] = rows.map(_.hcursor.get[String]("text").getOrElse(""))
+      assertEquals(texts(WsAskHandlers.encodeCanvasTranscript(rows)), expected)
+      assertEquals(texts(WsAskHandlers.encodeTranscript(rows)), List(expected.mkString))
+  }
+
   // ── S4 写路径契约（源码钉）：落盘只走 SessionStore 既有面 ────────────────────
 
   test("S4 写路径契约：recorder 落盘走 appendUiMessages/markRoundTerminal，零绕行介质") {

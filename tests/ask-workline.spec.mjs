@@ -35,7 +35,9 @@ try {
   await page.evaluate(()=>{fixture.s.msgs.push({role:'user',text:'问题'});fixture.d.render();fixture.d.consume({type:'textDelta',delta:'第一'},fixture.s);});
   assert.equal(await page.locator('.ai').count(),0,'partial text must not appear');
   assert.equal(await page.locator('.nf-workline').count(),1,'workline remains during text');
-  await page.evaluate(()=>{fixture.d.consume({type:'textDelta',delta:'条'},fixture.s);fixture.d.processWorkline(fixture.s,{type:'toolStart',label:'Read'});});
+  await page.evaluate(()=>{fixture.d.processWorkline(fixture.s,{type:'toolCallDetected',name:'Read'});fixture.d.consume({type:'textDelta',delta:'条'},fixture.s);});
+  assert.equal(await page.locator('.ai').count(),0,'tool detection is not a boundary');
+  await page.evaluate(()=>fixture.d.processWorkline(fixture.s,{type:'toolStart',label:'Read'}));
   assert.equal(await page.locator('.ai').count(),1,'tool boundary commits one message');
   assert.equal(await page.locator('.ai').first().innerText(),'第一条');
   await page.evaluate(()=>fixture.d.consume({type:'textDelta',delta:'第二条'},fixture.s));
@@ -50,6 +52,11 @@ try {
   await page.evaluate(()=>{fixture.d.armTurn(fixture.s);fixture.d.consume({type:'textDelta',delta:'错误前文本'},fixture.s);fixture.d.consume({type:'error',message:'failure'},fixture.s);});
   assert.equal(await page.evaluate(()=>fixture.s.askBufferedText),'','error clears buffer');
   assert.ok((await page.locator('.ai').allInnerTexts()).includes('错误前文本'));
+  await page.evaluate(()=>{fixture.d.armTurn(fixture.s);fixture.d.consume({type:'textDelta',delta:'   '},fixture.s);fixture.d.consume({type:'done'},fixture.s);});
+  assert.equal(await page.locator('.ai').count(),6,'blank text does not create a message');
+  const frames = JSON.parse(readFileSync(resolve('tests/ask-display-frames.json'),'utf8'));
+  await page.evaluate((events)=>{fixture.s.msgs=[];fixture.d.armTurn(fixture.s);fixture.d.render();for(const e of events){if(e.type==='textDelta'||e.type==='done')fixture.d.consume(e,fixture.s);else fixture.d.processWorkline(fixture.s,e);}},frames);
+  assert.deepEqual(await page.locator('.ai').allInnerTexts(),['前后','第二条','第三条长文本：abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789','终结'],'shared frame sequence must preserve boundaries');
   console.log(`PASS ${width} ${theme}: single line, complete messages, no process residue`);
   await page.close();
  }

@@ -676,7 +676,7 @@ export function createAskDialog(cfg) {
     flushBufferedText(s) {
       const text = s.askBufferedText || '';
       s.askBufferedText = '';
-      if (!text) return null;
+      if (!text.trim()) return null;
       const row = { role: 'ai', text, ts: Date.now() };
       s.msgs.push(row);
       cfg.onPersist?.(s);
@@ -688,7 +688,7 @@ export function createAskDialog(cfg) {
     },
     processWorkline(s, msg) {
       if (!cfg.workline || !s || !s.busy) return;
-      if (msg.type === 'toolCallDetected' || msg.type === 'toolStart' || msg.type === 'roundComplete') dlg.flushBufferedText(s);
+      if (msg.type === 'toolStart' || msg.type === 'roundComplete') dlg.flushBufferedText(s);
       s.lastFrameAt = Date.now();
       if (msg.type === 'thinkingDelta') {
         if (s.askLastKind !== 'thinking') s.askThinking = '';

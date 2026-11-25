@@ -2397,11 +2397,8 @@ function consumeFrame(msg) {
       // 单开第三种记录形状）；卡的来源工具在 ask 面由授权单点决定（唯一 HTML 卡
       // 生产者 = Card），渲染时按常量标源即可。
       const cardMsg = { role: 'card', text: cardContent };
-      // 落列位置 = 当前流式 ai 泡**之前**：卡是这一拍的中间产物，末位必须仍是 ai
-      // 泡，流式增量腿（内核 updateStreaming 认末元素为 ai 泡）判据不受影响。
-      const tail = entry.msgs[entry.msgs.length - 1];
-      if (tail && tail.role === 'ai') entry.msgs.splice(entry.msgs.length - 1, 0, cardMsg);
-      else entry.msgs.push(cardMsg);
+      // 工具开始已收口前一条正文；卡按事件顺序排在它之后、下一条正文之前。
+      entry.msgs.push(cardMsg);
       // 卡载荷落 localStorage 转录持久面（作者令 2026-11-19「要留存」）：卡行与
       // user/ai 同族进 PERSISTED_ROLES，写穿单点 = persistSession（SESS_MAX_MSGS
       // 容量闸照旧 60 行、私密模式/quota 仍静默降级）。与内核 consume 的每一拍同律：
