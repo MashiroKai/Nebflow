@@ -98,7 +98,7 @@ async function desktopCase(browser, failures) {
     const t = document.getElementById('canvas-title').getBoundingClientRect();
     return { btnRight: b.right, titleLeft: t.left };
   });
-  check('desktop: 收藏钮位于标题右侧', await s.page.evaluate(() => document.getElementById('canvas-fav-btn').getBoundingClientRect().left >= document.getElementById('canvas-title').getBoundingClientRect().right - 1), JSON.stringify(geo));
+  check('desktop: 收藏钮位于胶囊左侧', geo.btnRight <= geo.titleLeft + 1, JSON.stringify(geo));
   const measureEnds = () => s.page.evaluate(() => {
     const r = q => document.querySelector(q).getBoundingClientRect();
     const h = r('#canvas-panel .canvas-header'), a = r('#canvas-fav-btn'), b = r('#canvas-pop-btn');
@@ -106,7 +106,7 @@ async function desktopCase(browser, failures) {
     const delta = (x, y) => Math.abs(x - y);
     const center = (x) => [x.left + x.width / 2, x.top + x.height / 2];
     const [ax, ay] = center(a), [bx, by] = center(b), [aix, aiy] = center(ai), [bix, biy] = center(bi);
-    return { vertical: Math.max(delta(ay, h.top + h.height / 2), delta(by, h.top + h.height / 2)), optical: Math.max(delta(ax, aix), delta(ay, aiy), delta(bx, bix), delta(by, biy)), size: delta(ai.width, bi.width), radii: delta(parseFloat(getComputedStyle(document.querySelector('#canvas-fav-btn')).borderRadius), parseFloat(getComputedStyle(document.querySelector('#canvas-pop-btn')).borderRadius)) };
+    return { inset: delta(a.left - h.left, h.right - b.right), vertical: Math.max(delta(ay, h.top + h.height / 2), delta(by, h.top + h.height / 2)), optical: Math.max(delta(ax, aix), delta(ay, aiy), delta(bx, bix), delta(by, biy)), size: delta(ai.width, bi.width), radii: delta(parseFloat(getComputedStyle(document.querySelector('#canvas-fav-btn')).borderRadius), parseFloat(getComputedStyle(document.querySelector('#canvas-pop-btn')).borderRadius)) };
   });
   const valid = g => Object.values(g).every(v => v <= 1);
   const endGeometry = await measureEnds();

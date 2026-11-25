@@ -1222,7 +1222,7 @@ function syncCanvasPage() {
       //   ③ 触屏展开腿 = 点活签 `.is-expanded`（宽度解一档，超宽继续 mask 淡出）。
       chip.title = d.label;
       const star = canvasUI.star;
-      chip.insertBefore(star, label.nextSibling);
+      chip.insertBefore(star, label);
       canvasUI.strip.appendChild(chip);
       if (typeof lucide !== 'undefined') createIconsIn(chip);
     }

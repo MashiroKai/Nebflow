@@ -3013,8 +3013,7 @@ function syncFavoriteButton() {
       if (nowOn) btn.classList.add('is-pop');
       window.__showToast?.(t(nowOn ? 'canvas.fav.added' : 'canvas.fav.removed'), 'success');
     });
-    const title = hdr.querySelector('.canvas-title');
-    hdr.insertBefore(btn, title ? title.nextSibling : null);
+    hdr.insertBefore(btn, hdr.firstChild);
   }
   const entry = activeCanvasEntry();
   const hasPath = !!(entry && entry.absPath);
