@@ -2843,6 +2843,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
 
   end routeWebSearchThroughProvider
 
+  // scalafix:off DisableSyntax
   protected def buildAllowedToolSet(
     agentDef: AgentDef,
     depth: Int = 0,
@@ -2870,9 +2871,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // that face.
     // gitviz 分支管理问答（2026-11-19 第二轮）：同一早退点，但工具面**更窄**
     // （没有 Bash / ask_edit / ask_write ⇒ 没有任何 git 写入口）。
-    if askGitViz then nebflow.core.ask.AskSessions.GitVizAllowedTools
-    else if askSession then nebflow.core.ask.AskSessions.AllowedTools
-    else {
+    if askGitViz then return nebflow.core.ask.AskSessions.GitVizAllowedTools
+    if askSession then return nebflow.core.ask.AskSessions.AllowedTools
     // 阶段 2c（§C.1/裁定 11）：收敛三定义（Nebula/project-dispatcher/general）
     // 的 agent.json tools 声明整体失效——工具面全部机制固定，零配置。存量
     // agent.json 里的文件工具声明（Nebula 六件 / dispatcher Write+Edit）由此
@@ -3038,9 +3038,9 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // 按插件逐名授予需 AgentDef 新增字段，留作后续）；无挂载 ⇒ 空集（默认工具面无名字）。不看身份名单。
     val pluginEngineGrant = nebflow.core.plugin.PluginRegistry.engineGrantFor(agentDef.pluginMcpServers)
     (withDelegateMail ++ pluginEngineGrant) -- nebflow.core.ask.AskSessions.AskExclusiveTools
-    }
 
   end buildAllowedToolSet
+  // scalafix:on DisableSyntax
 
   protected def buildToolList(
     agentDef: AgentDef,
