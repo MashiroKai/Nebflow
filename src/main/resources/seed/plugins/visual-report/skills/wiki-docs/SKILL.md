@@ -1072,7 +1072,7 @@ point at a **term** — not at a document, not at a bare path:
 - `[[auth-flow-review#Token lifetime]]` — positional reference into a section.
   Positional references stay legal because they resolve to a *place*, not to a
   document identity.
-- `![[architecture.svg]]` — embed an attachment from `attachments/`.
+- `![[architecture.png]]` — embed an attachment from `attachments/`.
 - Not citations any more (rules R13/R14): `[text](topic.md)` (a
   markdown link to a document), a document short form `[[some-doc]]`,
   a bare path in prose (`见 design/foo.md`) and a plain-text image path

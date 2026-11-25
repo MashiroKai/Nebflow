@@ -87,7 +87,7 @@ WaveJSON 速查：`1/0` 电平、`p/n` 时钟、`x` 不定态、`z` 高阻、`.`
 2. **禁止手画 SVG（core 铁律 1）**：时序图只能由 wavedrom / matplotlib 生成落盘；缺工具走 §3 降级链，不空转。
 3. **必须真实渲染出文件再嵌入**：核验 PNG 存在并可读，Markdown 正文嵌入 PNG；vault 使用附件相对路径。SVG 可选下载，渲染失败的 wavejson 不得冒充图件。
 4. **wavejson 源码随文档完整交付**：每图源码以 json 代码块附在图后，保证可复现、可 diff。
-5. **img 引用的 SVG 必须过暗色注入**（`wavedrom_dark.py`，core §3）。
+5. **Markdown 正文嵌入 PNG；SVG 可供下载，暗色适配见 `wavedrom_dark.py`（core §3）。**
 6. **数值逐字（core 铁律 2）**：参数表是唯一数据源；源里没有的参数不标注——需要就先补进参数表。
 7. **marked v12 兼容（core §4）**：`## ` 后带空格、GFM 表格列数齐、段落间空行。
 8. **时间分辨率声明**：1 slot = 多少 ns 写进 caption；亚 slot 量（如半周期建立 / 保持 25 ns）以文字精确值为准，不在图上强行标注。

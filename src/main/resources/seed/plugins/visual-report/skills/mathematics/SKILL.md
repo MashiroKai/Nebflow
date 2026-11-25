@@ -37,7 +37,7 @@ description: 数学讲解（过程动画+误差定量+manim）；函数、收敛
 - **收敛 / 逼近 / 参数扫描的过程叙事** → matplotlib.animation，经 `${SKILL_DIR}/../motion-toolkit` 封装出片（`scripts/mpl_anim.py`，MP4/GIF）；数学场景默认这条栈；
 - **公式推演 / 逐项镜头**（对照讲解）→ manim 0.21.0 直调 `python -m manim`（不在 motion-toolkit 三栈内，其 SKILL §2 标注「未封装」）；**本机无 LaTeX：MathTex/Tex 不可用**，公式一律 `Text`/`MarkupText`（Pango 渲染）；
 - **静态结论 / 误差图** → matplotlib 单帧（对数轴误差图是本场景标配）；
-- 动画计入 ≤3 图预算（core §1.3）；MP4 是文件交付（正文写 `~/...` 路径，core §2），GIF/PNG 可直接嵌入。
+- 动画计入 ≤3 图预算（core §1.3）；MP4 是文件交付（正文写 `~/...` 路径，core §2），静态图以 PNG 直接嵌入，GIF 作为文件交付。
 
 ## 工具链与自检
 
@@ -81,7 +81,7 @@ description: 数学讲解（过程动画+误差定量+manim）；函数、收敛
 3. **动画必须真渲染出片**：MP4/GIF 落 `~/.nebflow/plots/`，帧数/fps/时长写进交付文本；禁止占位框、占位帧、「示意动画」文字代替；
 4. **动画渲染一律经 `${SKILL_DIR}/../motion-toolkit` 封装**（manim 除外，直调但需冒烟）；禁止在场景内复制动效环境说明（motion-toolkit §6）；
 5. **manim 只做公式/推演镜头**，数值曲线主图归 matplotlib 栈——两栈各司其职，不重复造轮子；
-6. 单文档 ≤3 图（含视频）、marked v12 兼容（core §1.3/§4）：`## ` 带空格、GFM 表分隔行列数==表头列数、只用 `$...$`、`breaks:true` 段间空行。
+6. 单文档 ≤3 图（含视频）、marked v12 兼容（core §1.3/§4）：`## ` 带空格、GFM 表分隔行列数==表头列数、公式使用 LaTeX（行内 `$...$`、独立 `$$...$$`）、`breaks:true` 段间空行。
 
 ## 示例
 
