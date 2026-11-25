@@ -50,6 +50,7 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
         recoveryRequests <- Queue.unbounded[IO, LlmRequest]
         recoveryWriteResults <- Queue.unbounded[IO, Either[ToolError, String]]
         fallbackAllowed <- Queue.unbounded[IO, Boolean]
+        fallbackReported <- Queue.unbounded[IO, Option[nebflow.core.scheduler.DeviceZoneReport]]
         llm = new LlmHandle[IO]:
           def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new Exception("unexpected send"))
           def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] =
@@ -68,7 +69,7 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
           def summarize(input: JsonObject) = "zone probe"
           def summarizeResult(input: JsonObject, result: String) = result
           def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-            captured.offer(ctx.deviceZone) *> fallbackAllowed.offer(ctx.deviceZoneFallbackAllowed) *> blockTool.getAndSet(false).flatMap { block =>
+            captured.offer(ctx.deviceZone) *> fallbackAllowed.offer(ctx.deviceZoneFallbackAllowed) *> fallbackReported.offer(ctx.recentDeviceZone) *> blockTool.getAndSet(false).flatMap { block =>
               val runWrite = if ctx.sessionId.contains("zone-recovery") && !block then
                 val input = Json.obj("kind" -> "todo".asJson, "content" -> "recover reminder".asJson,
                   "triggerAt" -> "2035-01-01T09:00".asJson,
@@ -154,11 +155,16 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
         _ = assertEquals(sourceBeforeEvent, Some("Asia/Tokyo"))
         _ <- done.take.timeout(30.seconds)
         _ <- fallbackAllowed.tryTakeN(None)
+        _ <- fallbackReported.tryTakeN(None)
+        _ <- new nebflow.core.scheduler.DeviceZoneReports(root).recordIdentify(
+          Json.obj("type" -> "takeoverIdentify".asJson, "clientId" -> "last".asJson, "timeZone" -> "Europe/Paris".asJson), true, 123L)
         _ <- ref ! AgentCommand.ExternalEvent("schedule", "trigger", "scheduled event")
         eventZone <- captured.take.timeout(30.seconds)
         eventFallback <- fallbackAllowed.take.timeout(30.seconds)
+        eventReport <- fallbackReported.take.timeout(30.seconds)
         _ = assertEquals(eventZone, None)
         _ = assert(eventFallback, "schedule-origin turn must allow the recent device fallback")
+        _ = assertEquals(eventReport.map(_.zoneId), Some("Europe/Paris"))
         _ <- done.take.timeout(30.seconds)
         now = java.time.LocalTime.now()
         minute = now.getHour * 60 + now.getMinute
