@@ -442,6 +442,20 @@ object AskHostTool extends Tool:
   private[nebflow] def isBrowserTakeover(question: String): Boolean =
     question.linesIterator.nextOption().contains("[BU-TAKEOVER]")
 
+  private[nebflow] def admitBrowserTakeover(
+    trustedRoot: Boolean,
+    rootSession: String,
+    state: Option[AskHostLedger.RequestState],
+    browserSession: String,
+    registry: nebflow.core.browser.BrowserTakeoverRegistry
+  ): Either[String, Unit] =
+    state match
+      case Some(s) if trustedRoot && s.pending.rootSession == rootSession && isBrowserTakeover(s.question) &&
+          s.question.linesIterator.drop(1).count(_ == s"session: $browserSession") == 1 &&
+          (s.terminal.isEmpty || s.terminal.exists(_.isInstanceOf[AskHostLedger.Terminal.TimedOut])) && s.lateReplies.isEmpty =>
+        registry.begin(browserSession, s.pending.workerSession, s.pending.correlationId)
+      case _ => Left("接管请求未授权或已结束")
+
   val description =
     "Ask the trusted Nebula root for a decision. The root can answer or reject; use AskUserQuestion there if clarification is needed. This blocks until its correlated reply arrives."
 
