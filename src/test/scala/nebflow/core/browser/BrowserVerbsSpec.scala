@@ -30,6 +30,35 @@ class BrowserVerbsSpec extends CatsEffectSuite:
 
   private val nineNames = BrowserVerbNames.All.toSet
 
+  test("takeover registry rejects unowned and wrong-owner sessions and prevents duplicate leases") {
+    val registry = new BrowserTakeoverRegistry
+    assertEquals(registry.begin("old", "agent-a", "req-1"), Left("该浏览器会话没有归属记录"))
+    registry.created("work", "agent-a")
+    registry.created("work", "agent-b")
+    assert(registry.begin("work", "agent-b", "req-1").isLeft)
+    assertEquals(registry.begin("work", "agent-a", "req-1"), Right(()))
+    assert(registry.begin("work", "agent-a", "req-2").isLeft)
+    assert(registry.isTakingOver("work"))
+    registry.finish("req-1")
+    assert(!registry.isTakingOver("work"))
+  }
+
+  test("external and pre-restart unowned sessions refuse takeover but permit ordinary verbs") {
+    for scenario <- List("external", "pre-restart") do
+      val registry = new BrowserTakeoverRegistry
+      assertEquals(registry.begin(scenario, "agent-a", "req"), Left("该浏览器会话没有归属记录"))
+      assertEquals(registry.withVerb(scenario)("normal verb ran"), "normal verb ran")
+  }
+
+  test("takeover blocks normal browser verbs until completion") {
+    val registry = new BrowserTakeoverRegistry
+    registry.created("work", "agent-a")
+    assertEquals(registry.begin("work", "agent-a", "req"), Right(()))
+    assertEquals(intercept[IllegalStateException](registry.withVerb("work")("wrong")).getMessage, "作者正在接管")
+    registry.finish("req")
+    assertEquals(registry.withVerb("work")("ok"), "ok")
+  }
+
   test("new screenshot file is owner read-write only on POSIX") {
     val dir = Files.createTempDirectory("bu-private-shot")
     val file = dir.resolve("shot.png")
