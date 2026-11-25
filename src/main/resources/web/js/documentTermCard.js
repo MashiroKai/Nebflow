@@ -33,7 +33,7 @@ document.addEventListener('canvas-tab-switched', () => closeCard(false));
 /** Preview an identified document; openDocument preserves its existing navigation. */
 export function closeDocumentTermCard() { closeCard(false); }
 
-export async function showDocumentTermCard(trigger, { path = '', title, remote = false, openDocument, term, onClose }) {
+export async function showDocumentTermCard(trigger, { path = '', title = '', remote = false, openDocument = null, term = null, onClose = null }) {
   closeCard(false);
   const card = document.createElement('section');
   card.className = 'document-term-card';
@@ -70,7 +70,7 @@ export async function showDocumentTermCard(trigger, { path = '', title, remote =
   trigger.addEventListener('keydown', function enterCard(e) {
     if (!active || active.trigger !== trigger) { trigger.removeEventListener('keydown', enterCard); return; }
     if (e.key === 'Tab' && !e.shiftKey) {
-      const action = card.querySelector('button:not([hidden])');
+      const action = card.querySelector(/** @type {'button'} */ ('button:not([hidden])'));
       if (action) { e.preventDefault(); action.focus(); }
     }
   });
@@ -87,7 +87,7 @@ export async function showDocumentTermCard(trigger, { path = '', title, remote =
       metadata.textContent = data.metadata || '';
       button.hidden = !data.open;
       button.onclick = data.open ? () => { closeCard(false); data.open(); } : null;
-      let retry = card.querySelector('.document-term-retry');
+      let retry = /** @type {HTMLButtonElement | null} */ (card.querySelector('.document-term-retry'));
       if (data.retry && !retry) {
         retry = document.createElement('button');
         retry.type = 'button'; retry.className = 'document-term-open document-term-retry';

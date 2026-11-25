@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "change": "term-card-unification",
+  "mappings": [
+    {
+      "requirement": "TCU-REQ-001",
+      "scenario": "TCU-SCN-001",
+      "implementation": ["src/main/resources/web/js/termTip.js", "src/main/resources/web/js/documentTermCard.js"],
+      "tests": [{"path": "tests/wiki-term-citation.spec.mjs", "name": "选区解释共用卡片且不显示词条来源按钮"}]
+    },
+    {
+      "requirement": "TCU-REQ-001",
+      "scenario": "TCU-SCN-002",
+      "implementation": ["src/main/resources/web/js/termTip.js"],
+      "tests": [{"path": "tests/wiki-term-citation.spec.mjs", "name": "词条预览不创建返回按钮或目标页签"}]
+    },
+    {
+      "requirement": "TCU-REQ-002",
+      "scenario": "TCU-SCN-003",
+      "implementation": ["src/main/resources/web/js/viewers/markdown.js"],
+      "tests": [{"path": "tests/wiki-term-citation.spec.mjs", "name": "提示且卡片仍可用"}]
+    }
+  ]
+}
