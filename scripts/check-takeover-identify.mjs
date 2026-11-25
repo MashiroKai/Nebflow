@@ -45,6 +45,7 @@
 // Usage: node scripts/check-takeover-identify.mjs
 
 import { existsSync, readFileSync } from 'node:fs';
+import { stripBrowserTakeoverGlue } from './lib/browser-takeover-glue.mjs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -211,34 +212,13 @@ if (!/function captureSeatDraft\s*\(/.test(canvasJs)) {
 if (!/captureSeatDraft\(\)/.test(canvasJs)) {
   fail('I: captureSeatDraft is never called — the seat-loss hook is unwired');
 }
-const glueMarker = /\/\/ (BEGIN|END) BROWSER TAKEOVER VIEWER GLUE/g;
-let outsideGlue = '';
-let lastEnd = 0;
-let blockStart = null;
-let marker;
-while ((marker = glueMarker.exec(canvasJs)) !== null) {
-  if (marker[1] === 'BEGIN') {
-    if (blockStart !== null) {
-      fail('I: nested browser takeover viewer glue marker');
-    } else {
-      outsideGlue += canvasJs.slice(lastEnd, marker.index);
-      blockStart = marker.index;
-    }
-  } else if (blockStart === null) {
-    fail('I: unpaired browser takeover viewer glue END marker');
-  } else {
-    const block = canvasJs.slice(blockStart, glueMarker.lastIndex);
-    const content = block.replace(/\/\/ (?:BEGIN|END) BROWSER TAKEOVER VIEWER GLUE/g, '');
-    if (block.split('\n').length > 40) fail('I: browser takeover viewer glue exceeds 40 lines');
-    if (!/takeover/i.test(content)) fail('I: browser takeover viewer glue has no takeover reference');
-    lastEnd = glueMarker.lastIndex;
-    blockStart = null;
+try {
+  const { outside } = stripBrowserTakeoverGlue(canvasJs);
+  if (/takeover/i.test(outside)) {
+    fail('I: canvas.js still references the console-takeover surface — the canvas producer must carry none of it');
   }
-}
-if (blockStart !== null) fail('I: unpaired browser takeover viewer glue BEGIN marker');
-outsideGlue += canvasJs.slice(lastEnd);
-if (/takeover/i.test(outsideGlue)) {
-  fail('I: canvas.js still references the console-takeover surface — the canvas producer must carry none of it');
+} catch (error) {
+  fail(`I: ${error.message}`);
 }
 
 if (failures.length > 0) {

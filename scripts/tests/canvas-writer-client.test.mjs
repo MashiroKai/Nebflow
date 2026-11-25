@@ -2,6 +2,19 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { stripBrowserTakeoverGlue } from '../lib/browser-takeover-glue.mjs';
+
+const beginGlue = '// BEGIN BROWSER TAKEOVER VIEWER GLUE';
+const endGlue = '// END BROWSER TAKEOVER VIEWER GLUE';
+test('viewer glue rejects unpaired markers', () => {
+  assert.throws(() => stripBrowserTakeoverGlue(`${beginGlue}\ntakeover`), /unpaired/);
+});
+test('viewer glue rejects blocks longer than 40 lines', () => {
+  assert.throws(() => stripBrowserTakeoverGlue(`${beginGlue}\ntakeover\n${'\n'.repeat(40)}${endGlue}`), /40 lines/);
+});
+test('viewer glue rejects dead markers', () => {
+  assert.throws(() => stripBrowserTakeoverGlue(`${beginGlue}\nordinary\n${endGlue}`), /no takeover/);
+});
 
 function client(transport) {
   const source = readFileSync(new URL('../../src/main/resources/web/js/canvas.js', import.meta.url), 'utf8');
@@ -155,5 +168,5 @@ test('③ a refused write is kept silently locally (no toast, no takeover/yield 
   assert.match(wire[1], /localUnsynced\s*=\s*true/, 'the local fallback must stay');
   assert.doesNotMatch(wire[1], /__showToast|showToast|writerNotice|保存失败/, 'the save-failure popup is retired');
   assert.doesNotMatch(wire[1], /接管|让出|取回|控制权/);
-  assert.doesNotMatch(source, /takeover/i, 'the canvas producer must carry no console-takeover surface');
+  assert.doesNotMatch(stripBrowserTakeoverGlue(source).outside, /takeover/i, 'the canvas producer must carry no console-takeover surface');
 });
