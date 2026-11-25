@@ -272,11 +272,12 @@ object BrowserSessions:
   // ── 动词实现 ────────────────────────────────────────────────────────
 
   /** browser_open：打开/复用会话；url 非空则导航。返回页面读数（脱敏）。 */
-  def open(name: String, url: Option[String], home: Path = homeRoot()): String = synchronized {
-    val h = ensure(name, home)
-    url.foreach(u => navigate(h, u))
-    pageInfoJson(name, h).spaces2
-  }
+  def open(name: String, url: Option[String], home: Path = homeRoot()): String =
+    takeoverRegistry.withVerb(name) {
+      val h = ensure(name, home)
+      url.foreach(u => navigate(h, u))
+      pageInfoJson(name, h).spaces2
+    }
 
   /** browser_snapshot：无障碍树 + ref 映射（替换上一份映射——旧 ref 即刻失效）。 */
   def snapshot(name: String, maxNodes: Int, home: Path = homeRoot()): String =
@@ -503,7 +504,8 @@ object BrowserSessions:
    * browser_close：优雅 Browser.close → 仅当 pid 仍是本会话记录的 Chrome 可执行文件时发 SIGTERM
    * （防 pid 复用误杀）→ 校验 pid 消失与端口无监听，把校验结果写进回执。profile 保留。
    */
-  def close(name: String, home: Path = homeRoot()): String = synchronized {
+  def close(name: String, home: Path = homeRoot()): String = takeoverRegistry.withVerb(name) {
+    takeoverRegistry.remove(name)
     closeHandle(name)
     readRecord(home, name) match
       case None => s"no session '$name' (nothing to close)"

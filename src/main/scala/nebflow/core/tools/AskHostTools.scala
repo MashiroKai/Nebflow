@@ -84,6 +84,15 @@ object AskHostLedger:
       }
       requests.values.toList
 
+  /** Lock order: journalLock then session registry; local ledger reads only, no external IO. */
+  private[nebflow] def admitTakeoverCurrent(
+    id: String, root: String, session: String, registry: nebflow.core.browser.BrowserTakeoverRegistry
+  ): IO[Either[String, Unit]] = IO.blocking {
+    journalLock.synchronized {
+      AskHostTool.admitBrowserTakeover(true, root, requestStateSync(id), session, registry)
+    }
+  }
+
   /** Recreate in-process waiters and satisfy any request whose decision was journaled before a crash. */
   def restoreWaiter(id: String): IO[Deferred[IO, String]] =
     Deferred[IO, String].flatMap { candidate =>

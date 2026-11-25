@@ -1,41 +1,50 @@
 package nebflow.core.browser
 
-/** In-memory ownership and exclusive takeover leases. No browser content is stored here. */
+import java.util.concurrent.ConcurrentHashMap
+import scala.jdk.CollectionConverters.*
+
+/** Process-local session ownership and leases. Lock order: journal, then one session. */
 final class BrowserTakeoverRegistry:
-  private val owners = scala.collection.mutable.Map.empty[String, String]
-  private val leases = scala.collection.mutable.Map.empty[String, String]
+  private final class State:
+    var owner: Option[String] = None
+    var lease: Option[String] = None
+  private val states = new ConcurrentHashMap[String, State]()
+  private def state(session: String): State = states.computeIfAbsent(session, _ => new State)
 
-  def withVerb[A](session: String)(body: => A): A = synchronized {
-    if leases.contains(session) then throw new IllegalStateException("作者正在接管")
-    body
-  }
+  def withVerb[A](session: String)(body: => A): A =
+    val s = state(session)
+    s.synchronized {
+      if s.lease.nonEmpty then throw new IllegalStateException("作者正在接管")
+      body
+    }
 
-  def created(session: String, owner: String): Unit = synchronized {
-    owners.getOrElseUpdate(session, owner)
-    ()
-  }
+  def created(session: String, owner: String): Unit =
+    val s = state(session)
+    s.synchronized { if s.owner.isEmpty then s.owner = Some(owner) }
 
-  def begin(session: String, owner: String, request: String): Either[String, Unit] = synchronized {
-    owners.get(session) match
-      case None => Left("该浏览器会话没有归属记录")
-      case Some(existing) if existing != owner => Left("浏览器会话归属不匹配")
-      case _ if leases.contains(session) || leases.values.exists(_ == request) => Left("浏览器会话已有接管")
-      case _ =>
-        leases.put(session, request)
-        Right(())
-  }
+  def begin(session: String, owner: String, request: String): Either[String, Unit] =
+    val s = state(session)
+    s.synchronized {
+      s.owner match
+        case None => Left("该浏览器会话没有归属记录")
+        case Some(existing) if existing != owner => Left("浏览器会话归属不匹配")
+        case _ if s.lease.nonEmpty => Left("浏览器会话已有接管")
+        case _ => s.lease = Some(request); Right(())
+    }
 
-  def ownedBy(session: String, owner: String): Boolean = synchronized { owners.get(session).contains(owner) }
+  def ownedBy(session: String, owner: String): Boolean =
+    val s = state(session)
+    s.synchronized { s.owner.contains(owner) }
 
-  def isTakingOver(session: String): Boolean = synchronized { leases.contains(session) }
+  def isTakingOver(session: String): Boolean =
+    val s = state(session)
+    s.synchronized { s.lease.nonEmpty }
 
-  def remove(session: String): Unit = synchronized {
-    owners.remove(session)
-    leases.remove(session)
-    ()
-  }
+  def remove(session: String): Unit =
+    val s = state(session)
+    s.synchronized { s.owner = None; s.lease = None }
 
-  def finish(request: String): Unit = synchronized {
-    leases.filterInPlace((_, value) => value != request)
-    ()
-  }
+  def finish(request: String): Unit =
+    states.values().asScala.foreach { s =>
+      s.synchronized { if s.lease.contains(request) then s.lease = None }
+    }
