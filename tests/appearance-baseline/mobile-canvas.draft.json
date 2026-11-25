@@ -1,0 +1,90 @@
+{
+  "approved": false,
+  "approvedBy": null,
+  "approvedAt": null,
+  "sourceCommit": "9069622915de92e81219fd5d636a5cafa50bfb1a",
+  "panel": "mobile-canvas",
+  "viewportNA": {
+    "width": 1280,
+    "reason": "手机层仅在不超过768px时启用"
+  },
+  "browser": "151.0.7922.34",
+  "variants": {
+    "light": {
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "dpr": 1
+      },
+      "elements": {
+        "canvas": {
+          "selector": ".mobile-page[data-page=canvas] .mf-cv-host",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(27, 30, 38)",
+            "boxShadow": "none",
+            "padding": "0px",
+            "border": "0px none rgb(27, 30, 38)"
+          },
+          "box": {
+            "x": 0,
+            "y": 0,
+            "width": 390,
+            "height": 844
+          }
+        },
+        "document": {
+          "selector": ".canvas-tab-pane",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(27, 30, 38)",
+            "fontSize": "16px",
+            "fontWeight": "400",
+            "padding": "0px",
+            "border": "0px none rgb(27, 30, 38)"
+          }
+        }
+      }
+    },
+    "dark": {
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "dpr": 1
+      },
+      "elements": {
+        "canvas": {
+          "selector": ".mobile-page[data-page=canvas] .mf-cv-host",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(232, 234, 237)",
+            "boxShadow": "none",
+            "padding": "0px",
+            "border": "0px none rgb(232, 234, 237)"
+          },
+          "box": {
+            "x": 0,
+            "y": 0,
+            "width": 390,
+            "height": 844
+          }
+        },
+        "document": {
+          "selector": ".canvas-tab-pane",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(232, 234, 237)",
+            "fontSize": "16px",
+            "fontWeight": "400",
+            "padding": "0px",
+            "border": "0px none rgb(232, 234, 237)"
+          }
+        }
+      }
+    }
+  }
+}

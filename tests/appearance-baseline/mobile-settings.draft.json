@@ -1,0 +1,98 @@
+{
+  "approved": false,
+  "approvedBy": null,
+  "approvedAt": null,
+  "sourceCommit": "9069622915de92e81219fd5d636a5cafa50bfb1a",
+  "panel": "mobile-settings",
+  "viewportNA": {
+    "width": 1280,
+    "reason": "手机层仅在不超过768px时启用"
+  },
+  "browser": "151.0.7922.34",
+  "variants": {
+    "light": {
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "dpr": 1
+      },
+      "elements": {
+        "settings-page": {
+          "selector": ".mobile-page[data-page=settings]",
+          "styles": {
+            "backgroundColor": "rgb(245, 246, 248)",
+            "color": "rgb(27, 30, 38)",
+            "fontSize": "16px",
+            "fontWeight": "400"
+          },
+          "box": {
+            "x": 0,
+            "y": 0,
+            "width": 390,
+            "height": 844
+          }
+        },
+        "back": {
+          "selector": ".mobile-page[data-page=settings] .mobile-back-btn",
+          "styles": {
+            "borderRadius": "50%",
+            "backgroundColor": "rgba(255, 255, 255, 0.16)",
+            "color": "rgb(27, 30, 38)",
+            "boxShadow": "none",
+            "height": "48px",
+            "padding": "0px",
+            "border": "1px solid rgba(255, 255, 255, 0.35)"
+          },
+          "box": {
+            "x": 16,
+            "y": 16,
+            "width": 48,
+            "height": 48
+          }
+        }
+      }
+    },
+    "dark": {
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "dpr": 1
+      },
+      "elements": {
+        "settings-page": {
+          "selector": ".mobile-page[data-page=settings]",
+          "styles": {
+            "backgroundColor": "rgb(19, 22, 28)",
+            "color": "rgb(232, 234, 237)",
+            "fontSize": "16px",
+            "fontWeight": "400"
+          },
+          "box": {
+            "x": 0,
+            "y": 0,
+            "width": 390,
+            "height": 844
+          }
+        },
+        "back": {
+          "selector": ".mobile-page[data-page=settings] .mobile-back-btn",
+          "styles": {
+            "borderRadius": "50%",
+            "backgroundColor": "rgba(24, 28, 38, 0.16)",
+            "color": "rgb(232, 234, 237)",
+            "boxShadow": "none",
+            "height": "48px",
+            "padding": "0px",
+            "border": "1px solid rgba(255, 255, 255, 0.06)"
+          },
+          "box": {
+            "x": 16,
+            "y": 16,
+            "width": 48,
+            "height": 48
+          }
+        }
+      }
+    }
+  }
+}

@@ -14,6 +14,10 @@ try {
     const { width, height } = panel.viewportGroups[0];
     const session = await createSession(browser, { width, height, colorScheme: theme, clock: 1793940000000, apiStubs: { '/api/nf-authcheck': { status: 204 }, '/api/plugins': { body: { plugins: [], rejected: [] } }, '/api/neblink/status': { body: { loggedIn: true, device: { name: 'fixture' }, peers: [] } } } });
     try {
+      if (panel.fixtures?.includes('friends')) await session.page.addInitScript(() => {
+        localStorage.setItem('fm_api_mock', '1');
+        localStorage.setItem('fm_api_mock_seed', JSON.stringify({ self: { userId: 'me', neblinkId: 'me@example.com', name: 'Me', avatarUrl: '' }, users: [], friends: Array.from({ length: 30 }, (_, i) => ({ userId: `u-${i}`, neblinkId: `friend-${i}`, name: `联系人${i}`, avatarUrl: '', since: Date.now() - 86400000 })), incoming: [], outgoing: [], conversations: [], messages: {} }));
+      });
       await session.boot({ config: { llm: { providers: {} }, features: { friends: true } } });
       const page = session.page;
       for (const step of panel.openSteps) {
@@ -21,6 +25,12 @@ try {
           if (step.action === 'click') await page.locator(step.selector).first().click({ timeout: 5000 });
           else if (step.action === 'wait') await page.locator(step.selector).first().waitFor({ state: 'visible', timeout: 5000 });
           else if (step.action === 'fill') await page.locator(step.selector).first().fill(step.value, { timeout: 5000 });
+          else if (step.action === 'agentsFixture') await page.evaluate(async () => {
+            const state = (await import('/js/state.js')).default;
+            state.sessionBgAgents['visual-root'] = { 'delegate-fixture-1': { name: 'delegate-fixture-1', kind: 'Delegate', sessionId: 'delegate-fixture-1', status: 'Processing', startedAt: Date.now() - 120000, parentSessionId: 'visual-root', task: '测试任务' } };
+            state.updateBgAgentIndicator();
+          });
+          else if (step.action === 'canvasFixture') await page.evaluate(async () => { (await import('/js/canvas.js')).openTab('doc-1', '测试文档', { type: 'generic' }); });
           else if (step.action === 'todoFixture') await page.evaluate(async () => {
             const { todoStore } = await import('/js/todoStore.js');
             todoStore.__seed({ tagList: [{ id: 'tag-work', name: '工作', color: 'rgb(59,130,246)' }], itemList: [{ id: 'f-1', tagId: 'tag-work', title: '修登录态过期', due: Date.now() + 3600000, priority: 3, createdAt: Date.now() - 3600000 }] });
