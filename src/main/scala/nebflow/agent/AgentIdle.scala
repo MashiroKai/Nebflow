@@ -231,7 +231,8 @@ private[agent] object AgentIdle:
             intake,
             fromUser,
             project,
-            _
+            _,
+            deviceZone
           ) =>
         val (isDuplicate, dedupedState) = checkDuplicate(clientMessageId, state)
         if isDuplicate then
@@ -267,7 +268,7 @@ private[agent] object AgentIdle:
             if isHumanInput then None
             else injectionSourceFor(fromUser, source.orElse(inferInjectionSource(state.sessionId, replyTo)))
           val enrichedBlocks: Option[List[ContentBlock]] = blocks.filter(_.nonEmpty)
-          val stateWithFlush = stateWithWidth
+          val stateWithFlush = stateWithWidth.copy(execution = stateWithWidth.execution.copy(deviceZone = deviceZone, deviceZoneFallbackAllowed = false))
           val userMsg = withUserClock(
             (enrichedBlocks match
               case Some(bl) => Message(MessageRole.User, Right(bl))
@@ -846,6 +847,9 @@ private[agent] object AgentIdle:
                   depth,
                   parentRef,
                   flushBase
+                    .copy(execution = flushBase.execution.copy(deviceZone = None,
+                      deviceZoneFallbackAllowed = (source == "bridge" || source == "schedule") &&
+                        ledgerFlush.messages.isEmpty && heldMessages.isEmpty))
                     .withMessages(
                       // Reminder refactor (2026-08-20): always carry a source marker —
                       // external-event turns are system events, not real user input
@@ -1139,7 +1143,8 @@ private[agent] object AgentIdle:
             windowItems,
             // P3 磁盘邮箱批（节点 3）：cid **必须**随件转生（见下方 case _ 分支的说明）——
             // 这是「同 cid 重发同一帧 ⇒ 执行计数 = 1」在主腿上的承重项。
-            clientMessageId
+            clientMessageId,
+            deviceZone
           ) =>
         windowItems match
           case Some(items) if items.nonEmpty =>
@@ -1281,7 +1286,8 @@ private[agent] object AgentIdle:
                 eventType,
                 None,
                 fromUser,
-                project
+                project,
+                deviceZone = deviceZone
               )
             yield idle(agentDef, resources, depth, parentRef, state)
 

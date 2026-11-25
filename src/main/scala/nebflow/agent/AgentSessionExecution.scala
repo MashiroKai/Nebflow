@@ -1536,8 +1536,14 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 )
               nebflow.core.sandbox.SandboxPolicy.off
         else nebflow.core.sandbox.SandboxPolicy.off
+      recentDeviceZone <- if state.execution.deviceZoneFallbackAllowed then
+        new nebflow.core.scheduler.DeviceZoneReports(nebflow.shared.PathUtil.dataRoot).latest
+      else IO.pure(None)
       toolCtx = ToolContext(
         projectRoot = effectiveProjectRoot,
+        deviceZone = state.execution.deviceZone,
+        deviceZoneFallbackAllowed = state.execution.deviceZoneFallbackAllowed,
+        recentDeviceZone = recentDeviceZone,
         llm = Some(resources.llm),
         sessionStore = Some(resources.sessionStore),
         agentActorRef = Some(ctx.self),

@@ -749,9 +749,14 @@ private[agent] object AgentProcessing:
         else
           val immediate = nextState.execution.pendingImmediateInputs
           val queued = nextState.execution.pendingUserInputs
-          val cleanState =
-            nextState.copy(execution = nextState.execution.copy(pendingImmediateInputs = Nil, pendingUserInputs = Nil))
           val users = queued.collect { case input: UserInput => input }
+          // A merged LLM request cannot attribute a tool call to an individual input.
+          val turnZone = nebflow.core.scheduler.TodoDue.mergedDeviceZone(
+            immediate.map(_.deviceZone) ++ users.map(_.deviceZone)
+          )
+          val cleanState = nextState.copy(execution = nextState.execution.copy(
+            pendingImmediateInputs = Nil, pendingUserInputs = Nil, deviceZone = turnZone, deviceZoneFallbackAllowed = false
+          ))
           val selectedImmediate = immediate.map { input =>
             val content =
               input.blocks.filter(_.nonEmpty).fold[Either[String, List[ContentBlock]]](Left(input.text))(Right(_))
@@ -1047,6 +1052,15 @@ private[agent] object AgentProcessing:
             state.execution
               .copy(
                 messages = newMessages,
+                // Mid-turn inputs share the next LLM request: any unknown or differing
+                // source makes the whole turn ambiguous, without changing batching.
+                deviceZoneFallbackAllowed = if immInputs.nonEmpty || mailInputs.nonEmpty || humanFrameInputs.nonEmpty then false else state.execution.deviceZoneFallbackAllowed,
+                deviceZone = if immInputs.nonEmpty || mailInputs.nonEmpty || humanFrameInputs.nonEmpty then
+                  nebflow.core.scheduler.TodoDue.mergedDeviceZone(
+                    List(state.execution.deviceZone) ++ immInputs.map(_.deviceZone) ++
+                      mailInputs.map(_ => None) ++ humanFrameInputs.map(_.deviceZone)
+                  )
+                else state.execution.deviceZone,
                 // D3: keep a pending permission across the turn boundary — the
                 // root holds the sub-agent's Deferred while waiting for the user
                 // answer; clearing it here would strand the sub-agent until the

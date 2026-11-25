@@ -276,7 +276,8 @@ object AgentCommand:
      * （idle 直达件无排队，恒 `None`）；非 mail 件恒 `None`。**位置置末**（
      * `project` 之后，同上款理由——不使既有位置构造/解构错位）。
      */
-    queuedAtMs: Option[Long] = None
+    queuedAtMs: Option[Long] = None,
+    deviceZone: Option[String] = None
   ) extends AgentCommand
 
   /**
@@ -369,7 +370,8 @@ object AgentCommand:
      * （`CompactionQueueStore:103`、`DeviceMailSpec:410`），插在中间会把旧实参
      * 错位 ⇒ 置末使既有位置调用逐字保持可编译。缺席 ⇒ `None` ⇒ 行为逐字现状。
      */
-    clientMessageId: Option[String] = None
+    clientMessageId: Option[String] = None,
+    deviceZone: Option[String] = None
   ) extends AgentCommand
 
   case class Interrupt() extends AgentCommand
