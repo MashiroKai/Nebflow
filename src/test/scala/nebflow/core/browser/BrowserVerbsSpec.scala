@@ -43,6 +43,17 @@ class BrowserVerbsSpec extends CatsEffectSuite:
     assert(!registry.isTakingOver("work"))
   }
 
+  test("CDP event subscribers receive only their event and can unsubscribe") {
+    val events = new CdpEventSubscriptions
+    var received = List.empty[Int]
+    val cancel = events.subscribe("Page.screencastFrame", json => received = received :+ json.hcursor.get[Int]("sessionId").toOption.get)
+    events.dispatch("Other", Json.obj("sessionId" -> 1.asJson))
+    events.dispatch("Page.screencastFrame", Json.obj("sessionId" -> 2.asJson))
+    cancel()
+    events.dispatch("Page.screencastFrame", Json.obj("sessionId" -> 3.asJson))
+    assertEquals(received, List(2))
+  }
+
   test("external and pre-restart unowned sessions refuse takeover but permit ordinary verbs") {
     for scenario <- List("external", "pre-restart") do
       val registry = new BrowserTakeoverRegistry
