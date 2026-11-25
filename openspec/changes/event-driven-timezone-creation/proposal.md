@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Proposed implementation. Covers the current batch only; earlier branch slices have no retrospective change record. A reminder due is independent of the existing daily todo surface. Message zones remain per-message; merged inputs retain a zone only if every source has the same valid region. Author subsequently chose the most recently reported device as the fallback when the initiating message has no device zone. A separate persistent per-device latest-report record and creation-source audit are therefore required.
+Input contract approved by the author (28d33e78); other explicitly identified Spider rulings remain pending author confirmation. Covers the current batch only; earlier branch slices have no retrospective change record. A reminder due is independent of the existing daily todo surface. Message zones remain per-message; merged inputs retain a zone only if every source has the same valid region. Author subsequently chose the most recently reported device as the fallback when the initiating message has no device zone. A separate persistent per-device latest-report record and creation-source audit are therefore required.
 
 ## Requirements and acceptance scenarios
 
@@ -39,4 +39,4 @@ Proposed implementation. Covers the current batch only; earlier branch slices ha
 
 - Exercise old records, both write ports, valid and invalid regions, offset and offset-free input, cross-midnight, DST gaps and overlaps, different device regions, occurrence deduplication, crash retry and expiry with individually discriminating red/green tests.
 - Instance interpretation uses its bound rule version; tick, rearm and direct new-rule saves use the current rule. A store-level atomic claim and settlement seam is required for the author's rescheduling decision; this slice adds no delivery frame, actor delivery wiring, or external notification exactly-once guarantee. Visible due delivery and replay belong to B/D after A integration; timezone presentation remains in this batch. Notification exactly-once and real network delivery are not claimed.
-- Q3–Q6 and these input and compatibility decisions are Spider rulings pending author confirmation. Q7 thresholds remain open; automatic catch-up is outside this batch. Before merge, author review must decide whether earlier slices need their own OpenSpec change records.
+- The four write-port input contract decisions are author-approved (28d33e78); Q3–Q6 and separately identified compatibility and implementation decisions remain Spider rulings pending author confirmation. Q7 thresholds remain open; automatic catch-up is outside this batch. Before merge, author review must decide whether earlier slices need their own OpenSpec change records.
