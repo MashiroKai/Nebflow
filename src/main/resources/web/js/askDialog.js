@@ -128,12 +128,19 @@ function setMarkdownHtml(node, text, streaming) {
  * @property {number} [lastFrameAt]
  * @property {string} [mailAddress]
  * @property {string} [replyState]
+ * @property {any} [askWorklineView]
+ * @property {string} [askThinking]
+ * @property {string} [askTool]
+ * @property {string} [askToolDetail]
+ * @property {string} [askLastKind]
+ * @property {Array<{kind:string,text:string,name?:string}>} [askProcess]
  */
 
 /**
  * @typedef {Object} AskDialogCfg
  * @property {(zh: string, en: string) => string} tt 双语
  * @property {string} placeholder 输入条 placeholder
+ * @property {boolean} [workline] Canvas workline opt-in
  * @property {() => AskSession|null} activeSession 当前会话
  * @property {(s: AskSession) => boolean} canSubmit 发送前硬闸
  * @property {() => Promise<AskSession|null>} ensureSession 取/建会话
@@ -670,12 +677,15 @@ export function createAskDialog(cfg) {
       s.lastFrameAt = Date.now();
       if (!s.askProcess) s.askProcess = [];
       if (msg.type === 'thinkingDelta') {
+        if (s.askLastKind !== 'thinking') s.askThinking = '';
+        s.askLastKind = 'thinking';
         s.askThinking = (s.askThinking || '') + (msg.delta || '');
         let item = s.askProcess[s.askProcess.length - 1];
         if (!item || item.kind !== 'thinking') { item = { kind: 'thinking', text: '' }; s.askProcess.push(item); }
         item.text += msg.delta || '';
       }
       if (msg.type === 'toolCallDetected' || msg.type === 'toolStart') {
+        s.askLastKind = 'tool';
         s.askTool = msg.label || msg.toolName || msg.name || 'Tool';
         s.askToolDetail = '';
         const last = s.askProcess[s.askProcess.length - 1];
@@ -694,7 +704,11 @@ export function createAskDialog(cfg) {
       if (!typingNode || !typingNode.isConnected) dlg.appendTyping();
       const view = s.askWorklineView;
       if (!view) return;
-      if (msg.type === 'thinkingDelta') thinkingWorklineItem(view, s.askThinking);
+      if (msg.type === 'thinkingDelta') {
+        thinkingWorklineItem(view, s.askThinking);
+        const think = view.dom.chat.querySelector('.nf-wl-think');
+        if (think) { think.scrollLeft = 1e7; think.classList.toggle('nf-wl-clip', think.scrollLeft > 0); }
+      }
       if (msg.type === 'toolCallDetected' || msg.type === 'toolStart') startWorklineItem(view, s.askTool);
       if (msg.type === 'toolArgDelta') worklineToolDetail(view, s.askToolDetail);
       if (msg.type === 'toolEnd' && s.askTool) {
@@ -703,7 +717,7 @@ export function createAskDialog(cfg) {
       }
     },
     updateTypingText(text) {
-      if (cfg.workline) { dlg.removeTyping(); return; }
+      if (cfg.workline) { dlg.removeTyping(); dlg.updateStreaming(cfg.activeSession()); return; }
       if (!typingNode || !typingNode.isConnected || typeof text !== 'string') return;
       if (!text) return; // 思考期保持 spinner：首个非空 token 才换相
       typingNode.textContent = text;
@@ -737,7 +751,7 @@ export function createAskDialog(cfg) {
       input.value = '';
       input.style.height = 'auto';
       // ④ 双泡修复批 2026-10-31：发问时**不再预压空 ai 泡**——等待期只有 typing。
-      if (cfg.workline) { s.askThinking = ''; s.askTool = ''; s.askToolDetail = ''; s.askProcess = []; }
+      if (cfg.workline) { s.askThinking = ''; s.askTool = ''; s.askToolDetail = ''; s.askLastKind = ''; s.askProcess = []; }
       const userRow = { role: 'user', text: v, ts: Date.now() };
       if (picked.length) userRow.images = picked.map((p) => ({ name: p.name, url: p.url }));
       s.msgs.push(userRow);
