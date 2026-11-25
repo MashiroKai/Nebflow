@@ -86,6 +86,7 @@ class WebSocketRoutes(
 ):
   private val logger = NebflowLogger.forName("nebflow.ws")
   private val attachmentOwnerStore = OwnerStore.forDataRoot(PathUtil.dataRoot.toNIO)
+  private val browserTakeoverTickets = new nebflow.core.browser.BrowserTakeoverTickets(() => System.currentTimeMillis(), 120000L)
 
   /**
    * #295 热更：setSttConfig 写配置后重建服务并替换此 Ref——transcribe 立即
@@ -1299,6 +1300,23 @@ class WebSocketRoutes(
                                 // 门户身份透传批（方案 A1）：本连接的会话身份随帧进消息
                                 // 分发（两处消费点：typeless 腿 + immediateInput 腿——
                                 // 后者经 wsDispatchContext 闭包）。Bearer 轨恒 None。
+                                else if parsedJson(text).hcursor.get[String]("type").toOption.contains("browserTakeoverTicket") then
+                                  val origin = req.headers.headers.find(_.name.toString.equalsIgnoreCase("Origin")).map(_.value)
+                                  val host = req.headers.headers.find(_.name.toString.equalsIgnoreCase("Host")).map(_.value).getOrElse("")
+                                  val requestId = parsedJson(text).hcursor.get[String]("correlationId").toOption.getOrElse("")
+                                  (OwnerIdentity.localAnchor, AskHostLedger.requestState(requestId)).tupled.flatMap { (anchor, state) =>
+                                    val owner = BrowserTakeoverAuth.allowed(sessionIdentity.map(_.accountSub), anchor.map(_.sub))
+                                    val allowedOrigin = BrowserTakeoverAuth.validOrigin(origin, host, HealthRoutes.allowedProbeOrigins)
+                                    val eligible = state.filter(s => (s.terminal.isEmpty || s.terminal.exists(_.isInstanceOf[AskHostLedger.Terminal.TimedOut])) && s.lateReplies.isEmpty)
+                                      .flatMap(s => AskHostTool.takeoverSession(s.question).map(session => (s, session)))
+                                      .filter { case (s, session) => nebflow.core.browser.BrowserSessions.takeoverRegistry.ownedBy(session, s.pending.workerSession) }
+                                    if !owner || !allowedOrigin || eligible.isEmpty then
+                                      perConnJsonSend(Json.obj("type" -> "browserTakeoverTicketResult".asJson, "error" -> "接管请求未授权或不可用".asJson))
+                                    else
+                                      val (s, session) = eligible.get
+                                      val ticket = browserTakeoverTickets.issue(s.pending.correlationId, s.pending.workerSession, session)
+                                      perConnJsonSend(Json.obj("type" -> "browserTakeoverTicketResult".asJson, "correlationId" -> requestId.asJson, "ticket" -> ticket.asJson))
+                                  }
                                 else handleMessage(text, perConnJsonSend, watchSession, sessionIdentity, Some(cred))
                               handled.handleErrorWith { e =>
                                 logger.error(s"WebSocket message handler error: ${e.getMessage}", e)
