@@ -42,6 +42,12 @@ class OwnerGateBootSpec extends munit.FunSuite:
     assert(!BrowserTakeoverAuth.allowed(Some("other"), Some("owner")))
     assert(BrowserTakeoverAuth.allowed(Some("owner"), Some("owner")))
 
+  test("browser takeover origin rejects cross-site and malformed origins"):
+    assert(BrowserTakeoverAuth.validOrigin(Some("http://localhost:6138"), "localhost:6138", Set.empty))
+    assert(!BrowserTakeoverAuth.validOrigin(Some("http://evil.example"), "localhost:6138", Set.empty))
+    assert(!BrowserTakeoverAuth.validOrigin(Some("http://localhost:6138/path"), "localhost:6138", Set.empty))
+    assert(!BrowserTakeoverAuth.validOrigin(None, "localhost:6138", Set.empty))
+
   private val ServedSub = "logto|user-A"
   private val OwnerSub = "logto|user-B"
 
