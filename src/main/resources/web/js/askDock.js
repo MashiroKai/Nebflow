@@ -480,7 +480,7 @@ function buildDialog() {
     onQueued: (s, sent) => { noteAskQueued(s, !sent); },
     // 帧事实喂入口（状态可见性与失败上报批）：内核 consume 每收一帧就回调一次
     //（通用挂钩，内核不知道帧语义）；本文件按 msg.type 记事实/上报/重投影。
-    onFrame: (kind, msg, s) => { onKernelFrame(msg, kind, s); },
+    onFrame: (kind, msg, s) => { onKernelFrame(kind, msg, s); },
     // 草稿变化即时重投影：「待发送 ⇄ 空闲」这一拍不必等 1s 节拍（状态可见性批）。
     onInput: () => { syncTurnStatus(); },
     // 中止动作（取消 ≠ 失败）：canvas 档自己收口回合事实（settleTurn({cancel:true})）
