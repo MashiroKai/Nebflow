@@ -609,13 +609,14 @@ export function renderDocumentMentions(host, data, projectName, absPath = '') {
  *
  * @param {HTMLElement} host 落面宿主
  * @param {string|null} [projectName] 作用域工程（缺省 = 合并视图，歧义不猜）
+ * @param {() => boolean} [isCurrent] 可选的异步宿主有效性检查
  * @returns {Promise<number>} 生成的词条链接数（0 = 无词条/无图谱/出错）
  */
-export async function termLinkify(host, projectName) {
+export async function termLinkify(host, projectName, isCurrent) {
   if (!host || typeof host.querySelectorAll !== 'function') return 0;
   let data = null;
   try { data = await wikiGraph(); } catch { data = null; }
-  if (!data) return 0;
+  if (!data || (isCurrent && !isCurrent())) return 0;
   try { return renderAutoTerms(host, data, projectName || null, ''); } catch { return 0; }
 }
 

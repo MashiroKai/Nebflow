@@ -19,7 +19,7 @@
 //      卡片宿主（共享管线挂载，全局 observer 生效）——五面同管线，测三面
 //      代表（wiki docs 与 viewer 同链路）
 //   R6 术语 hover：卡内 [[词条]] → a.nf-wikilink-term（data-wiki-term-fallback）
-//      → hover 出 .nf-term-tip（词条名+定义，API 兜底腿恰一次）
+//      → 点击出 .document-term-card（词条名+定义，API 兜底腿恰一次）
 //   R7 亮暗双主题：卡片背景随 prefers-color-scheme 翻转 + 截图×2
 //   R8 全进程零 console 错误 / 零 pageerror
 //
@@ -340,25 +340,22 @@ try {
   });
   ok(citeArm.text === '反馈回路' && citeArm.kind === 'fallback', `R6 词条引用 linkify（text=${citeArm.text} kind=${citeArm.kind}）`);
   const hitsBefore = termApi();
-  await page.hover('#r5-chat-host a.nf-wikilink-term');
-  await page.waitForSelector('.nf-term-tip', { state: 'visible', timeout: 10000 });
+  await page.click('#r5-chat-host a.nf-wikilink-term');
+  await page.waitForSelector('.document-term-card', { state: 'visible', timeout: 10000 });
+  await page.waitForFunction(() => document.querySelector('.document-term-summary')?.textContent.includes('重试放大负载'));
   const tip = await page.evaluate(() => {
-    const el = document.querySelector('.nf-term-tip');
+    const el = document.querySelector('.document-term-card');
     return {
-      name: el.querySelector('.tt').textContent,
-      def: el.querySelector('.ts').textContent,
+      name: el.querySelector('strong').textContent,
+      def: el.querySelector('.document-term-summary').textContent,
     };
   });
   ok(tip.name === '反馈回路', `R6 hover 气泡出泡（词条名=${tip.name}）`);
   ok(/重试放大负载/.test(tip.def), `R6 气泡带定义（${tip.def.slice(0, 20)}…）`);
   ok(termApi() - hitsBefore === 1, `R6 API 兜底腿恰一次（Δ=${termApi() - hitsBefore}）`);
-  await page.mouse.move(5, 5);
-  await sleep(300);
-  const tipHidden = await page.evaluate(() => {
-    const el = document.querySelector('.nf-term-tip');
-    return !el || el.style.display === 'none';
-  });
-  ok(tipHidden, 'R6 移开后气泡收起');
+  await page.keyboard.press('Escape');
+  const tipHidden = await page.locator('.document-term-card').count() === 0;
+  ok(tipHidden, 'R6 Escape 后气泡收起');
 
   // ── R7 亮暗双主题 + 截图（聊天气泡宿主元素级取景，抽屉点开态） ──
   await page.evaluate(() => {

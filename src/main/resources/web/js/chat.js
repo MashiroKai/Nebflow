@@ -917,6 +917,19 @@ export function finishAi(durationMs, model) {
       if (rootFace) markZeroBlockFace(bubble, activeView.stream.aiText || '');
     }
     bubble._nfText = activeView.stream.aiText || '';
+    const termText = bubble._nfText;
+    void import('./viewers/markdown.js').then(({ termLinkify }) => {
+      if (!bubble.isConnected || bubble._nfText !== termText) return;
+      return termLinkify(bubble, null, () => bubble.isConnected && bubble._nfText === termText).then(() => {
+        if (!bubble.isConnected || bubble._nfText !== termText) return;
+        bubble.querySelectorAll('a.nf-wikilink-term').forEach((link) => {
+          link.addEventListener('click', (event) => {
+            event.preventDefault();
+            void import('./termTip.js').then(({ termTapExpand }) => termTapExpand(link, null));
+          });
+        });
+      });
+    }).catch(() => {});
     bubble._nfRendered = true;
     if (askBox) bubble.appendChild(askBox);
     activeView.stream.aiStreamAskBox = null;

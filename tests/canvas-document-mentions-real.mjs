@@ -43,6 +43,6 @@ try {
  assert.equal(await host.locator('pre a.nf-term, code a.nf-term, pre .nf-wikilink, code .nf-wikilink, pre .nf-wikilink-term, code .nf-wikilink-term').count(),0,'code excluded');
  assert.equal(await host.locator('a[href="https://example.org"] a.nf-term').count(),0,'existing link excluded');
  await host.locator('a.nf-term').first().click();
- await page.locator('.nf-term-tip').waitFor({state:'visible'});
+ await page.locator('.document-term-card').waitFor({state:'visible'});
  console.log('PASS',engine,'real markdown → term tip; unique, duplicate, exclusions');
 } finally { await browser.close(); }

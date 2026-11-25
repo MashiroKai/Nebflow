@@ -125,8 +125,8 @@ const awaitReveal = (page, rel) => page.waitForFunction((p) => {
 /** 词条气泡是常驻 dialog（fixed 盖在相邻文本上）：连续点第二个词条前走产品
  *  自身的关闭钮收起（S1 的点击显气泡行为不变，这里只是复现用户的自然顺序）。 */
 const closeTip = async (page) => {
-  if (await page.locator('.nf-term-tip').isVisible()) {
-    await page.locator('.nf-term-tip .term-tip-close').click();
+  if (await page.locator('.document-term-card').isVisible()) {
+    await page.keyboard.press('Escape');
   }
 };
 

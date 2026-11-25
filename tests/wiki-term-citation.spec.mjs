@@ -389,7 +389,7 @@ test('请求计数对照同夹具', async ({ browser }) => {
     if (u.pathname.startsWith('/api/wiki/term')) counts[u.pathname] = (counts[u.pathname] || 0) + 1;
   });
   await page.locator('a.nf-wikilink-term', { hasText: 'GCR' }).click();
-  const summary = page.locator('.document-term-summary, .nf-term-tip .ts');
+  const summary = page.locator('.document-term-summary');
   await expect(summary).toContainText('银河宇宙线');
   if (process.env.TERM_ORIGINAL_ASSERTION) {
     expect(Object.values(counts).reduce((a, b) => a + b, 0), '载荷命中 = 兜底 API 零请求（原夹具 /term** 通配计数）').toBe(0);
@@ -443,7 +443,7 @@ test.describe('统一卡片截图与锚点', () => {
       setActiveView(chatViews.primary);
       chatViews.primary.setSession('term-fixture');
       const chat = await import('/js/chat.js');
-      chat.appendAiText('聊天正文 [[GCR]]');
+      chat.appendAiText('聊天正文 GCR');
       chat.finishAi();
     });
     await expect(page.locator('#chat .bubble').filter({ hasText: '聊天正文' })).toBeVisible();
@@ -451,6 +451,9 @@ test.describe('统一卡片截图与锚点', () => {
     await expect(link).toBeVisible({ timeout: 5000 });
     await link.click();
     await expect(page.locator('.document-term-card')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.document-term-card .document-term-summary')).toContainText('银河宇宙线');
+    await expect(page.getByRole('button', { name: '打开原词条' })).toBeHidden();
+    expect(await page.evaluate(() => window.__openEvents.length)).toBe(0);
     await context.close();
   });
 
