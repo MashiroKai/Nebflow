@@ -261,6 +261,18 @@ class TodoTaxonomySpec extends CatsEffectSuite:
   private def callTool(input: Json): Either[ToolError, String] =
     ScheduleTool.call(input.asObject.get, mkCtx()).unsafeRunSync()
 
+  test("tool todo overlap selects earlier instant and exposes chosen offset"):
+    val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
+    val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision, "triggerAt" -> "2035-11-04T01:30".asJson)
+    for
+      _ <- reset()
+      result <- ScheduleTool.call(input.asObject.get, mkCtx().copy(deviceZone = Some("America/New_York")))
+      stored <- taskStore.getAllTodos
+    yield
+      assert(result.isRight, s"overlap must resolve: $result")
+      assertEquals(stored.head.nextDueAt, Some(java.time.Instant.parse("2035-11-04T05:30:00Z").toEpochMilli))
+      assert(result.toOption.get.contains("-04:00"), "the selected overlap offset must appear in the receipt")
+
   test("tool todo gap resolves to the first valid local instant"):
     val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
     val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision, "triggerAt" -> "2035-03-11T02:30".asJson)

@@ -894,7 +894,11 @@ Your context does NOT show the current date/time — never invent an absolute da
         val dueNote = due.map { rule =>
           val local = LocalDateTime.parse(rule.wallClock)
           val transition = ZoneId.of(rule.zoneId).getRules.getTransition(local)
-          val adjustment = if transition != null && transition.isGap then " (adjusted to first valid time)" else ""
+          val adjustment =
+            if transition != null && transition.isGap then " (adjusted to first valid time)"
+            else if transition != null && transition.isOverlap then
+              s" (overlap: ${Instant.ofEpochMilli(rule.dueAt).atZone(ZoneId.of(rule.zoneId)).getOffset})"
+            else ""
           s" [due: ${rule.wallClock} ${rule.zoneId}$adjustment]"
         }.getOrElse("")
         Right(
