@@ -72,7 +72,7 @@ class Relay:
   fd=os.open(self.args.ledger+'.abort',os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600)
   try:
    if os.write(fd,data)!=len(data): raise OSError('short sidecar write')
-   os.fsync(fd)
+   os.fsync(fd); return True
   finally: os.close(fd)
  def recover_sidecar(self):
   path=self.args.ledger+'.abort'
@@ -120,16 +120,16 @@ class Relay:
     except BlockingIOError:
      left=end-time.monotonic()
      if left<=0:
-      self.sidecar(obj); return
+      return self.sidecar(obj)
      threading.Event().wait(min(left,0.01))
    try:
     # A waiter may have opened the old inode before an atomic replacement.
     if os.fstat(ledger.fileno()).st_ino != os.stat(self.args.ledger).st_ino:
      return self.sidecar(obj)
     try:
-     ledger.write(json.dumps(obj,separators=(',',':'))+'\n'); ledger.flush(); os.fsync(ledger.fileno())
+     ledger.write(json.dumps(obj,separators=(',',':'))+'\n'); ledger.flush(); os.fsync(ledger.fileno()); return True
     except OSError:
-     self.sidecar(obj)
+     return self.sidecar(obj)
    finally: fcntl.flock(ledger.fileno(),fcntl.LOCK_UN)
  def rejection_event(self,obj):
   obj=dict(obj); obj.setdefault('record_id',uuid.uuid4().hex); identity=obj['record_id']
@@ -137,23 +137,12 @@ class Relay:
   with self.rejection_lock: self.rejections[identity]='inflight'
   def finalize():
    try:
-    try: self.event(obj)
-    except OSError: pass
-    found=False
-    for path in (self.args.ledger,self.args.ledger+'.abort'):
-     try:
-      with open(path,encoding='utf-8') as f:
-       for line in f:
-        try: found |= json.loads(line).get('record_id')==identity
-        except (ValueError,UnicodeDecodeError): continue
-     except FileNotFoundError: pass
-    if not found:
-     try: self.sidecar(obj); found=True
-     except OSError: pass
+    try: recorded=self.event(obj) is True
+    except Exception: recorded=False
     with self.rejection_lock:
-     self.rejections[identity]='recorded' if found else 'unrecorded'
-     if not found: self.unrecorded_rejections+=1
-    if not found: print('unrecorded rejection',file=sys.stderr,flush=True)
+     self.rejections[identity]='recorded' if recorded else 'unrecorded'
+     if not recorded: self.unrecorded_rejections+=1
+    if not recorded: print('unrecorded rejection',file=sys.stderr,flush=True)
    finally: done.set()
   threading.Thread(target=finalize,daemon=True).start()
   if not done.wait(self.lock_timeout+self.abort_timeout): return False

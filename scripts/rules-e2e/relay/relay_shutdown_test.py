@@ -138,7 +138,7 @@ server.serve_forever()'''
   relay.stopping=True; entered=threading.Event(); release=threading.Event(); written=threading.Event(); original=relay.event
   def delayed(obj):
    if obj['trace_id']=='late': entered.set(); release.wait(2)
-   original(obj); written.set()
+   result=original(obj); written.set(); return result
   relay.event=delayed
   from relay_concurrency_test import H
   h=H('late'); h.send_error=lambda *a:None
@@ -149,6 +149,24 @@ server.serve_forever()'''
   written.clear(); release.set(); self.assertTrue(written.wait(2))
   self.assertEqual(sum(json.loads(x)['status']=='rejected-limit' for x in self.path.read_text().splitlines()),2)
   with relay.rejection_lock: self.assertEqual(relay.unrecorded_rejections,0)
+ def test_late_results_after_429(self):
+  from relay_concurrency_test import H
+  for result in (True,False):
+   with self.subTest(result=result), tempfile.TemporaryDirectory(dir=os.environ['RELAY_EVIDENCE_DIR']) as tmp:
+    relay=m.Relay(args(pathlib.Path(tmp)/'ledger'),lock_timeout=.03,abort_timeout=.03); relay.stopping=True
+    entered=threading.Event(); release=threading.Event(); responses=[]; done=threading.Event()
+    def writer(obj): entered.set(); release.wait(2); return result
+    relay.event=writer; h=H('late'); h.send_error=lambda status,*a:responses.append(status)
+    with patch('sys.stderr',new_callable=io.StringIO):
+     relay.handle(h); self.assertTrue(entered.is_set()); self.assertEqual(responses,[429]); self.assertEqual(list(relay.rejections.values()),['inflight'])
+     release.set()
+     # Signal on classification rather than timing assumptions.
+     def observe():
+      with relay.rejection_lock:
+       if list(relay.rejections.values())!=['inflight']: done.set()
+      if not done.is_set(): threading.Timer(.01,observe).start()
+     observe(); self.assertTrue(done.wait(2)); self.assertEqual(list(relay.rejections.values()),['recorded' if result else 'unrecorded'])
+    relay.ledger.close(); relay.owner.close()
  def test_watchdog_only_starts_once(self):
   relay=m.Relay(args(self.path),grace=1,exit_fn=lambda code:None)
   self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
