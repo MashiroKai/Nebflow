@@ -1,0 +1,10 @@
+{
+  "panel": "mobile-messages",
+  "route": "mobile:dock/messages，滚动收起搜索",
+  "viewportGroups": [{"width":390,"height":844,"themes":["light","dark"],"dpr":[1]}],
+  "elements": [
+    {"id":"collapsed-search","selector":".mobile-page[data-page=\"messages\"].live .mh-search-bar","properties":["borderRadius","backgroundColor","color","boxShadow","fontSize","fontWeight","height","padding","border"],"box":true},
+    {"id":"conversation-row","selector":".mobile-page[data-page=\"messages\"].live .fm-conv-row","properties":["borderRadius","backgroundColor","color","boxShadow","fontSize","fontWeight","padding","border"],"box":false},
+    {"id":"mobile-dock","selector":"#mobile-dock","properties":["borderRadius","backgroundColor","color","boxShadow","fontSize","fontWeight","height","padding","border"],"box":true}
+  ]
+}
