@@ -105,6 +105,27 @@ class Battery:
         return ok
 
 
+def case_env(battery, tmp):
+    from unittest.mock import patch
+
+    keys = ('CUBU_BASELINE', 'PLAYWRIGHT_BROWSERS_PATH')
+    for key in keys:
+        for present in (False, True):
+            parent = {'UNLISTED_ENV_PROBE': 'secret'}
+            if present:
+                parent[key] = 'value with spaces'
+            with patch.dict(os.environ, parent, clear=True):
+                env = mod.build_env(tmp / 'isolated-home')
+            child = subprocess.run([sys.executable, '-c',
+                                    'import json, os; print(json.dumps(dict(os.environ)))'],
+                                   env=env, capture_output=True, text=True, check=True)
+            actual = json.loads(child.stdout)
+            ok = (actual.get(key) == 'value with spaces' if present else key not in actual)
+            ok = ok and 'UNLISTED_ENV_PROBE' not in actual
+            ok = ok and actual['HOME'] == str(tmp / 'isolated-home')
+            battery.check(f'env-{key}-{present}', ok, 'child env; unlisted scrubbed; HOME isolated')
+
+
 def case_a(battery, tmp):
     fake = make_fake(tmp / 'a', 'fake-sbt', "print('fake sbt task done')\nsys.exit(0)")
     runs_before = set(mod.RUNS_DIR.glob('*')) if mod.RUNS_DIR.exists() else set()
@@ -451,6 +472,7 @@ def main():
     battery = Battery()
     with tempfile.TemporaryDirectory(prefix='sbt-guard-selftest-') as name:
         tmp = pathlib.Path(name)
+        case_env(battery, tmp)
         case_w(battery, tmp)   # refusals first: nothing must ever start
         case_l(battery, tmp)
         case_n(battery, tmp)
