@@ -215,6 +215,31 @@ server.serve_forever()'''
   self.assertEqual(codes,[2]); self.assertTrue(lines[0]['sealed']); summary=lines[1]
   self.assertEqual((summary['abort_write_confirmed'],summary['abort_write_unconfirmed'],summary['recorded_this_run'],summary['still_inflight_at_exit']),(0,0,1,0))
   self.assertFalse(pathlib.Path(str(self.path)+'.abort').exists())
+ def test_abort_fsync_stall_is_unconfirmed_and_bounded(self):
+  codes=[]; grace=.01; budget=.12
+  relay=m.Relay(args(self.path),grace=grace,abort_timeout=budget,exit_fn=codes.append)
+  self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
+  writer_entered=threading.Event(); release_writer=threading.Event(); fsync_entered=threading.Event(); release_fsync=threading.Event(); fsync_done=threading.Event(); daemon=[]
+  self.addCleanup(release_writer.set); self.addCleanup(release_fsync.set)
+  relay._event_unlocked=lambda obj:(writer_entered.set(),release_writer.wait(3),True)[-1]
+  original_fsync=m.os.fsync
+  def stalled_fsync(fd):
+   daemon.append(threading.current_thread().daemon); fsync_entered.set()
+   try:
+    if not release_fsync.wait(3): raise TimeoutError('fsync gate')
+    return original_fsync(fd)
+   finally: fsync_done.set()
+  worker=threading.Thread(target=lambda:relay.event({'seq':7,'status':'reserved','record_id':'pending-fsync'}),daemon=True)
+  worker.start(); self.assertTrue(writer_entered.wait(1))
+  with patch.object(m.os,'fsync',side_effect=stalled_fsync),patch('sys.stderr',new_callable=io.StringIO) as out:
+   start=time.monotonic(); relay.force_after_grace(); elapsed=time.monotonic()-start
+   summaries=[json.loads(line) for line in out.getvalue().splitlines()]
+   self.assertTrue(fsync_entered.is_set()); self.assertEqual(daemon,[True]); self.assertEqual(codes,[2])
+   self.assertTrue(summaries[0]['sealed']); self.assertEqual(summaries[1]['abort_write_unconfirmed'],1); self.assertEqual(summaries[1]['abort_write_confirmed'],0)
+   self.assertLessEqual(elapsed,grace+3*budget+.5)
+   print('T6 elapsed_ms=%.3f budget_ms=%.3f daemon=%s exit=2 unconfirmed=1'%(elapsed*1000,(grace+3*budget+.5)*1000,daemon[0]),flush=True)
+   release_fsync.set(); self.assertTrue(fsync_done.wait(2))
+  release_writer.set(); worker.join(2); self.assertFalse(worker.is_alive())
  def test_summary_excludes_prior_run(self):
   self.path.write_text(json.dumps({'seq':1,'status':'reserved','record_id':'old'})+'\n')
   relay=m.Relay(args(self.path,3)); self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
