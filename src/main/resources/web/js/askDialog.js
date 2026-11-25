@@ -594,6 +594,15 @@ export function createAskDialog(cfg) {
         }
         col.insertBefore(node, ref);
       }
+      if (cfg.workline && s && s.busy) {
+        dlg.appendTyping();
+        const view = s.askWorklineView;
+        if (s.askLastKind === 'thinking' && s.askThinking) thinkingWorklineItem(view, s.askThinking);
+        if (s.askLastKind === 'tool' && s.askTool) {
+          startWorklineItem(view, s.askTool);
+          if (s.askToolDetail) worklineToolDetail(view, s.askToolDetail);
+        }
+      }
       // 落列后的跟随/计数由调用点经 settleCol/snapCol 单点决定（本函数只建 DOM）。
     },
 
@@ -706,8 +715,6 @@ export function createAskDialog(cfg) {
       if (!view) return;
       if (msg.type === 'thinkingDelta') {
         thinkingWorklineItem(view, s.askThinking);
-        const think = view.dom.chat.querySelector('.nf-wl-think');
-        if (think) { think.scrollLeft = 1e7; think.classList.toggle('nf-wl-clip', think.scrollLeft > 0); }
       }
       if (msg.type === 'toolCallDetected' || msg.type === 'toolStart') startWorklineItem(view, s.askTool);
       if (msg.type === 'toolArgDelta') worklineToolDetail(view, s.askToolDetail);

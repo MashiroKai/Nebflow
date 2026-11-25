@@ -476,10 +476,6 @@ body.mobile-layer .note-dock .ds-resize-handle {
   min-width: 0;
 }
 .ask-workline-host { align-self: stretch; min-width: 0; width: 100%; }
-/* Ask keeps the desktop workline geometry until the shared mobile fix lands. */
-.ask-workline-host .nf-workline:has(.nf-wl-think) .nf-wl-slot { height: calc(var(--ds-fs-hint, 12px) * var(--ds-lh-body, 1.5)); overflow: hidden; }
-.ask-workline-host .nf-workline .nf-wl-item:has(.nf-wl-think) { position: absolute; }
-.ask-workline-host .nf-workline .nf-wl-think { white-space: nowrap; overflow: hidden; overflow-wrap: normal; }
 .ask-process-details { align-self: stretch; min-width: 0; font-size: var(--ds-fs-hint); color: var(--color-text-dim); }
 .ask-process-details summary { cursor: pointer; }
 .ask-process-details pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
