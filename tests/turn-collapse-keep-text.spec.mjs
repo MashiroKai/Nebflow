@@ -27,7 +27,7 @@
 // Run: npx playwright test tests/turn-collapse-keep-text.spec.mjs
 
 import { test, expect } from '@playwright/test';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -94,6 +94,10 @@ async function newPage(browser, opts = {}) {
   const page = await context.newPage();
   const pageErrors = [];
   page.on('pageerror', (err) => pageErrors.push(err.message));
+  if (process.env.NB_BASELINE_TURNGROUP === '1') {
+    const source = execFileSync('git', ['show', 'c15a24d35^:src/main/resources/web/js/turnGroup.js'], { cwd: REPO_ROOT, encoding: 'utf8' });
+    await page.route('**/src/main/resources/web/js/turnGroup.js', route => route.fulfill({ status: 200, contentType: 'text/javascript', body: source }));
+  }
   await page.goto(`http://127.0.0.1:${port}${HARNESS_PATH}`);
   await page.waitForFunction(() => window.__ready === true, null, { timeout: 15000 });
   return { context, page, pageErrors };
@@ -104,7 +108,7 @@ async function newPage(browser, opts = {}) {
 function readSeq(page) {
   return page.evaluate(() => {
     const chat = document.getElementById('chat');
-    return Array.from(chat.children).map(k => {
+    return Array.from(chat.children).filter(k => !k.hasAttribute('data-nf-injection-stack')).map(k => {
       if (k.classList.contains('turn-header')) return 'header';
       if (k.classList.contains('row')) {
         const tuck = k.classList.contains('nf-tucked') ? ':tucked' : '';
@@ -142,7 +146,7 @@ function visibleTexts(page) {
 function rowsSnapshot(page) {
   return page.evaluate(() =>
     Array.from(document.getElementById('chat').children)
-      .filter(el => !el.classList.contains('turn-header'))
+      .filter(el => !el.classList.contains('turn-header') && !el.hasAttribute('data-nf-injection-stack'))
       .map(el => el.outerHTML).join('\n'));
 }
 
@@ -166,6 +170,225 @@ const T_A = '好的，我先检索资料，再逐段汇报进展。';
 const T_B = '找到关键线索了：收起分组在turnGroup.js，继续核对细节。';
 const T_FINAL = '这是最终回复：中间过程已收起，回复与卡片照常可见。';
 const T_FINAL2 = '新回合的最终回复。';
+
+for (const zoom of [0.9, 1, 1.1, 1.25, 1.5]) {
+  test(`count ink remains within expanded clipping window at zoom ${zoom}`, async ({ browser }) => {
+    const { context, page } = await newPage(browser, { reducedMotion: 'reduce' });
+    await page.evaluate(() => window.__liveTurn());
+    const result = await page.locator('.nf-injection-stack-digit').evaluate((el, scale) => {
+      document.body.style.zoom = String(scale);
+      const style = getComputedStyle(el);
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      ctx.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+      const m = ctx.measureText(el.textContent);
+      const range = document.createRange(); range.selectNodeContents(el);
+      const r = range.getBoundingClientRect();
+      const clip = el.parentElement.getBoundingClientRect();
+      const line = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.2;
+      const baseline = r.top + (line - parseFloat(style.fontSize)) * scale / 2 + parseFloat(style.fontSize) * scale * 0.8;
+      return { top: baseline - m.actualBoundingBoxAscent * scale, bottom: baseline + m.actualBoundingBoxDescent * scale, clipTop: clip.top - 2 * scale, clipBottom: clip.bottom + 2 * scale };
+    }, zoom);
+    expect(result.top).toBeGreaterThanOrEqual(result.clipTop);
+    expect(result.bottom).toBeLessThanOrEqual(result.clipBottom);
+    const count = page.locator('.nf-injection-stack-count');
+    const button = page.locator('[data-nf-injection-stack] button');
+    const clipped = await button.screenshot();
+    await count.evaluate(el => { el.style.overflow = 'visible'; });
+    const visible = await button.screenshot();
+    expect(clipped.equals(visible)).toBe(true);
+    await context.close();
+  });
+}
+
+for (const width of [900, 390, 375]) {
+  test(`injection stack preserves mid-turn user order and four states at ${width}px`, async ({ browser }) => {
+    const { context, page } = await newPage(browser, { viewport: { width, height: 900 } });
+    const T = 1735689600000;
+    const msgs = [
+      { type: 'user', text: '开轮', timestamp: T },
+      { type: 'tool', label: 'Read', summary: 'ok', content: 'x', isError: false },
+      { type: 'user', injected: true, source: 'deviceMail', text: '第一条蓝色', timestamp: T + 1 },
+      { type: 'user', text: '中途用户插话', midTurn: true, timestamp: T + 2 },
+      { type: 'user', injected: true, source: 'deviceMail', text: '第二条蓝色', timestamp: T + 3 },
+      { type: 'ai', text: '完成', durationMs: 3000, model: 'test-model', timestamp: T + 4 },
+      { type: 'user', text: '下一轮用户消息', timestamp: T + 5 },
+    ];
+    await page.evaluate(m => window.__history(m, { busyTail: false }), msgs);
+    const rows = page.locator('#chat > .row');
+    const baseline = await rows.evaluateAll(els => els.map(el => el.textContent));
+    const button = page.locator('[data-nf-injection-stack] button');
+    await expect(button).toContainText('2');
+    await page.locator('.nf-injection-stack-digit').evaluate(async el => Promise.all(el.getAnimations().map(a => a.finished)));
+    const geometry = await page.evaluate(() => {
+      const rect = el => { const r = el.getBoundingClientRect(); return { left:r.left, right:r.right, top:r.top, bottom:r.bottom }; };
+      const stack = document.querySelector('[data-nf-injection-stack]');
+      const button = stack.querySelector('button');
+      const textFits = [...button.querySelectorAll('.nf-injection-stack-label, .nf-injection-stack-digit')].every(el => {
+        const range = document.createRange(); range.selectNodeContents(el);
+        const text = range.getBoundingClientRect(), box = button.getBoundingClientRect();
+        return text.left >= box.left - 1 && text.right <= box.right + 1 && text.top >= box.top - 1 && text.bottom <= box.bottom + 1;
+      });
+      const nextUser = [...document.querySelectorAll('#chat > .row.user')].find(el => el.textContent.includes('下一轮用户消息'));
+      const digit = stack.querySelector('.nf-injection-stack-digit');
+      const range = document.createRange(); range.selectNodeContents(digit);
+      const dr = range.getBoundingClientRect();
+      const clip = stack.querySelector('.nf-injection-stack-count').getBoundingClientRect();
+      return { viewport: innerWidth, stack: rect(stack), button: rect(button), face: rect(stack.querySelector('.nf-injection-stack-face')), header: rect(document.querySelector('.turn-header')), chat: rect(document.querySelector('#chat')), user: rect(document.querySelector('#chat > .row.user')), nextUser: rect(nextUser), textFits, digit: {left:dr.left,right:dr.right,top:dr.top,bottom:dr.bottom}, clip: {left:clip.left,right:clip.right,top:clip.top,bottom:clip.bottom} };
+    });
+    expect(geometry.stack.top).toBeGreaterThanOrEqual(geometry.header.bottom - 1);
+    expect(geometry.stack.top).toBeGreaterThanOrEqual(geometry.user.bottom - 1);
+    expect(geometry.stack.bottom).toBeLessThanOrEqual(geometry.nextUser.top + 1);
+    console.log(`STABLE_GEOMETRY ${width} ${JSON.stringify({digit: geometry.digit, clip: geometry.clip, button: geometry.button})}`);
+    expect(geometry.textFits).toBe(true);
+    expect(geometry.digit.left).toBeGreaterThanOrEqual(geometry.clip.left - 1);
+    expect(geometry.digit.right).toBeLessThanOrEqual(geometry.clip.right + 1);
+    expect(geometry.digit.top).toBeGreaterThanOrEqual(geometry.clip.top - 1);
+    expect(geometry.digit.bottom).toBeLessThanOrEqual(geometry.clip.bottom + 1);
+    await page.screenshot({ path: path.join(SHOT_DIR, `injection-stable-${width}.png`) });
+    expect(geometry.button.right).toBeLessThanOrEqual(geometry.face.left + 1);
+    expect(Math.abs((geometry.button.top + geometry.button.bottom - geometry.face.top - geometry.face.bottom) / 2)).toBeLessThanOrEqual(1);
+    expect(geometry.button.left).toBeGreaterThanOrEqual(Math.max(0, geometry.chat.left) - 1);
+    expect(geometry.face.right).toBeLessThanOrEqual(Math.min(geometry.viewport, geometry.chat.right) + 1);
+    const injected = page.locator('#chat > .row:has(.bubble.injected)');
+    await expect(injected.nth(0)).toBeHidden();
+    await expect(injected.nth(1)).toBeHidden();
+    await button.click();
+    await expect(injected.nth(0)).toBeVisible();
+    await expect(injected.nth(1)).toBeVisible();
+    await page.locator('.turn-header').click();
+    await expect(button).toBeHidden();
+    await expect(injected.nth(0)).toBeVisible();
+    await page.locator('.turn-header').click();
+    await expect(button).toHaveAttribute('aria-expanded', 'true');
+    await button.click();
+    await page.locator('.turn-header').click();
+    await expect(button).toBeHidden();
+    await expect(injected.nth(1)).toBeVisible();
+    await page.locator('.turn-header').click();
+    await expect(button).toHaveAttribute('aria-expanded', 'false');
+    expect(await rows.evaluateAll(els => els.map(el => el.textContent))).toEqual(baseline);
+    await context.close();
+  });
+}
+
+test('rule anchor: stack follows badge', async ({ browser }) => {
+  const { context, page } = await newPage(browser);
+  await page.evaluate(() => window.__liveTurn());
+  expect(await page.locator('.turn-header').evaluate(el => el.nextElementSibling?.hasAttribute('data-nf-injection-stack'))).toBe(true);
+  await context.close();
+});
+
+test('rule restore: expansion preserves original row order', async ({ browser }) => {
+  const { context, page } = await newPage(browser);
+  await page.evaluate(() => window.__liveTurn());
+  const rows = page.locator('#chat > .row');
+  const before = await rows.evaluateAll(els => els.map(el => el.dataset.msgId || el.className));
+  await page.locator('[data-nf-injection-stack] button').click();
+  expect(await rows.evaluateAll(els => els.map(el => el.dataset.msgId || el.className))).toEqual(before);
+  await expect(page.locator('#chat > .row:has(.bubble.injected)')).toBeVisible();
+  await context.close();
+});
+
+test('rule force: expanding badge reveals collapsed injections', async ({ browser }) => {
+  const { context, page } = await newPage(browser);
+  await page.evaluate(() => window.__liveTurn());
+  await expect(page.locator('#chat > .row:has(.bubble.injected)')).toBeHidden();
+  await page.locator('.turn-header').click();
+  await expect(page.locator('#chat > .row:has(.bubble.injected)')).toBeVisible();
+  await context.close();
+});
+
+for (const scheme of ['light', 'dark']) for (const width of [375, 390, 900]) {
+  test(`delivery screenshot ${scheme} ${width}`, async ({ browser }) => {
+    test.skip(!process.env.NB_STACK_SCREEN_DIR, 'set NB_STACK_SCREEN_DIR to capture delivery screenshots');
+    const { context, page } = await newPage(browser, { colorScheme: scheme, reducedMotion: 'reduce', viewport: { width, height: 900 } });
+    await page.evaluate(() => window.__liveTurn());
+    const dir = process.env.NB_STACK_SCREEN_DIR;
+    if (!dir) throw new Error('NB_STACK_SCREEN_DIR required');
+    fs.mkdirSync(dir, { recursive: true });
+    await page.screenshot({ path: path.join(dir, `${scheme}-${width}-collapsed.png`), animations: 'disabled' });
+    await page.locator('[data-nf-injection-stack] button').click();
+    await expect(page.locator('#chat > .row:has(.bubble.injected)')).toBeVisible();
+    await page.screenshot({ path: path.join(dir, `${scheme}-${width}-expanded.png`), animations: 'disabled' });
+    await context.close();
+  });
+}
+
+test('product stylesheet list matches the harness in source order', async ({ browser }) => {
+  const { context, page } = await newPage(browser);
+  const lists = await page.evaluate(async () => {
+    const doc = new DOMParser().parseFromString(await (await fetch('/src/main/resources/web/index.html')).text(), 'text/html');
+    const product = [...doc.querySelectorAll('head link[rel="stylesheet"]')].map(x => new URL(x.getAttribute('href'), location.origin + '/src/main/resources/web/').href);
+    return { product, harness: await window.__productStyles };
+  });
+  expect(lists.harness).toEqual(lists.product);
+  expect(lists.product.some(x => x.endsWith('/css/design-system.css'))).toBe(true);
+  console.log('PRODUCT_STYLES ' + JSON.stringify(lists.product));
+  await context.close();
+});
+
+test('ownership: opening injection before badge belongs to its new turn', async ({ browser }) => {
+  const { context, page } = await newPage(browser);
+  await page.evaluate(() => window.__liveTurn());
+  await page.evaluate(() => window.__postClosureTurn());
+  const headers = page.locator('.turn-header');
+  await expect(headers).toHaveCount(2);
+  const opener = page.locator('#chat > .row:has(.bubble.injected)').nth(1);
+  const order = await page.evaluate(() => {
+    const children = [...document.querySelector('#chat').children];
+    return { header: children.indexOf(document.querySelectorAll('.turn-header')[1]), opener: children.indexOf([...document.querySelectorAll('#chat > .row')].find(el => el.textContent.includes('每日站会提醒'))) };
+  });
+  expect(order.opener).toBeGreaterThan(order.header);
+  await expect(opener).toBeHidden();
+  await expect(headers.nth(1).locator('xpath=following-sibling::*[1]//button')).toContainText('1');
+  await context.close();
+});
+
+test('ownership: injections after badge count in the same turn', async ({ browser }) => {
+  const { context, page } = await newPage(browser);
+  await page.evaluate(() => window.__liveTurn());
+  await expect(page.locator('[data-nf-injection-stack] button')).toContainText('1');
+  await expect(page.locator('#chat > .row:has(.bubble.injected)')).toBeHidden();
+  await context.close();
+});
+
+test('ownership: no-process injection turn has no stack and stays visible', async ({ browser }) => {
+  const { context, page } = await newPage(browser);
+  await page.evaluate(m => window.__history(m, { busyTail: false }), [
+    { type: 'user', injected: true, source: 'schedule', text: '开轮注入' },
+    { type: 'ai', text: '完成', durationMs: 500, model: 'test-model' },
+  ]);
+  await expect(page.locator('.turn-header')).toHaveCount(0);
+  await expect(page.locator('[data-nf-injection-stack]')).toHaveCount(0);
+  await expect(page.locator('#chat > .row:has(.bubble.injected)')).toBeVisible();
+  await context.close();
+});
+
+test('diagnostic: closed group error baseline DOM', async ({ browser }) => {
+  const { context, page } = await newPage(browser);
+  await page.evaluate(() => window.__liveTurn());
+  await page.evaluate(() => window.__postClosureTurn());
+  const snapshot = () => page.evaluate(() => [...document.querySelector('#chat').children].map(el => ({ tag: el.outerHTML.slice(0, 260), text: el.textContent.trim().slice(0, 65) })));
+  console.log('DOM_BEFORE ' + JSON.stringify(await snapshot()));
+  await page.evaluate(() => window.__refailTurn());
+  console.log('DOM_AFTER ' + JSON.stringify(await snapshot()));
+  await context.close();
+});
+
+test('ownership: same-turn error recovery reveals opening and later injections', async ({ browser }) => {
+  const { context, page } = await newPage(browser);
+  await page.evaluate(() => window.__liveTurn());
+  await page.evaluate(() => window.__postClosureTurn());
+  await page.evaluate(() => window.__refailTurn());
+  // Pre-feature baseline also dissolves both headers on this re-terminal path.
+  await expect(page.locator('.turn-header')).toHaveCount(0);
+  await expect(page.locator('[data-nf-injection-stack]')).toHaveCount(0);
+  const injections = page.locator('#chat > .row:has(.bubble.injected)');
+  await expect(injections.nth(0)).toBeVisible();
+  await expect(injections.nth(1)).toBeVisible();
+  await context.close();
+});
 
 test.describe('decompression model — live alternating turn (验收 ②④)', () => {
   test('done tucks thinking+tools behind a persistent stats header; texts/injected stay visible', async ({ browser }) => {
@@ -203,11 +426,14 @@ test.describe('decompression model — live alternating turn (验收 ②④)', (
         thinking: pick('.row.thinking-row'),
         tools: pick('.row.tool'),
         injected: pick('.row .bubble.injected'),
+        stack: pick('[data-nf-injection-stack]'),
       };
     });
     expect(vis.thinking).toEqual([false]);
     expect(vis.tools).toEqual([false, false]);
-    expect(vis.injected).toEqual([true]);
+    expect(vis.injected).toEqual([false]);
+    expect(vis.stack).toEqual([true]);
+    await expect(page.locator('[data-nf-injection-stack] button')).toContainText('1');
 
     // The header carries the restored ✻ design phrase + model + whole-turn
     // tool count + file count (Read turnGroup.js → 1 file;

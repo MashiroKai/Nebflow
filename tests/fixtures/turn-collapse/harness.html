@@ -42,8 +42,21 @@
 <head>
   <meta charset="UTF-8">
   <title>turn-collapse harness</title>
-  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
-  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <script>
+    // Use the product's ordered stylesheet list, not a hand-maintained subset.
+    window.__productStyles = fetch('/src/main/resources/web/index.html').then(r => r.text()).then(html => {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      return Promise.all([...doc.querySelectorAll('head link[rel="stylesheet"]')].map(source => new Promise((resolve, reject) => {
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = new URL(source.getAttribute('href'), location.origin + '/src/main/resources/web/').href;
+        if (source.media) link.media = source.media;
+        link.onload = () => resolve(link.href);
+        link.onerror = () => reject(new Error('stylesheet failed: ' + link.href));
+        document.head.appendChild(link);
+      })));
+    });
+  </script>
   <style>
     /* Minimal stand-in for the app shell: give #chat the column width the
        real layout gives it, everything else comes from the real CSS. */
@@ -381,8 +394,6 @@
       await raf2();
     };
 
-    window.__ready = true;
-
     // 思考单行揭示（2026-10-03 stream-ux redesign）：只铺 user + 流式 thinking
     // delta，不 finish——气泡行 pre-tucked（展开面），可见馈送在 turn 行上。
     window.__thinkingStreamStart = async () => {
@@ -441,6 +452,7 @@
       await raf2();
     };
 
+    await window.__productStyles;
     window.__ready = true;
   </script>
 </body>

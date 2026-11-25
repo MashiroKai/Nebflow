@@ -1,5 +1,6 @@
 // chat.js 拆分(FE组件化批次三 2026-09-27):注入行显示(source 标签表 + 注入行 builder + live 渲染) 可复用模块(行为保持)。
 import { activeView } from '../chatView.js';
+import { EVENTS } from '../events.js';
 import { t } from '../i18n.js';
 import { createIconsIn, renderMarkdownWithMath, shouldFollowBottom } from '../utils.js';
 import { parseTaskReturnText, buildTaskRefLine } from '../reference.js';
@@ -814,5 +815,6 @@ export function renderInjectedBubble(text, source, timestamp, eventType, sender,
   // A 侧 #491 单点落序（chat.js appendChatRow = `chat.append(row)`）随簇同位落此：
   // 纯 doc-order 追加，等价语义、同为唯一追加语义（禁反向 import chat.js 成环）。
   chat.append(row);
+  chat.dispatchEvent(new CustomEvent(EVENTS.NF_INJECTION_APPENDED, { bubbles: true, detail: { row } }));
   if (shouldFollowBottom(activeView, chat)) chat.scrollTop = chat.scrollHeight;
 }

@@ -27,6 +27,7 @@
 //    importing chat.js from here would close the chat.js → workline.js cycle.
 
 import { t } from './i18n.js';
+import { EVENTS } from './events.js';
 import { isNearBottom } from './utils.js';
 
 /** Out-phase duration before the leaving item is dropped from the DOM —
@@ -258,6 +259,7 @@ function ensureRow(view) {
   const anchor = turnAnchor(chat);
   if (anchor && anchor.parentNode === chat) anchor.after(row);
   else chat.appendChild(row);
+  chat.dispatchEvent(new CustomEvent(EVENTS.NF_WORKLINE_CREATED, { bubbles: true, detail: { row } }));
   // The line is one row tall; keep the viewport pinned when it was pinned (the
   // insertion above would otherwise push the pinned content out of view).
   if (isNearBottom(chat)) chat.scrollTop = chat.scrollHeight;
