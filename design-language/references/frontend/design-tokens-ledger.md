@@ -153,6 +153,7 @@
 
 | 档 | 变量 | 值 | 用在哪 |
 |---|---|---|---|
+| none | `--ds-radius-none` | 0px | 结构性直角 |
 | badge | `--ds-radius-badge` | 4px | 徽标 pill、行内 code、极小微片 |
 | chip | `--ds-radius-chip` | 6px | 28px 图标钮、小 chip、路径片、卡片容器（cfg-card） |
 | input | `--ds-radius-input` | 8px | 输入/下拉、面板档按钮、玻璃小钮（原 7px 档归此） |
@@ -357,6 +358,7 @@ node scripts/check-design-spec-sync.mjs --json   # 机器读
 <!-- design-spec-scale:begin -->
 | 变量 | 值 | 用在哪 |
 |---|---|---|
+| `--ds-radius-none` | `0px` | 结构性直角 |
 | `--ds-radius-badge` | `4px` | 徽标 pill、行内 code |
 | `--ds-radius-chip` | `6px` | 图标钮、小 chip、卡片容器 |
 | `--ds-radius-input` | `8px` | 输入/下拉、面板档按钮 |

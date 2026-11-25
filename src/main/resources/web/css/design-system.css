@@ -208,6 +208,7 @@
      值重定批 §3.3 R 组吸收：既有 badge/chip/input/button/shell/pill 六槽与草案
      xs/sm/md/lg/window/pill 逐档同值（4/6/8/10/20/999，Apple rounded.sm 8px 与
      NVIDIA --radius-lg 8px 三源互证），故只补草案里原先无归属的两档。 */
+  --ds-radius-none: 0px;     /* 结构性直角 */
   --ds-radius-badge: 4px;    /* 徽标 pill、行内 code；NVIDIA --radius-md 4px 同值互证 */
   --ds-radius-chip: 6px;     /* 28px 图标钮、chip */
   --ds-radius-input: 8px;    /* 输入/下拉/面板档按钮 */

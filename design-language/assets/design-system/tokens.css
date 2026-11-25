@@ -84,6 +84,7 @@
   --dl-ls-caps: 0.08em;         /* 仅拉丁/数字大写微标位（SpaceX 正字距）；中文一律 normal */
 
   /* ── ④ 圆角阶梯（8 档；与 --ds-radius-* 同值） ── */
+  --dl-r-none: 0px;     /* 结构性直角 */
   --dl-r-badge: 4px;    /* 徽标 pill */
   --dl-r-chip: 6px;     /* 图标钮/小 chip */
   --dl-r-input: 8px;    /* 输入 + 面板档按钮。反例：5px 按钮 */

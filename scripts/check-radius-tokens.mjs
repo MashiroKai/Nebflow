@@ -118,6 +118,35 @@ function classify(val) {
   return 'literal-off-ladder';                            // 档外值 / 复合字面量（多角字面量同此档）
 }
 
+// 待办专属表的规则不受全局 ALLOW 或选择器关键词影响。允许多个令牌组成
+// 四角值；fallback 也只能是圆角令牌，不能藏字面量或其他变量。
+function strictRadiusValue(value) {
+  let rest = value.replace(/\s*!important\s*$/i, '').trim();
+  if (rest === 'inherit') return true;
+  if (!rest) return false;
+  function token() {
+    const start = rest.match(/^var\(\s*--ds-radius-[a-z0-9-]+\s*/);
+    if (!start) return false;
+    rest = rest.slice(start[0].length);
+    if (rest.startsWith(',')) {
+      rest = rest.slice(1).trimStart();
+      if (!token()) return false;
+      rest = rest.trimStart();
+    }
+    if (!rest.startsWith(')')) return false;
+    rest = rest.slice(1);
+    return true;
+  }
+  while (rest) {
+    if (!token()) return false;
+    if (rest && !/^\s/.test(rest)) return false;
+    rest = rest.trimStart();
+  }
+  return true;
+}
+
+const strictViolations = [];
+let strictCount = 0;
 const rows = [];
 for (const file of files) {
   const raw = readFileSync(file, 'utf8');
@@ -125,6 +154,17 @@ for (const file of files) {
   // 去注释（保行号）。JS 的 // 行注释只剥 CSS 块注释之外不动（避免误伤 URL/字符串）。
   const src = raw.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
   const lineOf = (idx) => src.slice(0, idx).split('\n').length;
+  if (file === join(CSS_DIR, 'mobile-todo-apple.css')) {
+    // 整文件扫描声明，避免 @media / 选择器及全局 allow 表造成盲区。
+    const strictDecl = /\b(border-radius|border-(?:top|bottom)-(?:left|right)-radius)\s*:\s*([^;}]*)(?:;|(?=\}))/gi;
+    let decl;
+    while ((decl = strictDecl.exec(src))) {
+      strictCount++;
+      if (!strictRadiusValue(decl[2])) {
+        strictViolations.push({ file: relative(ROOT, file), line: lineOf(decl.index), prop: decl[1], val: decl[2].trim() });
+      }
+    }
+  }
   const ruleRe = /([^{}]+)\{([^{}]*)\}/g;
   const seen = new Set();
   let m;
@@ -177,7 +217,11 @@ if (LIST) {
 }
 
 console.log(`check-radius-tokens: scanned ${files.length} css+js, ${rows.length} radius decls; ${JSON.stringify(tally)}`);
-if (violations.length) {
+console.log(`check-radius-tokens: todo strict ${strictCount} declarations, ${strictViolations.length} violations`);
+if (strictViolations.length) {
+  for (const v of strictViolations) console.error(`  ${v.file}:${v.line}  ${v.prop}: ${v.val}  [todo-strict]`);
+}
+if (violations.length || strictViolations.length) {
   console.error(`FAIL ${violations.length} radius violation(s) (hardcoded / square; must use --ds-radius-* token or a ALLOW entry with a reason):`);
   for (const v of violations) console.error(`  ${v.file}:${v.line}  ${v.sel.slice(0, 90)}  ${v.prop}: ${v.val}  [${v.kind}]`);
   process.exit(1);

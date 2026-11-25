@@ -595,7 +595,7 @@ ok('F2 上色 = 既有 accent token 引用（零字面量：底 / 边 / 墨逐�
 ok('F2 同色族 = 右侧「+」的 sapphire 族（不是第二枚实心主操作）',
   parseRGBA(fabLight.borderColor) && Math.abs(parseRGBA(fabLight.borderColor).rgb[0] - 91) <= 1
   && Math.abs(parseRGBA(fabLight.borderColor).rgb[2] - 191) <= 1
-  && fabLight.background !== 'rgb(91, 127, 191)' && fabLight.radius === '50%',
+  && fabLight.background !== 'rgb(91, 127, 191)' && fabLight.radius === '999px',
   JSON.stringify({ edge: fabLight.borderColor, plusBg: 'rgb(91, 127, 191)', radius: fabLight.radius }));
 
 ok('F2 彩色语义面判据 C2 色相可指认（暗档：距蓝族轴 ≤10° 且 chroma ≥ 底 ×1.5）',
