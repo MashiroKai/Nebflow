@@ -1803,7 +1803,7 @@ export async function mountHistoryPageChunked(msgs, opts = {}, hooks = {}) {
       }
     }
     syncQuoteJumpStates(container);
-    buildTurnSummariesForHistory(container, { busyTail: false });
+    buildTurnSummariesForHistory(container, { busyTail: false, mainChat: activeView.dom.chat.id === 'chat', bareProcess: !!activeView.nfBareProcessRows });
     if (hooks.onBuilt && hooks.onBuilt(container) === false) return;
     const anchorChat = opts.scrollAnchor || null;
     const jobs = [];

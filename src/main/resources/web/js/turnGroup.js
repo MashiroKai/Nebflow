@@ -829,8 +829,8 @@ function markInferredMidTurnRows(chat) {
 }
 
 export function buildTurnSummariesForHistory(chat, opts = {}) {
-  if (chat.dataset.nfBareProcessRows === '1' || chat.id === 'chat') {
-    if (chat.id === 'chat') tuckRows(Array.from(chat.children).filter(isTuckableRow));
+  if (chat.dataset.nfBareProcessRows === '1' || chat.id === 'chat' || opts.bareProcess || opts.mainChat) {
+    if (chat.id === 'chat' || opts.mainChat) tuckRows(Array.from(chat.children).filter(isTuckableRow));
     markClosed(chat);
     return;
   }

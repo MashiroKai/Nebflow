@@ -126,6 +126,17 @@ test('主会话其他身份和延迟历史无 human 过程抽屉', async ({ page
   await expect(page.locator('#chat .bubble.ai details.nf-human-details')).toHaveCount(0);
 });
 
+test('分页历史 root 和旧身份 human 不出现过程抽屉及摘要', async ({ page }) => {
+  await boot(page);
+  await page.evaluate(async () => {
+    const {mountHistoryPageChunked} = await import('/js/persistence.js');
+    const text = '过程\n\n```human\n分页结论\n```\n\n结尾';
+    await mountHistoryPageChunked([{type:'user',text:'请求'}, {type:'tool',label:'Read',content:'结果'}, {type:'ai',isRoot:true,text:`<report>${text}</report>`,terminal:true}, {type:'ai',text,terminal:true}], {}, {onBuilt: container => document.querySelector('#chat').append(...container.children)});
+  });
+  await expect(page.locator('#chat .nf-human-card')).toHaveCount(2);
+  await expect(page.locator('#chat .nf-human-details, #chat .turn-header')).toHaveCount(0);
+});
+
 test('历史回放直接显示注入且摘要不提供展开', async ({ page }) => {
   await boot(page, [
     {type:'user', text:'请求'},
