@@ -302,9 +302,7 @@ function syncInjectionStack(header) {
     const count = document.createElement('span');
     count.className = 'nf-injection-stack-count';
     button.append(label, count);
-    const face = document.createElement('div');
-    face.className = 'bubble injected nf-injection-stack-face';
-    stack.append(button, face);
+    stack.append(button);
     header.after(stack); // single anchoring decision
     button.onclick = () => {
       header.dataset.nfInjectionExpanded = header.dataset.nfInjectionExpanded === '1' ? '0' : '1';
@@ -314,9 +312,7 @@ function syncInjectionStack(header) {
   const expanded = header.dataset.nfInjectionExpanded === '1';
   const forced = header.dataset.turnState === 'done-expanded';
   const button = stack.firstElementChild;
-  const face = stack.lastElementChild;
   stack.hidden = forced;
-  face.hidden = expanded;
   button.setAttribute('aria-expanded', String(expanded));
   button.firstElementChild.textContent = expanded ? '收起' : '展开';
   const count = button.lastElementChild;
@@ -327,7 +323,6 @@ function syncInjectionStack(header) {
     count.replaceChildren(digit);
   }
   button.setAttribute('aria-label', `${expanded ? '收起' : '展开'} ${rows.length} 条注入消息`);
-  face.textContent = `本轮收到 ${rows.length} 条注入消息`;
   for (const row of rows) row.classList.toggle('nf-injection-stack-hidden', !expanded && !forced);
 }
 

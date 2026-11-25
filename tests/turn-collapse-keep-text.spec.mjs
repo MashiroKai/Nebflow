@@ -171,6 +171,55 @@ const T_B = '找到关键线索了：收起分组在turnGroup.js，继续核对�
 const T_FINAL = '这是最终回复：中间过程已收起，回复与卡片照常可见。';
 const T_FINAL2 = '新回合的最终回复。';
 
+for (const width of [390, 1280]) {
+  test(`turn header geometry matches with and without injection ${width}`, async ({ browser }) => {
+    const { context, page } = await newPage(browser, { viewport: { width, height: 900 }, reducedMotion: 'reduce' });
+    const msgs = [
+      { type: 'user', text: '开轮' },
+      { type: 'tool', label: 'Read', summary: 'ok', content: 'x', isError: false },
+      { type: 'user', injected: true, source: 'deviceMail', text: '注入' },
+      { type: 'ai', text: '完成', durationMs: 3000, model: 'test-model' },
+    ];
+    const geometry = async messages => {
+      await page.evaluate(m => window.__history(m, { busyTail: false }), messages);
+      return page.locator('.turn-header').evaluate(el => {
+        const r = el.getBoundingClientRect();
+        return { x: r.x, y: r.y, width: r.width, height: r.height, top: r.top, right: r.right, bottom: r.bottom, left: r.left };
+      });
+    };
+    const withInjection = await geometry(msgs);
+    const stack = page.locator('[data-nf-injection-stack]');
+    expect(await stack.evaluate(el => ({ children: el.children.length, nodes: el.childNodes.length, gap: getComputedStyle(el).gap }))).toEqual({ children: 1, nodes: 1, gap: 'normal' });
+    await expect(stack.locator('.nf-injection-stack-face')).toHaveCount(0);
+    const withoutInjection = await geometry(msgs.filter(m => !m.injected));
+    expect(withInjection).toEqual(withoutInjection);
+    await context.close();
+  });
+}
+
+for (const scheme of ['light', 'dark']) for (const width of [390, 1280]) {
+  test(`collapsed injection has no visible bubble ${scheme} ${width}`, async ({ browser }) => {
+    const { context, page } = await newPage(browser, { colorScheme: scheme, viewport: { width, height: 900 }, reducedMotion: 'reduce' });
+    await page.evaluate(() => window.__liveTurn());
+    const button = page.locator('[data-nf-injection-stack] button');
+    await expect(button).toBeVisible();
+    const bubbles = page.locator('#chat .bubble.injected');
+    const visibleBoxes = () => bubbles.evaluateAll(els => els.filter(el => {
+      const r = el.getBoundingClientRect(), s = getComputedStyle(el);
+      return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
+    }).length);
+    if (scheme === 'dark' && width === 390 && process.env.NB_INJECTION_SHOT) {
+      await page.screenshot({ path: process.env.NB_INJECTION_SHOT, animations: 'disabled' });
+    }
+    expect(await visibleBoxes()).toBe(0);
+    await button.click();
+    expect(await visibleBoxes()).toBe(1);
+    await button.click();
+    expect(await visibleBoxes()).toBe(0);
+    await context.close();
+  });
+}
+
 for (const zoom of [0.9, 1, 1.1, 1.25, 1.5]) {
   test(`count ink remains within expanded clipping window at zoom ${zoom}`, async ({ browser }) => {
     const { context, page } = await newPage(browser, { reducedMotion: 'reduce' });
@@ -234,7 +283,7 @@ for (const width of [900, 390, 375]) {
       const range = document.createRange(); range.selectNodeContents(digit);
       const dr = range.getBoundingClientRect();
       const clip = stack.querySelector('.nf-injection-stack-count').getBoundingClientRect();
-      return { viewport: innerWidth, stack: rect(stack), button: rect(button), face: rect(stack.querySelector('.nf-injection-stack-face')), header: rect(document.querySelector('.turn-header')), chat: rect(document.querySelector('#chat')), user: rect(document.querySelector('#chat > .row.user')), nextUser: rect(nextUser), textFits, digit: {left:dr.left,right:dr.right,top:dr.top,bottom:dr.bottom}, clip: {left:clip.left,right:clip.right,top:clip.top,bottom:clip.bottom} };
+      return { viewport: innerWidth, stack: rect(stack), button: rect(button), header: rect(document.querySelector('.turn-header')), chat: rect(document.querySelector('#chat')), user: rect(document.querySelector('#chat > .row.user')), nextUser: rect(nextUser), textFits, digit: {left:dr.left,right:dr.right,top:dr.top,bottom:dr.bottom}, clip: {left:clip.left,right:clip.right,top:clip.top,bottom:clip.bottom} };
     });
     expect(geometry.stack.top).toBeGreaterThanOrEqual(geometry.header.bottom - 1);
     expect(geometry.stack.top).toBeGreaterThanOrEqual(geometry.user.bottom - 1);
@@ -246,10 +295,8 @@ for (const width of [900, 390, 375]) {
     expect(geometry.digit.top).toBeGreaterThanOrEqual(geometry.clip.top - 1);
     expect(geometry.digit.bottom).toBeLessThanOrEqual(geometry.clip.bottom + 1);
     await page.screenshot({ path: path.join(SHOT_DIR, `injection-stable-${width}.png`) });
-    expect(geometry.button.right).toBeLessThanOrEqual(geometry.face.left + 1);
-    expect(Math.abs((geometry.button.top + geometry.button.bottom - geometry.face.top - geometry.face.bottom) / 2)).toBeLessThanOrEqual(1);
     expect(geometry.button.left).toBeGreaterThanOrEqual(Math.max(0, geometry.chat.left) - 1);
-    expect(geometry.face.right).toBeLessThanOrEqual(Math.min(geometry.viewport, geometry.chat.right) + 1);
+    expect(geometry.button.right).toBeLessThanOrEqual(Math.min(geometry.viewport, geometry.chat.right) + 1);
     const injected = page.locator('#chat > .row:has(.bubble.injected)');
     await expect(injected.nth(0)).toBeHidden();
     await expect(injected.nth(1)).toBeHidden();
