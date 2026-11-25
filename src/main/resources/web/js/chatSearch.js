@@ -1277,7 +1277,7 @@ async function fetchSessionList(signal) {
  * params today and returns the full history; pages are sliced client-side.
  * @param {string} sessionId
  * @param {AbortSignal} [signal]
- * @param {{before?:number, after?:number, limit?:number}} [cursor]
+ * @param {{before?:number, after?:number, limit?:number, latest?:boolean}} [cursor]
  */
 async function fetchHistory(sessionId, signal, cursor = {}) {
   const params = new URLSearchParams();
