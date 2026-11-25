@@ -803,15 +803,21 @@ Your context does NOT show the current date/time — never invent an absolute da
       case None => Right(None)
       case Some(raw) =>
         val zoned = raw.asString.flatMap(s => scala.util.Try(ZonedDateTime.parse(s)).toOption)
+        val local = raw.asString.flatMap(s => scala.util.Try(LocalDateTime.parse(s)).toOption)
         val explicit = zoned.map(_.getZone.getId).filter(ZoneId.getAvailableZoneIds.contains)
         for
           region <- TodoDue.requireCreationZone(explicit, ctx.deviceZone)
           _ <- Either.cond(input("repeat").flatMap(_.asString).forall(r => r == "once" || r.isBlank), (), "Repeating todo deadlines are not yet supported")
           _ <- Either.cond(zoned.isDefined || raw.asString.exists(s => scala.util.Try(LocalDateTime.parse(s)).isSuccess || s.trim.toLowerCase.startsWith("tomorrow")), (), "Please clarify an explicit local date and time")
-          at <- zoned.map(z => Right(z.toInstant.toEpochMilli)).getOrElse(parseTriggerAt(Some(raw), now, ZoneId.of(region)))
+          at <- zoned.map(z => Right(z.toInstant.toEpochMilli)).orElse(local.map { value =>
+            val zone = ZoneId.of(region)
+            val transition = zone.getRules.getTransition(value)
+            val resolved = if transition != null && transition.isGap then transition.getDateTimeAfter else value
+            Right(resolved.atZone(zone).toInstant.toEpochMilli)
+          }).getOrElse(parseTriggerAt(Some(raw), now, ZoneId.of(region)))
           _ <- Either.cond(at > now, (), "Please clarify a future reminder time")
         yield
-          val wall = Instant.ofEpochMilli(at).atZone(ZoneId.of(region)).toLocalDateTime.toString
+          val wall = local.map(_.toString).getOrElse(Instant.ofEpochMilli(at).atZone(ZoneId.of(region)).toLocalDateTime.toString)
           val offset = zoned.map(_.getOffset.toString)
           Some(TodoDue.Once(at, region, wall, offset))
     if content.isBlank then
@@ -885,9 +891,15 @@ Your context does NOT show the current date/time — never invent an absolute da
           case olds =>
             s" — replaced ${olds.size} existing todo(s) with the same name (${olds.map(_.id).mkString(", ")})"
         val nameNote = taskName.map(n => s" [name: $n]").getOrElse("")
+        val dueNote = due.map { rule =>
+          val local = LocalDateTime.parse(rule.wallClock)
+          val transition = ZoneId.of(rule.zoneId).getRules.getTransition(local)
+          val adjustment = if transition != null && transition.isGap then " (adjusted to first valid time)" else ""
+          s" [due: ${rule.wallClock} ${rule.zoneId}$adjustment]"
+        }.getOrElse("")
         Right(
           s"Todo ${saved.id} registered (surfaces daily at ${formatTime(saved.triggerAt).takeRight(5)} until done/cancelled)" +
-            s"$nameNote: ${content.take(80)}$replacedNote"
+            s"$nameNote$dueNote: ${content.take(80)}$replacedNote"
         )
       end for
     end if

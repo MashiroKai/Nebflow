@@ -261,6 +261,19 @@ class TodoTaxonomySpec extends CatsEffectSuite:
   private def callTool(input: Json): Either[ToolError, String] =
     ScheduleTool.call(input.asObject.get, mkCtx()).unsafeRunSync()
 
+  test("tool todo gap resolves to the first valid local instant"):
+    val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
+    val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision, "triggerAt" -> "2035-03-11T02:30".asJson)
+    for
+      _ <- reset()
+      result <- ScheduleTool.call(input.asObject.get, mkCtx().copy(deviceZone = Some("America/New_York")))
+      stored <- taskStore.getAllTodos
+    yield
+      assert(result.isRight, s"gap must be resolved: $result")
+      assert(result.toOption.get.toLowerCase.contains("adjust"), "gap adjustment must be visible in the receipt")
+      assertEquals(stored.head.due.get.asJson.hcursor.get[String]("wallClock").toOption, Some("2035-03-11T02:30"))
+      assertEquals(stored.head.nextDueAt, Some(java.time.Instant.parse("2035-03-11T07:00:00Z").toEpochMilli))
+
   test("tool todo relative tomorrow resolves using its device region"):
     val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
     val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision, "triggerAt" -> "tomorrow at 09:00".asJson)
