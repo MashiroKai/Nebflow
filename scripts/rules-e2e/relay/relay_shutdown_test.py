@@ -240,6 +240,28 @@ server.serve_forever()'''
    print('T6 elapsed_ms=%.3f budget_ms=%.3f daemon=%s exit=2 unconfirmed=1'%(elapsed*1000,(grace+3*budget+.5)*1000,daemon[0]),flush=True)
    release_fsync.set(); self.assertTrue(fsync_done.wait(2))
   release_writer.set(); worker.join(2); self.assertFalse(worker.is_alive())
+ def test_admission_lock_not_held_during_io(self):
+  codes=[]; relay=m.Relay(args(self.path),grace=.01,abort_timeout=.1,exit_fn=codes.append)
+  self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
+  entered=threading.Event(); release=threading.Event(); self.addCleanup(release.set)
+  def blocked(obj): entered.set(); release.wait(3); return True
+  relay._event_unlocked=blocked
+  writer=threading.Thread(target=lambda:relay.event({'seq':1,'status':'reserved','record_id':'blocked'}),daemon=True)
+  writer.start(); self.assertTrue(entered.wait(1))
+  with patch('sys.stderr',new_callable=io.StringIO) as out:
+   start=time.monotonic(); relay.force_after_grace(); elapsed=time.monotonic()-start
+   lines=[json.loads(x) for x in out.getvalue().splitlines()]
+  release.set(); writer.join(2)
+  self.assertLess(elapsed,1); self.assertEqual(codes,[2]); self.assertTrue(lines[0]['sealed'])
+ def test_writer_leaves_after_seal(self):
+  relay=m.Relay(args(self.path)); self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
+  entered=threading.Event(); release=threading.Event(); self.addCleanup(release.set)
+  relay._event_unlocked=lambda obj:(entered.set(),release.wait(2),True)[-1]
+  writer=threading.Thread(target=lambda:relay.event({'seq':1,'status':'reserved','record_id':'leaves'}),daemon=True)
+  writer.start(); self.assertTrue(entered.wait(1))
+  with relay.append_lock: relay.sealed=True
+  release.set(); writer.join(2); self.assertFalse(writer.is_alive())
+  with relay.append_lock: self.assertNotIn('leaves',relay.append_inflight)
  def test_summary_excludes_prior_run(self):
   self.path.write_text(json.dumps({'seq':1,'status':'reserved','record_id':'old'})+'\n')
   relay=m.Relay(args(self.path,3)); self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
