@@ -11,7 +11,7 @@ class RecoveryAborted(RuntimeError): pass
 
 class Relay:
  def __init__(self, args, dialer=None, grace=60, exit_fn=os._exit, lock_timeout=5, abort_timeout=5, append_override=None):
-  self.args=args; self.condition=threading.Condition(); self.lock=self.condition; self.count=0; self.seq=0; self.confirmed_reservations=0; self.rejection_delivery={}
+  self.args=args; self.condition=threading.Condition(); self.lock=self.condition; self.count=0; self.seq=0; self.confirmed_reservations=0; self.rejection_delivery={}; self.account_lock=threading.Lock()
   self.grace=grace; self.exit_fn=exit_fn; self.stop_fired=False; self.finished=threading.Event(); self.watchdog_lock=threading.Lock(); self.watchdog_started=False
   self.lock_timeout=lock_timeout; self.abort_timeout=abort_timeout; self.append_override=append_override
   self.rejection_lock=threading.Condition(); self.unrecorded_rejections=0; self.rejections={}
@@ -148,7 +148,8 @@ class Relay:
   if leave is None: return False
   try:
    result=self._sidecar_unlocked(obj) if sidecar else self._event_unlocked(obj)
-   if result is True and obj.get('status')=='reserved': self.confirmed_reservations+=1
+   if result is True and obj.get('status')=='reserved':
+    with self.account_lock: self.confirmed_reservations+=1
    return result
   finally: leave()
  def _event_unlocked(self,obj):
@@ -195,6 +196,7 @@ class Relay:
  def rejection_response(self,h,obj):
   identity=uuid.uuid4().hex; obj['record_id']=identity
   self.rejection_event(obj)
+  # Spider 裁定待作者确认：send_error 无异常仅表示响应写出，不代表客户端已接收。
   delivered=False
   try:
    h.send_error(429); delivered=True
@@ -246,7 +248,7 @@ class Relay:
    undelivered=sum(state=='recorded' and self.rejection_delivery.get(key) is False for key,state in self.rejections.items())
    unknown=sum(state=='inflight' or (state=='recorded' and self.rejection_delivery.get(key) is None) for key,state in self.rejections.items())
   with results_lock: confirmed=sum(results)
-  summary={'sealed':sealed,'recorded_this_run':len(run_keys & final),'unrecorded_this_run':len(run_keys-final),'still_inflight_at_exit':len(still) if sealed else None,'abort_write_confirmed':confirmed,'abort_write_unconfirmed':len(attempted)-confirmed,'inflight_upper_bound':None if sealed else len(self.active),'unrecorded_rejections':unrecorded,'rejection_recorded_delivered':delivered,'rejection_recorded_undelivered':undelivered,'rejection_unrecorded':unrecorded,'rejection_unknown':unknown}
+  summary={'sealed':sealed,'recorded_this_run':len(run_keys & final),'unrecorded_this_run':len(run_keys-final),'still_inflight_at_exit':len(still) if sealed else None,'abort_write_confirmed':confirmed,'abort_write_unconfirmed':len(attempted)-confirmed,'inflight_upper_bound':None if sealed else len(self.active),'unrecorded_rejections':unrecorded,'rejection_recorded_response_written':delivered,'rejection_recorded_response_write_failed':undelivered,'rejection_unrecorded':unrecorded,'rejection_unknown':unknown}
   print(json.dumps(summary),file=sys.stderr,flush=True)
  def maybe_stop(self):
   # Called with condition held; dispatching the callback is done by the caller.
@@ -275,8 +277,8 @@ class Relay:
    finally: self.append_lock.release()
    print(json.dumps({'sealed':True}),file=sys.stderr,flush=True)
   else:
-   lower=self.confirmed_reservations; reserved=self.count
-   print(json.dumps({'sealed':False,'recorded_lower_bound':lower,'unrecorded_upper_bound':max(0,reserved-lower),'inflight':None,'possible_extra_record_after_exit':True}),file=sys.stderr,flush=True)
+   with self.account_lock: lower,reserved=self.confirmed_reservations,self.count
+   print(json.dumps({'sealed':False,'recorded_lower_bound':lower,'reserved_snapshot':reserved,'unrecorded_upper_bound':max(0,reserved-lower),'inflight':None,'possible_extra_record_after_exit':True}),file=sys.stderr,flush=True)
    self.exit_fn(2); return
   self.shutdown_summary(pending,deadline); self.exit_fn(2)
  def handle(self,h):
@@ -316,7 +318,8 @@ class Relay:
    self.seq+=1; seq=self.seq
    rejected=self.stopping or self.count>=self.args.limit
    if not rejected:
-    self.count+=1; self.inflight+=1; self.active[seq]=trace[0]; self.drained.clear(); final=self.count==self.args.limit
+    with self.account_lock: self.count+=1
+    self.inflight+=1; self.active[seq]=trace[0]; self.drained.clear(); final=self.count==self.args.limit
     if final: self.stopping=True
   if final: self.start_watchdog()
   if rejected:

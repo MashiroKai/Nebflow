@@ -344,7 +344,27 @@ server.serve_forever()'''
   with patch('sys.stderr',new_callable=io.StringIO) as out: relay.force_after_grace(); summary=json.loads(out.getvalue().splitlines()[-1])
   records=[json.loads(line) for line in self.path.read_text().splitlines()]
   self.assertTrue(summary['sealed']); self.assertEqual(len([x for x in records if x['status']=='rejected-limit']),2)
-  self.assertEqual((summary['rejection_recorded_delivered'],summary['rejection_recorded_undelivered'],summary['rejection_unrecorded']),(1,1,1))
+  self.assertEqual((summary['rejection_recorded_response_written'],summary['rejection_recorded_response_write_failed'],summary['rejection_unrecorded']),(1,1,1))
+ def test_unsealed_snapshot_slow_fsync(self):
+  codes=[]; relay=m.Relay(args(self.path,5),grace=0,exit_fn=codes.append); self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
+  relay.count=1; self.assertTrue(relay.event({'seq':1,'status':'reserved','record_id':'one'}))
+  with relay.account_lock: before=relay.confirmed_reservations; relay.count+=1
+  entered=threading.Event(); release=threading.Event(); held=threading.Event(); unlock=threading.Event()
+  self.addCleanup(release.set); self.addCleanup(unlock.set); original=m.os.fsync
+  def slow(fd): entered.set(); release.wait(3); return original(fd)
+  writer=threading.Thread(target=lambda:relay.event({'seq':2,'status':'reserved','record_id':'two'}),daemon=True)
+  def holder():
+   with relay.append_lock: held.set(); unlock.wait(3)
+  with patch.object(m.os,'fsync',side_effect=slow):
+   writer.start(); self.assertTrue(entered.wait(1)); locker=threading.Thread(target=holder,daemon=True); locker.start(); self.assertTrue(held.wait(1))
+   with patch('sys.stderr',new_callable=io.StringIO) as out:
+    start=time.monotonic(); relay.force_after_grace(); self.assertLess(time.monotonic()-start,.5); summary=json.loads(out.getvalue())
+   self.assertEqual(codes,[2]); self.assertEqual(summary['recorded_lower_bound']+summary['unrecorded_upper_bound'],summary['reserved_snapshot'])
+   self.assertGreaterEqual(summary['recorded_lower_bound'],before); self.assertTrue(summary['possible_extra_record_after_exit'])
+   release.set(); unlock.set(); writer.join(2); locker.join(2)
+  records=[json.loads(line) for line in self.path.read_text().splitlines()]; persisted=sum(x['status']=='reserved' for x in records)
+  self.assertGreaterEqual(persisted,summary['recorded_lower_bound']); self.assertLessEqual(persisted,summary['reserved_snapshot'])
+  with relay.account_lock: self.assertGreaterEqual(relay.confirmed_reservations,summary['recorded_lower_bound'])
  def test_watchdog_only_starts_once(self):
   relay=m.Relay(args(self.path),grace=1,exit_fn=lambda code:None)
   self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
