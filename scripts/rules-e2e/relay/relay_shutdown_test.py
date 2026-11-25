@@ -128,10 +128,10 @@ server.serve_forever()'''
   relay.event=lambda obj: release.wait(2)
   from relay_concurrency_test import H
   h=H('second'); responses=[]; h.send_error=lambda code,*a:responses.append(code)
-  with patch('sys.stderr',new_callable=io.StringIO) as errors:
-   start=time.monotonic(); relay.handle(h); relay.shutdown_summary(); self.assertLess(time.monotonic()-start,.5)
-   self.assertIn('unrecorded rejection',errors.getvalue()); self.assertIn('"unrecorded_rejections": 1',errors.getvalue())
-  self.assertEqual(responses,[429]); self.assertEqual(relay.unrecorded_rejections,1)
+  start=time.monotonic(); relay.handle(h); self.assertLess(time.monotonic()-start,.5)
+  self.assertEqual(responses,[429]); self.assertEqual(list(relay.rejections.values()),['inflight']); self.assertEqual(relay.unrecorded_rejections,0)
+  release.set()
+  with relay.rejection_lock: self.assertTrue(relay.rejection_lock.wait_for(lambda:list(relay.rejections.values())==['recorded'],timeout=2))
  def test_late_rejection_write_counterexample(self):
   # Characterize the unresolved race: timeout classification is not a durable snapshot.
   relay=m.Relay(args(self.path),lock_timeout=.05,abort_timeout=.05); self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
@@ -154,18 +154,15 @@ server.serve_forever()'''
   for result in (True,False):
    with self.subTest(result=result), tempfile.TemporaryDirectory(dir=os.environ['RELAY_EVIDENCE_DIR']) as tmp:
     relay=m.Relay(args(pathlib.Path(tmp)/'ledger'),lock_timeout=.03,abort_timeout=.03); relay.stopping=True
-    entered=threading.Event(); release=threading.Event(); responses=[]; done=threading.Event()
+    entered=threading.Event(); release=threading.Event(); responses=[]
     def writer(obj): entered.set(); release.wait(2); return result
     relay.event=writer; h=H('late'); h.send_error=lambda status,*a:responses.append(status)
     with patch('sys.stderr',new_callable=io.StringIO):
      relay.handle(h); self.assertTrue(entered.is_set()); self.assertEqual(responses,[429]); self.assertEqual(list(relay.rejections.values()),['inflight'])
      release.set()
-     # Signal on classification rather than timing assumptions.
-     def observe():
-      with relay.rejection_lock:
-       if list(relay.rejections.values())!=['inflight']: done.set()
-      if not done.is_set(): threading.Timer(.01,observe).start()
-     observe(); self.assertTrue(done.wait(2)); self.assertEqual(list(relay.rejections.values()),['recorded' if result else 'unrecorded'])
+     with relay.rejection_lock:
+      self.assertTrue(relay.rejection_lock.wait_for(lambda:list(relay.rejections.values())!=['inflight'],timeout=2))
+      self.assertEqual(list(relay.rejections.values()),['recorded' if result else 'unrecorded'])
     relay.ledger.close(); relay.owner.close()
  def test_watchdog_only_starts_once(self):
   relay=m.Relay(args(self.path),grace=1,exit_fn=lambda code:None)

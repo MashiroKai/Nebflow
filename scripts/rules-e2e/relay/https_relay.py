@@ -12,7 +12,7 @@ class Relay:
   self.args=args; self.condition=threading.Condition(); self.lock=self.condition; self.count=0; self.seq=0
   self.grace=grace; self.exit_fn=exit_fn; self.stop_fired=False; self.finished=threading.Event(); self.watchdog_lock=threading.Lock(); self.watchdog_started=False
   self.lock_timeout=lock_timeout; self.abort_timeout=abort_timeout; self.append_override=append_override
-  self.rejection_lock=threading.Lock(); self.unrecorded_rejections=0; self.rejections={}
+  self.rejection_lock=threading.Condition(); self.unrecorded_rejections=0; self.rejections={}
   self.dialer=dialer or (lambda host,port,timeout: http.client.HTTPSConnection(host,port,timeout=timeout,context=ssl.create_default_context()))
   self.routes={}
   allowed=set(args.allow_host)
@@ -142,6 +142,7 @@ class Relay:
     with self.rejection_lock:
      self.rejections[identity]='recorded' if recorded else 'unrecorded'
      if not recorded: self.unrecorded_rejections+=1
+     self.rejection_lock.notify_all()
     if not recorded: print('unrecorded rejection',file=sys.stderr,flush=True)
    finally: done.set()
   threading.Thread(target=finalize,daemon=True).start()
