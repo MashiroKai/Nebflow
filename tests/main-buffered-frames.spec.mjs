@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-const web = join(dirname(fileURLToPath(import.meta.url)), '..', 'src/main/resources/web');
+const web = process.env.WEB_TREE || join(dirname(fileURLToPath(import.meta.url)), '..', 'src/main/resources/web');
 const sid = 'buffered-root';
 const mime = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.json':'application/json', '.svg':'image/svg+xml', '.woff2':'font/woff2' };
 async function boot(page, history = []) {
@@ -162,6 +162,12 @@ test('历史回放直接显示注入且摘要不提供展开', async ({ page }) 
   await expect(page.locator('#chat [data-nf-injection-stack], #chat .turn-header[role="button"], #chat .turn-header .nf-chevron')).toHaveCount(0);
 });
 
+test('忙碌历史尾段显示单行工作线', async ({page}) => {
+  await boot(page);
+  await page.evaluate(async () => { const p = await import('/js/persistence.js'); p.restoreFromBackendHistory([{type:'user',text:'请求'}, {type:'tool',label:'Read',content:'历史工具结果'}], {busyTail:true}); });
+  await expect(page.locator('#chat .nf-workline')).toHaveCount(1);
+  await expect(page.locator('#chat .turn-header')).toHaveCount(0);
+});
 test('规则1：主会话没有轮组 badge 或展开控件', async ({page}) => {
   await boot(page); await frame(page,{type:'thinkingDelta',delta:'处理'}); await frame(page,{type:'toolStart',label:'Read',toolId:'a'});
   await expect(page.locator('#chat .nf-chevron, #chat .turn-header, #chat .nf-workline [role=button]')).toHaveCount(0);

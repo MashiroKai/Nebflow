@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-const web = join(dirname(fileURLToPath(import.meta.url)), '..', 'src/main/resources/web');
+const web = process.env.WEB_TREE || join(dirname(fileURLToPath(import.meta.url)), '..', 'src/main/resources/web');
 const root = 'expanded-root', sid = 'delegate-expanded';
 const mime = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.json':'application/json', '.svg':'image/svg+xml', '.woff2':'font/woff2' };
 const thinking = Array.from({length: 9}, (_, i) => `思考步骤${i + 1}：检查结果`).join('\n\n');
@@ -39,6 +39,20 @@ async function verify(page) {
   await expect(card).not.toHaveAttribute('aria-expanded');
   expect(await thinkingEl.evaluate(el => el.scrollHeight <= el.clientHeight + 1)).toBe(true);
 }
+test('子 agent 分页工具正文始终展开', async ({page}) => {
+  await boot(page, false);
+  await page.evaluate(async sid => {
+    const {chatViews,activeView,setActiveView} = await import('/js/chatView.js');
+    const {mountHistoryPageChunked} = await import('/js/persistence.js');
+    const saved = activeView, view = chatViews['bgagent-' + sid];
+    setActiveView(view);
+    try { await mountHistoryPageChunked([{type:'tool',label:'Read',content:'分页工具完整结果'}], {}, {onBuilt: container => view.dom.chat.prepend(...container.children)}); } finally {setActiveView(saved);}
+  }, sid);
+  const card = page.locator('.flow-agent-chat:visible .tool-card').first();
+  await expect(card).toContainText('分页工具完整结果');
+  await expect(card).not.toHaveAttribute('aria-expanded');
+  await card.click(); await expect(card).toContainText('分页工具完整结果');
+});
 for (const width of [390,1280]) for (const theme of ['light','dark']) for (const state of ['running','done','replay']) {
   test(`规则6 ${width} ${theme} ${state}`, async ({page}) => {
     await page.setViewportSize({width,height:850});

@@ -15,6 +15,7 @@ import { dropDeviceMessageCache } from './fmDropboxCache.js';
 // 单向依赖、无环；`evict` 自带 L2/L5 降级（配额失败 ⇒ 本池清空重试 ⇒ 只读镜像）。
 import { evict as evictLocalStore } from './localStore.js';
 import { activeView } from './chatView.js';
+import { startWorklineDots } from './workline.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, appendUserTextWithFences, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId, shouldFollowBottom, deviceTagHtml } from './utils.js';
 // output 块语法批（作者令 2026-10-31）：历史重放腿同 live 腿一个 output 面——
@@ -1654,6 +1655,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
   // 可能在本页靠后位置，创建顺序倒挂 ⇒ 此刻才有完整答案）。
   syncQuoteJumpStates(chat);
   buildTurnSummariesForHistory(chat, { busyTail }); // #346 E4: re-derive turn headers from flat rows
+  if (busyTail && chat.id === 'chat') startWorklineDots(activeView);
   // #491: doc-order replay keeps each artifact beside its Pop tool row — same
   // as the live path and the storage-replay path; no re-anchor.
   // Scroll to bottom: immediate sync (for stable initial position before any async iframe load)
