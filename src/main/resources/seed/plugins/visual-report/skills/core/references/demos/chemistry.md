@@ -12,7 +12,7 @@
 
 `C1=CC=C(C(=C1)C(=O)O)O.CC(=O)OC(=O)C>>CC(=O)OC1=CC=CC=C1C(=O)O.CC(=O)O`
 
-![水杨酸乙酰化反应式](~/.nebflow/plots/vrs2-biochem/20261004_chem_rxn_aspirin.svg)
+![水杨酸乙酰化反应式](assets/20261004_chem_rxn_aspirin.png)
 
 ## 反应验证与计量核对
 
@@ -31,7 +31,7 @@
 
 四物种 2D 网格（rdkit 渲染，图例拉丁名 + CID）：
 
-![四物种 2D 结构网格](~/.nebflow/plots/vrs2-biochem/20261004_chem_species_grid.svg)
+![四物种 2D 结构网格](assets/20261004_chem_species_grid.png)
 
 产物阿司匹林 3D 构象交付为**自包含可旋转交互件**（3Dmol.js v2.5.5 库内联，WebGL；左键旋转 / 滚轮缩放 / 右键平移，亮暗主题随系统 `prefers-color-scheme` 切换）：
 

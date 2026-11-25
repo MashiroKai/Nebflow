@@ -10,7 +10,7 @@
 
 数据来源（公开常见分子，权威记录逐字引用）：PubChem PUG REST，2026-10-04 取得——阿司匹林 CID 2244，`CC(=O)OC1=CC=CC=C1C(=O)O`，C9H8O4，MW 180.16（PubChem 口径）；咖啡因 CID 2519，`CN1C=NC2=C1C(=O)N(C(=O)N2C)C`，C8H10N4O2，MW 194.19（PubChem 口径）。2D 结构由 rdkit MolDraw2DSVG 渲染（图内图例用拉丁名：rdkit 内置字体不含 CJK 字形，中文名见图注）：
 
-![阿司匹林与咖啡因 2D 结构](~/.nebflow/plots/vrs2-biochem/20261004_bio_structures.svg)
+![阿司匹林与咖啡因 2D 结构](assets/20261004_bio_structures.png)
 
 左：阿司匹林（乙酰氧基与羧基邻位双取代苯环）；右：咖啡因（嘌呤-2,6-二酮骨架，3 个 N-甲基）。
 
