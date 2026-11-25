@@ -1,0 +1,208 @@
+{
+  "approved": false,
+  "approvedBy": null,
+  "approvedAt": null,
+  "sourceCommit": "3cf3dac5c962eaaf3a584e9ba4d62ab6db0db3d7",
+  "panel": "mobile-contacts",
+  "viewportNA": {
+    "width": 1280,
+    "reason": "手机层仅在不超过768px时启用"
+  },
+  "browser": "151.0.7922.34",
+  "variants": {
+    "light": {
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "dpr": 1
+      },
+      "elements": {
+        "search-input": {
+          "selector": ".mobile-page[data-page=contacts] input.mh-search-input",
+          "styles": {
+            "borderRadius": "12px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(58, 61, 69)",
+            "fontSize": "16px",
+            "fontWeight": "400",
+            "padding": "6px 12px",
+            "border": "0px none rgb(58, 61, 69)"
+          }
+        },
+        "contact-body": {
+          "selector": ".mobile-page[data-page=contacts] #fm-contacts-body",
+          "styles": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(27, 30, 38)",
+            "padding": "84px 8px 72px",
+            "border": "0px none rgb(27, 30, 38)"
+          }
+        },
+        "entry": {
+          "selector": ".mobile-page[data-page=contacts] .fm-nf-entry",
+          "styles": {
+            "borderRadius": "6px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(58, 61, 69)",
+            "padding": "8px 10px",
+            "border": "0px none rgba(0, 0, 0, 0)"
+          }
+        },
+        "list": {
+          "selector": ".mobile-page[data-page=contacts] .fm-friend-list",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(27, 30, 38)",
+            "padding": "0px",
+            "border": "0px none rgb(27, 30, 38)"
+          }
+        },
+        "avatar": {
+          "selector": ".mobile-page[data-page=contacts] .fm-friend-row .fm-avatar-36",
+          "styles": {
+            "borderRadius": "50%",
+            "backgroundColor": "rgba(0, 0, 0, 0.024)",
+            "color": "rgb(139, 142, 150)",
+            "border": "1px solid rgba(91, 127, 191, 0.1)"
+          }
+        },
+        "name": {
+          "selector": ".mobile-page[data-page=contacts] .fm-friend-row .fm-row-name",
+          "styles": {
+            "color": "rgb(27, 30, 38)",
+            "fontSize": "17px",
+            "fontWeight": "500"
+          }
+        },
+        "search": {
+          "selector": ".mobile-page[data-page=contacts] .mh-search-bar",
+          "styles": {
+            "borderRadius": "12px",
+            "backgroundColor": "rgba(255, 255, 255, 0.16)",
+            "color": "rgb(27, 30, 38)",
+            "boxShadow": "rgba(16, 20, 30, 0.1) 0px 2px 10px 0px",
+            "height": "44px",
+            "padding": "0px 16px",
+            "border": "1px solid rgba(255, 255, 255, 0.35)"
+          },
+          "box": {
+            "x": 16,
+            "y": 18,
+            "width": 358,
+            "height": 44
+          }
+        },
+        "contact-row": {
+          "selector": "#fm-contacts-body .fm-friend-row",
+          "styles": {
+            "borderRadius": "6px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(58, 61, 69)",
+            "fontSize": "16px",
+            "fontWeight": "400",
+            "padding": "0px 10px",
+            "border": "0px none rgba(0, 0, 0, 0)"
+          }
+        }
+      }
+    },
+    "dark": {
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "dpr": 1
+      },
+      "elements": {
+        "search-input": {
+          "selector": ".mobile-page[data-page=contacts] input.mh-search-input",
+          "styles": {
+            "borderRadius": "12px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(200, 202, 208)",
+            "fontSize": "16px",
+            "fontWeight": "400",
+            "padding": "6px 12px",
+            "border": "0px none rgb(200, 202, 208)"
+          }
+        },
+        "contact-body": {
+          "selector": ".mobile-page[data-page=contacts] #fm-contacts-body",
+          "styles": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(232, 234, 237)",
+            "padding": "84px 8px 72px",
+            "border": "0px none rgb(232, 234, 237)"
+          }
+        },
+        "entry": {
+          "selector": ".mobile-page[data-page=contacts] .fm-nf-entry",
+          "styles": {
+            "borderRadius": "6px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(232, 234, 237)",
+            "padding": "8px 10px",
+            "border": "0px none rgba(0, 0, 0, 0)"
+          }
+        },
+        "list": {
+          "selector": ".mobile-page[data-page=contacts] .fm-friend-list",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(232, 234, 237)",
+            "padding": "0px",
+            "border": "0px none rgb(232, 234, 237)"
+          }
+        },
+        "avatar": {
+          "selector": ".mobile-page[data-page=contacts] .fm-friend-row .fm-avatar-36",
+          "styles": {
+            "borderRadius": "50%",
+            "backgroundColor": "rgba(255, 255, 255, 0.04)",
+            "color": "rgb(123, 126, 136)",
+            "border": "1px solid rgba(91, 127, 191, 0.08)"
+          }
+        },
+        "name": {
+          "selector": ".mobile-page[data-page=contacts] .fm-friend-row .fm-row-name",
+          "styles": {
+            "color": "rgb(232, 234, 237)",
+            "fontSize": "17px",
+            "fontWeight": "500"
+          }
+        },
+        "search": {
+          "selector": ".mobile-page[data-page=contacts] .mh-search-bar",
+          "styles": {
+            "borderRadius": "12px",
+            "backgroundColor": "rgba(24, 28, 38, 0.16)",
+            "color": "rgb(232, 234, 237)",
+            "boxShadow": "rgba(16, 20, 30, 0.1) 0px 2px 10px 0px",
+            "height": "44px",
+            "padding": "0px 16px",
+            "border": "1px solid rgba(255, 255, 255, 0.06)"
+          },
+          "box": {
+            "x": 16,
+            "y": 18,
+            "width": 358,
+            "height": 44
+          }
+        },
+        "contact-row": {
+          "selector": "#fm-contacts-body .fm-friend-row",
+          "styles": {
+            "borderRadius": "6px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(232, 234, 237)",
+            "fontSize": "16px",
+            "fontWeight": "400",
+            "padding": "0px 10px",
+            "border": "0px none rgba(0, 0, 0, 0)"
+          }
+        }
+      }
+    }
+  }
+}

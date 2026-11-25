@@ -1,0 +1,13 @@
+{"panel":"desktop-canvas","route":"desktop:canvas/plugins","viewportGroups":[{"width":1280,"height":800,"themes":["light","dark"],"dpr":[1]}],"viewportNA":{"width":390,"reason":"手机层使用独立看板"},"openSteps":[{"action":"wait","selector":"#canvas-panel"}],"elements":[
+{"id":"canvas","selector":"#canvas-panel","properties":["borderRadius","backgroundColor","color","boxShadow","padding","border"],"box":true},
+{"id":"slide","selector":"#canvas-slide","properties":["borderRadius","backgroundColor","color","padding","border"],"box":true},
+{"id":"header","selector":"#canvas-panel .canvas-header","properties":["borderRadius","backgroundColor","color","boxShadow","padding","border"],"box":true},
+{"id":"title","selector":"#canvas-title","properties":["borderRadius","backgroundColor","color","fontSize","fontWeight","padding","border"],"box":false},
+{"id":"content","selector":"#canvas-content","properties":["borderRadius","backgroundColor","color","padding","border"],"box":true},
+{"id":"pane","selector":"#canvas-panel .canvas-tab-pane.active","properties":["borderRadius","backgroundColor","color","fontSize","fontWeight","padding","border"],"box":false},
+{"id":"plugin-top","selector":"#plugins-content .plugins-topbar","properties":["borderRadius","backgroundColor","color","padding","border"],"box":false},
+{"id":"plugin-title","selector":"#plugins-content .plugins-title","properties":["color","fontSize","fontWeight"],"box":false},
+{"id":"plugin-stats","selector":"#plugins-content .plugins-stats","properties":["borderRadius","backgroundColor","color","fontSize","fontWeight","padding","border"],"box":false},
+{"id":"plugin-section","selector":"#plugins-section-plugins","properties":["borderRadius","backgroundColor","color","padding","border"],"box":false},
+{"id":"plugin-empty","selector":"#plugins-section-plugins .plugins-none","properties":["borderRadius","backgroundColor","color","fontSize","fontWeight","padding","border"],"box":false}
+]}

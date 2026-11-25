@@ -1,0 +1,212 @@
+{
+  "approved": false,
+  "approvedBy": null,
+  "approvedAt": null,
+  "sourceCommit": "3cf3dac5c962eaaf3a584e9ba4d62ab6db0db3d7",
+  "panel": "desktop-contacts",
+  "viewportNA": {
+    "width": 390,
+    "reason": "手机层使用独立联系人页"
+  },
+  "browser": "151.0.7922.34",
+  "variants": {
+    "light": {
+      "viewport": {
+        "width": 1280,
+        "height": 800,
+        "dpr": 1
+      },
+      "elements": {
+        "body": {
+          "selector": "#panel-contacts #fm-contacts-body",
+          "styles": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(58, 61, 69)",
+            "padding": "4px 8px 10px",
+            "border": "0px none rgb(58, 61, 69)"
+          }
+        },
+        "search": {
+          "selector": "#panel-contacts .fm-search-block",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(58, 61, 69)",
+            "padding": "4px 2px 8px",
+            "border": "0px none rgb(58, 61, 69)"
+          }
+        },
+        "search-input": {
+          "selector": "#panel-contacts input.fm-search-input",
+          "styles": {
+            "borderRadius": "12px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(58, 61, 69)",
+            "fontSize": "13px",
+            "fontWeight": "400",
+            "padding": "6px 12px",
+            "border": "0px none rgb(58, 61, 69)"
+          }
+        },
+        "search-button": {
+          "selector": "#panel-contacts .fm-search-btn",
+          "styles": {
+            "borderRadius": "8px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(27, 30, 38)",
+            "boxShadow": "rgba(16, 20, 30, 0.1) 0px 2px 10px 0px",
+            "height": "30px",
+            "padding": "0px 8px",
+            "border": "1px solid rgba(0, 0, 0, 0.18)"
+          }
+        },
+        "friend-list": {
+          "selector": "#panel-contacts .fm-friend-list",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(58, 61, 69)",
+            "padding": "0px",
+            "border": "0px none rgb(58, 61, 69)"
+          }
+        },
+        "friend-name": {
+          "selector": "#panel-contacts .fm-friend-row .fm-row-name",
+          "styles": {
+            "color": "rgb(27, 30, 38)",
+            "fontSize": "13px",
+            "fontWeight": "500"
+          }
+        },
+        "panel": {
+          "selector": "#panel-contacts.active",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(58, 61, 69)",
+            "boxShadow": "none",
+            "padding": "0px",
+            "border": "0px none rgb(58, 61, 69)"
+          },
+          "box": {
+            "x": 61,
+            "y": 17,
+            "width": 234,
+            "height": 772
+          }
+        },
+        "contact-row": {
+          "selector": "#panel-contacts .fm-friend-row",
+          "styles": {
+            "borderRadius": "6px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(58, 61, 69)",
+            "fontSize": "16px",
+            "fontWeight": "400",
+            "padding": "8px 10px",
+            "border": "0px none rgba(0, 0, 0, 0)"
+          }
+        }
+      }
+    },
+    "dark": {
+      "viewport": {
+        "width": 1280,
+        "height": 800,
+        "dpr": 1
+      },
+      "elements": {
+        "body": {
+          "selector": "#panel-contacts #fm-contacts-body",
+          "styles": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(200, 202, 208)",
+            "padding": "4px 8px 10px",
+            "border": "0px none rgb(200, 202, 208)"
+          }
+        },
+        "search": {
+          "selector": "#panel-contacts .fm-search-block",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(200, 202, 208)",
+            "padding": "4px 2px 8px",
+            "border": "0px none rgb(200, 202, 208)"
+          }
+        },
+        "search-input": {
+          "selector": "#panel-contacts input.fm-search-input",
+          "styles": {
+            "borderRadius": "12px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(200, 202, 208)",
+            "fontSize": "13px",
+            "fontWeight": "400",
+            "padding": "6px 12px",
+            "border": "0px none rgb(200, 202, 208)"
+          }
+        },
+        "search-button": {
+          "selector": "#panel-contacts .fm-search-btn",
+          "styles": {
+            "borderRadius": "8px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(232, 234, 237)",
+            "boxShadow": "rgba(16, 20, 30, 0.1) 0px 2px 10px 0px",
+            "height": "30px",
+            "padding": "0px 8px",
+            "border": "1px solid rgba(255, 255, 255, 0.15)"
+          }
+        },
+        "friend-list": {
+          "selector": "#panel-contacts .fm-friend-list",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(200, 202, 208)",
+            "padding": "0px",
+            "border": "0px none rgb(200, 202, 208)"
+          }
+        },
+        "friend-name": {
+          "selector": "#panel-contacts .fm-friend-row .fm-row-name",
+          "styles": {
+            "color": "rgb(232, 234, 237)",
+            "fontSize": "13px",
+            "fontWeight": "500"
+          }
+        },
+        "panel": {
+          "selector": "#panel-contacts.active",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(200, 202, 208)",
+            "boxShadow": "none",
+            "padding": "0px",
+            "border": "0px none rgb(200, 202, 208)"
+          },
+          "box": {
+            "x": 61,
+            "y": 17,
+            "width": 234,
+            "height": 772
+          }
+        },
+        "contact-row": {
+          "selector": "#panel-contacts .fm-friend-row",
+          "styles": {
+            "borderRadius": "6px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(232, 234, 237)",
+            "fontSize": "16px",
+            "fontWeight": "400",
+            "padding": "8px 10px",
+            "border": "0px none rgba(0, 0, 0, 0)"
+          }
+        }
+      }
+    }
+  }
+}
