@@ -916,6 +916,7 @@ export function finishAi(durationMs, model) {
       bubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '', true, rootFace ? { report: true } : undefined);
       if (rootFace) markZeroBlockFace(bubble, activeView.stream.aiText || '');
     }
+    if (activeView.dom.chat.id === 'chat') bubble.querySelectorAll('details.nf-human-details').forEach(el => el.remove());
     bubble._nfText = activeView.stream.aiText || '';
     const termText = bubble._nfText;
     void import('./viewers/markdown.js').then(({ termLinkify }) => {

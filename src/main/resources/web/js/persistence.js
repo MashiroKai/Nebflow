@@ -773,6 +773,7 @@ export function restoreFromStorage(opts = {}) {
             bubble.innerHTML = renderMarkdownWithMath(m.text || '', true, rootFace ? { report: true } : undefined);
             if (rootFace && m.text) markZeroBlockFace(bubble, m.text || '');
           }
+          if (chat.id === 'chat') bubble.querySelectorAll('details.nf-human-details').forEach(node => node.remove());
           row.appendChild(bubble);
         }
         if (isTurnTerminal) {
@@ -1694,6 +1695,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         // 第二处裸 innerHTML 赋值点——component-contract R5「只许减不许增」）。
         const faced = el.dataset && el.dataset.nfDeferOutput === '1' && applyOutputFace(el, text);
         if (!faced) el.innerHTML = renderMarkdownWithMath(text, parseVoice, opts);
+        if (el.closest('#chat')) el.querySelectorAll('details.nf-human-details').forEach(node => node.remove());
       } catch (e) {
         el.textContent = text; // 回落纯文本（renderer 自身另有永不抛护栏，双保险）
       }
@@ -1813,6 +1815,7 @@ export async function mountHistoryPageChunked(msgs, opts = {}, hooks = {}) {
       // 批）。短路由 && 承担，赋值点仍只有一处（component-contract R5 零新增）。
       const faced = j.el.dataset && j.el.dataset.nfDeferOutput === '1' && applyOutputFace(j.el, j.text);
       if (!faced) j.el.innerHTML = renderMarkdownWithMath(j.text, j.parseVoice, j.opts);
+      if (j.el.closest('#chat')) j.el.querySelectorAll('details.nf-human-details').forEach(node => node.remove());
     });
     for (let ji = 0; ji < jobs.length; ji += MOUNT_UPGRADE_BATCH) {
       const end = Math.min(ji + MOUNT_UPGRADE_BATCH, jobs.length);

@@ -115,6 +115,16 @@ test('主会话 report 内 human 正文不产生可点击过程 details', async 
   await expect(replay.locator('#chat .bubble.ai details.nf-human-details')).toHaveCount(0);
 });
 
+test('主会话其他身份和延迟历史无 human 过程抽屉', async ({ page }) => {
+  const text = '过程叙述\n\n```human\n用户结论\n```\n\n后续叙述';
+  await boot(page, [{type:'ai', isRoot:false, text, terminal:true}]);
+  await expect(page.locator('#chat .bubble.ai')).toContainText('用户结论');
+  await expect(page.locator('#chat .bubble.ai details.nf-human-details')).toHaveCount(0);
+  await frame(page,{type:'textDelta', isRoot:false, delta:text});
+  await frame(page,{type:'done'});
+  await expect(page.locator('#chat .bubble.ai details.nf-human-details')).toHaveCount(0);
+});
+
 test('历史回放直接显示注入且摘要不提供展开', async ({ page }) => {
   await boot(page, [
     {type:'user', text:'请求'},
