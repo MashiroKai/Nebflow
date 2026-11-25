@@ -130,15 +130,8 @@ body.mobile-layer .mf-strip-chip .mf-cv-star svg { width: 18px; height: 18px; }
 .cfp-back { flex: none; height: auto; min-height: var(--ds-page-back-size); overflow-wrap: anywhere; }
 .cfp-title { flex: 1; min-width: 0; margin: 0; text-align: center; overflow-wrap: anywhere; font-size: 17px; font-weight: 600; }
 .cfp-search { padding: var(--ds-space-2) var(--ds-space-6); flex: none; }
-.cfp-search-input {
-  width: 100%;
-  box-sizing: border-box;
-  height: 36px;
-  padding: 0 12px;
-  color: inherit;
-  font-size: 15px;
-}
-/* 搜索框造型 + 焦点环 = 共享输入面 .nf-field（inputSurface.css 单源，I2/F1 口径）。 */
+/* 搜索字段由消息面板共用的 sf-field 构建。 */
+.cfp-search-input { border-radius: var(--ds-radius-thin); }
 .cfp-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -173,6 +166,12 @@ body.mobile-layer .mf-strip-chip .mf-cv-star svg { width: 18px; height: 18px; }
   cursor: pointer;
 }
 .cfp-row:active { opacity: .75; }
+.cfp-row-container { position: relative; min-width: 0; }
+.cfp-row-container .cfp-row { box-sizing: border-box; padding-bottom: var(--ds-capsule-end-size); }
+.cfp-remove { position: absolute; right: 0; bottom: 0; opacity: 0; }
+.cfp-remove svg { width: 18px; height: 18px; }
+.cfp-row-container:hover .cfp-remove, .cfp-row-container:focus-within .cfp-remove { opacity: 1; }
+@media (hover: none) { .cfp-remove { opacity: 1; } }
 .cfp-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--ds-space-1); }
 .cfp-row-title { color: var(--color-text); font-size: var(--ds-fs-title); font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; white-space: normal; }
 .cfp-row-meta { display: flex; gap: var(--ds-space-2); font-size: var(--ds-fs-hint); color: var(--color-text-muted); line-height: 1.4; }

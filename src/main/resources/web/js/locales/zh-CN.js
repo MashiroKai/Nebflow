@@ -2282,6 +2282,7 @@ export default {
   'canvas.fav.invalid': '已失效',
   'canvas.fav.added': '已收藏',
   'canvas.fav.removed': '已取消收藏',
+  'canvas.fav.saveFailed': '取消收藏失败，请重试',
   'canvas.fav.open': '收藏',
   'canvas.favPage.open': '打开收藏页',
   'canvas.favPage.title': '收藏',

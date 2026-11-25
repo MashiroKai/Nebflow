@@ -192,10 +192,15 @@ try {
       }
       if(width===1280) {
         const source=s.page.locator(`${root} .cfp-row-src`).first();
+        const sourceOriginal=await source.evaluate(el=>{const old=el.textContent;el.textContent='/negative-control/'+ 'p'.repeat(128);return old;});
+        const sourceBefore=await source.evaluate(el=>({sw:el.scrollWidth,cw:el.clientWidth,sh:el.scrollHeight,ch:el.clientHeight}));
         await source.evaluate(el=>{el.style.whiteSpace='nowrap';el.style.overflowWrap='normal';});
+        const sourceAfter=await source.evaluate(el=>({sw:el.scrollWidth,cw:el.clientWidth,sh:el.scrollHeight,ch:el.clientHeight}));
+        console.log('SOURCE-NEGATIVE',JSON.stringify({before:sourceBefore,after:sourceAfter}));
         const brokenSource=await measure(s.page,root);
         assert.throws(()=>assertText(brokenSource),/clipped/);
-        await source.evaluate(el=>el.removeAttribute('style'));
+        await source.evaluate((el,original)=>{el.removeAttribute('style');el.textContent=original;},sourceOriginal);
+        assertText(await measure(s.page,root));
         await s.page.screenshot({path:join(shots,'desktop-1280-long-favorites.png'),animations:'disabled'});
         const title=s.page.locator(`${root} .cfp-row-title`).first();
         await title.evaluate(el=>{el.style.whiteSpace='nowrap';el.style.overflow='hidden';el.style.textOverflow='ellipsis';});

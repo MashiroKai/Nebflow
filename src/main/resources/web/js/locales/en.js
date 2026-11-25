@@ -2341,6 +2341,7 @@ export default {
   'canvas.fav.invalid': 'Unavailable',
   'canvas.fav.added': 'Added to favorites',
   'canvas.fav.removed': 'Removed from favorites',
+  'canvas.fav.saveFailed': 'Could not remove favorite. Please try again',
   'canvas.fav.open': 'Favorites',
   'canvas.favPage.open': 'Open favorites',
   'canvas.favPage.title': 'Favorites',
