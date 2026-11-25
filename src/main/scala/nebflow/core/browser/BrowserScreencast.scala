@@ -7,7 +7,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 /** Caller serializes this object's operations away from the CDP listener thread. */
 private[nebflow] final class BrowserScreencast(send: (String, Json) => Unit):
   private val stopped = new AtomicBoolean(false)
-  private val frames = new BrowserFrameBuffer(id => send("Page.screencastFrameAck", Json.obj("sessionId" -> id.asJson)))
+  private val frames = new BrowserFramePump
+  private val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+  private val failure = new AtomicBoolean(false)
 
   def start(): Unit =
     send("Page.startScreencast", Json.obj("format" -> "jpeg".asJson, "quality" -> 60.asJson,
@@ -30,9 +32,19 @@ private[nebflow] final class BrowserScreencast(send: (String, Json) => Unit):
       data <- c.get[String]("data").toOption
     do
       val metadata = c.downField("metadata").focus.getOrElse(Json.obj())
-      frames.receive(id, Json.obj("data" -> data.asJson, "metadata" -> metadata).noSpaces)
+      val startDrain = frames.offer(id, Json.obj("data" -> data.asJson, "metadata" -> metadata).noSpaces)
+      if startDrain then executor.execute(() => drain())
 
-  def take(): Option[String] = frames.take()
+  private def drain(): Unit =
+    var next = frames.nextAck()
+    while next.nonEmpty do
+      try send("Page.screencastFrameAck", Json.obj("sessionId" -> next.get.asJson))
+      catch case _: Exception => failure.set(true)
+      next = frames.nextAck()
+
+  def take(): Option[String] = frames.takeFrame()
 
   def close(): Unit =
-    if stopped.compareAndSet(false, true) then send("Page.stopScreencast", Json.obj())
+    if stopped.compareAndSet(false, true) then
+      executor.shutdownNow()
+      send("Page.stopScreencast", Json.obj())

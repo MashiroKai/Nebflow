@@ -1107,31 +1107,33 @@ class WebSocketRoutes(
                                     IO(nebflow.core.browser.BrowserSessions.takeoverRegistry.finish(b.request)) *>
                                       send(Json.obj("type" -> "status".asJson, "error" -> "接管票已使用或过期".asJson))
                                   case Right(_) =>
-                                    IO.blocking {
+                                    IO.uncancelable { _ => IO.blocking {
                                       val page = nebflow.core.browser.BrowserSessions.takeoverPage(b.session)
                                       val stream = new nebflow.core.browser.BrowserScreencast((method, params) => { page.send(method, params); () })
-                                      val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
-                                      val unsubscribe = page.subscribe("Page.screencastFrame") { params =>
-                                        try executor.execute(() => stream.frame(params))
-                                        catch case _: java.util.concurrent.RejectedExecutionException => ()
-                                      }
+                                      val unsubscribe = page.subscribe("Page.screencastFrame")(stream.frame)
                                       try stream.start()
                                       catch
                                         case e: Throwable =>
                                           unsubscribe()
-                                          executor.shutdownNow()
+                                          stream.close()
                                           throw e
-                                      val dispose = () => { unsubscribe(); executor.shutdown(); () }
-                                      (b.request, b.session, stream, dispose)
+                                      (b.request, b.session, stream, unsubscribe)
                                     }.attempt.flatMap {
                                       case Left(_) => IO(nebflow.core.browser.BrowserSessions.takeoverRegistry.finish(b.request)) *> send(Json.obj("type" -> "status".asJson, "error" -> "画面流启动失败；可在运行 stand 的机器前操作真实浏览器窗口".asJson))
                                       case Right(active) => state.set(Some(active)) *> started.set(true) *> send(Json.obj("type" -> "status".asJson, "ready" -> true.asJson, "timedOut" -> snapshot.terminal.isDefined.asJson))
-                                    }
+                                    } }
                                 }
                             }
                         }
-                      case "input" => state.get.flatMap(_.traverse_ { case (_, _, stream, _) =>
-                        message.hcursor.downField("event").focus.traverse_(event => IO.blocking(stream.input(event)).attempt.void)
+                      case "input" => state.get.flatMap(_.traverse_ { case (id, session, stream, _) =>
+                        (OwnerIdentity.localAnchor, tokenRef.get.flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))).tupled.flatMap { (currentOwner, currentCred) =>
+                          val currentSubject = currentCred.collect { case Credential.ViaSession(record) => record.accountSub }
+                          if BrowserTakeoverAuth.allowed(currentSubject, currentOwner.map(_.sub)) &&
+                              BrowserTakeoverAuth.validOrigin(origin, host, HealthRoutes.allowedProbeOrigins) &&
+                              nebflow.core.browser.BrowserSessions.takeoverRegistry.holds(session, id) then
+                            message.hcursor.downField("event").focus.traverse_(event => IO.blocking(stream.input(event)).attempt.void)
+                          else send(Json.obj("type" -> "status".asJson, "error" -> "接管输入未授权".asJson))
+                        }
                       })
                       case "finish" => state.getAndSet(None).flatMap {
                         case None => send(Json.obj("type" -> "status".asJson, "error" -> "接管租约不存在".asJson))
