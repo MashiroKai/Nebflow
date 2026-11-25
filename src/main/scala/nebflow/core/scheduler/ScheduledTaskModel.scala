@@ -13,35 +13,32 @@ final case class DeviceZoneReport(deviceId: String, zoneId: String, reportedAt: 
 
 class DeviceZoneReports(root: os.Path):
   private val path = root / "device-zone-reports.json"
+  private val lock = new ScheduledTaskStore(root / "device-zone-lock")
   private given Codec[DeviceZoneReport] = io.circe.generic.semiauto.deriveCodec
 
   private def readReports(): List[DeviceZoneReport] =
     if !os.exists(path) then Nil
     else io.circe.parser.decode[List[DeviceZoneReport]](os.read(path)).fold(throw _, identity)
 
-  def recordIdentify(frame: Json, authenticated: Boolean, now: Long): IO[Unit] = IO.blocking {
+  def recordIdentify(frame: Json, authenticated: Boolean, now: Long): IO[Unit] =
     val id = frame.hcursor.get[String]("clientId").toOption.map(_.trim).filter(s => s.nonEmpty && s.length <= 128)
     val zone = TodoDue.deviceZoneFromFrame(frame)
-    if authenticated && frame.hcursor.get[String]("type").toOption.contains("takeoverIdentify") && id.isDefined && zone.isDefined then
-      DeviceZoneReports.synchronized {
-        os.makeDir.all(root)
-        val deviceId = s"browser:${id.get}"
-        val previous = readReports()
-        val report = DeviceZoneReport(deviceId, zone.get, now, "takeoverIdentify")
-        val updated = previous.find(_.deviceId == deviceId) match
-          case Some(old) if old.reportedAt > now => previous
-          case _ => previous.filterNot(_.deviceId == deviceId) :+ report
-        val temp = root / s".device-zone-${UUID.randomUUID()}"
-        os.write(temp, updated.asJson.noSpaces)
-        os.move.over(temp, path, replaceExisting = true, atomicMove = true)
-      }
-  }
+    if !authenticated || !frame.hcursor.get[String]("type").toOption.contains("takeoverIdentify") || id.isEmpty || zone.isEmpty then IO.unit
+    else lock.withStoreLock(IO.blocking {
+      os.makeDir.all(root)
+      val deviceId = s"browser:${id.get}"
+      val previous = readReports()
+      val report = DeviceZoneReport(deviceId, zone.get, now, "takeoverIdentify")
+      val updated = previous.find(_.deviceId == deviceId) match
+        case Some(old) if old.reportedAt > now => previous
+        case _ => previous.filterNot(_.deviceId == deviceId) :+ report
+      val temp = root / s".device-zone-${UUID.randomUUID()}"
+      os.write(temp, updated.asJson.noSpaces)
+      os.move.over(temp, path, replaceExisting = true, atomicMove = true)
+    })
 
-  def latest: IO[Option[DeviceZoneReport]] = IO.blocking {
-    DeviceZoneReports.synchronized(readReports().sortBy(r => (-r.reportedAt, r.deviceId)).headOption)
-  }
-
-object DeviceZoneReports
+  def latest: IO[Option[DeviceZoneReport]] =
+    lock.withStoreLock(IO.blocking(readReports().sortBy(r => (-r.reportedAt, r.deviceId)).headOption))
 
 
 // `TodoDecision` / `DecisionOption` / `DecisionMedia` 已迁至本包

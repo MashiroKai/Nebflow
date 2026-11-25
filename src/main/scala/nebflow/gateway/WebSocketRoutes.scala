@@ -1278,24 +1278,24 @@ class WebSocketRoutes(
                                 else if takeover.enabled && ConsoleTakeover.isAckFrame(text) then
                                   // 接管通知确认（补推账清账）：客户端渲染后回 at，服务端只认同 at。
                                   ConsoleTakeover.ackAt(text).fold(IO.unit)(at => takeover.ackNotice(hubConnId, at))
-                                else if takeover.enabled && ConsoleTakeover.isIdentifyFrame(text) then
-                                  (ConsoleTakeover.declaredClientId(text), takeoverSession) match
-                                    case (Some(cid), Some(sid)) =>
-                                      // 迁移 + 重裁决（kick 与否在 ConsoleTakeover.settle 内定），
-                                      // 再把本连接实例键写回闸读数（闸随之换轨）。
-                                      // 同端判据批：身份帧同时带自动化声明（webdriver）与握手 UA/
-                                      // 来源 IP——无它们则「同端」与「谁顶了谁」都判不出。
-                                      val meta = ConsoleTakeover.ClientMeta(
-                                        clientId = Some(cid),
-                                        ua = wsUa,
-                                        ip = Some(wsIp),
-                                        automatedDeclared = ConsoleTakeover.declaredAutomated(text)
-                                      )
-                                      takeover.onIdentifyDeclared(sid, hubConnId, Some(meta)).flatMap { h =>
-                                        IO(takeoverHolderRef.set(h))
-                                      }
-                                    // 坏体/无身份/Bearer 轨 ⇒ 静默空转（声明是加速面，不是语义面）。
-                                    case _ => IO.unit
+                                else if ConsoleTakeover.isIdentifyFrame(text) then
+                                  val record = io.circe.parser.parse(text).toOption.fold(IO.unit) { frame =>
+                                    new nebflow.core.scheduler.DeviceZoneReports(nebflow.shared.PathUtil.dataRoot)
+                                      .recordIdentify(frame, authenticated = true, System.currentTimeMillis())
+                                  }
+                                  record *> (if !takeover.enabled then IO.unit else
+                                    (ConsoleTakeover.declaredClientId(text), takeoverSession) match
+                                      case (Some(cid), Some(sid)) =>
+                                        val meta = ConsoleTakeover.ClientMeta(
+                                          clientId = Some(cid),
+                                          ua = wsUa,
+                                          ip = Some(wsIp),
+                                          automatedDeclared = ConsoleTakeover.declaredAutomated(text)
+                                        )
+                                        takeover.onIdentifyDeclared(sid, hubConnId, Some(meta)).flatMap { h =>
+                                          IO(takeoverHolderRef.set(h))
+                                        }
+                                      case _ => IO.unit)
                                 // 门户身份透传批（方案 A1）：本连接的会话身份随帧进消息
                                 // 分发（两处消费点：typeless 腿 + immediateInput 腿——
                                 // 后者经 wsDispatchContext 闭包）。Bearer 轨恒 None。

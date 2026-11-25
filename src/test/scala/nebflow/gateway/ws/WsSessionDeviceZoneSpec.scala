@@ -26,9 +26,14 @@ class WsSessionDeviceZoneSpec extends CatsEffectSuite:
       _ = assertEquals(empty, None)
       _ <- reports.recordIdentify(tokyo, authenticated = true, 100L)
       _ <- reports.recordIdentify(paris, authenticated = true, 200L)
+      _ <- reports.recordIdentify(paris.deepMerge(Json.obj("clientId" -> "".asJson)), authenticated = true, 300L)
+      _ <- reports.recordIdentify(tokyo.deepMerge(Json.obj("clientId" -> "z".asJson)), authenticated = false, 400L)
       loaded <- new nebflow.core.scheduler.DeviceZoneReports(root).latest
       _ = assertEquals(loaded.map(_.zoneId), Some("Europe/Paris"))
       _ = assertEquals(loaded.map(_.deviceId), Some("browser:b"))
+      _ <- reports.recordIdentify(tokyo, authenticated = true, 200L)
+      tied <- reports.latest
+      _ = assertEquals(tied.map(_.deviceId), Some("browser:a"))
       _ <- IO(os.remove.all(root))
     yield ()
   }
