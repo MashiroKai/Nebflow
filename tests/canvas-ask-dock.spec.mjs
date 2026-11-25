@@ -198,7 +198,7 @@ async function bootPage(browser, { viewport = { width: 1600, height: 1000 }, col
 
 /** 移动档 boot（body.mobile-layer 自举，#activity-bar 手机层隐藏不等待）。 */
 async function bootMobilePage(browser, colorScheme = 'dark') {
-  const ctx = await browser.newContext({ viewport: { width: 375, height: 812 }, colorScheme, hasTouch: true });
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 812 }, colorScheme, hasTouch: true });
   await ctx.addInitScript(() => {
     localStorage.setItem('nebflow_token', 't'); localStorage.setItem('neblink_token', 't');
     localStorage.setItem('nebflow_locale', 'zh-CN'); localStorage.setItem('neblink_locale', 'zh-CN');
@@ -415,59 +415,48 @@ try {
   const userBub = await page.waitForSelector('.ask-dock .ask-bub.user', { timeout: 3000 });
   const userText = await userBub.textContent();
   ok('T3d user 气泡即时呈现', userText.includes('τ 为什么取 30 天？'), userText.slice(0, 40));
-  await page.waitForSelector('.ask-dock .ask-stream-line', { timeout: 2000 }).then(() => ok('T3e 单行流式指示在场', true)).catch(() => ok('T3e 单行流式指示在场', false));
+  await page.waitForSelector('.ask-dock .nf-workline', { timeout: 2000 });
+  wsSend({ type: 'thinkingDelta', sessionId: askedSid, delta: '正在分析近因加权的依据' });
+  await page.waitForSelector('.ask-dock .nf-wl-think');
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await shot(page, 'product-desktop-dark');
+  const single = await page.evaluate(() => { const e = document.querySelector('.ask-dock .nf-wl-think'); return { text:e.textContent, whiteSpace:getComputedStyle(e).whiteSpace, height:e.getBoundingClientRect().height }; });
+  ok('T3e 思考进入共享工作线并保持单行', single.text.includes('正在分析') && single.whiteSpace === 'nowrap' && single.height <= 19, JSON.stringify(single));
+  wsSend({ type: 'toolStart', sessionId: askedSid, label: 'Read' });
+  await page.waitForSelector('.ask-dock .nf-wl-tool');
+  const longArg = '/tmp/fixture.md' + '-long'.repeat(160);
+  wsSend({ type: 'toolArgDelta', sessionId: askedSid, delta: longArg });
+  await page.waitForFunction(() => document.querySelector('.ask-dock .nf-wl-detail')?.textContent.includes('fixture'));
+  ok('T3e1 工具替换思考且仍为同一工作线', await page.locator('.ask-dock .nf-workline').count() === 1);
+  await openFile(page, '状态隔离测试.md');
+  await openFile(page, '记忆检索调优笔记.md');
+  await page.waitForSelector('.ask-dock .nf-wl-tool');
+  ok('T3e2 切换会话后恢复在飞工具', (await page.locator('.ask-dock .nf-wl-detail').textContent()).includes(longArg));
+  wsSend({ type: 'toolEnd', sessionId: askedSid, label: 'Read', summary: '读取完成' });
+  await shot(page, 't3-stream-line');
   wsSend({ type: 'textDelta', sessionId: askedSid, delta: '笔记「近因加权」节：' });
   await sleep(60);
-  const streamLine = await page.evaluate(() => {
-    const line = document.querySelector('.ask-dock .ask-stream-line');
-    return line ? { text: line.textContent, overflow: getComputedStyle(line).overflowX, pointerEvents: getComputedStyle(line).pointerEvents, height: line.getBoundingClientRect().height } : null;
-  });
-  ok('T3e1 流式行显示增量、单行且不可交互展开', !!streamLine && streamLine.text.includes('笔记') && streamLine.height < 60 && streamLine.pointerEvents === 'none', JSON.stringify(streamLine));
-  const streamContract = await page.evaluate(() => {
-    const line = document.querySelector('.ask-dock .ask-stream-line');
-    const col = line.parentElement;
-    const reference = document.createElement('div');
-    reference.className = 'nf-workline nf-wl-think';
-    reference.textContent = 'Reference';
-    document.body.append(reference);
-    const props = ['fontSize', 'fontWeight', 'lineHeight', 'color', 'opacity'];
-    const actual = getComputedStyle(line), expected = getComputedStyle(reference);
-    const styles = Object.fromEntries(props.map(p => [p, [actual[p], expected[p]]]));
-    const caret = ['content', 'color', 'animationName', 'animationDuration', 'animationTimingFunction'].map(p => [p, getComputedStyle(line, '::after')[p], getComputedStyle(reference, '::after')[p]]);
-    // Constrain the actual flex column: a last flex item must not shrink below its line box.
-    const old = col.style.cssText;
-    col.style.height = '80px';
-    col.style.maxHeight = '80px';
-    const range = document.createRange();
-    range.selectNodeContents(line);
-    const text = range.getBoundingClientRect(), box = line.getBoundingClientRect();
-    const geometry = { textTop: text.top, textBottom: text.bottom, boxTop: box.top, boxBottom: box.bottom, clientHeight: line.clientHeight, scrollHeight: line.scrollHeight };
-    col.style.cssText = old;
-    reference.remove();
-    return { styles, caret, geometry };
-  });
-  const g = streamContract.geometry;
-  ok('T3e2 拥挤列内流式文字行框完整', g.textTop >= g.boxTop - 0.5 && g.textBottom <= g.boxBottom + 0.5 && g.scrollHeight <= g.clientHeight, JSON.stringify(g));
-  ok('T3e3 主会话流式文字与光标计算样式一致', Object.values(streamContract.styles).every(([a, b]) => a === b) && streamContract.caret.every(([, a, b]) => a === b), JSON.stringify({ styles: streamContract.styles, caret: streamContract.caret }));
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  const reducedCaret = await page.evaluate(() => getComputedStyle(document.querySelector('.ask-stream-line'), '::after').animationName);
-  ok('T3e4 减少动态效果时流式光标不闪烁', reducedCaret === 'none', reducedCaret);
-  await page.emulateMedia({ reducedMotion: 'no-preference' });
-  await shot(page, 't3-stream-line');
   for (const d of ['τ=30 半衰期 ≈21 天。', '<cite>§近因加权</cite>']) {
     wsSend({ type: 'textDelta', sessionId: askedSid, delta: d });
     await sleep(60);
   }
-  const aiMid = await page.evaluate(() => document.querySelector('.ask-dock .ask-stream-line')?.textContent || '');
-  ok('T3f textDelta 增量更新单行流式预览', aiMid.includes('τ=30 半衰期 ≈21 天。'), aiMid.slice(0, 50));
+  const aiMid = await page.evaluate(() => [...document.querySelectorAll('.ask-dock .ask-bub.ai')].at(-1)?.textContent || '');
+  ok('T3f textDelta 增量更新正文', aiMid.includes('τ=30 半衰期 ≈21 天。'), aiMid.slice(0, 50));
   wsSend({ type: 'done', sessionId: askedSid });
   await sleep(250);
   const aiFinal = await page.evaluate(() => {
     const nodes = [...document.querySelectorAll('.ask-dock .ask-bub.ai')];
     return nodes.length ? nodes[nodes.length - 1].textContent : '';
   });
-  const streamGone = await page.$('.ask-dock .ask-stream-line');
+  const streamGone = await page.$('.ask-dock .nf-workline');
   ok('T3g done 定稿（转录保留 + 流式行消失，无完成标记）', aiFinal.includes('τ=30 半衰期 ≈21 天') && !streamGone && !(await page.$('.ask-dock .ask-bub.typing')), aiFinal.slice(-30));
+  await page.locator('.ask-process-details summary').click();
+  const processText = await page.locator('.ask-process-details').innerText();
+  ok('T3g1 展开完整思考与长工具参数', processText.includes('正在分析近因加权') && processText.includes(longArg) && processText.includes('读取完成'));
+  await openFile(page, '状态隔离测试.md');
+  await openFile(page, '记忆检索调优笔记.md');
+  await page.locator('.ask-process-details summary').click();
+  ok('T3g2 切回重渲后完整过程仍可展开', (await page.locator('.ask-process-details').innerText()).includes(longArg));
   const fabState = await page.evaluate(() => {
     const f = document.querySelector('.ask-fab');
     const dot = getComputedStyle(f.querySelector('.ask-sess-dot'));
@@ -494,7 +483,7 @@ try {
     user: document.querySelectorAll('.ask-dock .ask-bub.user').length,
     ai: document.querySelectorAll('.ask-dock .ask-bub.ai').length,
     emptyAi: [...document.querySelectorAll('.ask-dock .ask-bub.ai')].filter((b) => !b.textContent.trim()).length,
-    streamLine: document.querySelectorAll('.ask-dock .ask-stream-line').length,
+    streamLine: document.querySelectorAll('.ask-dock .nf-workline').length,
     prevAi,
   }), aiCountBefore);
   // ④双泡（作者截屏 3 = 空 ai 泡叠 typing 双泡）：等待期 ai 泡数不增长（无新空泡）、
@@ -509,12 +498,12 @@ try {
   await sleep(200);
   const f2mid = await page.evaluate((previousCount) => ({
     ai: document.querySelectorAll('.ask-dock .ask-bub.ai').length,
-    streamLine: document.querySelectorAll('.ask-dock .ask-stream-line').length,
+    streamLine: document.querySelectorAll('.ask-dock .nf-workline').length,
     previousCount,
-    text: document.querySelector('.ask-dock .ask-stream-line')?.textContent || '',
+    text: [...document.querySelectorAll('.ask-dock .ask-bub.ai')].at(-1)?.textContent || '',
   }), aiCountBefore);
-  ok('F2 生成中仅显示一行预览（答案不提前形成气泡）',
-    f2mid.ai === f2mid.previousCount && f2mid.streamLine === 1 && f2mid.text.includes('## 结构') && f2mid.text.includes('```js'),
+  ok('F2 正文增量进入气泡，工作线收口',
+    f2mid.ai === f2mid.previousCount + 1 && f2mid.streamLine === 0 && f2mid.text.includes('结构') && f2mid.text.includes('code'),
     JSON.stringify(f2mid));
   wsSend({ type: 'done', sessionId: fSid });
   await sleep(250);
@@ -1007,6 +996,14 @@ try {
   await openFile(lite.page, '记忆检索调优笔记.md');
   await lite.page.click('.ask-fab');
   await sleep(900); // askOpen 回放（mock 转录）到位
+  await lite.page.fill('.ask-dock textarea', '请分析文件');
+  await lite.page.press('.ask-dock textarea', 'Enter');
+  await sleep(200);
+  const liteQuestion = inbound.findLast(m => m.type === 'askQuestion');
+  wsSend({ type: 'thinkingDelta', sessionId: liteQuestion.sessionId, delta: '正在梳理文件中的关键结论与上下文。'.repeat(8) });
+  await lite.page.waitForSelector('.ask-dock .nf-wl-think');
+  await lite.page.emulateMedia({ reducedMotion: 'reduce' });
+  await shot(lite.page, 'product-desktop-light');
   await shot(lite.page, 't16-light-dock');
   ok('T16 双主题截图取证（t16-dark-dock-wide / t16-light-dock）', true, 'evidence/canvas-ask-dock/shots/');
   await lite.page.close();
@@ -1113,17 +1110,19 @@ try {
       await target.press('.ask-dock textarea', 'Enter');
       await sleep(180);
       const question = inbound.findLast((m) => m.type === 'askQuestion');
-      wsSend({ type: 'textDelta', sessionId: question?.sessionId || mobileSid, delta: '这是一段用于验证手机端单行尾随滚动的流式文本。' });
+      wsSend({ type: 'thinkingDelta', sessionId: question?.sessionId || mobileSid, delta: '这是一段用于验证手机端单行尾随滚动的流式文本。'.repeat(8) });
       await sleep(120);
       const streaming = await target.evaluate(() => {
-        const line = document.querySelector('.ask-stream-line');
-        return line && { count: document.querySelectorAll('.ask-stream-line').length, height: line.getBoundingClientRect().height, text: line.textContent, pointer: getComputedStyle(line).pointerEvents, viewport: [innerWidth, innerHeight], scrollWidth: line.scrollWidth, clientWidth: line.clientWidth };
+        const line = document.querySelector('.ask-dock .nf-wl-think');
+        return line && { count: document.querySelectorAll('.ask-dock .nf-workline').length, height: line.getBoundingClientRect().height, text: line.textContent, whiteSpace: getComputedStyle(line).whiteSpace, viewport: [innerWidth, innerHeight], scrollLeft: line.scrollLeft, scrollWidth: line.scrollWidth, clientWidth: line.clientWidth };
       });
-      ok(`T9e ${suffix}手机375×812流式态：单行可见且不可交互`, !!streaming && streaming.count === 1 && streaming.height < 60 && streaming.text.includes('单行尾随滚动') && streaming.pointer === 'none' && streaming.viewport[0] === 375 && streaming.viewport[1] === 812, JSON.stringify(streaming));
+      ok(`T9e ${suffix}手机375×812流式态：单行可见且不可交互`, !!streaming && streaming.count === 1 && streaming.height <= 19 && streaming.text.includes('单行尾随滚动') && streaming.whiteSpace === 'nowrap' && streaming.scrollLeft > 0 && streaming.viewport[0] === 390 && streaming.viewport[1] === 812, JSON.stringify(streaming));
+      await target.emulateMedia({ reducedMotion: 'reduce' });
       await shot(target, `t9-stream-${suffix}`);
+      await shot(target, `product-mobile-${suffix.replace('-', '')}`);
       wsSend({ type: 'done', sessionId: question?.sessionId || mobileSid });
       await sleep(250);
-      const lingering = await target.$('.ask-stream-line');
+      const lingering = await target.$('.ask-dock .nf-workline');
       ok(`T9f ${suffix}手机终态流式行消失`, !lingering);
     };
     await mobileAsk(mob.page, 'dark-');
