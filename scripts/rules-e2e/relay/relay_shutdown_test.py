@@ -501,6 +501,38 @@ server.serve_forever()'''
      old=self.path; self.path=pathlib.Path(tmp)/'ledger'
      try: self.matrix_slow_upload(trigger,available)
      finally: self.path=old
+ def test_process_limit_slow_order(self):
+  # Slow upload remains in body reading, before reservation; another complete
+  # request consumes the limit and remains in flight against the loopback peer.
+  up=socket.socket(); up.bind(('127.0.0.1',0)); up.listen(); up.settimeout(3); self.addCleanup(up.close)
+  self.assertNotEqual(up.getsockname()[1],6138); accepted=threading.Event(); release=threading.Event(); self.addCleanup(release.set)
+  def provider():
+   try:
+    conn,_=up.accept(); accepted.set(); release.wait(5); conn.close()
+   except OSError: pass
+  threading.Thread(target=provider,daemon=True).start()
+  code='''import sys,importlib.util,http.client,time,json,itertools\ns=importlib.util.spec_from_file_location("relay",sys.argv.pop(1)); m=importlib.util.module_from_spec(s); s.loader.exec_module(m)\nport=int(sys.argv.pop(1)); old=m.Relay.__init__; event=m.Relay.event; send=m.BaseHTTPRequestHandler.send_error; order=itertools.count()\ndef log(label): print(json.dumps({"observation":label,"seq":next(order),"monotonic":time.monotonic()}),file=sys.stderr,flush=True)\ndef init(self,args,**kw): old(self,args,dialer=lambda h,p,t:http.client.HTTPConnection("127.0.0.1",port,timeout=t),grace=1,abort_timeout=.1)\ndef observed(self,obj):\n result=event(self,obj)\n if obj.get("status")=="rejected-limit" and result is True: log("ledger-fsynced")\n return result\ndef sent(self,status,*a,**kw):\n result=send(self,status,*a,**kw)\n if status==429: log("response-written")\n return result\nm.Relay.__init__=init; m.Relay.event=observed; m.BaseHTTPRequestHandler.send_error=sent; m.main()'''
+  ev=pathlib.Path(os.environ['RELAY_EVIDENCE_DIR']); prefix=ev/'round7-process-limit-slow'; ledger=self.path
+  with open(str(prefix)+'-stderr.log','w') as err:
+   p=subprocess.Popen([sys.executable,'-B','-c',code,str(pathlib.Path(m.__file__)),str(up.getsockname()[1]),'--route','one,example.com,/v1,FAKE_KEY','--allow-host','example.com','--port','0','--ledger',str(ledger),'--limit','1','--seconds','30','--timeout','5'],stdout=subprocess.PIPE,stderr=err,text=True,env={'PATH':'/usr/bin:/bin','FAKE_KEY':'fake-only'})
+   slow=first=None
+   try:
+    port=json.loads(p.stdout.readline())['port']; self.assertNotEqual(port,6138)
+    def connect(trace,length,body):
+     c=socket.create_connection(('127.0.0.1',port),timeout=2); c.settimeout(2); c.sendall(('POST /one/chat HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Length: %d\r\nX-Stand-Trace-Id: %s\r\n\r\n'%(port,length,trace)).encode()+body); return c
+    slow=connect('slow',100,b'x'); first=connect('reserve',2,b'{}'); self.assertTrue(accepted.wait(3)); reject=connect('reject',2,b'{}')
+    response=reject.recv(4096); stamp=time.monotonic(); reject.close(); self.assertIn(b' 429 ',response); code_exit=p.wait(timeout=4); elapsed=time.monotonic()-stamp
+    pathlib.Path(str(prefix)+'-response.bin').write_bytes(response); pathlib.Path(str(prefix)+'-exit.log').write_text(str(code_exit)+'\n'); pathlib.Path(str(prefix)+'-clock.log').write_text('rejection_to_exit_seconds=%s grace_seconds=1\n'%elapsed); pathlib.Path(str(prefix)+'-ledger.log').write_text(ledger.read_text())
+    side=pathlib.Path(str(ledger)+'.abort'); pathlib.Path(str(prefix)+'-sidecar.log').write_text(side.read_text() if side.exists() else '')
+    self.assertEqual(code_exit,2); self.assertGreater(elapsed,.8)
+   finally:
+    release.set()
+    if slow: slow.close()
+    if first: first.close()
+    if p.poll() is None: p.terminate(); p.wait(timeout=3)
+    p.stdout.close()
+  lines=[json.loads(x) for x in pathlib.Path(str(prefix)+'-stderr.log').read_text().splitlines()]; obs=[x for x in lines if 'observation' in x]
+  self.assertEqual([x['observation'] for x in obs],['ledger-fsynced','response-written']); self.assertLess(obs[0]['seq'],obs[1]['seq']); self.assertLessEqual(obs[0]['monotonic'],obs[1]['monotonic']); self.assertTrue(lines[-1]['sealed'])
  def test_watchdog_only_starts_once(self):
   relay=m.Relay(args(self.path),grace=1,exit_fn=lambda code:None)
   self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
