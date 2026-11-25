@@ -803,6 +803,7 @@ Your context does NOT show the current date/time — never invent an absolute da
       case None => Right(None)
       case Some(raw) =>
         val zoned = raw.asString.flatMap(s => scala.util.Try(ZonedDateTime.parse(s)).toOption)
+        val originalOffset = raw.asString.flatMap(s => scala.util.Try(OffsetDateTime.parse(s.takeWhile(_ != '['))).toOption)
         val local = raw.asString.flatMap(s => scala.util.Try(LocalDateTime.parse(s)).toOption)
         val explicit = zoned.map(_.getZone.getId).filter(ZoneId.getAvailableZoneIds.contains)
         for
@@ -811,7 +812,7 @@ Your context does NOT show the current date/time — never invent an absolute da
           _ <- Either.cond(Set("", "once", "weekly").contains(repeat), (), "Todo repeat must be once or weekly")
           _ <- Either.cond(repeat != "weekly" || local.exists(t => t.getSecond == 0 && t.getNano == 0), (), "Weekly reminders require a local date and minute")
           _ <- Either.cond(zoned.isDefined || raw.asString.exists(s => scala.util.Try(LocalDateTime.parse(s)).isSuccess || s.trim.toLowerCase.startsWith("tomorrow")), (), "Please clarify an explicit local date and time")
-          at <- zoned.map(z => Right(z.toInstant.toEpochMilli)).orElse(local.map { value =>
+          at <- originalOffset.map(z => Right(z.toInstant.toEpochMilli)).orElse(local.map { value =>
             val zone = ZoneId.of(region)
             val transition = zone.getRules.getTransition(value)
             val resolved = if transition != null && transition.isGap then transition.getDateTimeAfter else value
@@ -820,7 +821,7 @@ Your context does NOT show the current date/time — never invent an absolute da
           _ <- Either.cond(at > now, (), "Please clarify a future reminder time")
         yield
           val wall = local.map(_.toString).getOrElse(Instant.ofEpochMilli(at).atZone(ZoneId.of(region)).toLocalDateTime.toString)
-          val offset = zoned.map(_.getOffset.toString)
+          val offset = originalOffset.map(_.getOffset.toString)
           val rule = if repeat == "weekly" then
             val value = local.get
             TodoDue.Weekly(value.getDayOfWeek.getValue, value.toLocalTime.toString, region, wall)

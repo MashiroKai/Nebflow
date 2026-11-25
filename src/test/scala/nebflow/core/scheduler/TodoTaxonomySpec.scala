@@ -261,6 +261,21 @@ class TodoTaxonomySpec extends CatsEffectSuite:
   private def callTool(input: Json): Either[ToolError, String] =
     ScheduleTool.call(input.asObject.get, mkCtx()).unsafeRunSync()
 
+  test("tool offset with explicit region preserves the input instant and original offset"):
+    val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
+    val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision,
+      "triggerAt" -> "2035-01-01T09:00:00+08:00[Europe/Paris]".asJson)
+    for
+      _ <- reset()
+      result <- ScheduleTool.call(input.asObject.get, mkCtx())
+      stored <- taskStore.getAllTodos
+    yield
+      assert(result.isRight, s"input offset determines instant: $result")
+      val due = stored.head.due.get.asJson.hcursor
+      assertEquals(due.get[String]("zoneId").toOption, Some("Europe/Paris"))
+      assertEquals(due.get[String]("originalOffset").toOption, Some("+08:00"))
+      assertEquals(due.get[Long]("dueAt").toOption, Some(java.time.Instant.parse("2035-01-01T01:00:00Z").toEpochMilli))
+
   test("tool weekly todo persists a wall-clock rule in the device zone"):
     val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
     val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision,
