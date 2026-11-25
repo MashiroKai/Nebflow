@@ -84,8 +84,28 @@ final class GitVizAskScopeSpec extends CatsEffectSuite:
       }
       old <- new AskSessionRegistry(dataRoot).byId("ask-deadbeef")
       _ = assert(old.exists(!_.isGitViz), "无 kind 字段的存量记录必须读回 file 域")
+      _ = assertEquals(old.flatMap(_.device), None)
     yield ()
     end for
+  }
+
+  test("绑定身份区分本机和远端并拒绝显式 ID 冲突") {
+    val root = os.Path(Files.createTempDirectory("ask-device-bind").toFile)
+    val registry = new AskSessionRegistry(root)
+    for
+      local <- registry.bind("/tmp/a.md", "a.md")
+      remote <- registry.bind("/tmp/a.md", "a.md", device = Some("peer"))
+      _ = assertEquals(local.id, "ask-15f9566a")
+      _ = assertNotEquals(local.id, remote.id)
+      loaded <- new AskSessionRegistry(root).byId(remote.id)
+      _ = assertEquals(loaded.flatMap(_.device), Some("peer"))
+      conflict <- registry.bind("/tmp/other.md", "other.md", explicitId = local.id).attempt
+      _ = assert(conflict.isLeft)
+      conflictDevice <- registry.bind("/tmp/a.md", "a.md", explicitId = local.id, device = Some("peer")).attempt
+      _ = assert(conflictDevice.isLeft)
+      unchanged <- registry.byId(local.id)
+      _ = assertEquals(unchanged, Some(local))
+    yield ()
   }
 
   // ── G4 交办出口 ──────────────────────────────────────────────────────────

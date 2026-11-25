@@ -1487,10 +1487,17 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           nebflow.core.ask.AskGatewayServices.instance match
             case None => IO.pure(call)
             case Some(services) => services.registry.byId(sid).map {
-              case Some(binding) if call.input("device").flatMap(_.asString).exists(d => d.nonEmpty && !d.equalsIgnoreCase("local")) ||
-                  state.session.sessionDevice.nonEmpty || !nebflow.core.ask.AskPathBoundary.isBoundDocument(
-                    binding.file, call.input("path").flatMap(_.asString).getOrElse("")
-                  ) =>
+              case Some(binding) if {
+                val explicit = call.input("device").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+                val effective = explicit match
+                  case Some(d) if d.equalsIgnoreCase("local") => None
+                  case Some(d) => Some(d)
+                  case None => state.session.sessionDevice.map(_.trim).filter(_.nonEmpty)
+                // Remote inline review is not implemented; even a matching remote binding delegates.
+                effective.nonEmpty || binding.device != effective || !nebflow.core.ask.AskPathBoundary.isBoundDocument(
+                  binding.file, call.input("path").flatMap(_.asString).getOrElse("")
+                )
+              } =>
                 val rename = if call.name == "ask_edit" then
                   List("path" -> "file_path", "old_str" -> "old_string", "new_str" -> "new_string")
                 else List("path" -> "file_path")
@@ -1685,11 +1692,12 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         val skipStreaming = call.name == "AskUserQuestion"
         val callCtx = toolCtx.copy(toolCallId = call.id)
         // pi-logic 接线点 9：单调用起点审计行（与 ToolStart 帧位同步——纯增日志）。
-        IO(piBridge.toolStart(call.id, call.name)) *>
+        val modelCall = result.toolCalls.find(_.id == call.id).getOrElse(call)
+        IO(piBridge.toolStart(modelCall.id, modelCall.name)) *>
           ((if !skipStreaming then
               emitStreamIO(
                 state.wsSend,
-                AgentStreamEvent.ToolStart(nebflow.core.summarizeToolCall(call)),
+                AgentStreamEvent.ToolStart(nebflow.core.summarizeToolCall(modelCall)),
                 isSubagent,
                 sessionIdOpt
               )
@@ -1797,6 +1805,13 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         val r = ToolExecResult(s"Tool not available: ${call.name}", isError = true)
         logToolStructured(call, toolCtx, r).as((call, r))
       }
+      delegationDetails = normalizedCalls.zip(result.toolCalls).collect {
+        case (actual, original) if actual.name != original.name => original.id -> Json.obj(
+          "tool" -> actual.name.asJson,
+          "path" -> actual.input("file_path").getOrElse(Json.Null),
+          "device" -> actual.input("device").getOrElse(state.session.sessionDevice.asJson)
+        )
+      }.toMap
       originalCallsById = result.toolCalls.map(c => c.id -> c).toMap
       transcriptResults = (guardedBatch ++ droppedResults).map { (call, output) =>
         (originalCallsById.getOrElse(call.id, call), output)
@@ -1850,7 +1865,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             result.thinking,
             result.thinkingSignature,
             loopCounters = Some(loopCounters),
-            freezeAfter = Some(f.msg)
+            freezeAfter = Some(f.msg),
+            delegatedTo = delegationDetails
           )
         case t: nebflow.core.processor.LoopGuard.Verdict.Terminate =>
           // L1：turn 以 LoopDetected 失败——不投 ToolsComplete，走 LlmFailed fatal
@@ -1880,7 +1896,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             result.thinking,
             result.thinkingSignature,
             loopReminder = Some(nebflow.core.processor.LoopGuard.reminderMessage(w)),
-            loopCounters = Some(loopCounters)
+            loopCounters = Some(loopCounters),
+            delegatedTo = delegationDetails
           )
         case nebflow.core.processor.LoopGuard.Verdict.Pass =>
           ctx.self ! ToolsComplete(
@@ -1890,7 +1907,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             None,
             result.thinking,
             result.thinkingSignature,
-            loopCounters = Some(loopCounters)
+            loopCounters = Some(loopCounters),
+            delegatedTo = delegationDetails
           )
       // P0 阶段 3：工具执行完成——touch 活动戳（长工具执行期间流已结束，
       // 若无此 touch 会被误判卡死；下轮 LLM 调用开始会再次 mark Processing）。

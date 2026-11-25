@@ -226,7 +226,8 @@ final case class AskBinding(
    * 既有能力零复制地复用（作者令「复用同一条路，不新造第二套」）。缺省 `"file"`
    * ⇒ 存量 index.json 逐字兼容（无该字段即旧语义）。
    */
-  kind: String = AskBinding.KindFile
+  kind: String = AskBinding.KindFile,
+  device: Option[String] = None
 ):
 
   def displayKey: String = AskSessions.displayKey(file)
@@ -335,7 +336,8 @@ final class AskSessionRegistry(dataRoot: os.Path):
                         .toOption
                         .filter(AskBinding.KindGitViz == _)
                         .getOrElse(AskBinding.KindFile)
-                    yield AskBinding(id, f, n, c, m, k)
+                      device = item.hcursor.downField("device").as[Option[String]].toOption.flatten
+                    yield AskBinding(id, f, n, c, m, k, device)
                   }
                   .map(b => b.id -> b)
                   .toMap
@@ -359,7 +361,8 @@ final class AskSessionRegistry(dataRoot: os.Path):
               "fileName" -> b.fileName.asJson,
               "createdAt" -> b.createdAt.asJson,
               "mainSessionId" -> b.mainSessionId.asJson,
-              "kind" -> b.kind.asJson
+              "kind" -> b.kind.asJson,
+              "device" -> b.device.asJson
             )
           )
           .asJson
@@ -378,13 +381,19 @@ final class AskSessionRegistry(dataRoot: os.Path):
     canonicalFile: String,
     fileName: String,
     explicitId: String = "",
-    kind: String = AskBinding.KindFile
+    kind: String = AskBinding.KindFile,
+    device: Option[String] = None
   ): IO[AskBinding] =
-    val id = if explicitId.trim.nonEmpty then explicitId else AskSessions.sessionIdFor(canonicalFile)
+    val id = if explicitId.trim.nonEmpty then explicitId
+      else device match
+        case Some(remote) => AskSessions.sessionIdFor(s"device:${remote.length}:$remote:$canonicalFile")
+        case None => AskSessions.sessionIdFor(canonicalFile)
     IO {
       bindingsRef.get.get(id) match
         case Some(existing) =>
-          // 文件名漂移（重命名后同路径不会发生；同名不同大小写等）时刷新显示名。
+          if existing.file != canonicalFile || existing.device != device then
+            throw new IllegalArgumentException(s"ask binding identity conflict for $id: device or path differs")
+          // 文件名漂移时刷新显示名，不改绑定身份。
           if existing.fileName != fileName then
             val updated = existing.copy(fileName = fileName)
             bindingsRef.set(bindingsRef.get + (id -> updated))
@@ -392,7 +401,7 @@ final class AskSessionRegistry(dataRoot: os.Path):
             updated
           else existing
         case None =>
-          val fresh = AskBinding(id, canonicalFile, fileName, System.currentTimeMillis(), "", kind)
+          val fresh = AskBinding(id, canonicalFile, fileName, System.currentTimeMillis(), "", kind, device)
           bindingsRef.set(bindingsRef.get + (id -> fresh))
           persist(bindingsRef.get)
           fresh

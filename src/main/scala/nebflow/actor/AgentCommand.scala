@@ -453,7 +453,8 @@ object AgentCommand:
      * ToolsComplete 链式 dispatch 会递增 currentTurnId，后续消息按 stale
      * 丢弃，冻结永不落地（wiring 实证）。
      */
-    freezeAfter: Option[String] = None
+    freezeAfter: Option[String] = None,
+    delegatedTo: Map[String, io.circe.Json] = Map.empty
   ) extends AgentCommand
 
   case class CompactionComplete(result: Either[String, List[Message]]) extends AgentCommand

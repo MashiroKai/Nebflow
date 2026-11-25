@@ -150,7 +150,7 @@ class WebSearchWiringSpec extends CatsEffectSuite:
   private def toolUsesOf(req: LlmRequest): List[(String, String)] =
     req.messages.flatMap { m =>
       m.content.toOption.toList.flatMap(
-        _.collect { case ContentBlock.ToolUse(id, name, _) => (id, name) }
+        _.collect { case ContentBlock.ToolUse(id, name, _, _) => (id, name) }
       )
     }
 

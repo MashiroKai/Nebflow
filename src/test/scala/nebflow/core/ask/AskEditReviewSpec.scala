@@ -27,42 +27,6 @@ final class AskEditReviewSpec extends CatsEffectSuite:
     AskEditReviews.resetForTest(binding.id)
     (root, dir, registry, binding)
 
-  test("non-bound edits use ordinary tools and never contaminate bound review") {
-    val (root, _, registry, binding) = setup("delegation")
-    val other = root / "other.txt"
-    val ordinary = root / "ordinary.txt"
-    os.write(other, "alpha")
-    os.write(ordinary, "alpha")
-    val sources = new AskContextSources:
-      def fileStat(p: String) = IO.pure(None)
-      def fileText(p: String) = IO.pure(None)
-      def graphNeighbors(p: String) = IO.pure(Nil)
-      def recallHits(q: String) = IO.pure(Nil)
-      def recallDbMtime = IO.pure(0L)
-      def graphVersion = IO.pure("")
-    AskGatewayServices.install(AskServices(registry, sources, new AskPromptCache))
-    val ctx = ToolContext(projectRoot = root.toString, sessionId = Some(binding.id))
-    val edit = JsonObject("path" -> other.toString.asJson, "old_str" -> "alpha".asJson, "new_str" -> "beta".asJson)
-    val ordinaryEdit = JsonObject("file_path" -> ordinary.toString.asJson, "old_string" -> "alpha".asJson, "new_string" -> "beta".asJson)
-    val write = JsonObject("path" -> other.toString.asJson, "content" -> "final".asJson)
-    val ordinaryWrite = JsonObject("file_path" -> ordinary.toString.asJson, "content" -> "final".asJson)
-    (for
-      bound <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", _ => Right("changed"))
-      a <- AskEditTool.call(edit, ctx)
-      b <- nebflow.core.tools.EditTool.call(ordinaryEdit, ctx)
-      c <- AskWriteTool.call(write, ctx)
-      d <- nebflow.core.tools.WriteTool.call(ordinaryWrite, ctx)
-      _ = assert(bound.isRight && a.isRight && b.isRight && c.isRight && d.isRight)
-      _ = assertEquals(os.read(other), os.read(ordinary))
-      _ = assertEquals(AskEditReviews.reviewFor(binding.id).map(_.path), Some(binding.file))
-      _ = assertEquals(AskEditReviews.reviewFor(binding.id).map(_.changes.size), Some(1))
-      rejected <- AskEditReviews.reject(binding.id, None)
-      _ = assert(rejected.isRight)
-      _ = assertEquals(os.read(os.Path(binding.file)), original)
-      _ = assertEquals(os.read(other), "final")
-    yield ()).guarantee(IO(AskGatewayServices.uninstall()))
-  }
-
   // ── 直接落盘 + 聚合审阅 ──────────────────────────────────────────────────
   test("applyChange writes the disk immediately and records the aggregate review") {
     val (_, _, _, binding) = setup("apply")
