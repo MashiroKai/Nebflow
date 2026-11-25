@@ -283,6 +283,7 @@ let streamSessions = [];
 /** @type {Array<any>} sessions with non-empty windows, in display order */
 let streamGroups = [];
 let streamMode = 'browse';   // 'browse' | 'anchor' | 'search'
+let historyCoverage = null;
 let pageInFlight = false;
 let sentinelEl = null;
 let sentinelObserver = null;
@@ -1276,13 +1277,14 @@ async function fetchSessionList(signal) {
  * params today and returns the full history; pages are sliced client-side.
  * @param {string} sessionId
  * @param {AbortSignal} [signal]
- * @param {{before?:number, after?:number, limit?:number}} [cursor]
+ * @param {{before?:number, after?:number, limit?:number, latest?:boolean}} [cursor]
  */
 async function fetchHistory(sessionId, signal, cursor = {}) {
   const params = new URLSearchParams();
   if (cursor.before != null) params.set('before', String(cursor.before));
   if (cursor.after != null) params.set('after', String(cursor.after));
   if (cursor.limit != null) params.set('limit', String(cursor.limit));
+  if (cursor.latest) params.set('latest', 'true');
   const qs = params.toString();
   const resp = await searchFetch(
     `/api/sessions/${encodeURIComponent(sessionId)}/history${qs ? `?${qs}` : ''}`,
@@ -1295,14 +1297,14 @@ async function fetchHistory(sessionId, signal, cursor = {}) {
   //   · 其余非 2xx ⇒ 抛（fetchSessionList 同律）⇒ runSearch/
   //     runStream 既有 catch ⇒ showError 渲染「加载失败: … + 重试」钮；
   //   · 2xx 但体损坏（messages 缺失/非数组 = 截断体）⇒ 同样抛。
-  if (resp.status === 404) return [];
+  if (resp.status === 404) return cursor.latest ? { messages: [], total: 0, latestApplied: true } : [];
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const data = await resp.json().catch((e) => {
     if (e && e.name === 'AbortError') throw e;
     return null;
   });
   if (!data || !Array.isArray(data.messages)) throw new Error('malformed history payload');
-  return data.messages;
+  return cursor.latest ? { messages: data.messages, total: data.total, latestApplied: data.latestApplied === true } : data.messages;
 }
 
 // ── 会话消息源（3(b) 会话内独立搜索批 2026-11-06）──────────────────────────
@@ -2207,6 +2209,7 @@ async function runSearch() {
   if (!statusEl || !resultsEl) return;
 
   streamMode = 'search';
+  historyCoverage = null;
   resultsEl.dataset.loading = 'true';
   statusEl.textContent = t('search.searching');
   // 每次新查询清零分页档（续取腿只能挂在本次查询的档上）。
@@ -2225,7 +2228,7 @@ async function runSearch() {
     // 索引里；跳过 = 直接走全量拉取路径（fetchConvHistory），scope 零泄漏。
     if (SEARCH_API_ENABLED && kw && !convScope) {
       const handled = await runSearchIndex(kw, scope, agentSel, ac, mySeq, statusEl, resultsEl);
-      if (handled) return;
+      if (handled || mySeq !== searchSeq || ac.signal.aborted) return;
     }
 
     let sessions;
@@ -2254,11 +2257,17 @@ async function runSearch() {
       if (agentSel) sessions = sessions.filter(s => agentNameOf(s) === agentSel);
     }
 
+    statusEl.textContent = '正在搜索历史…';
     const showProgress = sessions.length > 1;
+    let searched = 0;
+    let truncated = false;
+    let legacy = false;
     const perSession = await mapLimit(sessions, FETCH_CONCURRENCY, async (s) => {
-      const raw = s.convSource
-        ? await fetchConvHistory(s.id, ac.signal)
-        : await fetchHistory(s.id, ac.signal);
+      const page = s.convSource ? null : await fetchHistory(s.id, ac.signal, { latest: true, limit: 4000 });
+      const raw = s.convSource ? await fetchConvHistory(s.id, ac.signal) : page.messages;
+      searched += raw.length;
+      if (page && page.total > raw.length) truncated = true;
+      if (page && !page.latestApplied) legacy = true;
       const norm = s.convSource
         ? normalizeConv(raw, { sessionId: s.id, sessionName: s.name || s.id })
         : normalizeAll(raw, { sessionId: s.id, sessionName: s.name || s.id });
@@ -2269,6 +2278,7 @@ async function runSearch() {
 
     if (mySeq !== searchSeq) return;
 
+    historyCoverage = legacy ? `旧版服务：已搜 ${searched} 条，可能不是最近内容` : `已搜最近 ${searched} 条${truncated ? ' · 已截断' : ' · 更早历史可能已超出留存范围'}`;
     populateToolFilter(perSession.map(p => ({ all: p.all })), selectById('search-tool')?.value || '');
 
     // v3.2: typed media tabs search ENTRY FIELDS, not message text (PLAN §3.5)
@@ -2571,7 +2581,8 @@ function statusSummary() {
   const count = (pager && total > loaded)
     ? t('search.loadedOf', { n: loaded, m: total })
     : t('search.results', { n: total });
-  return prefix ? `${prefix} · ${count}` : count;
+  const summary = prefix ? `${prefix} · ${count}` : count;
+  return historyCoverage && streamMode === 'search' ? `${summary} · ${historyCoverage}` : summary;
 }
 
 /** Error state: message + an inline retry button (glass control). */

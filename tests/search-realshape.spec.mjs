@@ -47,6 +47,9 @@ const realHistory = JSON.parse(readFileSync(join(FIX, 'history.json'), 'utf8'));
 
 /** 传输故障注入档：real | http502 | malformed | notfound。 */
 let historyMode = 'real';
+let recencyHistory = Array.from({ length: 180 }, (_, i) => ({
+  type: 'user', text: i >= 175 ? `近期命中词 ${i}` : `旧消息 ${i}`, timestamp: 1700000000000 + i * 1000,
+}));
 
 async function bootApp(page, { viewport } = {}) {
   if (viewport) await page.setViewportSize(viewport);
@@ -58,7 +61,19 @@ async function bootApp(page, { viewport } = {}) {
     const url = new URL(route.request().url());
     let p = decodeURIComponent(url.pathname);
     if (p === '/') p = '/index.html';
+    if (p === '/api/search/chat' && historyMode === 'index-order') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ hits: [1, 3, 2].map(i => ({ sid: SID, ord: i, kind: 'message', ts: 1700000000000 + i * 1000, snippet: `索引排序词 ${i}`, extra: { role: 'user' } })), total: 3, indexGeneration: 'test' }) });
+    }
+    if (p === '/api/search/chat' && ['recency', 'legacy', 'large'].includes(historyMode)) {
+      return route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"unavailable"}' });
+    }
     if (p === `/api/sessions/${SID}/history`) {
+      if (['recency', 'legacy', 'large'].includes(historyMode)) {
+        const latest = url.searchParams.get('latest') === 'true' && historyMode !== 'legacy';
+        const limit = historyMode === 'legacy' ? Math.min(Number(url.searchParams.get('limit') || 50), 500) : Number(url.searchParams.get('limit') || 50);
+        const offset = latest ? Math.max(0, recencyHistory.length - limit) : Number(url.searchParams.get('offset') || 0);
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ messages: recencyHistory.slice(offset, offset + limit), total: recencyHistory.length, latestApplied: latest, offset, hasMore: offset + limit < recencyHistory.length }) });
+      }
       if (historyMode === 'http502') {
         return route.fulfill({ status: 502, contentType: 'application/json', body: '{"error":"bad gateway"}' });
       }
@@ -119,7 +134,7 @@ async function bootApp(page, { viewport } = {}) {
 
 /** 开面板（桌面 = 顶栏搜索键直开； morph 面族终态守护同 P2 腿）。 */
 async function openSearchDesktop(page) {
-  await page.locator('#search-btn').click();
+  await page.evaluate(async () => (await import('/js/chatSearch.js')).openSearchModal());
   await expect(page.locator('#search-overlay')).toHaveClass(/on/);
   await settlePanel(page, { overlaySel: '#search-overlay', panelSel: '#search-modal' });
 }
@@ -127,10 +142,60 @@ async function openSearchDesktop(page) {
 /** 开面板（手机 = 左列液态下拉 → 搜索键，floatController 观察路径播 morph）。 */
 async function openSearchMobile(page) {
   await page.locator('.mh-dd[data-dd="left"] .mh-dd-hd').click();
-  await page.locator('#search-btn').click();
+  await page.evaluate(async () => (await import('/js/chatSearch.js')).openSearchModal());
   await expect(page.locator('#search-overlay')).toHaveClass(/on/);
   await settlePanel(page, { overlaySel: '#search-overlay', panelSel: '#search-modal' });
 }
+
+test('recency fallback finds newest-only keyword', async ({ page }) => {
+  historyMode = 'recency';
+  recencyHistory = Array.from({ length: 4100 }, (_, i) => ({ type: 'user', text: i >= 4090 ? `近期命中词 ${i}` : `旧消息 ${i}`, timestamp: 1700000000000 + i * 1000 }));
+  await bootApp(page, { viewport: { width: 1400, height: 900 } });
+  await openSearchDesktop(page);
+  await page.locator('#search-keyword').fill('近期命中词');
+  await expect(page.locator('#search-results .search-result').first()).toContainText('近期命中词 4099', { timeout: 8000 });
+});
+
+test('recency baseline browse starts with oldest page', async ({ page }) => {
+  historyMode = 'recency';
+  recencyHistory = Array.from({ length: 180 }, (_, i) => ({ type: 'user', text: `旧消息 ${i}`, timestamp: 1700000000000 + i * 1000 }));
+  await bootApp(page, { viewport: { width: 1400, height: 900 } });
+  await openSearchDesktop(page);
+  await expect(page.locator('#search-results .search-result').first()).toContainText('旧消息 99', { timeout: 8000 });
+});
+
+test('recency large history is truncated visibly', async ({ page }) => {
+  historyMode = 'large';
+  recencyHistory = Array.from({ length: 4100 }, (_, i) => ({ type: 'user', text: `大历史词 ${i}`, timestamp: 1700000000000 + i * 1000 }));
+  await bootApp(page, { viewport: { width: 1400, height: 900 } });
+  await openSearchDesktop(page);
+  await page.locator('#search-keyword').fill('大历史词');
+  await expect(page.locator('#search-status')).toContainText('已搜最近 4000 条', { timeout: 12000 });
+  await expect(page.locator('#search-status')).toContainText('已截断');
+  await expect(page.locator('#search-results .search-result').first()).toContainText('大历史词 4099');
+});
+
+test('recency old backend remains usable and warns', async ({ page }) => {
+  historyMode = 'legacy';
+  recencyHistory = Array.from({ length: 180 }, (_, i) => ({ type: 'user', text: `旧服搜索 ${i}`, timestamp: 1700000000000 + i * 1000 }));
+  await bootApp(page, { viewport: { width: 1400, height: 900 } });
+  await openSearchDesktop(page);
+  await page.locator('#search-keyword').fill('旧服搜索');
+  await expect(page.locator('#search-status')).toContainText('旧版服务', { timeout: 12000 });
+  await expect(page.locator('#search-results .search-result').first()).toContainText('旧服搜索 179');
+});
+
+test('index results are newest first', async ({ page }) => {
+  historyMode = 'index-order';
+  await bootApp(page, { viewport: { width: 1400, height: 900 } });
+  await openSearchDesktop(page);
+  await page.locator('#search-keyword').fill('索引排序词');
+  await expect(page.locator('#search-results .search-result')).toHaveCount(3, { timeout: 12000 });
+  const rows = page.locator('#search-results .search-result');
+  await expect(rows.nth(0)).toContainText('索引排序词 3');
+  await expect(rows.nth(1)).toContainText('索引排序词 2');
+  await expect(rows.nth(2)).toContainText('索引排序词 1');
+});
 
 // ── T1 真形状关键词搜索（桌面）──────────────────────────────
 // 真实形状数据（含 injected 注入行/无 ts 工具行/system·askUser 不可检索行）

@@ -2262,7 +2262,7 @@ class SessionStore(
   def getUiMessages(sessionId: String, offset: Int, limit: Int): IO[(List[UiMessage], Int)] =
     loadHistoryMessages(sessionId).map { all =>
       val total = all.size
-      val start = Math.min(offset, total)
+      val start = if offset < 0 then math.max(0, total - limit) else Math.min(offset, total)
       // limit <= 0 means "no limit" — return everything from the offset.
       val end = if limit <= 0 then total else Math.min(start + limit, total)
       (all.slice(start, end), total)
