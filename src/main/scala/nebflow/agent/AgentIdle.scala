@@ -268,7 +268,7 @@ private[agent] object AgentIdle:
             if isHumanInput then None
             else injectionSourceFor(fromUser, source.orElse(inferInjectionSource(state.sessionId, replyTo)))
           val enrichedBlocks: Option[List[ContentBlock]] = blocks.filter(_.nonEmpty)
-          val stateWithFlush = stateWithWidth.copy(execution = stateWithWidth.execution.copy(deviceZone = deviceZone))
+          val stateWithFlush = stateWithWidth.copy(execution = stateWithWidth.execution.copy(deviceZone = deviceZone, deviceZoneFallbackAllowed = false))
           val userMsg = withUserClock(
             (enrichedBlocks match
               case Some(bl) => Message(MessageRole.User, Right(bl))
@@ -847,6 +847,9 @@ private[agent] object AgentIdle:
                   depth,
                   parentRef,
                   flushBase
+                    .copy(execution = flushBase.execution.copy(deviceZone = None,
+                      deviceZoneFallbackAllowed = (source == "bridge" || source == "schedule") &&
+                        ledgerFlush.messages.isEmpty && heldMessages.isEmpty))
                     .withMessages(
                       // Reminder refactor (2026-08-20): always carry a source marker —
                       // external-event turns are system events, not real user input

@@ -541,6 +541,7 @@ case class LastDispatch(
 case class ExecutionContext(
   messages: List[Message] = Nil,
   deviceZone: Option[String] = None,
+  deviceZoneFallbackAllowed: Boolean = false,
   status: AgentStatus = AgentStatus.Idle,
   turnIdx: Int = 0,
   currentTurnId: Long = 0L,

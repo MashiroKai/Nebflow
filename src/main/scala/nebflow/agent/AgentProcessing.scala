@@ -755,7 +755,7 @@ private[agent] object AgentProcessing:
             immediate.map(_.deviceZone) ++ users.map(_.deviceZone)
           )
           val cleanState = nextState.copy(execution = nextState.execution.copy(
-            pendingImmediateInputs = Nil, pendingUserInputs = Nil, deviceZone = turnZone
+            pendingImmediateInputs = Nil, pendingUserInputs = Nil, deviceZone = turnZone, deviceZoneFallbackAllowed = false
           ))
           val selectedImmediate = immediate.map { input =>
             val content =
@@ -1054,6 +1054,7 @@ private[agent] object AgentProcessing:
                 messages = newMessages,
                 // Mid-turn inputs share the next LLM request: any unknown or differing
                 // source makes the whole turn ambiguous, without changing batching.
+                deviceZoneFallbackAllowed = if immInputs.nonEmpty || mailInputs.nonEmpty || humanFrameInputs.nonEmpty then false else state.execution.deviceZoneFallbackAllowed,
                 deviceZone = if immInputs.nonEmpty || mailInputs.nonEmpty || humanFrameInputs.nonEmpty then
                   nebflow.core.scheduler.TodoDue.mergedDeviceZone(
                     List(state.execution.deviceZone) ++ immInputs.map(_.deviceZone) ++
