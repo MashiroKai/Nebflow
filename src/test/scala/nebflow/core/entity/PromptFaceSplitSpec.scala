@@ -39,6 +39,18 @@ class PromptFaceSplitSpec extends FunSuite:
       .map(_.systemPrompt)
       .getOrElse(fail(s"BuiltinAgents must resolve '$executorName' via delegateEntry"))
 
+  test("node and delegate prompts do not prohibit direct commits to main globally"):
+    for (face, text) <- Seq("node" -> nodePrompt, "delegate" -> delegatePrompt) do
+      assert(!text.contains("never commit straight to `main`"), s"$face imposes a global main prohibition")
+
+  test("node and delegate prompts follow the target repository branch and commit rules"):
+    for (face, text) <- Seq("node" -> nodePrompt, "delegate" -> delegatePrompt) do
+      assert(
+        text.contains("follow the target repository's branch and commit rules") ||
+          text.contains("Follow the target repository's branch and commit rules"),
+        s"$face is missing the target repository branch and commit rules"
+      )
+
   test("restart exception is narrow on role and tool prompt surfaces"):
     val surfaces = Seq(
       nodePrompt,
