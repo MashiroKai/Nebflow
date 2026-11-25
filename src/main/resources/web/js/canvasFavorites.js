@@ -114,7 +114,8 @@ export async function removeFavoriteFromPage(entry) {
   if (pendingPageRemovals.has(entry.path)) return false;
   pendingPageRemovals.add(entry.path);
   const previous = pageRemovalQueue;
-  let release;
+  /** @type {() => void} */
+  let release = () => {};
   pageRemovalQueue = new Promise((resolve) => { release = resolve; });
   await previous;
   const before = loadFavorites().slice();

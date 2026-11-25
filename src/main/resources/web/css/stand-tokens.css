@@ -651,6 +651,7 @@ html[data-theme="light"] {
   /* 聚焦（指针态）：同一根灰线压深一档 + 阴影略抬，形态不变 */
   --nf-field-border-focus: color-mix(in srgb, var(--color-text) 26%, transparent);
   --nf-field-radius: var(--ds-radius-xl);             /* 12px 条状容器档 */
+  --nf-field-radius-thin: var(--ds-radius-thin);     /* 收藏搜索输入的既有细圆角 */
   --nf-field-shadow: var(--nf-glass-shadow);          /* = #input-bar 三档栈 */
   --nf-field-pad-y: var(--ds-space-1h);               /* 6px  = #input-bar */
   --nf-field-pad-x: var(--ds-space-3);                /* 12px = #input-bar */
