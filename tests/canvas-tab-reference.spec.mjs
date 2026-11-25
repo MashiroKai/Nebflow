@@ -426,7 +426,7 @@ await mobileLeg(SELFTEST ? 'selftest-m375' : 'm375', SELFTEST);
   for (const d of [DOCS[0], DOCS[1]]) await openDoc(page, d, true);
   await page.locator('#mobile-dock .dock-key[data-dock="canvas"]').click({ timeout: 8000 }).catch(() => {});
   await sleep(900);
-  // ① 展开后点签名 = 收起（既有语义），不得出引用 chip
+  // ① 当前活动签常驻展开；点签名不得收起，也不得出引用 chip。
   await page.tap('.mf-strip-chip.on').catch(() => {});
   await sleep(450);
   const expandedBefore = await page.evaluate(() => !!document.querySelector('.mf-strip-chip.is-expanded'));
@@ -446,8 +446,8 @@ await mobileLeg(SELFTEST ? 'selftest-m375' : 'm375', SELFTEST);
   await sleep(500);
   const refsAfterBlank = await page.evaluate(() => document.querySelectorAll('#attachment-preview .att-ref').length);
   await page.screenshot({ path: join(OUT, `${SELFTEST ? 'selftest-' : ''}m375-misfire.png`) });
-  record('R8', '不误触：点签名（收起）/ 点签条边缘 / 点正文空白 均零引用 chip',
-    expandedBefore && collapsed && refsAfterLabelTap === 0 && refsAfterMisc === 0 && refsAfterBlank === 0,
+  record('R8', '不误触：点签名保持展开 / 点签条边缘 / 点正文空白 均零引用 chip',
+    expandedBefore && !collapsed && refsAfterLabelTap === 0 && refsAfterMisc === 0 && refsAfterBlank === 0,
     `expanded=${expandedBefore} collapsedByLabelTap=${collapsed} refs(label)=${refsAfterLabelTap} refs(stripEdge)=${refsAfterMisc} refs(blank)=${refsAfterBlank}`);
   await ctx.close();
 }
@@ -499,8 +499,8 @@ await mobileLeg(SELFTEST ? 'selftest-m375' : 'm375', SELFTEST);
   const collisions = (geo2.others || []).map((o) => ({ cls: o.cls, area: chipRect ? ovl({ left: o.l, right: o.r, top: o.t, bottom: o.b }, chipRect) : 0 }))
     .filter((c) => c.area > 1);
   await page.screenshot({ path: join(OUT, `${SELFTEST ? 'selftest-' : ''}m375-expanded-geom.png`) });
-  record('R9', '展开态既有内容与几何：展开 ≥ 常态宽 ∧ 引用钮 ⊆ 签 ∧ 零悬浮钮交叠（既有合同）',
-    !!geo2.expanded && geo2.w > geo.normW && geo2.qInChip === true && collisions.length === 0,
+  record('R9', '常驻展开态几何：点签前后宽度稳定 ∧ 引用钮 ⊆ 签 ∧ 零悬浮钮交叠',
+    !!geo2.expanded && Math.abs(geo2.w - geo.normW) <= 0.5 && geo.qInChip && geo2.qInChip === true && collisions.length === 0,
     `normW=${geo.normW} expandedW=${geo2.w} maxW=${geo2.maxW} labelW=${geo2.labelW} qInChip=${geo2.qInChip}`
     + ` overlaps=${JSON.stringify(collisions)} liveBtns=${JSON.stringify(geo.others.map((o) => o.cls))}`);
   await ctx.close();
