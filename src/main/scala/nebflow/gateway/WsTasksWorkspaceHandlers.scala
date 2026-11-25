@@ -497,6 +497,8 @@ private[gateway] object WsTasksWorkspaceHandlers:
               "creator" -> io.circe.Json.Null,
               "content" -> saved.content.asJson,
               "triggerAt" -> saved.triggerAt.asJson,
+              "due" -> saved.due.asJson,
+              "nextDueAt" -> saved.nextDueAt.asJson,
               "createdAt" -> saved.createdAt.asJson,
               "referencePath" -> io.circe.Json.Null,
               "repeat" -> io.circe.Json.Null,
@@ -709,7 +711,9 @@ private[gateway] object WsTasksWorkspaceHandlers:
       "todoClass" -> nebflow.core.scheduler.TodoClass
         .wire(nebflow.core.scheduler.TodoTaxonomy.classify(t))
         .asJson,
-      "decision" -> t.decision.asJson
+      "decision" -> t.decision.asJson,
+      "due" -> t.due.asJson,
+      "nextDueAt" -> t.nextDueAt.asJson
     )
 
   private def handleDeleteScheduledTask(
@@ -861,6 +865,29 @@ private[gateway] object WsTasksWorkspaceHandlers:
       )
     if upId.isEmpty then
       failUpdate("updateScheduledTask requires id — call listScheduledTasks first, then pass the entry's id.")
+    else if json.hcursor.downField("creationZone").succeeded then
+      val zone = json.hcursor.get[String]("creationZone").toOption.map(_.trim)
+      val mixed = List("content", "project", "priority", "name", "detail", "triggerAt", "repeat")
+        .exists(key => json.hcursor.downField(key).succeeded)
+      if mixed then failUpdate("creationZone correction must be submitted separately from other edits")
+      else if !zone.exists(java.time.ZoneId.getAvailableZoneIds.contains) then
+        failUpdate("creationZone must be a valid IANA region")
+      else
+        sharedResources.scheduledTaskStore.findTaskById(upId).flatMap {
+          case None => failUpdate(s"No entry with id $upId")
+          case Some(task) if !task.isTodo || task.due.isEmpty => failUpdate("entry has no todo due rule")
+          case Some(_) =>
+            (for
+              _ <- sharedResources.scheduledTaskStore.changeCreationZone(upId, zone.get, System.currentTimeMillis())
+              saved <- sharedResources.scheduledTaskStore.findTaskById(upId)
+              _ <- sharedResources.scheduledTaskService.traverse_(_.notifyTaskChange())
+              _ <- saved match
+                case Some(task) => wsSend(io.circe.Json.obj(
+                  "type" -> "scheduledTaskUpdated".asJson, "sessionId" -> task.sessionId.asJson,
+                  "task" -> listTaskJson(task)))
+                case None => failUpdate("entry no longer exists")
+            yield ()).handleErrorWith(e => failUpdate(s"creationZone correction failed: ${e.getMessage}"))
+        }
     else
       triggerAtOpt match
         case Left(msg) => failUpdate(msg)

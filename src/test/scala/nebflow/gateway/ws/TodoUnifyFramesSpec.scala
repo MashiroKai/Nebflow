@@ -152,6 +152,71 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
   // ① createScheduledTask 收 priority（钳位落库）
   // ==================================================================
 
+  test("creation-zone correction rejects an invalid region without changing the rule") {
+    withRig { (c, res) =>
+      val at = java.time.Instant.parse("2035-01-01T09:00:00Z").toEpochMilli
+      val task = todo("invalid-zone").copy(
+        due = Some(nebflow.core.scheduler.TodoDue.Once(at, "Europe/London", "2035-01-01T09:00", None)),
+        nextDueAt = Some(at))
+      for
+        _ <- res.scheduledTaskStore.addTask(task)
+        frames <- send(c, "updateScheduledTask", """{"type":"updateScheduledTask","id":"invalid-zone","creationZone":"+09:00"}""")
+        saved <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assert(types(frames).contains("error"))
+        assertEquals(saved.head.due, task.due)
+    }
+  }
+
+  test("creation-zone correction refuses todo entries without a due rule") {
+    withRig { (c, res) =>
+      val task = todo("no-zone-rule")
+      for
+        _ <- res.scheduledTaskStore.addTask(task)
+        frames <- send(c, "updateScheduledTask", """{"type":"updateScheduledTask","id":"no-zone-rule","creationZone":"Asia/Tokyo"}""")
+        saved <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assert(types(frames).contains("error"))
+        assertEquals(saved.head.due, None)
+    }
+  }
+
+  test("creation-zone correction rejects a mixed content edit without partial persistence") {
+    withRig { (c, res) =>
+      val at = java.time.Instant.parse("2035-01-01T09:00:00Z").toEpochMilli
+      val task = todo("mixed-zone").copy(
+        due = Some(nebflow.core.scheduler.TodoDue.Once(at, "Europe/London", "2035-01-01T09:00", None)),
+        nextDueAt = Some(at))
+      for
+        _ <- res.scheduledTaskStore.addTask(task)
+        frames <- send(c, "updateScheduledTask", """{"type":"updateScheduledTask","id":"mixed-zone","creationZone":"Asia/Tokyo","content":"changed"}""")
+        saved <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assert(types(frames).contains("error"))
+        assertEquals(saved.head.due, task.due)
+        assertEquals(saved.head.content, task.content)
+    }
+  }
+
+  test("explicit creation-zone correction reschedules the stored todo and returns its new rule") {
+    withRig { (c, res) =>
+      val at = java.time.Instant.parse("2035-01-01T09:00:00Z").toEpochMilli
+      val moved = java.time.Instant.parse("2035-01-01T00:00:00Z").toEpochMilli
+      val occurrence = nebflow.core.scheduler.TodoOccurrence.create("zone-edit", at, 0L)
+      val task = todo("zone-edit").copy(
+        due = Some(nebflow.core.scheduler.TodoDue.Once(at, "Europe/London", "2035-01-01T09:00", None)),
+        nextDueAt = Some(at), occurrences = List(occurrence))
+      for
+        _ <- res.scheduledTaskStore.addTask(task)
+        frames <- send(c, "updateScheduledTask", """{"type":"updateScheduledTask","id":"zone-edit","sessionId":"s1","creationZone":"Asia/Tokyo"}""")
+        saved <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assert(types(frames).contains("scheduledTaskUpdated"), s"frames: $frames")
+        assertEquals(saved.head.occurrences.head.scheduledAt, moved)
+        assertEquals(rowOf(frames).hcursor.downField("due").get[String]("zoneId").toOption, Some("Asia/Tokyo"))
+    }
+  }
+
   test("retry of an already persisted past deadline returns the durable row") {
     withRig { (c, res) =>
       val id = "a2b4c6d8-1234-4abc-8def-123456789abc"

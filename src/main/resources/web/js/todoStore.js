@@ -364,6 +364,8 @@ function mapRow(row) {
     decision: row.decision && typeof row.decision === 'object' ? row.decision : null,
     // due ↔ triggerAt：引擎算出的下次浮出时刻（只读真源）。
     due: Number.isFinite(row.triggerAt) ? row.triggerAt : null,
+    dueRule: row.due && typeof row.due === 'object' ? row.due : null,
+    nextDueAt: Number.isFinite(row.nextDueAt) ? row.nextDueAt : null,
     priority: clampPriority(row.priority),
     completed: row.completed === true || (row.completedAt != null),
     completedAt: Number.isFinite(row.completedAt) ? row.completedAt : null,

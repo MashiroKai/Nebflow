@@ -261,6 +261,42 @@ class TodoTaxonomySpec extends CatsEffectSuite:
   private def callTool(input: Json): Either[ToolError, String] =
     ScheduleTool.call(input.asObject.get, mkCtx()).unsafeRunSync()
 
+  test("Schedule zone correction rejects mixed content without partial changes"):
+    val at = java.time.Instant.parse("2035-01-01T09:00:00Z").toEpochMilli
+    val task = ScheduledTask(id = "mixed-zone", sessionId = "s1", content = "original", triggerAt = at,
+      createdAt = 1L, kind = Some(ScheduledTask.KindTodo),
+      due = Some(TodoDue.Once(at, "Europe/London", "2035-01-01T09:00", None)), nextDueAt = Some(at))
+    val input = Json.obj("action" -> "edit".asJson, "id" -> task.id.asJson,
+      "creationZone" -> "Asia/Tokyo".asJson, "content" -> "changed".asJson)
+    for
+      _ <- reset()
+      _ <- taskStore.addTask(task)
+      result <- ScheduleTool.call(input.asObject.get, mkCtx())
+      rows <- taskStore.loadTasks("s1")
+    yield
+      assert(result.isLeft)
+      assertEquals(rows.head.due, task.due)
+      assertEquals(rows.head.content, task.content)
+
+  test("Schedule edit explicitly corrects the creation zone and preserves occurrence identity"):
+    val at = java.time.Instant.parse("2035-01-01T09:00:00Z").toEpochMilli
+    val moved = java.time.Instant.parse("2035-01-01T00:00:00Z").toEpochMilli
+    val occurrence = TodoOccurrence.create("correct-zone", at, 0L)
+    val task = ScheduledTask(id = "correct-zone", sessionId = "s1", content = "remind", triggerAt = at,
+      createdAt = 1L, kind = Some(ScheduledTask.KindTodo),
+      due = Some(TodoDue.Once(at, "Europe/London", "2035-01-01T09:00", None)),
+      nextDueAt = Some(at), occurrences = List(occurrence))
+    val input = Json.obj("action" -> "edit".asJson, "id" -> task.id.asJson, "creationZone" -> "Asia/Tokyo".asJson)
+    for
+      _ <- reset()
+      _ <- taskStore.addTask(task)
+      result <- ScheduleTool.call(input.asObject.get, mkCtx())
+      rows <- taskStore.loadTasks("s1")
+    yield
+      assert(result.isRight, s"zone correction must succeed: $result")
+      assertEquals(rows.head.occurrences.head.scheduledAt, moved)
+      assertEquals(rows.head.occurrences.head.key, occurrence.key)
+
   test("explicitly sourceless tool turn uses the latest reported device with auditable provenance"):
     val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
     val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision, "triggerAt" -> "2035-01-01T09:00".asJson)

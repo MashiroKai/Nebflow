@@ -250,6 +250,10 @@ Your context does NOT show the current date/time — never invent an absolute da
           "type" -> "string".asJson,
           "description" -> "(create, kind=\"task\" only) conditional trigger — fires only when TRUE at trigger time. Forms: bare `sh -c` probe (exit 0 = true; fast, absolute paths, 60s timeout = unmet); \"git-tip:<repoPath>[#<branch>]\" (stateful sentinel — fires when branch tip changed since last check); \"task-terminal:<project>:<nodeId>\" (fires when that flow-map node reaches a terminal state). Unmet: repeating tasks skip silently to the next cycle; one-shots re-check every 30 min for up to 24h then auto-PAUSE. Nothing is injected while unmet.".asJson
         ),
+        "creationZone" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "(edit) Explicit IANA creation-zone correction; submit separately from other edits.".asJson
+        ),
         "id" -> Json.obj(
           "type" -> "string".asJson,
           "description" -> "(cancel/done/edit) Entry id — from action=list.".asJson
@@ -575,7 +579,28 @@ Your context does NOT show the current date/time — never invent an absolute da
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
     val idOpt = input("id").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
-    idOpt match
+    val correction = input("creationZone")
+    if correction.isDefined then
+      val zone = correction.flatMap(_.asString).map(_.trim)
+      val mixed = List("content", "project", "name", "detail").exists(input.contains)
+      if idOpt.isEmpty then IO.pure(Left(ToolError("edit requires id")))
+      else if mixed then IO.pure(Left(ToolError("creationZone correction must be submitted separately")))
+      else if !zone.exists(ZoneId.getAvailableZoneIds.contains) then IO.pure(Left(ToolError("creationZone must be a valid IANA region")))
+      else taskStore.findTaskById(idOpt.get).flatMap {
+        case None => IO.pure(Left(ToolError("entry not found")))
+        case Some(task) if !task.isTodo || task.due.isEmpty => IO.pure(Left(ToolError("entry has no todo due rule")))
+        case Some(_) =>
+          (for
+            _ <- taskStore.changeCreationZone(idOpt.get, zone.get, System.currentTimeMillis())
+            saved <- taskStore.findTaskById(idOpt.get)
+            _ <- taskService.traverse_(_.notifyTaskChange())
+            _ <- ctx.wsSend.traverse_(send => saved.traverse_(row =>
+              send(Json.obj("type" -> "scheduledTaskUpdated".asJson,
+                "sessionId" -> row.sessionId.asJson, "task" -> row.asJson))))
+          yield saved.toRight(ToolError("entry no longer exists")).map(_ => s"Updated creation zone to ${zone.get}"))
+            .handleError(e => Left(ToolError(s"creationZone correction failed: ${e.getMessage}")))
+      }
+    else idOpt match
       case None =>
         IO.pure(Left(ToolError("edit requires id — call Schedule {action:\"list\"} first, then pass the entry's id.")))
       case Some(id) =>
@@ -666,7 +691,6 @@ Your context does NOT show the current date/time — never invent an absolute da
               }
             end if
         }
-    end match
   end editAction
 
   // ---------------------------------------------------------------------------
