@@ -1084,12 +1084,13 @@ class WebSocketRoutes(
                 state <- Ref.of[IO, Option[(String, String, nebflow.core.browser.BrowserScreencast, () => Unit)]](None)
                 started <- Ref.of[IO, Boolean](false)
                 failed = new java.util.concurrent.atomic.AtomicBoolean(false)
+                failureWake <- Deferred[IO, Unit]
                 send = (j: Json) => outbound.offer(WebSocketFrame.Text(j.noSpaces))
                 cleanup = state.getAndSet(None).flatMap(_.traverse_ { case (id, _, stream, unsubscribe) =>
                   IO(unsubscribe()) *> IO.blocking(stream.close()).attempt.void *> IO(nebflow.core.browser.BrowserSessions.takeoverRegistry.finish(id)) *>
                     (if failed.get() then AskHostLedger.recordTakeoverStreamFailure(id) *> outbound.tryOffer(WebSocketFrame.Text(Json.obj("type" -> "status".asJson, "error" -> "画面流故障，接管已停止".asJson).noSpaces)).void else IO.unit)
                 })
-                receive: Pipe[IO, WebSocketFrame, Unit] = _.evalMap {
+                receive: Pipe[IO, WebSocketFrame, Unit] = incoming => Stream.resource(Dispatcher.parallel[IO]).flatMap { failureDispatcher => incoming.evalMap {
                   case WebSocketFrame.Text(text, _) if text.length <= 16384 =>
                     val message = parsedJson(text)
                     message.hcursor.get[String]("type").getOrElse("") match
@@ -1111,7 +1112,11 @@ class WebSocketRoutes(
                                   case Right(_) =>
                                     IO.uncancelable { _ => IO.blocking {
                                       val page = nebflow.core.browser.BrowserSessions.takeoverPage(b.session)
-                                      val stream = new nebflow.core.browser.BrowserScreencast((method, params) => { page.send(method, params); () }, () => { failed.set(true); () })
+                                      val stream = new nebflow.core.browser.BrowserScreencast((method, params) => { page.send(method, params); () }, () => {
+                                        failed.set(true)
+                                        try failureDispatcher.unsafeRunAndForget(failureWake.complete(()).void)
+                                        catch case _: IllegalStateException => ()
+                                      })
                                       val unsubscribe = page.subscribe("Page.screencastFrame")(stream.frame)
                                       try stream.start()
                                       catch
@@ -1159,11 +1164,10 @@ class WebSocketRoutes(
                       }
                       case _ => IO.unit
                   case _ => IO.unit
-                }.onFinalize(cleanup)
+                }.onFinalize(cleanup) }
                 frames = Stream.awakeEvery[IO](200.millis).evalMap(_ =>
-                  if failed.get() then cleanup.as(Option.empty[Option[String]])
-                  else state.get.flatMap(_.traverse { case (_, _, stream, _) => IO(stream.take()) })
-                ).collect { case Some(Some(data)) => WebSocketFrame.Text(Json.obj("type" -> "frame".asJson, "frame" -> io.circe.parser.parse(data).getOrElse(Json.obj())).noSpaces) }
+                  state.get.flatMap(_.traverse { case (_, _, stream, _) => IO(stream.take()) })
+                ).concurrently(Stream.eval(failureWake.get *> cleanup)).collect { case Some(Some(data)) => WebSocketFrame.Text(Json.obj("type" -> "frame".asJson, "frame" -> io.circe.parser.parse(data).getOrElse(Json.obj())).noSpaces) }
                 response <- wsb.build(Stream.fromQueueUnterminated(outbound).merge(frames), receive)
               yield response
           }
