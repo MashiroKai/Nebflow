@@ -106,18 +106,21 @@ private[gateway] object SessionRoutes:
           // readers: export, index rebuild). Everything else normalizes through the
           // WS leg's own clamp — one paging vocabulary, not two.
           val unlimited = rawLimit.exists(v => v == "all" || v.trim == "0")
+          val latest = req.params.get("latest").contains("true")
           val limit =
-            if unlimited then 0
+            if latest then math.max(1, math.min(rawLimit.flatMap(_.toIntOption).getOrElse(4000), 4000))
+            else if unlimited then 0
             else WsSessionChatHandlers.clampHistoryLimit(rawLimit.flatMap(_.toIntOption))
-          val offset = req.params.get("offset").flatMap(_.toIntOption).filter(_ >= 0).getOrElse(0)
+          val offset = if latest then -1 else req.params.get("offset").flatMap(_.toIntOption).filter(_ >= 0).getOrElse(0)
           sessionStore.getUiMessages(sessionId, offset, limit).flatMap { case (messages, total) =>
-            val start = math.min(offset, total)
+            val start = if latest then math.max(0, total - limit) else math.min(offset, total)
             val returned = messages.size
             Ok(
               Json.obj(
                 "messages" -> messages.asJson,
                 "total" -> total.asJson,
                 "sessionId" -> sessionId.asJson,
+                "latestApplied" -> latest.asJson,
                 "offset" -> start.asJson,
                 "limit" -> limit.asJson,
                 "hasMore" -> (start + returned < total).asJson
