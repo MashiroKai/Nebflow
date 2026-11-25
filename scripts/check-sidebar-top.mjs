@@ -21,7 +21,8 @@ for (const file of readdirSync(dir).filter(x => x.endsWith('.css'))) {
     if (!/(?:#panel-(?:favorites|messages).*?(?:cfp-bar|cfp-title|cfp-search|fm-msg-search|panel-header|panel-title|sf-field)|\.cfp-(?:bar|title|search)(?:\s|\{|,|$))/s.test(selector)) continue;
     if (file === 'canvasFavorites.css' && !/#panel-favorites/.test(selector)) continue; // 手机页面另行管理
     for (const declaration of body.split(';')) {
-      if (/^\s*(?:border(?:-[\w-]+)?-radius|padding(?:-[\w-]+)?|margin(?:-[\w-]+)?|gap|font-size)\s*:\s*[^;]*\b\d+(?:\.\d+)?(?:px|rem|em)\b/i.test(declaration)) errors.push(`css/${file}: ${selector.trim()} ${declaration.trim()}`);
+      const geometry = /^\s*(?:border(?:-[\w-]+)?-radius|padding(?:-[\w-]+)?|margin(?:-[\w-]+)?|(?:row-|column-)?gap|font-size)\s*:\s*(.+)$/i.exec(declaration);
+      if (geometry && /\b\d+(?:\.\d+)?(?:px|rem|em|vh|vw|%)\b/i.test(geometry[1])) errors.push(`css/${file}: ${selector.trim()} ${declaration.trim()}`);
     }
   }
 }
