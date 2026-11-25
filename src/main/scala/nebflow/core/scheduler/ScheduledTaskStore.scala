@@ -201,7 +201,7 @@ class ScheduledTaskStore(
   }
 
   /** Transform the authoritative payload once, then retire stale copies only after it lands. */
-  private def updateByIdUnlocked(taskId: String)(f: ScheduledTask => ScheduledTask): IO[Option[ScheduledTask]] =
+  private def updateByIdUnlocked(taskId: String, allowOccurrenceReschedule: Boolean = false)(f: ScheduledTask => ScheduledTask): IO[Option[ScheduledTask]] =
     sessionIdsUnlocked.flatMap(_.traverse(sid => loadUnlocked(sid).map(sid -> _))).flatMap { sessions =>
       val copies = sessions.flatMap(_._2).filter(_.id == taskId)
       distinctById(copies).headOption match
@@ -210,7 +210,7 @@ class ScheduledTaskStore(
         case None => IO.pure(None)
         case Some(current) =>
           val requested = f(current)
-          if requested.due != current.due && requested.occurrences != current.occurrences then
+          if !allowOccurrenceReschedule && requested.due != current.due && requested.occurrences != current.occurrences then
             throw new IllegalStateException("rule change cannot rewrite occurrences")
           val changed = requested.copy(
             id = current.id,
@@ -418,24 +418,27 @@ class ScheduledTaskStore(
       }
     }
 
+  private def resolveLocal(local: java.time.LocalDateTime, zone: java.time.ZoneId): Long =
+    val rules = zone.getRules
+    val offsets = rules.getValidOffsets(local)
+    val instant =
+      if offsets.isEmpty then rules.getTransition(local).getDateTimeAfter.atZone(zone).toInstant
+      else local.toInstant(offsets.get(0))
+    instant.toEpochMilli
+
+  private def nextDue(rule: TodoDue, scheduled: Long): Option[Long] = rule match
+    case _: TodoDue.Once => None
+    case weekly: TodoDue.Weekly =>
+      val zone = java.time.ZoneId.of(weekly.zoneId)
+      val date = java.time.Instant.ofEpochMilli(scheduled).atZone(zone).toLocalDate.plusWeeks(1)
+      Some(resolveLocal(date.atTime(java.time.LocalTime.parse(weekly.localTime)), zone))
+
   /** Materialize all elapsed reminder instances; each replacement commits cursor and instance together. */
   private[scheduler] def materializeDueOccurrences(now: Long): IO[Unit] =
-    def next(rule: TodoDue, scheduled: Long): Option[Long] = rule match
-      case _: TodoDue.Once => None
-      case weekly: TodoDue.Weekly =>
-        val zone = java.time.ZoneId.of(weekly.zoneId)
-        val date = java.time.Instant.ofEpochMilli(scheduled).atZone(zone).toLocalDate.plusWeeks(1)
-        val local = date.atTime(java.time.LocalTime.parse(weekly.localTime))
-        val rules = zone.getRules
-        val offsets = rules.getValidOffsets(local)
-        val instant =
-          if offsets.isEmpty then rules.getTransition(local).getDateTimeAfter.atZone(zone).toInstant
-          else local.toInstant(offsets.get(0))
-        Some(instant.toEpochMilli)
     def advance(sessionId: String, task: ScheduledTask): IO[Unit] =
       (task.due, task.nextDueAt) match
         case (Some(rule), Some(at)) if at <= now =>
-          val following = next(rule, at)
+          val following = nextDue(rule, at)
           val occurrence = TodoOccurrence.create(task.id, at, task.dueRuleVersion)
           val updated = task.copy(
             occurrences = task.occurrences :+ occurrence,
@@ -454,9 +457,57 @@ class ScheduledTaskStore(
         .flatMap(_.traverse_(task => advance(task.sessionId, task)))
     }
 
+  def changeCreationZone(taskId: String, zoneId: String, editNow: Long): IO[Unit] =
+    changeCreationZoneWithHook(taskId, zoneId, editNow, IO.unit)
+
+  private[scheduler] def changeCreationZoneWithHook(taskId: String, zoneId: String, editNow: Long, onLocked: IO[Unit], onWait: IO[Unit] = IO.unit): IO[Unit] =
+    withStoreLock(
+      onLocked *> updateByIdUnlocked(taskId, allowOccurrenceReschedule = true) { task =>
+        val newZone = java.time.ZoneId.of(zoneId)
+        require(java.time.ZoneId.getAvailableZoneIds.contains(zoneId), "zone must be an IANA region")
+        val oldRule = task.due.getOrElse(throw new IllegalArgumentException("task has no due rule"))
+        val oldZone = java.time.ZoneId.of(oldRule match
+          case once: TodoDue.Once => once.zoneId
+          case weekly: TodoDue.Weekly => weekly.zoneId)
+        def convertFrom(at: Long, zone: java.time.ZoneId): Long =
+          resolveLocal(java.time.Instant.ofEpochMilli(at).atZone(zone).toLocalDateTime, newZone)
+        def convert(at: Long): Long = convertFrom(at, oldZone)
+        val newRule = oldRule match
+          case once: TodoDue.Once => once.copy(dueAt = convert(once.dueAt), zoneId = zoneId, originalOffset = None)
+          case weekly: TodoDue.Weekly => weekly.copy(zoneId = zoneId)
+        if oldZone == newZone then task
+        else
+          val version = Math.addExact(task.dueRuleVersion, 1L)
+          val moved = task.occurrences.map { occurrence =>
+            if occurrence.settledAt.nonEmpty || occurrence.missedReason.nonEmpty then occurrence
+            else
+              val bound = task.ruleForOccurrence(occurrence).getOrElse(
+                throw new IllegalStateException("missing bound occurrence rule"))
+              val boundZone = java.time.ZoneId.of(bound match
+                case once: TodoDue.Once => once.zoneId
+                case weekly: TodoDue.Weekly => weekly.zoneId)
+              val at = convertFrom(occurrence.scheduledAt, boundZone)
+              occurrence.copy(scheduledAt = at, ruleVersion = version, stableId = Some(occurrence.key),
+                missedReason = Option.when(at <= editNow)("zone-correction"))
+          }
+          var cursor = task.nextDueAt.map(convert)
+          var occurrences = moved
+          while cursor.exists(_ <= editNow) do
+            val at = cursor.get
+            if !occurrences.exists(o => o.scheduledAt == at && o.settledAt.isEmpty) then
+              occurrences = occurrences :+ TodoOccurrence.create(task.id, at, version).copy(missedReason = Some("zone-correction"))
+            cursor = nextDue(newRule, at)
+          task.copy(due = Some(newRule), nextDueAt = cursor, occurrences = occurrences)
+      }.void,
+      onMutexWait = onWait
+    )
+
   def claimOccurrence(taskId: String, occurrenceId: String, now: Long): IO[Boolean] =
-    withStoreLock {
-      scanUnlocked(_.id == taskId, sort = false).flatMap { copies =>
+    claimOccurrenceWithHook(taskId, occurrenceId, now, IO.unit)
+
+  private[scheduler] def claimOccurrenceWithHook(taskId: String, occurrenceId: String, now: Long, onLocked: IO[Unit], onWait: IO[Unit] = IO.unit): IO[Boolean] =
+    withStoreLock(
+      onLocked *> scanUnlocked(_.id == taskId, sort = false).flatMap { copies =>
         distinctById(copies).headOption match
           case None if copies.nonEmpty => IO.raiseError(new IllegalStateException("conflicting task revisions"))
           case None => IO.pure(false)
@@ -467,8 +518,9 @@ class ScheduledTaskStore(
             else updateByIdUnlocked(taskId)(t => t.copy(occurrences = t.occurrences.map { o =>
               if o.key == occurrenceId then o.copy(settledAt = Some(now)) else o
             })).as(true)
-      }
-    }
+      },
+      onMutexWait = onWait
+    )
 
   def addTask(task: ScheduledTask): IO[Unit] =
     withStoreLock(addUnlocked(task))

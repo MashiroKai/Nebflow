@@ -59,6 +59,249 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
 
   private def withDue(value: Json): Json = legacy.deepMerge(Json.obj("due" -> value))
 
+  test("editing a weekly cursor marks newly elapsed dates missed without duplicating an existing instance"):
+    val dir = os.temp.dir(prefix = "occurrence-edit-cursor-")
+    val store = new ScheduledTaskStore(dir)
+    val at = java.time.Instant.parse("2035-01-01T09:00:00Z").toEpochMilli
+    val converted = java.time.Instant.parse("2035-01-01T00:00:00Z").toEpochMilli
+    val pending = TodoOccurrence.create("old", at, 0L)
+    val initial = legacy.as[ScheduledTask].toOption.get.copy(
+      due = Some(TodoDue.Weekly(1, "09:00", "Europe/London", "2035-01-01T09:00")),
+      nextDueAt = Some(at), occurrences = List(pending))
+    for
+      _ <- store.addTask(initial)
+      _ <- store.changeCreationZone("old", "Asia/Tokyo", converted + 1L)
+      saved <- store.loadTasks("s1")
+      _ = assertEquals(saved.head.occurrences.count(_.scheduledAt == converted), 1)
+      _ = assert(saved.head.occurrences.find(_.scheduledAt == converted).exists(_.missedReason.nonEmpty))
+      _ = assertEquals(saved.head.nextDueAt, Some(converted + 7L * 86400000L))
+      claim <- store.claimOccurrence("old", pending.key, converted + 1L)
+    yield assert(!claim, "missed instance cannot be claimed")
+
+  test("a future weekly cursor moves to the new zone without materializing an instance"):
+    val dir = os.temp.dir(prefix = "occurrence-edit-future-cursor-")
+    val store = new ScheduledTaskStore(dir)
+    val at = java.time.Instant.parse("2035-01-01T09:00:00Z").toEpochMilli
+    val converted = java.time.Instant.parse("2035-01-01T00:00:00Z").toEpochMilli
+    val initial = legacy.as[ScheduledTask].toOption.get.copy(
+      due = Some(TodoDue.Weekly(1, "09:00", "Europe/London", "2035-01-01T09:00")),
+      nextDueAt = Some(at))
+    for
+      _ <- store.addTask(initial)
+      _ <- store.changeCreationZone("old", "Asia/Tokyo", converted - 1L)
+      saved <- new ScheduledTaskStore(dir).loadTasks("s1")
+      _ = assertEquals(saved.head.nextDueAt, Some(converted))
+    yield assertEquals(saved.head.occurrences, Nil)
+
+  test("zone correction materializes each elapsed weekly cursor as missed and advances to the future"):
+    val dir = os.temp.dir(prefix = "occurrence-edit-multiple-cursor-")
+    val store = new ScheduledTaskStore(dir)
+    val at = java.time.Instant.parse("2035-01-01T09:00:00Z").toEpochMilli
+    val converted = java.time.Instant.parse("2035-01-01T00:00:00Z").toEpochMilli
+    val week = 7L * 86400000L
+    val initial = legacy.as[ScheduledTask].toOption.get.copy(
+      due = Some(TodoDue.Weekly(1, "09:00", "Europe/London", "2035-01-01T09:00")),
+      nextDueAt = Some(at))
+    for
+      _ <- store.addTask(initial)
+      _ <- store.changeCreationZone("old", "Asia/Tokyo", converted + 2L * week + 1L)
+      saved <- new ScheduledTaskStore(dir).loadTasks("s1")
+      rows = saved.head.occurrences
+      _ = assertEquals(rows.map(_.scheduledAt).sorted, List(converted, converted + week, converted + 2L * week))
+      _ = assert(rows.forall(_.missedReason.nonEmpty))
+      _ = assertEquals(saved.head.nextDueAt, Some(converted + 3L * week))
+      claims <- rows.traverse(o => store.claimOccurrence("old", o.key, converted + 3L * week))
+    yield assert(claims.forall(!_))
+
+  test("editing zone marks a rescheduled past occurrence missed and preserves settled history after restart"):
+    val dir = os.temp.dir(prefix = "occurrence-edit-restart-")
+    val store = new ScheduledTaskStore(dir)
+    val at = java.time.Instant.parse("2035-01-01T09:00:00Z").toEpochMilli
+    val changed = java.time.Instant.parse("2035-01-01T00:00:00Z").toEpochMilli
+    val pending = TodoOccurrence.create("old", at, 0L)
+    val settled = TodoOccurrence.create("old", at - 86400000L, 0L).copy(settledAt = Some(at - 86400000L))
+    val initial = legacy.as[ScheduledTask].toOption.get.copy(
+      due = Some(TodoDue.Once(at, "Europe/London", "2035-01-01T09:00", None)), occurrences = List(pending, settled))
+    for
+      _ <- store.addTask(initial)
+      _ <- new ScheduledTaskStore(dir).changeCreationZone("old", "Asia/Tokyo", changed + 1L)
+      saved <- new ScheduledTaskStore(dir).loadTasks("s1")
+      rows = saved.head.occurrences
+      _ = assertEquals(rows.find(_.key == settled.key), Some(settled))
+      missed = rows.find(_.key == pending.key).get
+      _ = assertEquals(missed.scheduledAt, changed)
+      _ = assert(missed.missedReason.nonEmpty, "past reschedule must be recorded as missed")
+      claimed <- store.claimOccurrence("old", pending.key, at + 1L)
+    yield assert(!claimed, "missed occurrences must never be delivered as catch-up")
+
+  test("editing a zone reschedules an unclaimed instance without changing its identity"):
+    val dir = os.temp.dir(prefix = "occurrence-edit-")
+    val store = new ScheduledTaskStore(dir)
+    val at = java.time.Instant.parse("2035-01-01T09:00:00Z").toEpochMilli
+    val changed = java.time.Instant.parse("2035-01-01T00:00:00Z").toEpochMilli
+    val editAt = changed - 1000L
+    val occurrence = TodoOccurrence.create("old", at, 0L)
+    val initial = legacy.as[ScheduledTask].toOption.get.copy(
+      due = Some(TodoDue.Once(at, "Europe/London", "2035-01-01T09:00", None)), occurrences = List(occurrence))
+    for
+      _ <- store.addTask(initial)
+      _ <- store.changeCreationZone("old", "Asia/Tokyo", editAt)
+      saved <- store.loadTasks("s1")
+      _ = assertEquals(saved.head.occurrences.head.key, occurrence.key)
+      _ = assertEquals(saved.head.occurrences.head.scheduledAt, changed)
+      before <- store.claimOccurrence("old", occurrence.key, changed - 1L)
+      after <- store.claimOccurrence("old", occurrence.key, changed)
+    yield
+      assert(!before, "rescheduled occurrence must not be claimable before its new instant")
+      assert(after, "rescheduled occurrence must be claimable at its new instant")
+
+  test("an already due unclaimed instance can move into the future after a zone correction"):
+    val dir = os.temp.dir(prefix = "occurrence-edit-overdue-")
+    val store = new ScheduledTaskStore(dir)
+    val at = java.time.Instant.parse("2035-01-01T00:00:00Z").toEpochMilli
+    val changed = java.time.Instant.parse("2035-01-01T09:00:00Z").toEpochMilli
+    val occurrence = TodoOccurrence.create("old", at, 0L)
+    val initial = legacy.as[ScheduledTask].toOption.get.copy(
+      due = Some(TodoDue.Once(at, "Asia/Tokyo", "2035-01-01T09:00", None)), occurrences = List(occurrence))
+    for
+      _ <- store.addTask(initial)
+      _ <- store.changeCreationZone("old", "Europe/London", at + 1L)
+      saved <- store.loadTasks("s1")
+      _ = assertEquals(saved.head.occurrences.head.key, occurrence.key)
+      _ = assertEquals(saved.head.occurrences.head.scheduledAt, changed)
+      early <- store.claimOccurrence("old", occurrence.key, at + 1L)
+      onTime <- store.claimOccurrence("old", occurrence.key, changed)
+    yield
+      assert(!early)
+      assert(onTime)
+
+  test("zone correction uses the occurrence bound rule zone rather than the current rule zone"):
+    val dir = os.temp.dir(prefix = "occurrence-edit-bound-rule-")
+    val store = new ScheduledTaskStore(dir)
+    val at = java.time.Instant.parse("2035-01-01T00:00:00Z").toEpochMilli
+    val old = TodoDue.Once(at, "Asia/Tokyo", "2035-01-01T09:00", None)
+    val current = TodoDue.Once(at, "America/New_York", "2034-12-31T19:00", None)
+    val initial = legacy.as[ScheduledTask].toOption.get.copy(due = Some(current), dueRuleVersion = 1L,
+      dueRuleHistory = List(TodoRuleSnapshot(0L, old)), occurrences = List(TodoOccurrence.create("old", at, 0L)))
+    for
+      _ <- store.addTask(initial)
+      _ <- store.changeCreationZone("old", "Europe/London", at - 1L)
+      saved <- store.loadTasks("s1")
+    yield assertEquals(saved.head.occurrences.head.scheduledAt,
+      java.time.Instant.parse("2035-01-01T09:00:00Z").toEpochMilli)
+
+  test("zone correction uses the materializer gap and overlap resolution"):
+    val dir = os.temp.dir(prefix = "occurrence-edit-dst-")
+    val store = new ScheduledTaskStore(dir)
+    val gap = java.time.Instant.parse("2025-03-09T02:30:00Z").toEpochMilli
+    val overlap = java.time.Instant.parse("2025-11-02T01:30:00Z").toEpochMilli
+    val first = legacy.as[ScheduledTask].toOption.get.copy(id = "gap",
+      due = Some(TodoDue.Once(gap, "Europe/London", "2025-03-09T02:30", None)),
+      occurrences = List(TodoOccurrence.create("gap", gap, 0L)))
+    val second = legacy.as[ScheduledTask].toOption.get.copy(id = "overlap",
+      due = Some(TodoDue.Once(overlap, "Europe/London", "2025-11-02T01:30", None)),
+      occurrences = List(TodoOccurrence.create("overlap", overlap, 0L)))
+    for
+      _ <- store.addTask(first)
+      _ <- store.addTask(second)
+      _ <- store.changeCreationZone("gap", "America/New_York", 0L)
+      _ <- store.changeCreationZone("overlap", "America/New_York", 0L)
+      rows <- store.loadTasks("s1")
+    yield
+      assertEquals(rows.find(_.id == "gap").get.occurrences.head.scheduledAt,
+        java.time.Instant.parse("2025-03-09T07:00:00Z").toEpochMilli)
+      assertEquals(rows.find(_.id == "overlap").get.occurrences.head.scheduledAt,
+        java.time.Instant.parse("2025-11-02T05:30:00Z").toEpochMilli)
+
+  test("claim holds the store lock while a competing zone correction waits"):
+    val dir = os.temp.dir(prefix = "occurrence-claim-lock-")
+    val store = new ScheduledTaskStore(dir)
+    val at = java.time.Instant.parse("2035-01-01T09:00:00Z").toEpochMilli
+    val occurrence = TodoOccurrence.create("old", at, 0L)
+    val initial = legacy.as[ScheduledTask].toOption.get.copy(
+      due = Some(TodoDue.Once(at, "Europe/London", "2035-01-01T09:00", None)), occurrences = List(occurrence))
+    for
+      _ <- store.addTask(initial)
+      entered <- cats.effect.Deferred[IO, Unit]
+      release <- cats.effect.Deferred[IO, Unit]
+      editStarted <- cats.effect.Deferred[IO, Unit]
+      claimant <- store.claimOccurrenceWithHook("old", occurrence.key, at,
+        entered.complete(()).void *> release.get).start
+      _ <- entered.get
+      editor <- new ScheduledTaskStore(dir).changeCreationZoneWithHook("old", "Asia/Tokyo", at,
+        IO.unit, editStarted.complete(()).void).start
+      _ <- editStarted.get
+      _ <- release.complete(())
+      claimed <- claimant.joinWithNever
+      _ <- editor.joinWithNever
+      saved <- new ScheduledTaskStore(dir).loadTasks("s1")
+    yield
+      assert(claimed)
+      assertEquals(saved.head.occurrences, List(occurrence.copy(settledAt = Some(at))))
+
+  test("edit holds the store lock while a competing claim waits"):
+    val dir = os.temp.dir(prefix = "occurrence-edit-lock-")
+    val store = new ScheduledTaskStore(dir)
+    val at = java.time.Instant.parse("2035-01-01T09:00:00Z").toEpochMilli
+    val changed = java.time.Instant.parse("2035-01-01T00:00:00Z").toEpochMilli
+    val occurrence = TodoOccurrence.create("old", at, 0L)
+    val initial = legacy.as[ScheduledTask].toOption.get.copy(
+      due = Some(TodoDue.Once(at, "Europe/London", "2035-01-01T09:00", None)), occurrences = List(occurrence))
+    for
+      _ <- store.addTask(initial)
+      entered <- cats.effect.Deferred[IO, Unit]
+      release <- cats.effect.Deferred[IO, Unit]
+      claimStarted <- cats.effect.Deferred[IO, Unit]
+      editor <- store.changeCreationZoneWithHook("old", "Asia/Tokyo", changed,
+        entered.complete(()).void *> release.get).start
+      _ <- entered.get
+      claimant <- new ScheduledTaskStore(dir).claimOccurrenceWithHook("old", occurrence.key, at,
+        IO.unit, claimStarted.complete(()).void).start
+      _ <- claimStarted.get
+      _ <- release.complete(())
+      _ <- editor.joinWithNever
+      claimed <- claimant.joinWithNever
+      saved <- new ScheduledTaskStore(dir).loadTasks("s1")
+    yield
+      assert(!claimed)
+      assert(saved.head.occurrences.head.missedReason.nonEmpty)
+
+  test("zone correction before claim marks the new past instant missed after restart"):
+    val dir = os.temp.dir(prefix = "occurrence-edit-first-")
+    val store = new ScheduledTaskStore(dir)
+    val at = java.time.Instant.parse("2035-01-01T09:00:00Z").toEpochMilli
+    val changed = java.time.Instant.parse("2035-01-01T00:00:00Z").toEpochMilli
+    val occurrence = TodoOccurrence.create("old", at, 0L)
+    val initial = legacy.as[ScheduledTask].toOption.get.copy(
+      due = Some(TodoDue.Once(at, "Europe/London", "2035-01-01T09:00", None)), occurrences = List(occurrence))
+    for
+      _ <- store.addTask(initial)
+      _ <- store.changeCreationZone("old", "Asia/Tokyo", changed)
+      claimed <- new ScheduledTaskStore(dir).claimOccurrence("old", occurrence.key, at)
+      saved <- new ScheduledTaskStore(dir).loadTasks("s1")
+    yield
+      assert(!claimed)
+      assertEquals(saved.head.occurrences.head.scheduledAt, changed)
+      assert(saved.head.occurrences.head.missedReason.nonEmpty)
+
+  test("claim before zone correction keeps the settled occurrence unchanged after restart"):
+    val dir = os.temp.dir(prefix = "occurrence-claim-first-")
+    val store = new ScheduledTaskStore(dir)
+    val at = java.time.Instant.parse("2035-01-01T09:00:00Z").toEpochMilli
+    val occurrence = TodoOccurrence.create("old", at, 0L)
+    val initial = legacy.as[ScheduledTask].toOption.get.copy(
+      due = Some(TodoDue.Once(at, "Europe/London", "2035-01-01T09:00", None)), occurrences = List(occurrence))
+    for
+      _ <- store.addTask(initial)
+      claimed <- store.claimOccurrence("old", occurrence.key, at)
+      _ <- store.changeCreationZone("old", "Asia/Tokyo", at)
+      saved <- new ScheduledTaskStore(dir).loadTasks("s1")
+      again <- store.claimOccurrence("old", occurrence.key, at + 1L)
+    yield
+      assert(claimed)
+      assertEquals(saved.head.occurrences, List(occurrence.copy(settledAt = Some(at))))
+      assert(!again)
+
   test("claiming a due occurrence twice settles it only once"):
     val dir = os.temp.dir(prefix = "occurrence-claim-")
     val store = new ScheduledTaskStore(dir)
