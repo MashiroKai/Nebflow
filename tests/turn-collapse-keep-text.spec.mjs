@@ -268,6 +268,64 @@ for (const width of [900, 390, 375]) {
   });
 }
 
+test('product stylesheet list matches the harness in source order', async ({ browser }) => {
+  const { context, page } = await newPage(browser);
+  const lists = await page.evaluate(async () => {
+    const doc = new DOMParser().parseFromString(await (await fetch('/src/main/resources/web/index.html')).text(), 'text/html');
+    const product = [...doc.querySelectorAll('head link[rel="stylesheet"]')].map(x => new URL(x.getAttribute('href'), location.origin + '/src/main/resources/web/').href);
+    return { product, harness: await window.__productStyles };
+  });
+  expect(lists.harness).toEqual(lists.product);
+  expect(lists.product.some(x => x.endsWith('/css/design-system.css'))).toBe(true);
+  console.log('PRODUCT_STYLES ' + JSON.stringify(lists.product));
+  await context.close();
+});
+
+test('ownership: opening injection before badge belongs to its new turn', async ({ browser }) => {
+  const { context, page } = await newPage(browser);
+  await page.evaluate(() => window.__liveTurn());
+  await page.evaluate(() => window.__postClosureTurn());
+  const headers = page.locator('.turn-header');
+  await expect(headers).toHaveCount(2);
+  const opener = headers.nth(1).locator('xpath=preceding-sibling::*[1]');
+  await expect(opener.locator('.bubble.injected')).toHaveCount(1);
+  await expect(opener).toBeHidden();
+  await expect(headers.nth(1).locator('xpath=following-sibling::*[1]//button')).toContainText('1');
+  await context.close();
+});
+
+test('ownership: injections after badge count in the same turn', async ({ browser }) => {
+  const { context, page } = await newPage(browser);
+  await page.evaluate(() => window.__liveTurn());
+  await expect(page.locator('[data-nf-injection-stack] button')).toContainText('1');
+  await expect(page.locator('#chat > .row:has(.bubble.injected)')).toBeHidden();
+  await context.close();
+});
+
+test('ownership: no-process injection turn has no stack and stays visible', async ({ browser }) => {
+  const { context, page } = await newPage(browser);
+  await page.evaluate(m => window.__history(m, { busyTail: false }), [
+    { type: 'user', injected: true, source: 'schedule', text: '开轮注入' },
+    { type: 'ai', text: '完成', durationMs: 500, model: 'test-model' },
+  ]);
+  await expect(page.locator('.turn-header')).toHaveCount(0);
+  await expect(page.locator('[data-nf-injection-stack]')).toHaveCount(0);
+  await expect(page.locator('#chat > .row:has(.bubble.injected)')).toBeVisible();
+  await context.close();
+});
+
+test('ownership: same-turn error recovery reveals opening and later injections', async ({ browser }) => {
+  const { context, page } = await newPage(browser);
+  await page.evaluate(() => window.__liveTurn());
+  await page.evaluate(() => window.__postClosureTurn());
+  await page.evaluate(() => window.__refailTurn());
+  await expect(page.locator('.turn-header')).toHaveCount(1);
+  const injections = page.locator('#chat > .row:has(.bubble.injected)');
+  await expect(injections.nth(0)).toBeHidden();
+  await expect(injections.nth(1)).toBeVisible();
+  await context.close();
+});
+
 test.describe('decompression model — live alternating turn (验收 ②④)', () => {
   test('done tucks thinking+tools behind a persistent stats header; texts/injected stay visible', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
