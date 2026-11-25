@@ -113,6 +113,25 @@ server.serve_forever()'''
   self.assertEqual(relay.count,1); self.assertTrue(relay.stopping); self.assertFalse(exited.wait(.15)); self.assertTrue(exited.wait(1)); self.assertEqual(codes,[2])
   self.assertEqual(json.loads(pathlib.Path(str(self.path)+'.abort').read_text())['status'],'aborted-on-exit')
   fcntl.flock(f,fcntl.LOCK_UN); self.assertTrue(release.wait(2)); worker.join(1)
+ def test_rejection_record_before_response(self):
+  relay=m.Relay(args(self.path)); self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
+  relay.stopping=True
+  from relay_concurrency_test import H
+  h=H('second'); observed=[]
+  def send(code,*a):
+   observed.append((code,[json.loads(line)['status'] for line in self.path.read_text().splitlines()]))
+  h.send_error=send; relay.handle(h)
+  self.assertEqual(observed,[(429,['rejected-limit'])]); self.assertEqual(relay.unrecorded_rejections,0)
+ def test_unrecorded_rejection_is_bounded(self):
+  relay=m.Relay(args(self.path),lock_timeout=.05,abort_timeout=.05); self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
+  relay.stopping=True; release=threading.Event(); self.addCleanup(release.set)
+  relay.event=lambda obj: release.wait(2)
+  from relay_concurrency_test import H
+  h=H('second'); responses=[]; h.send_error=lambda code,*a:responses.append(code)
+  with patch('sys.stderr',new_callable=io.StringIO) as errors:
+   start=time.monotonic(); relay.handle(h); relay.shutdown_summary(); self.assertLess(time.monotonic()-start,.5)
+   self.assertIn('unrecorded rejection',errors.getvalue()); self.assertIn('"unrecorded_rejections": 1',errors.getvalue())
+  self.assertEqual(responses,[429]); self.assertEqual(relay.unrecorded_rejections,1)
  def test_watchdog_only_starts_once(self):
   relay=m.Relay(args(self.path),grace=1,exit_fn=lambda code:None)
   self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)

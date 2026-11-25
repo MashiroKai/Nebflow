@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Test-only constrained HTTPS relay. Not approved for production use."""
-import argparse, fcntl, http.client, json, math, os, re, socket, socketserver, ssl, threading, time, urllib.parse, uuid
+import argparse, fcntl, http.client, json, math, os, re, socket, socketserver, ssl, sys, threading, time, urllib.parse, uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 class Server(socketserver.ThreadingMixIn, HTTPServer):
@@ -12,6 +12,7 @@ class Relay:
   self.args=args; self.condition=threading.Condition(); self.lock=self.condition; self.count=0; self.seq=0
   self.grace=grace; self.exit_fn=exit_fn; self.stop_fired=False; self.finished=threading.Event(); self.watchdog_lock=threading.Lock(); self.watchdog_started=False
   self.lock_timeout=lock_timeout; self.abort_timeout=abort_timeout; self.append_override=append_override
+  self.rejection_lock=threading.Lock(); self.unrecorded_rejections=0
   self.dialer=dialer or (lambda host,port,timeout: http.client.HTTPSConnection(host,port,timeout=timeout,context=ssl.create_default_context()))
   self.routes={}
   allowed=set(args.allow_host)
@@ -130,6 +131,20 @@ class Relay:
     except OSError:
      self.sidecar(obj)
    finally: fcntl.flock(ledger.fileno(),fcntl.LOCK_UN)
+ def rejection_event(self,obj):
+  done=threading.Event(); outcome=[]
+  def write():
+   try: self.event(obj); outcome.append(True)
+   except Exception: outcome.append(False)
+   finally: done.set()
+  threading.Thread(target=write,daemon=True).start()
+  if done.wait(self.lock_timeout+self.abort_timeout) and outcome==[True]: return True
+  with self.rejection_lock: self.unrecorded_rejections+=1
+  print('unrecorded rejection',file=sys.stderr,flush=True)
+  return False
+ def shutdown_summary(self):
+  with self.rejection_lock: count=self.unrecorded_rejections
+  print(json.dumps({'unrecorded_rejections':count}),file=sys.stderr,flush=True)
  def maybe_stop(self):
   # Called with condition held; dispatching the callback is done by the caller.
   self.condition.notify_all()
@@ -158,7 +173,7 @@ class Relay:
    except OSError: pass
   writer=threading.Thread(target=record_abort,daemon=True); writer.start()
   writer.join(self.abort_timeout)
-  self.exit_fn(2)
+  self.shutdown_summary(); self.exit_fn(2)
  def handle(self,h):
   start=time.monotonic(); parsed=urllib.parse.urlsplit(h.path); parts=parsed.path.split('/'); route=parts[1] if len(parts)>1 else ''; target=self.routes.get(route)
   expected_host=f'127.0.0.1:{h.server.server_port}'
@@ -200,8 +215,8 @@ class Relay:
     if final: self.stopping=True
   if final: self.start_watchdog()
   if rejected:
-   h.send_error(429)
-   self.event({'seq':seq,'status':'rejected-limit','method':'POST','host':host,'path':path,'dial':False,'time':time.time(),'rule_id':None,'trace_id':trace[0]}); return
+   self.rejection_event({'seq':seq,'status':'rejected-limit','method':'POST','host':host,'path':path,'dial':False,'time':time.time(),'rule_id':None,'trace_id':trace[0]})
+   h.send_error(429); return
   try:
    self.event({'seq':seq,'status':'reserved','method':'POST','host':host,'path':path,'dial':False,'time':time.time(),'rule_id':None,'trace_id':trace[0]})
   except OSError:
@@ -263,5 +278,5 @@ def main():
  server=Server(('127.0.0.1',a.port),Handler)
  print(json.dumps({'port':server.server_port}),flush=True)
  relay.stop_callback=server.shutdown
- timer=threading.Timer(a.seconds,relay.deadline); timer.daemon=True; timer.start(); server.serve_forever(); timer.cancel(); server.server_close(); relay.ledger.close(); relay.owner.close()
+ timer=threading.Timer(a.seconds,relay.deadline); timer.daemon=True; timer.start(); server.serve_forever(); timer.cancel(); server.server_close(); relay.shutdown_summary(); relay.ledger.close(); relay.owner.close()
 if __name__=='__main__': main()
