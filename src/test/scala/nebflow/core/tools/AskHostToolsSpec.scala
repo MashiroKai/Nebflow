@@ -27,6 +27,44 @@ class AskHostToolsSpec extends CatsEffectSuite:
     assertEquals(AskHostTool.admitBrowserTakeover(true, "root", Some(marked), "work", registry), Right(()))
   }
 
+  test("takeover finish answers pending once and releases lease") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    val registry = new nebflow.core.browser.BrowserTakeoverRegistry
+    registry.created("work", "worker")
+    (for
+      (request, waiter) <- AskHostLedger.beginForCall("worker", "root", "agent", "[BU-TAKEOVER]\nsession: work", "finish-call")
+      _ <- AskHostLedger.admitTakeoverCurrent(request.correlationId, "root", "work", registry)
+      first <- AskHostLedger.finishTakeover(request.correlationId, "work", registry)
+      second <- AskHostLedger.finishTakeover(request.correlationId, "work", registry)
+      decision <- waiter.get
+      _ = assertEquals(first, AskHostLedger.TakeoverFinish.Answered)
+      _ = assertEquals(second, AskHostLedger.TakeoverFinish.NoLease)
+      _ = assertEquals(decision, AskHostLedger.TakeoverDecision)
+      _ = assert(!registry.isTakingOver("work"))
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("takeover finish claims a timed-out request once") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    val registry = new nebflow.core.browser.BrowserTakeoverRegistry
+    registry.created("work", "worker")
+    (for
+      (request, _) <- AskHostLedger.beginForCall("worker", "root", "agent", "[BU-TAKEOVER]\nsession: work", "late-finish-call")
+      _ <- AskHostLedger.releaseOnTimeout(request.correlationId, "timeout")
+      _ <- AskHostLedger.admitTakeoverCurrent(request.correlationId, "root", "work", registry)
+      first <- AskHostLedger.finishTakeover(request.correlationId, "work", registry)
+      second <- AskHostLedger.finishTakeover(request.correlationId, "work", registry)
+      _ = assertEquals(first, AskHostLedger.TakeoverFinish.LateClaimed)
+      _ = assertEquals(second, AskHostLedger.TakeoverFinish.NoLease)
+      rows <- IO(os.read.lines(tmp / "askhost" / "ledger.jsonl"))
+      _ = assertEquals(rows.count(_.contains("takeover-late-claimed")), 1)
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
   test("stale takeover snapshot cannot open after answer or cancellation") {
     val tmp = os.temp.dir()
     val previous = PathUtil.dataRoot
