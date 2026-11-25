@@ -261,6 +261,22 @@ class TodoTaxonomySpec extends CatsEffectSuite:
   private def callTool(input: Json): Either[ToolError, String] =
     ScheduleTool.call(input.asObject.get, mkCtx()).unsafeRunSync()
 
+  test("tool weekly todo persists a wall-clock rule in the device zone"):
+    val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
+    val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision,
+      "triggerAt" -> "2035-01-01T09:00".asJson, "repeat" -> "weekly".asJson)
+    for
+      _ <- reset()
+      result <- ScheduleTool.call(input.asObject.get, mkCtx().copy(deviceZone = Some("Asia/Tokyo")))
+      stored <- taskStore.getAllTodos
+    yield
+      assert(result.isRight, s"weekly deadline must be accepted: $result")
+      val due = stored.head.due.get.asJson.hcursor
+      assertEquals(due.get[String]("type").toOption, Some("weekly"))
+      assertEquals(due.get[String]("zoneId").toOption, Some("Asia/Tokyo"))
+      assertEquals(due.get[String]("localTime").toOption, Some("09:00"))
+      assertEquals(stored.head.nextDueAt, Some(java.time.Instant.parse("2035-01-01T00:00:00Z").toEpochMilli))
+
   test("tool todo overlap selects earlier instant and exposes chosen offset"):
     val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
     val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision, "triggerAt" -> "2035-11-04T01:30".asJson)

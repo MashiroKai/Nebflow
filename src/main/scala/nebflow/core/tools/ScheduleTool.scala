@@ -799,7 +799,7 @@ Your context does NOT show the current date/time — never invent an absolute da
     val project = input("project").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
     val now = System.currentTimeMillis()
     val dueInput = input("triggerAt").filter(j => !j.isNull && !j.asNumber.flatMap(_.toLong).contains(0L))
-    val dueResult: Either[String, Option[TodoDue.Once]] = dueInput match
+    val dueResult: Either[String, Option[(TodoDue, Long)]] = dueInput match
       case None => Right(None)
       case Some(raw) =>
         val zoned = raw.asString.flatMap(s => scala.util.Try(ZonedDateTime.parse(s)).toOption)
@@ -807,7 +807,9 @@ Your context does NOT show the current date/time — never invent an absolute da
         val explicit = zoned.map(_.getZone.getId).filter(ZoneId.getAvailableZoneIds.contains)
         for
           region <- TodoDue.requireCreationZone(explicit, ctx.deviceZone)
-          _ <- Either.cond(input("repeat").flatMap(_.asString).forall(r => r == "once" || r.isBlank), (), "Repeating todo deadlines are not yet supported")
+          repeat = input("repeat").flatMap(_.asString).getOrElse("once")
+          _ <- Either.cond(Set("", "once", "weekly").contains(repeat), (), "Todo repeat must be once or weekly")
+          _ <- Either.cond(repeat != "weekly" || local.exists(t => t.getSecond == 0 && t.getNano == 0), (), "Weekly reminders require a local date and minute")
           _ <- Either.cond(zoned.isDefined || raw.asString.exists(s => scala.util.Try(LocalDateTime.parse(s)).isSuccess || s.trim.toLowerCase.startsWith("tomorrow")), (), "Please clarify an explicit local date and time")
           at <- zoned.map(z => Right(z.toInstant.toEpochMilli)).orElse(local.map { value =>
             val zone = ZoneId.of(region)
@@ -819,7 +821,11 @@ Your context does NOT show the current date/time — never invent an absolute da
         yield
           val wall = local.map(_.toString).getOrElse(Instant.ofEpochMilli(at).atZone(ZoneId.of(region)).toLocalDateTime.toString)
           val offset = zoned.map(_.getOffset.toString)
-          Some(TodoDue.Once(at, region, wall, offset))
+          val rule = if repeat == "weekly" then
+            val value = local.get
+            TodoDue.Weekly(value.getDayOfWeek.getValue, value.toLocalTime.toString, region, wall)
+          else TodoDue.Once(at, region, wall, offset)
+          Some((rule, at))
     if content.isBlank then
       IO.pure(Left(ToolError("content is required and must not be blank")))
     else if dueResult.isLeft then
@@ -841,8 +847,9 @@ Your context does NOT show the current date/time — never invent an absolute da
         todoDetail,
         decision
       )
-      val due = dueResult.toOption.flatten
-      val ownedTodo = todo.copy(source = Some(TodoTaxonomy.SourceTool), due = due, nextDueAt = due.map(_.dueAt))
+      val preparedDue = dueResult.toOption.flatten
+      val due = preparedDue.map(_._1)
+      val ownedTodo = todo.copy(source = Some(TodoTaxonomy.SourceTool), due = due, nextDueAt = preparedDue.map(_._2))
       for
         rearm <- taskName match
           case Some(n) => taskStore.upsertTaskByName(ownedTodo, ScheduledTaskStore.toolOwnsLegacyNamedTask)
@@ -891,15 +898,18 @@ Your context does NOT show the current date/time — never invent an absolute da
           case olds =>
             s" — replaced ${olds.size} existing todo(s) with the same name (${olds.map(_.id).mkString(", ")})"
         val nameNote = taskName.map(n => s" [name: $n]").getOrElse("")
-        val dueNote = due.map { rule =>
-          val local = LocalDateTime.parse(rule.wallClock)
-          val transition = ZoneId.of(rule.zoneId).getRules.getTransition(local)
+        val dueNote = preparedDue.map { (rule, at) =>
+          val (wall, region) = rule match
+            case r: TodoDue.Once => (r.wallClock, r.zoneId)
+            case r: TodoDue.Weekly => (r.wallClock, r.zoneId)
+          val local = LocalDateTime.parse(wall)
+          val transition = ZoneId.of(region).getRules.getTransition(local)
           val adjustment =
             if transition != null && transition.isGap then " (adjusted to first valid time)"
             else if transition != null && transition.isOverlap then
-              s" (overlap: ${Instant.ofEpochMilli(rule.dueAt).atZone(ZoneId.of(rule.zoneId)).getOffset})"
+              s" (overlap: ${Instant.ofEpochMilli(at).atZone(ZoneId.of(region)).getOffset})"
             else ""
-          s" [due: ${rule.wallClock} ${rule.zoneId}$adjustment]"
+          s" [due: $wall $region$adjustment]"
         }.getOrElse("")
         Right(
           s"Todo ${saved.id} registered (surfaces daily at ${formatTime(saved.triggerAt).takeRight(5)} until done/cancelled)" +
