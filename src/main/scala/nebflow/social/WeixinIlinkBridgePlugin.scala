@@ -802,9 +802,11 @@ final class WeixinIlinkBridgePlugin(
                     // available to the web console and its other subscribers.
                     val noteOld = previous
                       .filter(p => p.requestId != rid && p.answered.isEmpty)
-                      .map(p => logger.info(
-                        s"weixin-ilink bridge: new ask replaces channel address requestId=${p.requestId} for sender $sender"
-                      ))
+                      .map(p =>
+                        logger.info(
+                          s"weixin-ilink bridge: new ask replaces channel address requestId=${p.requestId} for sender $sender"
+                        )
+                      )
                       .getOrElse(IO.unit)
                     noteOld *>
                       askLedgerRef.update(
