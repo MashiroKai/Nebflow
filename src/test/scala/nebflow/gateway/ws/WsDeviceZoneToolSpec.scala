@@ -8,7 +8,7 @@ import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, AgentCommand, AgentDef, AgentKind, AgentRecord, AgentStatus}
-import nebflow.agent.{AgentActor, AgentLibrary, SharedResources, SubAgentTaskStore}
+import nebflow.agent.{AgentActor, AgentLibrary, CompactionQueueStore, SharedResources, SubAgentTaskStore}
 import nebflow.core.{FileChangeTracker, RateLimiter, SessionStore}
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.schedule.{FreezeScheduleConfig, FreezeSegment}
@@ -47,10 +47,12 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
         toolRelease <- Queue.unbounded[IO, Unit]
         schedule <- Ref.of[IO, FreezeScheduleConfig](FreezeScheduleConfig(enabled = false))
         calls <- Ref.of[IO, Int](0)
+        recoveryRequests <- Queue.unbounded[IO, LlmRequest]
         llm = new LlmHandle[IO]:
           def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new Exception("unexpected send"))
           def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] =
-            Stream.eval((calls.getAndUpdate(_ + 1), overrideCall.getAndSet(None)).tupled).flatMap { (n, overrideTool) =>
+            Stream.eval((if req.sessionId == "zone-recovery" then recoveryRequests.offer(req) else IO.unit) *>
+              (calls.getAndUpdate(_ + 1), overrideCall.getAndSet(None)).tupled).flatMap { (n, overrideTool) =>
               if overrideTool.getOrElse(n % 2 == 0) then Stream(StreamChunk.ToolCallChunk(ToolCall(s"zone-call-$n", toolName, JsonObject.empty)), StreamChunk.Done(None, None))
               else Stream.eval(holdNextText.getAndSet(false)).flatMap { hold =>
                 val wait = if hold then Stream.eval(streamEntered.complete(()) *> releaseStream.get).drain else Stream.empty
@@ -198,6 +200,32 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
         _ <- done.take.timeout(30.seconds)
         _ <- done.take.timeout(30.seconds)
         _ <- DeviceZoneBoundaryChecks.run(ref, captured, done, blockTool, overrideCall, toolEntered, toolRelease)
+        _ <- (for
+          _ <- CompactionQueueStore.save("zone-recovery", CompactionQueueStore.PersistedQueues(imms = List(
+            AgentCommand.ImmediateInput("recovered-zone-probe", fromUser = true, deviceZone = Some("Asia/Tokyo")))))
+          disk <- CompactionQueueStore.load("zone-recovery")
+          _ = assertEquals(disk.map(_.imms.map(_.deviceZone)), Some(List(None)))
+          _ = assert(!os.read(root / "sessions" / "zone-recovery" / "injection-queues.json").contains("deviceZone"))
+          _ <- blockTool.set(true)
+          _ <- overrideCall.set(Some(true))
+          recoveredRef <- system.spawn(AgentActor(agentDef = agent, resources = resources, wsSend = _ => IO.unit,
+            depth = 0, sessionId = Some("zone-recovery"), sessionName = Some("zone-recovery")), "zone-recovery")
+          _ <- recoveredRef ! AgentCommand.UserInput("trigger recovered queue", clientMessageId = Some("recovery-trigger"), fromUser = true,
+            deviceZone = Some("Asia/Tokyo"))
+          first <- captured.take.timeout(30.seconds)
+          _ = assertEquals(first, Some("Asia/Tokyo"))
+          _ <- toolEntered.take.timeout(30.seconds)
+          _ <- recoveryRequests.take.timeout(30.seconds)
+          _ <- overrideCall.set(Some(true))
+          _ <- toolRelease.offer(())
+          continued <- recoveryRequests.take.timeout(30.seconds)
+          _ = assert(continued.messages.exists(_.textContent.contains("recovered-zone-probe")))
+          replayed <- captured.take.timeout(30.seconds)
+          _ = assertEquals(replayed, None)
+          // Probe calls the helper directly; real creation write ports remain unwired.
+          _ = assert(nebflow.core.scheduler.TodoDue.requireCreationZone(None, replayed).isLeft)
+          _ <- overrideCall.set(Some(false))
+        yield ())
         _ <- store.flushPendingUiWrites
       yield ()
     }
