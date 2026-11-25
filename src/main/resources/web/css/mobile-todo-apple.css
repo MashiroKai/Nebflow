@@ -264,7 +264,7 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-row {
    aligns with the text start line) */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-row::after {
   /* 全面圆角批 2026-11-22（作者令「得全面圆角」· 规范 §2.6）：画框面圆角标准档。 */
-  border-radius: var(--ds-radius-none);
+  border-radius: inherit;
   content: '';
   position: absolute;
   left: 52px;
