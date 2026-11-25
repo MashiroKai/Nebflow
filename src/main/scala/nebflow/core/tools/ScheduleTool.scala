@@ -798,21 +798,26 @@ Your context does NOT show the current date/time — never invent an absolute da
     val todoDetail = input("detail").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
     val project = input("project").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
     val now = System.currentTimeMillis()
+    val dueInput = input("triggerAt").filter(j => !j.isNull && !j.asNumber.flatMap(_.toLong).contains(0L))
+    val dueResult: Either[String, Option[TodoDue.Once]] = dueInput match
+      case None => Right(None)
+      case Some(raw) =>
+        for
+          region <- TodoDue.requireCreationZone(None, ctx.deviceZone)
+          _ <- Either.cond(input("repeat").flatMap(_.asString).forall(r => r == "once" || r.isBlank), (), "Repeating todo deadlines are not yet supported")
+          _ <- Either.cond(raw.asString.exists(s => scala.util.Try(LocalDateTime.parse(s)).isSuccess), (), "Please clarify an explicit local date and time")
+          at <- parseTriggerAt(Some(raw), now, ZoneId.of(region))
+          _ <- Either.cond(at > now, (), "Please clarify a future reminder time")
+        yield
+          val wall = Instant.ofEpochMilli(at).atZone(ZoneId.of(region)).toLocalDateTime.toString
+          val offset = raw.asString.flatMap(s => scala.util.Try(OffsetDateTime.parse(s).getOffset.toString).toOption)
+          Some(TodoDue.Once(at, region, wall, offset))
     if content.isBlank then
-      IO.pure(
-        Left(
-          ToolError(
-            "content is required and must not be blank (for list/cancel/done use action=\"list\"/\"cancel\"/\"done\")"
-          )
-        )
-      )
-    else if input("triggerAt").exists(j => !j.isNull && !j.asNumber.flatMap(_.toLong).contains(0L)) &&
-      TodoDue.requireCreationZone(None, ctx.deviceZone).isLeft then
-      IO.pure(Left(ToolError("Please clarify the creation time zone")))
-    else if input("triggerAt").exists(j => !j.isNull && !j.asNumber.flatMap(_.toLong).contains(0L)) then
-      IO.pure(Left(ToolError("Todo due creation is not yet supported")))
+      IO.pure(Left(ToolError("content is required and must not be blank")))
+    else if dueResult.isLeft then
+      IO.pure(Left(ToolError(dueResult.swap.toOption.get)))
     else
-      // triggerAt 不属于待办面（无固定触发时间）——首次浮出固定为下一次 09:00。
+      // The daily digest surface remains separate from the reminder deadline.
       val surfaceAt = ScheduledTask.nextTodoSurfaceAt(now, ZoneId.systemDefault())
       val todo = ScheduledTask.create(
         sessionId,
@@ -828,7 +833,8 @@ Your context does NOT show the current date/time — never invent an absolute da
         todoDetail,
         decision
       )
-      val ownedTodo = todo.copy(source = Some(TodoTaxonomy.SourceTool))
+      val due = dueResult.toOption.flatten
+      val ownedTodo = todo.copy(source = Some(TodoTaxonomy.SourceTool), due = due, nextDueAt = due.map(_.dueAt))
       for
         rearm <- taskName match
           case Some(n) => taskStore.upsertTaskByName(ownedTodo, ScheduledTaskStore.toolOwnsLegacyNamedTask)
