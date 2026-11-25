@@ -1,8 +1,8 @@
 package nebflow.actor
 
 import cats.effect.IO
-import io.circe.{Json, parser}
 import io.circe.syntax.*
+import io.circe.{Json, parser}
 import nebflow.shared.NebflowLogger
 
 /**

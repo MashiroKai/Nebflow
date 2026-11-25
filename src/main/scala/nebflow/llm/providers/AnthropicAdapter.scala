@@ -7,6 +7,7 @@ import fs2.Stream
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
+import nebflow.core.compact.TokenEstimator
 import nebflow.llm.{
   AdapterResponse,
   CacheAttribution,
@@ -15,7 +16,6 @@ import nebflow.llm.{
   ResolvedThinking,
   SendMessageParams
 }
-import nebflow.core.compact.TokenEstimator
 import nebflow.shared.*
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.*

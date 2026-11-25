@@ -1,10 +1,9 @@
 package nebflow.neblink.relay
 
-import nebflow.neblink.core.NeblinkService
-
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
+import nebflow.neblink.core.NeblinkService
 import nebflow.shared.{NebflowLogger, PeerInfo}
 
 import scala.concurrent.duration.*

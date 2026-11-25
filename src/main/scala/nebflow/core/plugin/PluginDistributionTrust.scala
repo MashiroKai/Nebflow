@@ -1,6 +1,6 @@
 package nebflow.core.plugin
 
-import PluginSourceLedger.Via
+import nebflow.core.plugin.PluginSourceLedger.Via
 
 /**
  * PluginDistributionTrust —— 分发信任模型（插件分发与生命周期协议升级草案 §12.1；A 期 §12.7 嵌入）。

@@ -4,8 +4,8 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.perception.PerceptionModel.*
 import nebflow.perception.{MailImportanceJudge, PerceptionModel}
-import PerceptionModel.*
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*

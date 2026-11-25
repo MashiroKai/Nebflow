@@ -1,10 +1,7 @@
 package nebflow.gateway
 
-import nebflow.neblink.core.*
-
 import cats.effect.IO
-import nebflow.neblink.core.DeviceIdentity
-import nebflow.neblink.core.NeblinkConfig
+import nebflow.neblink.core.{DeviceIdentity, NeblinkConfig, *}
 import nebflow.shared.Branding
 
 import java.net.URLEncoder

@@ -2,8 +2,8 @@ package nebflow.core.entity
 
 import cats.effect.IO
 import cats.syntax.all.*
-import io.circe.syntax.*
 import io.circe.Json
+import io.circe.syntax.*
 import nebflow.core.AtomicJson
 import nebflow.shared.{MemoryStore, NebflowLogger, PathUtil}
 

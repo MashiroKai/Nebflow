@@ -1,9 +1,8 @@
 package nebflow.core.tools
 
 import cats.effect.IO
-import io.circe.Json
 import io.circe.syntax.*
-import io.circe.JsonObject
+import io.circe.{Json, JsonObject}
 import nebflow.core.ask.{AskEditHunk, AskEditReviews, AskGatewayServices, AskSessions}
 
 import scala.util.control.NonFatal

@@ -3,6 +3,7 @@ package nebflow.core.wiki
 import cats.effect.IO
 
 import java.util.concurrent.atomic.AtomicReference
+
 import scala.collection.mutable.ListBuffer
 
 /**

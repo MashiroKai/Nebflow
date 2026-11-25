@@ -1,8 +1,7 @@
 package nebflow.neblink.misc
 
-import nebflow.neblink.misc.AvatarProxy
-
 import cats.effect.{IO, Ref}
+import nebflow.neblink.misc.AvatarProxy
 
 import scala.concurrent.duration.*
 

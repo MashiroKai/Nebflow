@@ -1,6 +1,8 @@
 package nebflow.neblink.identity
 
 import cats.effect.IO
+import cats.effect.std.Semaphore
+import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.*
 import io.circe.parser.decode
@@ -11,8 +13,6 @@ import nebflow.shared.{NebflowLogger, PathUtil}
 import java.nio.channels.FileChannel
 import java.nio.file.StandardOpenOption
 import java.util.UUID
-import cats.effect.std.Semaphore
-import cats.effect.unsafe.implicits.global
 
 /**
  * 「我登出了」上行通知 · stand 侧**发送接口 + 排队点**（登出收尾批 logout-fin；

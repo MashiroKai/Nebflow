@@ -1,14 +1,12 @@
 package nebflow.core.executor
 
-import cats.effect.IO
-import cats.effect.Ref
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
+import nebflow.core.tools.BgTaskOutputBuffer
 
 import java.lang.Process
 
 import scala.collection.immutable.Queue
-
-import nebflow.core.tools.BgTaskOutputBuffer
 
 /**
  * ExternalOutputStore —— 外部执行器进度缓冲 ＋ 活体注册表 ＋ mailbox

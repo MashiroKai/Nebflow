@@ -653,6 +653,31 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
     os.proc("git", "-C", repo, "commit", "-m", "seed").call()
     repo
 
+  test("legacy workspace owner and merger remain in flight; pinned wins") {
+    import nebflow.core.delegate.{DelegateTerminalTtl, DelegateWorktreeRegistry, WorkspaceLedger}
+    val oldRoot = PathUtil.dataRoot
+    val root = os.temp.dir(prefix = "ttl-ledger-")
+    val owner = "delegate-ttl-owner"
+    val merger = "delegate-ttl-merger"
+    val ledger = WorkspaceLedger.State(
+      workspaces = List(WorkspaceLedger.Workspace("id", "project", "repo", "/unused", "branch", "main", "base", owner, "delegate")),
+      mergers = List(WorkspaceLedger.Merger("project", "repo", merger))
+    )
+    try
+      PathUtil.setDataRoot(root)
+      os.write.over(root / "workspaces" / "ledger.json", ledger.asJson.noSpaces, createFolders = true)
+      val snap = DelegateWorktreeRegistry.Snapshot.of(Map.empty)
+      val now = System.currentTimeMillis()
+      val ownerRec = mkRecord(owner, "parent", "/unused")
+      val mergerRec = mkRecord(merger, "parent", "/unused")
+      assertEquals(DelegateTerminalTtl.verdict(ownerRec, None, now, snap), DelegateTerminalTtl.InFlight)
+      assertEquals(DelegateTerminalTtl.verdict(mergerRec, None, now, snap), DelegateTerminalTtl.InFlight)
+      assertEquals(DelegateTerminalTtl.verdict(ownerRec.copy(pinnedAt = Some(now)), None, now, snap), DelegateTerminalTtl.Pinned)
+    finally
+      PathUtil.setDataRoot(oldRoot)
+      os.remove.all(root)
+  }
+
   // ── 改后绿 J：worktree 现场三态判据（孤儿行全清 ops 复核批 2026-11-21）───────
   //
   // 旧闸 = 「worktree 字段非空 ⇒ InFlight」，在年龄判定之前返回。字段是登记时刻的意图
@@ -683,6 +708,11 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
     val rec = recWith("delegate-nebflow-ttl-j1", registeredDir.toString)
     // 三态快照：registered 目录登记在册；unregistered 目录不在清单里。
     val snap = DelegateWorktreeRegistry.Snapshot.of(Map(root -> Set(registeredDir.toString)))
+    assertEquals(
+      DelegateTerminalTtl.verdict(rec.copy(pinnedAt = Some(now)), Some(ancientRow), now, snap),
+      DelegateTerminalTtl.Pinned,
+      "pinned takes precedence over a live worktree"
+    )
     // ① 字段非空 + 目录在盘 + 已登记 ⇒ InFlight（保险丝语义：现场没拆，绝不清理）。
     assertEquals(
       DelegateWorktreeRegistry.presenceOf(rec, snap),

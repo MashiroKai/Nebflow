@@ -8,9 +8,9 @@ import nebflow.db.format.{EventEnvelope, GuardDocs, PendingRecord, ScheduleRecor
 import org.slf4j.LoggerFactory
 
 import java.nio.file.{Files, Path}
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.{ConcurrentHashMap, Semaphore}
+
 import scala.jdk.CollectionConverters.*
 
 /**

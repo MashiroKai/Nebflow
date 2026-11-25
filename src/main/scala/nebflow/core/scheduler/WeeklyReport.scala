@@ -1,9 +1,9 @@
 package nebflow.core.scheduler
 
 import cats.effect.IO
+import io.circe.Json
 import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
-import io.circe.Json
 import nebflow.shared.NebflowLogger
 
 import java.nio.charset.StandardCharsets

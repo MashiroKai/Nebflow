@@ -77,7 +77,7 @@ object SearchIndexMigration:
         put(c, "generation", java.util.UUID.randomUUID().toString)
         put(c, "active_generation", "legacy")
       c.commit()
-      if get(c, "phase").contains("done") then return
+      if !get(c, "phase").contains("done") then {
       var cursor = get(c, "backfill_cursor").get.toLong
       var batches = 0
       val highWater = get(c, "high_water").map(_.toLong).getOrElse {
@@ -190,6 +190,7 @@ object SearchIndexMigration:
       put(c, "active_generation", get(c, "generation").get)
       put(c, "phase", "done")
       c.commit()
+      }
     catch
       case scala.util.control.NonFatal(e) =>
         c.rollback()
@@ -254,7 +255,7 @@ object SearchIndexMigration:
   def main(args: Array[String]): Unit =
     if args.length == 3 && args(0) == "--snapshot" then
       makeSessionSnapshot(args(1), args(2))
-      return
+    else {
     require(
       args.length == 2 || (args.length == 3 && Set("--halt-50", "--halt-before-commit-50").contains(args(2))),
       "usage: SearchIndexMigration /tmp/<output>.sqlite /path/to/source.sqlite [--halt-50]"
@@ -281,5 +282,6 @@ object SearchIndexMigration:
     finally
       c.close()
       source.close()
+    }
   end main
 end SearchIndexMigration

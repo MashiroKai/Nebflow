@@ -1,20 +1,17 @@
 package nebflow.neblink.core
 
-import nebflow.neblink.relay.PresenceCandidateProbe
-
-import nebflow.neblink.attachment.*
-import nebflow.neblink.identity.*
-import nebflow.neblink.misc.*
-import nebflow.neblink.relay.*
-import nebflow.neblink.social.*
-
-import nebflow.neblink.logto.*
 import cats.effect.{Deferred, IO, Ref}
 import io.circe.*
 import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.core.NeblinkClientPort
+import nebflow.neblink.attachment.*
+import nebflow.neblink.identity.*
+import nebflow.neblink.logto.*
+import nebflow.neblink.misc.*
+import nebflow.neblink.relay.{PresenceCandidateProbe, *}
+import nebflow.neblink.social.*
 import nebflow.shared.{DeviceMail, NebflowLogger, RelayMailResult}
 
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}

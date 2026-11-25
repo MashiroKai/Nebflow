@@ -1,7 +1,6 @@
 package nebflow.core.scheduler
 
-import cats.effect.IO
-import cats.effect.Ref
+import cats.effect.{IO, Ref}
 
 /**
  * 会话工具活动时钟（2026-10-29 例程自检降频批）：记录每个会话最近一次工具

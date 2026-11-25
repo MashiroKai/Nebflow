@@ -8,6 +8,7 @@ import nebflow.shared.{Config, NebflowLogger, PathUtil, SharedBackend}
 import sttp.client4.*
 
 import java.util.Base64
+
 import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 

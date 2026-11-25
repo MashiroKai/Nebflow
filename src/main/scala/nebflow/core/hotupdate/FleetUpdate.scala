@@ -1,8 +1,8 @@
 package nebflow.core.hotupdate
 
 import cats.syntax.all.*
-import io.circe.{Decoder, Encoder, Json}
 import io.circe.syntax.*
+import io.circe.{Decoder, Encoder, Json}
 
 /**
  * 全设备统一更新（fleet update）——**纯逻辑层**：能力门槛表 + 分发决策树 + 计划形状。

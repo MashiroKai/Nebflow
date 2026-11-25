@@ -1,10 +1,9 @@
 package nebflow.neblink.portal
 
-import nebflow.neblink.relay.*
-
-import io.circe.{Json, JsonObject}
 import io.circe.parser.parse
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
+import nebflow.neblink.relay.*
 
 import java.util.Base64
 

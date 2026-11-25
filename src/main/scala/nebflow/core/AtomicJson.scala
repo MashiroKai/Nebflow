@@ -420,23 +420,26 @@ object AtomicJson:
     if !os.exists(j) then Nil
     else
       val text =
-        try os.read(j)
+        try Some(os.read(j))
         catch
-          case _: Exception => return Nil
-      // Only lines that END with '\n' are framed records; the tail after the
-      // last '\n' (which may be '' when the file ends cleanly) is discarded.
-      val framed = text.split("\n", -1).toList.dropRight(1)
-      val out = scala.collection.mutable.ListBuffer.empty[Note]
-      var stop = false
-      framed.foreach { l =>
-        if !stop then
-          if l.isEmpty then stop = true
-          else
-            scala.util.Try(io.circe.parser.parse(l)).toOption match
-              case Some(_) => out += Note(l, recordBytes(l))
-              case None => stop = true // torn frame: discard it and everything after
-      }
-      out.toList
+          case _: Exception => None
+      text match
+        case None => Nil
+        case Some(value) =>
+          // Only lines that END with '\n' are framed records; the tail after the
+          // last '\n' (which may be '' when the file ends cleanly) is discarded.
+          val framed = value.split("\n", -1).toList.dropRight(1)
+          val out = scala.collection.mutable.ListBuffer.empty[Note]
+          var stop = false
+          framed.foreach { l =>
+            if !stop then
+              if l.isEmpty then stop = true
+              else
+                scala.util.Try(io.circe.parser.parse(l)).toOption match
+                  case Some(_) => out += Note(l, recordBytes(l))
+                  case None => stop = true // torn frame: discard it and everything after
+          }
+          out.toList
     end if
   end readJournalRecords
 

@@ -1,12 +1,10 @@
 /* 从 RestApiRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
-import nebflow.neblink.core.*
-
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, parser}
-import nebflow.neblink.core.OutboundHttpClients
+import nebflow.neblink.core.{OutboundHttpClients, *}
 
 private[gateway] object ProviderProbe:
 

@@ -6,6 +6,7 @@ import nebflow.cli.GatewayClient
 
 import java.net.{HttpURLConnection, Proxy, URI, URLEncoder}
 import java.nio.charset.StandardCharsets
+
 import scala.util.Using
 
 /**
