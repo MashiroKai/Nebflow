@@ -39,6 +39,8 @@
 //   H. write rejection carries a REAL save-failure message on the server, while the
 //      client retains unsynced reader state silently (862f93c9e1);
 //   I. the writer seat is a SILENT PREEMPTIVE seat (申请即授予 + 定向通知被顶下的写者).
+//      Browser takeover viewer glue is a separate surface, allowed only in marked blocks;
+//      the console takeover surface remains forbidden in canvas.
 //
 // Usage: node scripts/check-takeover-identify.mjs
 
@@ -209,7 +211,33 @@ if (!/function captureSeatDraft\s*\(/.test(canvasJs)) {
 if (!/captureSeatDraft\(\)/.test(canvasJs)) {
   fail('I: captureSeatDraft is never called — the seat-loss hook is unwired');
 }
-if (/takeover/i.test(canvasJs)) {
+const glueMarker = /\/\/ (BEGIN|END) BROWSER TAKEOVER VIEWER GLUE/g;
+let outsideGlue = '';
+let lastEnd = 0;
+let blockStart = null;
+let marker;
+while ((marker = glueMarker.exec(canvasJs)) !== null) {
+  if (marker[1] === 'BEGIN') {
+    if (blockStart !== null) {
+      fail('I: nested browser takeover viewer glue marker');
+    } else {
+      outsideGlue += canvasJs.slice(lastEnd, marker.index);
+      blockStart = marker.index;
+    }
+  } else if (blockStart === null) {
+    fail('I: unpaired browser takeover viewer glue END marker');
+  } else {
+    const block = canvasJs.slice(blockStart, glueMarker.lastIndex);
+    const content = block.replace(/\/\/ (?:BEGIN|END) BROWSER TAKEOVER VIEWER GLUE/g, '');
+    if (block.split('\n').length > 40) fail('I: browser takeover viewer glue exceeds 40 lines');
+    if (!/takeover/i.test(content)) fail('I: browser takeover viewer glue has no takeover reference');
+    lastEnd = glueMarker.lastIndex;
+    blockStart = null;
+  }
+}
+if (blockStart !== null) fail('I: unpaired browser takeover viewer glue BEGIN marker');
+outsideGlue += canvasJs.slice(lastEnd);
+if (/takeover/i.test(outsideGlue)) {
   fail('I: canvas.js still references the console-takeover surface — the canvas producer must carry none of it');
 }
 
@@ -223,5 +251,6 @@ if (failures.length > 0) {
 console.log(
   `check-takeover-identify: PASS — identity declared in-band as "${frameType}" (client emit ↔ receive-pipe intercept), ` +
   `handshake ?clientId= rail intact, console retake restored and isolated from canvas, ` +
-  `refusal preserves unsynced reader state, writer seat silently preemptive (displaced writer notified → draft)`
+  `refusal preserves unsynced reader state, writer seat silently preemptive (displaced writer notified → draft); ` +
+  `marked browser takeover viewer glue is a separate surface, console takeover remains forbidden in canvas`
 );
