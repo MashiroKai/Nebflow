@@ -899,7 +899,7 @@ export function restoreFromStorage(opts = {}) {
         mountToolCardBody(card, { detailHtml, promptText, content: m.content, label: m.label, labelTail: lParts[1] || '' });
         row.appendChild(card);
         chat.appendChild(row);
-        if (hasBody) attachToolClick(card);
+        if (hasBody) attachToolClick(card, !!(activeView && activeView.nfBareProcessRows));
         // Schedule 卡片（schedule-created-card 批 2026-11-05）：重放腿与 live
         // renderTool 同形 —— 进程行 + 卡片行两行制，同一个 builder（零第二套判据）。
         const schedRow = scheduleCardRowForTool({
@@ -1402,7 +1402,7 @@ function buildHistoryRow(m, i, ctx) {
         mountToolCardBody(card, { detailHtml, promptText, content: m.content, label: m.label, labelTail: lParts[1] || '' });
         row.appendChild(card);
         fragment.appendChild(row);
-        if (hasBody) attachToolClick(card);
+        if (hasBody) attachToolClick(card, !!(activeView && activeView.nfBareProcessRows));
         // Schedule 卡片（schedule-created-card 批 2026-11-05）：与 storage 腿逐字
         // 同形（进程行 + 卡片行；同一 builder、同一行 id 后缀）。
         const schedRow = scheduleCardRowForTool({
