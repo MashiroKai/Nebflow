@@ -505,7 +505,9 @@ server.serve_forever()'''
   self.process_limit_slow_order(False)
  def test_process_double_trigger_once(self):
   self.process_limit_slow_order(True)
- def process_limit_slow_order(self,double_trigger):
+ def test_process_admission_lock_held(self):
+  self.process_limit_slow_order(False,True)
+ def process_limit_slow_order(self,double_trigger,lock_held=False):
   # Slow upload remains in body reading, before reservation; another complete
   # request consumes the limit and remains in flight against the loopback peer.
   up=socket.socket(); up.bind(('127.0.0.1',0)); up.listen(); up.settimeout(3); self.addCleanup(up.close)
@@ -517,6 +519,12 @@ server.serve_forever()'''
   threading.Thread(target=provider,daemon=True).start()
   code='''import sys,importlib.util,http.client,time,json,itertools\ns=importlib.util.spec_from_file_location("relay",sys.argv.pop(1)); m=importlib.util.module_from_spec(s); s.loader.exec_module(m)\nport=int(sys.argv.pop(1)); old=m.Relay.__init__; event=m.Relay.event; send=m.BaseHTTPRequestHandler.send_error; order=itertools.count()\ndef log(label): print(json.dumps({"observation":label,"seq":next(order),"monotonic":time.monotonic()}),file=sys.stderr,flush=True)\ndef init(self,args,**kw): old(self,args,dialer=lambda h,p,t:http.client.HTTPConnection("127.0.0.1",port,timeout=t),grace=1,abort_timeout=.1)\ndef observed(self,obj):\n result=event(self,obj)\n if obj.get("status")=="rejected-limit" and result is True: log("ledger-fsynced")\n return result\ndef sent(self,status,*a,**kw):\n result=send(self,status,*a,**kw)\n if status==429: log("response-written")\n return result\nm.Relay.__init__=init; m.Relay.event=observed; m.BaseHTTPRequestHandler.send_error=sent; m.main()'''
   code=code.replace('m.Relay.__init__=init; m.Relay.event=observed;', '''force=m.Relay.force_after_grace
+watchdog=m.Relay.start_watchdog
+def watch_observed(self):
+ import inspect
+ log("watch-"+inspect.currentframe().f_back.f_code.co_name)
+ return watchdog(self)
+m.Relay.start_watchdog=watch_observed
 original_init=init
 def init(self,args,**kw):
  original_init(self,args,**kw)
@@ -526,7 +534,15 @@ def init(self,args,**kw):
 def force_observed(self): log("force-entry"); return force(self)
 m.Relay.force_after_grace=force_observed
 m.Relay.__init__=init; m.Relay.event=observed;''')
-  ev=pathlib.Path(os.environ['RELAY_EVIDENCE_DIR']); prefix=ev/('round13-double-trigger' if double_trigger else 'round7-process-limit-slow'); ledger=self.path
+  if lock_held:
+   code=code.replace(' old_exit=self.exit_fn',' global relay_instance\n relay_instance=self\n old_exit=self.exit_fn')
+   code=code.replace(' if status==429: log("response-written")',''' if status==429:
+  log("response-written")
+  import threading
+  def hold():
+   with relay_instance.append_lock: log("lock-held"); threading.Event().wait()
+  threading.Thread(target=hold,daemon=True).start()''')
+  ev=pathlib.Path(os.environ['RELAY_EVIDENCE_DIR']); prefix=ev/('round14-lock-held' if lock_held else 'round13-double-trigger' if double_trigger else 'round7-process-limit-slow'); ledger=self.path
   with open(str(prefix)+'-stderr.log','w') as err:
    p=subprocess.Popen([sys.executable,'-B','-c',code,str(pathlib.Path(m.__file__)),str(up.getsockname()[1]),'--route','one,example.com,/v1,FAKE_KEY','--allow-host','example.com','--port','0','--ledger',str(ledger),'--limit','1','--seconds','0.5' if double_trigger else '30','--timeout','5'],stdout=subprocess.PIPE,stderr=err,text=True,env={'PATH':'/usr/bin:/bin','FAKE_KEY':'fake-only'})
    slow=first=None
@@ -546,7 +562,11 @@ m.Relay.__init__=init; m.Relay.event=observed;''')
     if p.poll() is None: p.terminate(); p.wait(timeout=3)
     p.stdout.close()
   lines=[json.loads(x) for x in pathlib.Path(str(prefix)+'-stderr.log').read_text().splitlines()]; obs=[x for x in lines if 'observation' in x]
-  names=[x['observation'] for x in obs]; self.assertCountEqual(names,['ledger-fsynced','response-written','force-entry','exit-call']); self.assertLess(names.index('ledger-fsynced'),names.index('response-written')); self.assertLess(names.index('force-entry'),names.index('exit-call')); self.assertEqual([x['seq'] for x in obs],list(range(4))); self.assertEqual([x['monotonic'] for x in obs],sorted(x['monotonic'] for x in obs)); self.assertTrue(lines[-2]['sealed'])
+  names=[x['observation'] for x in obs]; expected=['ledger-fsynced','response-written','force-entry','exit-call','watch-handle']+(['watch-deadline'] if double_trigger else [])+(['lock-held'] if lock_held else []); self.assertCountEqual(names,expected); self.assertLess(names.index('ledger-fsynced'),names.index('response-written')); self.assertLess(names.index('force-entry'),names.index('exit-call')); self.assertEqual([x['seq'] for x in obs],list(range(len(obs)))); self.assertEqual([x['monotonic'] for x in obs],sorted(x['monotonic'] for x in obs)); self.assertEqual(lines[-2]['sealed'],not lock_held)
+  if lock_held:
+   summary=lines[-2]; self.assertEqual(summary['recorded_lower_bound']+summary['unrecorded_upper_bound'],summary['reserved_snapshot']); self.assertIsNone(summary['inflight']); self.assertTrue(summary['possible_extra_record_after_exit']); self.assertLess(names.index('lock-held'),names.index('exit-call'))
+  if double_trigger:
+   stamps={x['observation']:x['monotonic'] for x in obs}; delta=stamps['watch-deadline']-stamps['watch-handle']; self.assertGreater(delta,0); self.assertLess(delta,1)
  def test_watchdog_only_starts_once(self):
   relay=m.Relay(args(self.path),grace=1,exit_fn=lambda code:None)
   self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
