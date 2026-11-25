@@ -338,6 +338,8 @@ object ScheduledTask:
   // ConfiguredCodec + withDefaults（库内先例：TaskListEntry/NotifyConfig）——
   // 缺键一律回默认值，老文件零迁移；升级前文件没有 name/kind/condition 键 →
   // 解码 None，没有 idleStreak/reviewFlag 键 → 0/false。
+  // 回滚注意：旧版本写回会丢弃 due、dueRuleVersion 及偏移字段。回滚前须保留
+  // 整份数据快照；回滚期间禁止旧版本写入这些任务数据。无需迁移或双写。
   given Configuration = Configuration.default.withDefaults
   private val derivedCodec: Codec[ScheduledTask] = ConfiguredCodec.derived
 
