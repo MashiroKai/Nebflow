@@ -1162,10 +1162,10 @@ function buildTodoInlineCreate() {
       <button type="button" class="reminder-form-btn reminder-form-btn-primary" data-role="confirm">${editing ? t('task.save') : t('task.sheetDone')}</button>
     </div>`;
 
-  const zoneInput = wrap.querySelector('#todo-inline-zone');
+  const zoneInput = /** @type {HTMLInputElement | null} */ (wrap.querySelector('#todo-inline-zone'));
   if (zoneInput) zoneInput.value = String(editing?.due?.zoneId || '');
   wrap.querySelector('[data-role="correct-zone"]')?.addEventListener('click', () => {
-    const zone = wrap.querySelector('#todo-inline-zone')?.value.trim();
+    const zone = zoneInput?.value.trim();
     const error = wrap.querySelector('[data-role="zone-error"]');
     if (!zone || !editing || !wsReady()) {
       if (error) error.textContent = !zone ? 'Enter an IANA time zone' : 'Connection unavailable';

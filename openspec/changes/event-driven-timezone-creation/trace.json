@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "change": "event-driven-timezone-creation",
+  "mappings": [
+    {
+      "requirement": "ETZ-REQ-001",
+      "scenario": "ETZ-SCN-001",
+      "implementation": ["src/main/scala/nebflow/gateway/WsTasksWorkspaceHandlers.scala"],
+      "tests": [{"path": "src/test/scala/nebflow/gateway/ws/TodoUnifyFramesSpec.scala", "name": "sourced todo due persists its instant and device region without an invented offset"}]
+    },
+    {
+      "requirement": "ETZ-REQ-002",
+      "scenario": "ETZ-SCN-002",
+      "implementation": ["src/main/scala/nebflow/core/scheduler/ScheduledTaskStore.scala"],
+      "tests": [{"path": "src/test/scala/nebflow/core/scheduler/TodoDuePersistenceSpec.scala", "name": "editing a zone reschedules an unclaimed instance without changing its identity"}]
+    },
+    {
+      "requirement": "ETZ-REQ-003",
+      "scenario": "ETZ-SCN-003",
+      "implementation": ["src/main/scala/nebflow/core/scheduler/ScheduledTaskModel.scala"],
+      "tests": [],
+      "manual": {"reason": "Rollback safeguards are deployment procedures rather than runtime enforcement.", "steps": "Review the baseline codec and old-version task writeback, and verify that the deployment plan requires a full snapshot and prevents old-version task writes.", "expected": "The old reader ignores new fields and old-version writeback discards them; the plan retains the snapshot and prohibits writes."}
+    }
+  ]
+}
