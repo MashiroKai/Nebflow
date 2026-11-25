@@ -329,12 +329,11 @@ class AskHostToolsSpec extends CatsEffectSuite:
     yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
   }
 
-  test("takeover instructions require a fresh snapshot and screenshot after every reply") {
+  test("takeover instructions require a fresh snapshot after completion") {
     val instructions = os.read(os.pwd / "src" / "main" / "resources" / "seed" / "plugins" / "browser-use" / "skills" / "browser-session" / "SKILL.md")
     val handoff = instructions.split("## BU 动词阻塞接管", 2)(1).split("## 三、", 2)(0)
-    assert(handoff.contains("每次收到答复（含迟答）先重新 browser_snapshot"))
-    assert(handoff.contains("再截图交主会话展示供作者确认"))
-    assert(handoff.contains("每步再截图并请求确认"))
+    assert(handoff.contains("收到答复（含迟答）后先重新 browser_snapshot"))
+    assert(handoff.contains("作者直接操作页面"))
     assert(handoff.contains("等待期间不执行浏览器动词"))
   }
 

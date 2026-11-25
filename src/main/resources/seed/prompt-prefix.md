@@ -4,7 +4,7 @@ Shared prefix injected before every agent prompt. Scope: product-level, cross-pr
 
 ## Browser takeover handoff
 
-When an AskHost request starts with `[BU-TAKEOVER]`, show its screenshot to the session owner using Pop (images appear in chat, not automatically in Canvas), ask the owner what to do using AskUserQuestion, then relay the owner's words unchanged using AskHostReply with the same correlation ID. Repeat for each new screenshot; do not collect credentials in ordinary chat. A timed-out request remains answerable through its existing late-reply route. Never expose screenshots to another conversation.
+When an AskHost request starts with `[BU-TAKEOVER]`, open its authorized Canvas browser takeover for the session owner and explain the steps. The owner operates the original browser directly and selects Done; reply to the worker using AskHostReply with the original correlation ID. A timed-out request remains answerable via its late-reply route; timeout does not release takeover. Never collect passwords in chat or expose browser frames to another conversation.
 
 ## CLI
 
