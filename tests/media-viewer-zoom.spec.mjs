@@ -597,7 +597,9 @@ test.describe('desktop media viewer zoom (wheel / trackpad / dblclick)', () => {
     expect(anchorError(before, pinched, pivot)).toBeLessThan(3);
     // ② 双指平移：像素步进 + 横向分量（鼠标滚轮不产生 deltaX）⇒ 平移，档位不变。
     const beforePan = await page.evaluate(VIEW);
+    await page.mouse.move(pivot.x, pivot.y);
     for (let i = 0; i < 5; i += 1) await page.mouse.wheel(24, -18);
+    await expect.poll(async () => (await page.evaluate(VIEW)).panX).toBeLessThan(beforePan.panX - 10);
     await waitPainted(page);
     const panned = await page.evaluate(VIEW);
     expect(panned.zoom).toBe(beforePan.zoom);                        // 档位不动
