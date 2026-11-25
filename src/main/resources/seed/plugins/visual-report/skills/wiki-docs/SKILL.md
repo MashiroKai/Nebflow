@@ -107,7 +107,7 @@ machine-checked:
    cards as it has parts (clause ⑩).
    → no validator rule for fence existence — deferred with the design
    (§7.4 另议); enforced by this skill + dispatch briefs until then.
-6. **PNG and LaTeX discipline** — embed figures as PNG in the body; axes, legends and captions must remain readable at phone width. PDF/SVG are optional download or enlarged-view links only. Use LaTeX for all formulae, units, subscripts, superscripts and Greek letters: inline `$...$`, display `$$...$$`. No Unicode subscripts/superscripts, formula images or plain-text approximations such as `cm^-2`; code, command output and quoted originals are exempt. The wiki checker reports `png-primary` and `latex-math`; old files are advisory, and `--math-warning` makes math advisory for all files.
+6. **PNG and LaTeX discipline** — embed figures as PNG in the body; axes, legends and captions must remain readable at phone width. PDF/SVG are optional download or enlarged-view links only. Use LaTeX for all formulae, units, subscripts, superscripts and Greek letters: inline `$...$`, display `$$...$$`. No Unicode subscripts/superscripts, formula images or plain-text approximations such as `cm^-2`; code, command output and quoted originals are exempt. The wiki checker reports `png-primary` and `latex-math`; old files are advisory, and math is advisory by default because of noise; `--math-strict` enables enforcement.
 
 6. **Images live with the document (图随文档走, images-live-with-the-doc
    batch, author order 2026-11-05 09:24)** — an image a document shows is a

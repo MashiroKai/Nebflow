@@ -51,6 +51,27 @@ class PngLatexDisciplineTests(unittest.TestCase):
         issues = MOD.collect_png_latex_issues('[放大](attachments/chart.pdf)\n数值 ≥ 3，面积 cm⁻²')
         self.assertEqual([i['rule'] for i in issues], ['png-primary', 'latex-math'])
 
+    def test_nearby_encoded_and_relative(self):
+        scan = MOD.collect_png_latex_issues
+        self.assertEqual(scan('![图](attachments/%E6%B5%8B%E8%AF%95.png)\n[下载](attachments/%E6%B5%8B%E8%AF%95.svg)'), [])
+        self.assertEqual([x['rule'] for x in scan('![图](attachments/a.png)\n\n[下载](attachments/b.pdf)')], ['png-primary'])
+        self.assertEqual(scan('![图](<attachments/测试.png>) [下载](<attachments/测试.svg>)'), [])
+
+    def test_fences_inline_and_quotes(self):
+        scan = MOD.collect_png_latex_issues
+        self.assertEqual(scan('~~~python\n∫ [a](a.pdf)\n~~~\n`√`\n> ≥\n$$\n∑\n$$'), [])
+        self.assertEqual([x['line'] for x in scan('正文\n≥ 2')], [2])
+
+    def test_new_and_legacy_scope_and_switch(self):
+        with tempfile.TemporaryDirectory() as root:
+            write(root, 'old__20261125_000000.md', doc('[下载](attachments/a.pdf)\n\n公式 ≥ 3'))
+            write(root, 'new__20261126_000500.md', doc('[下载](attachments/a.pdf)\n\n公式 ≥ 3'))
+            notices = []
+            violations = validate(Path(root), strict=True, advisories=notices)
+            self.assertTrue(any(x['rule'] == 'png-primary' and x['file'].startswith('new') for x in violations))
+            self.assertFalse(any(x['rule'] in ('png-primary', 'latex-math') and x['file'].startswith('old') for x in violations))
+            self.assertTrue(any(x['rule'] == 'latex-math' and x['file'].startswith('new') for x in notices))
+
     def test_exclusions_and_png(self):
         text = '![图](attachments/chart.png) [下载](attachments/chart.svg)\n$ x ≥ 3 $\n`²`\n> 原文 ∑\n```\n√\n```'
         self.assertEqual(MOD.collect_png_latex_issues(text), [])

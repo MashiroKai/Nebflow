@@ -2446,8 +2446,8 @@ def check(root, docs, resolve, glossary_rel, exclude_glossary_check, terms_by_re
                                        "detail": detail, "scope": "legacy"})
 
             for issue in collect_png_latex_issues('\n'.join(doc.raw_lines)):
-                hard = style_scoped_v2(rel, doc, '20261126_000500', strict)
-                if issue['rule'] == 'latex-math' and style_opts.get('math_warning'):
+                hard = style_scoped_v2(rel, doc, '20261126_000500', False)
+                if issue['rule'] == 'latex-math' and not style_opts.get('math_strict'):
                     hard = False
                 if hard:
                     add(issue['rule'], rel, issue['line'], issue['detail'])
@@ -2956,7 +2956,7 @@ def main():
                     help="命令行追加禁用词（可多次；逗号/空白分隔）")
     ap.add_argument("--fold-threshold", type=int, default=DETAIL_FOLD_THRESHOLD,
                     help=f"R16 细节折叠的敞开正文阈值（可视字符；缺省 {DETAIL_FOLD_THRESHOLD}）")
-    ap.add_argument('--math-warning', action='store_true', help='数学符号检查仅告警，不阻断')
+    ap.add_argument('--math-strict', action='store_true', help='数学符号检查按新旧文档范围阻断；缺省仅告警')
     args = ap.parse_args()
 
     if args.fold_run and args.fold_run > 0:
@@ -3038,7 +3038,7 @@ def main():
                                        "since_v2": args.style_since_v2,
                                        "since_img": args.image_since,
                                        "since_fig": args.figure_since,
-                                       "strict": args.strict_style, "math_warning": args.math_warning, "allow": abbrev_allow,
+                                       "strict": args.strict_style, "math_strict": args.math_strict, "allow": abbrev_allow,
                                        "plainwords": plain_block,
                                        "fold_threshold": args.fold_threshold,
                                        "stats": stats},
