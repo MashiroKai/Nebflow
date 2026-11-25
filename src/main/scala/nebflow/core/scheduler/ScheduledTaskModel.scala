@@ -10,6 +10,9 @@ import java.util.UUID
 import cats.effect.IO
 
 final case class DeviceZoneReport(deviceId: String, zoneId: String, reportedAt: Long, frameSource: String)
+final case class DueZoneSource(kind: String, deviceId: Option[String] = None, reportedAt: Option[Long] = None)
+object DueZoneSource:
+  given Codec[DueZoneSource] = io.circe.generic.semiauto.deriveCodec
 
 class DeviceZoneReports(root: os.Path):
   private val path = root / "device-zone-reports.json"
@@ -274,7 +277,8 @@ case class ScheduledTask(
   nextDueAt: Option[Long] = None,
   occurrences: List[TodoOccurrence] = Nil,
   dueRuleVersion: Long = 0L,
-  dueRuleHistory: List[TodoRuleSnapshot] = Nil
+  dueRuleHistory: List[TodoRuleSnapshot] = Nil,
+  dueZoneSource: Option[DueZoneSource] = None
 ):
 
   /** Resolve the rule frozen at an occurrence's creation; missing versions are not guessed. */
@@ -342,7 +346,8 @@ object ScheduledTask:
         val noNext = if t.nextDueAt.isEmpty then noDue.remove("nextDueAt") else noDue
         val noOccurrences = if t.occurrences.isEmpty then noNext.remove("occurrences") else noNext
         val noVersion = if t.dueRuleVersion == 0L then noOccurrences.remove("dueRuleVersion") else noOccurrences
-        if t.dueRuleHistory.isEmpty then noVersion.remove("dueRuleHistory") else noVersion
+        val noHistory = if t.dueRuleHistory.isEmpty then noVersion.remove("dueRuleHistory") else noVersion
+        if t.dueZoneSource.isEmpty then noHistory.remove("dueZoneSource") else noHistory
       }
     }
   )

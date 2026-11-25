@@ -28,6 +28,8 @@ object ToolExecutionIdentity:
 case class ToolContext(
   projectRoot: String,
   deviceZone: Option[String] = None,
+  recentDeviceZone: Option[nebflow.core.scheduler.DeviceZoneReport] = None,
+  deviceZoneFallbackAllowed: Boolean = false,
   llm: Option[LlmHandle[IO]] = None,
   sessionStore: Option[nebflow.core.SessionStorePort] = None,
   agentActorRef: Option[ActorRef[AgentCommand]] = None,

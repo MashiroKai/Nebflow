@@ -10,6 +10,7 @@ import nebflow.core.scheduler.{
   ScheduledTaskService,
   ScheduledTaskStore,
   TodoDue,
+  DueZoneSource,
   TodoDecision,
   TodoTaxonomy
 }
@@ -807,7 +808,7 @@ Your context does NOT show the current date/time — never invent an absolute da
         val local = raw.asString.flatMap(s => scala.util.Try(LocalDateTime.parse(s)).toOption)
         val explicit = zoned.map(_.getZone.getId).filter(ZoneId.getAvailableZoneIds.contains)
         for
-          region <- TodoDue.requireCreationZone(explicit, ctx.deviceZone)
+          region <- TodoDue.requireCreationZone(explicit, ctx.deviceZone.orElse(Option.when(ctx.deviceZoneFallbackAllowed)(ctx.recentDeviceZone).flatten.map(_.zoneId)))
           repeat = input("repeat").flatMap(_.asString).getOrElse("once")
           _ <- Either.cond(Set("", "once", "weekly").contains(repeat), (), "Todo repeat must be once or weekly")
           _ <- Either.cond(repeat != "weekly" || local.exists(t => t.getSecond == 0 && t.getNano == 0), (), "Weekly reminders require a local date and minute")
@@ -850,7 +851,17 @@ Your context does NOT show the current date/time — never invent an absolute da
       )
       val preparedDue = dueResult.toOption.flatten
       val due = preparedDue.map(_._1)
-      val ownedTodo = todo.copy(source = Some(TodoTaxonomy.SourceTool), due = due, nextDueAt = preparedDue.map(_._2))
+      val zoneSource = due.map { _ =>
+        val explicit = dueInput.flatMap(_.asString).flatMap(s => scala.util.Try(ZonedDateTime.parse(s)).toOption)
+          .exists(z => ZoneId.getAvailableZoneIds.contains(z.getZone.getId))
+        if explicit then DueZoneSource("explicit-region")
+        else if ctx.deviceZone.isDefined then DueZoneSource("initiating-device")
+        else
+          val report = ctx.recentDeviceZone.get
+          DueZoneSource("recent-device", Some(report.deviceId), Some(report.reportedAt))
+      }
+      val ownedTodo = todo.copy(source = Some(TodoTaxonomy.SourceTool), due = due,
+        nextDueAt = preparedDue.map(_._2), dueZoneSource = zoneSource)
       for
         rearm <- taskName match
           case Some(n) => taskStore.upsertTaskByName(ownedTodo, ScheduledTaskStore.toolOwnsLegacyNamedTask)

@@ -261,6 +261,21 @@ class TodoTaxonomySpec extends CatsEffectSuite:
   private def callTool(input: Json): Either[ToolError, String] =
     ScheduleTool.call(input.asObject.get, mkCtx()).unsafeRunSync()
 
+  test("explicitly sourceless tool turn uses the latest reported device with auditable provenance"):
+    val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
+    val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision, "triggerAt" -> "2035-01-01T09:00".asJson)
+    val report = DeviceZoneReport("browser:test", "Asia/Tokyo", 123L, "takeoverIdentify")
+    for
+      _ <- reset()
+      result <- ScheduleTool.call(input.asObject.get, mkCtx().copy(recentDeviceZone = Some(report), deviceZoneFallbackAllowed = true))
+      stored <- taskStore.getAllTodos
+    yield
+      assert(result.isRight, s"a known recent device should permit creation: $result")
+      val audit = stored.head.asJson.hcursor.downField("dueZoneSource")
+      assertEquals(audit.get[String]("kind").toOption, Some("recent-device"))
+      assertEquals(audit.get[String]("deviceId").toOption, Some("browser:test"))
+      assertEquals(audit.get[Long]("reportedAt").toOption, Some(123L))
+
   test("tool offset with explicit region preserves the input instant and original offset"):
     val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
     val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision,
