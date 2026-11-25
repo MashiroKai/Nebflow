@@ -171,6 +171,16 @@ server.serve_forever()'''
   self.assertIs(relay.event({'seq':1,'status':'reserved'}),False)
   self.assertIs(relay.sidecar({'seq':2,'status':'reserved'}),False)
   self.assertEqual(self.path.read_bytes(),before); self.assertFalse(pathlib.Path(str(self.path)+'.abort').exists())
+ def test_exit_abort_requires_seal_and_only_writes_sidecar(self):
+  import hashlib
+  relay=m.Relay(args(self.path)); self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
+  obj={'seq':1,'status':'aborted-on-exit','record_id':'abort-test'}
+  with self.assertRaises(RuntimeError): relay.exit_abort(obj)
+  digest=lambda:hashlib.sha256(self.path.read_bytes()).hexdigest()
+  before=digest()
+  with relay.append_lock: relay.sealed=True
+  self.assertIs(relay.exit_abort(obj),True); self.assertEqual(digest(),before)
+  self.assertEqual(json.loads(pathlib.Path(str(self.path)+'.abort').read_text()),obj)
  def test_watchdog_only_starts_once(self):
   relay=m.Relay(args(self.path),grace=1,exit_fn=lambda code:None)
   self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)

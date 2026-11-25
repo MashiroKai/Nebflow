@@ -13,7 +13,7 @@ class Relay:
   self.grace=grace; self.exit_fn=exit_fn; self.stop_fired=False; self.finished=threading.Event(); self.watchdog_lock=threading.Lock(); self.watchdog_started=False
   self.lock_timeout=lock_timeout; self.abort_timeout=abort_timeout; self.append_override=append_override
   self.rejection_lock=threading.Condition(); self.unrecorded_rejections=0; self.rejections={}
-  self.append_lock=threading.Lock(); self.append_inflight={}; self._anon=itertools.count(); self.exiting=False
+  self.append_lock=threading.Lock(); self.sidecar_lock=threading.Lock(); self.append_inflight={}; self._anon=itertools.count(); self.exiting=False
   with self.append_lock: self.sealed=False
   self.dialer=dialer or (lambda host,port,timeout: http.client.HTTPSConnection(host,port,timeout=timeout,context=ssl.create_default_context()))
   self.routes={}
@@ -71,6 +71,10 @@ class Relay:
  def sidecar(self,obj):
   return self.append_record(obj,sidecar=True)
  def _sidecar_unlocked(self,obj):
+  if not self.sidecar_lock.acquire(timeout=self.abort_timeout): return False
+  try: return self._write_sidecar(obj)
+  finally: self.sidecar_lock.release()
+ def _write_sidecar(self,obj):
   data=(json.dumps(obj,separators=(',',':'))+'\n').encode()
   if self.append_override is not None: return self.append_override(data)
   fd=os.open(self.args.ledger+'.abort',os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600)
