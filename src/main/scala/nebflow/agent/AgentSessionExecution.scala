@@ -664,6 +664,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             flowNodeSession = stateForLlm.flowNodeId.isDefined,
             isDispatcher = stateForLlm.isDispatcher,
             delegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(stateForLlm.sessionId),
+            askSession = nebflow.core.ask.AskSessions.isAskSession(stateForLlm.sessionId),
             askGitViz = nebflow.core.ask.AskSessions.isGitVizSession(stateForLlm.sessionId),
             delegateMode = nebflow.core.delegate.DelegateRegistry.modeFaceOf(stateForLlm.sessionId)
           )
@@ -2590,18 +2591,6 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 IO.pure(ToolExecResult(blockMsg, isError = true))
               else
                 val finalInput = preResult.updatedInput.getOrElse(call.input)
-                // canvas-ask-restricted-edit（CAE-REQ-002/CAE-SCN-003）：文件绑定
-                // Ask 的 Bash = 默认拒绝的只读白名单执行器——在 post-hook（上方
-                // beforeTool 已跑，hook 仍可先拦）之后、远端/本地路由之前单点短路：
-                // 拒绝在**任何执行前**显式返回；放行的命令经 argv 直执行（无 shell），
-                // 既不进远端 device 通道也不进普通 ShellSession。非 Ask 会话零路径
-                // 变化（判据单点 AskSessions.isAskSession）。
-                val askBashFace: Option[IO[ToolExecResult]] =
-                  Option.when(call.name == "Bash" && nebflow.core.ask.AskSessions.isAskSession(ctx.sessionId)) {
-                    nebflow.core.ask.AskBashFace
-                      .runAskBash(finalInput, ctx)
-                      .map { (out, isErr) => ToolExecResult(out, isError = isErr) }
-                  }
                 // S3（2026-09-14 作者裁定，工具面 `device` 摘除批的引擎面第二层）：
                 // `device` 的远端消费**收窄到 `RemoteExecutor.remoteableTools`**（六件真
                 // 远端），使代码回到 `RemoteExecutor.scala` 的自陈意图（「Only these tools
@@ -2649,7 +2638,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                         }
                       case None => IO.pure(Some(target))
                   case None => IO.pure(None)
-                val execIO: IO[ToolExecResult] = askBashFace.getOrElse(enforceRefusal.getOrElse(resolvedDevice.flatMap {
+                val execIO: IO[ToolExecResult] = enforceRefusal.getOrElse(resolvedDevice.flatMap {
                   resolved =>
                     resolved match
                       case Some(deviceName) if RemoteExecutor.current.isDefined =>
@@ -2777,7 +2766,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                               )
                             }
                         }
-                })) // resolved device, enforcement, ask face
+                }) // resolved device and enforcement
                 execIO.handleErrorWith {
                   case _: UserAbort => IO.raiseError(new UserAbort())
                   case e => IO.pure(ToolExecResult(s"Tool execution error: ${e.getMessage}", isError = true))
@@ -2862,23 +2851,12 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     isDispatcher: Boolean = false,
     delegateSession: Boolean = false,
     askSession: Boolean = false,
-    /**
-     * gitviz 分支管理问答批（2026-11-19 第二轮）：`ask-gv-` 会话的**更窄**工具面
-     *  （GitVizAllowedTools = Read/Glob/Grep + gitviz_graph，**没有 Bash**）。判据
-     *  单点 = `AskSessions.isGitVizSession(sessionId)`（纯前缀，调用点三处同形）。
-     */
+    /** GitViz retains scoped extra tools in addition to ordinary grants. */
     askGitViz: Boolean = false,
     /** 双模式批：delegate 会话生效执行形态（None = 总闸关/未判定——本参数全部分叉即失效）。 */
     delegateMode: Option[String] = None
   ): Set[String] =
-    // Ask has an independent ten-tool face (query-only Bash + direct-apply
-    // ask_edit/ask_write with canvas inline review, canvas-inline-diff-review).
-    // Return before definition, fixed-role, plugin or delegate grants can widen
-    // that face.
-    // gitviz 分支管理问答（2026-11-19 第二轮）：同一早退点，但工具面**更窄**
-    // （没有 Bash / ask_edit / ask_write ⇒ 没有任何 git 写入口）。
-    if askGitViz then return nebflow.core.ask.AskSessions.GitVizAllowedTools
-    if askSession then return nebflow.core.ask.AskSessions.AllowedTools
+    // Ask uses the ordinary authorization chain; scoped extras are added at the end.
     // 阶段 2c（§C.1/裁定 11）：收敛三定义（Nebula/project-dispatcher/general）
     // 的 agent.json tools 声明整体失效——工具面全部机制固定，零配置。存量
     // agent.json 里的文件工具声明（Nebula 六件 / dispatcher Write+Edit）由此
@@ -3043,7 +3021,10 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // EngineToolWhitelist（现即九动词；挂载判据是插件有 engine-tools 声明，粒度为白名单整集——
     // 按插件逐名授予需 AgentDef 新增字段，留作后续）；无挂载 ⇒ 空集（默认工具面无名字）。不看身份名单。
     val pluginEngineGrant = nebflow.core.plugin.PluginRegistry.engineGrantFor(agentDef.pluginMcpServers)
-    (withDelegateMail ++ pluginEngineGrant) -- nebflow.core.ask.AskSessions.AskExclusiveTools
+    val ordinary = (withDelegateMail ++ pluginEngineGrant) -- nebflow.core.ask.AskSessions.AskExclusiveTools
+    if askGitViz then ordinary ++ Set("gitviz_graph", "gitviz_handoff")
+    else if askSession then ordinary ++ nebflow.core.ask.AskSessions.AskExclusiveTools
+    else ordinary
 
   end buildAllowedToolSet
   // scalafix:on DisableSyntax

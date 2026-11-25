@@ -205,17 +205,8 @@ object AskSessions:
   def gitVizSessionIdFor(project: String): String =
     GitVizPrefix + fileHash("gitviz:" + project)
 
-  /**
-   * 历史工具面：原作者硬约束「这个 agent 没有任何 git 写能力」被 2026-11-25
-   * 22:47 作者裁定「放开」取代。下列旧实现待移除，不代表当前意图：
-   *   · 没有 `Bash`（文件 ask 有；Bash 是 git 写的唯一入口，这里整条拿掉）；
-   *   · 没有 `ask_edit` / `ask_write`（零落盘）；
-   *   · 没有 `send_message_to_main_chat`（交办只走 `askHandoff` 的结构化帧）；
-   *   · 数据面 = 唯一一件只读工具 `gitviz_graph`（实现 = 既有 `GitGraph.build`，
-   *     子命令白名单 rev-parse/for-each-ref/log/rev-list/merge-base，越界即拒）。
-   */
-  val GitVizAllowedTools: Set[String] =
-    Set("Read", "Glob", "Grep", "gitviz_graph", "gitviz_handoff")
+  // 历史硬约束「这个 agent 没有任何 git 写能力」被 2026-11-25 22:47
+  // 作者裁定「放开」取代；工具授权改由普通会话授权链决定。
 
 end AskSessions
 

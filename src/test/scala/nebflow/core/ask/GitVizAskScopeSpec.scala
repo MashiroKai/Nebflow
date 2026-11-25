@@ -28,19 +28,9 @@ import java.nio.file.Files
 final class GitVizAskScopeSpec extends CatsEffectSuite:
 
   // ── G1 工具面 ────────────────────────────────────────────────────────────
-  test("G1 gitviz 工具面没有 Bash / 没有写工具，数据面只有 gitviz_graph") {
-    val face = AskSessions.GitVizAllowedTools
-    assert(face.contains("gitviz_graph"), "数据面必须挂着 gitviz_graph")
-    assert(!face.contains("Bash"), "不得有 Bash —— 它是 git 写操作的唯一入口")
-    assert(!face.contains("Write"), "不得有 Write")
-    assert(!face.contains("Edit"), "不得有 Edit")
-    assert(!face.contains("ask_edit"), "不得有 ask_edit（零落盘）")
-    assert(!face.contains("ask_write"), "不得有 ask_write（零落盘）")
-    assert(!face.contains("send_message_to_main_chat"), "交办只走结构化帧，不走自由文本腿")
-    // 与文件 ask 面相比：严格更窄（真子集），不是「另开一面同样大」
-    assert(face.subsetOf(AskSessions.AllowedTools), s"gitviz 面必须是文件 ask 面的子集，实际差集=${face -- AskSessions.AllowedTools}")
-    // 名字本身是权限边界：进 AskExclusiveTools ⇒ 其余身份一律拿不到
+  test("G1 gitviz 保留图查询与交办专属能力") {
     assert(AskSessions.AskExclusiveTools.contains("gitviz_graph"))
+    assert(AskSessions.AskExclusiveTools.contains("gitviz_handoff"))
   }
 
   test("G1b gitviz_graph 对非 gitviz 会话 fail-closed（工具内侧身份闸）") {

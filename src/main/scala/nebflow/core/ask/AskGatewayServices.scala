@@ -48,8 +48,7 @@ final case class AskServices(
       case Some(binding) if binding.isGitViz =>
         // 分支管理问答批（2026-11-19 第二轮）：作用域 = 项目仓库，不是文件 ⇒ 文件类型
         // 白名单（isAskable）不适用；改由「仓库根目录真实存在」把关（fail-closed）。
-        // 提示词 = 只问答 + 交办口径单源（AskGitVizPrompt）；工具面由
-        // buildAllowedToolSet 的 askGitViz 早退集固定（GitVizAllowedTools）。
+        // 提示词保留项目上下文；普通工具经会话授权链装配。
         if !new java.io.File(binding.file).isDirectory then
           IO.raiseError(
             new RuntimeException(s"ask session $sessionId: gitviz scope is not a directory: ${binding.file}")
