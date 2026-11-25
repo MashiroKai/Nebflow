@@ -45,7 +45,9 @@ private[nebflow] final class BrowserScreencast(send: (String, Json) => Unit, onF
       next = frames.nextAck()
 
   private def fail(): Unit =
-    if failure.compareAndSet(false, true) then onFailure()
+    if failure.compareAndSet(false, true) then
+      try onFailure()
+      catch case _: Exception => ()
 
   def take(): Option[String] = frames.takeFrame()
 
