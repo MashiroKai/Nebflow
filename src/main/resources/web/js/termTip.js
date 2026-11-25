@@ -11,12 +11,12 @@
 // Popover is body-mounted, viewport-clamped, and has no full-screen mobile state.
 
 import { t } from './i18n.js';
+import { showDocumentTermCard, closeDocumentTermCard } from './documentTermCard.js';
 
-let termTipEl = null;
+let termCard = null;
 let termTipLink = null;
 let termTipHost = null;
 let termTipTimer = 0;
-let termTipDocBound = false;
 let termTipGeneration = 0;
 let termTipAbort = null;
 /** 深链导航回调（docs viewer 注入 onWikilinkClick；无导航面留空 = 收泡即止）。 */
@@ -27,74 +27,18 @@ export function setTermTipNav(fn) {
   termTipNav = fn;
 }
 
-function ensureTermTipEl() {
-  if (termTipEl) return termTipEl;
-  const el = document.createElement('div');
-  el.className = 'nf-term-tip';
-  el.style.display = 'none';
-  el.innerHTML = '<button type="button" class="term-tip-close glass-control"></button><div class="tt"></div><div class="ts" aria-live="polite"></div><div class="td"></div><button type="button" class="term-tip-source glass-control" hidden></button><button type="button" class="term-tip-retry glass-control" hidden></button>';
-  el.setAttribute('role', 'dialog');
-  el.setAttribute('aria-label', t('termPreview.openSource'));
-  const close = el.querySelector('.term-tip-close');
-  close.textContent = '×';
-  close.setAttribute('aria-label', t('termPreview.close'));
-  close.addEventListener('click', () => {
-    const link = termTipLink;
-    hideTermTip();
-    if (link && link.isConnected) link.focus();
-  });
-  const source = el.querySelector('.term-tip-source');
-  source.textContent = t('termPreview.openSource');
-  source.addEventListener('click', () => {
-    if (termTipNav && termTipLink && termTipHost) termTipNav(termTipLink, termTipHost);
-  });
-  const retry = el.querySelector('.term-tip-retry');
-  retry.textContent = t('termPreview.retry');
-  retry.addEventListener('click', () => {
-    if (termTipLink) requestTermTip(termTipLink, termTipHost, 0);
-  });
-  // Interacting with the preview must never invoke the document link handler.
-  el.addEventListener('click', (e) => e.stopPropagation());
-  el.addEventListener('pointerdown', (e) => {
-    e.stopPropagation();
-    el.classList.add('interactive');
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && termTipLink) {
-      e.preventDefault();
-      const link = termTipLink;
-      hideTermTip();
-      if (link && link.isConnected) link.focus();
-    }
-  });
-  document.body.appendChild(el);
-  termTipEl = el;
-  if (!termTipDocBound) {
-    termTipDocBound = true;
-    // 点击别处收泡（触屏首击开泡后的第二次交互面）。
-    document.addEventListener('pointerdown', (e) => {
-      if (!termTipLink) return;
-      const t = /** @type {Node|null} */ (e.target);
-      if (t && termTipEl.contains(t)) return;
-      if (termTipLink && termTipLink.contains(/** @type {Node|null} */ (t))) return;
-      hideTermTip();
-    }, true);
-    // 换页签收泡（hover 的 pane 隐藏后气泡位置失效）。
-    document.addEventListener('canvas-tab-switched', hideTermTip);
-  }
-  return el;
-}
-
-export function hideTermTip() {
+function clearTermTip() {
   termTipGeneration++;
   if (termTipAbort) { termTipAbort.abort(); termTipAbort = null; }
   if (termTipTimer) { clearTimeout(termTipTimer); termTipTimer = 0; }
   termTipLink = null;
   termTipHost = null;
-  if (termTipEl) {
-    termTipEl.style.display = 'none';
-    termTipEl.classList.remove('interactive');
-  }
+  termCard = null;
+}
+
+export function hideTermTip() {
+  if (termTipLink) closeDocumentTermCard();
+  clearTermTip();
 }
 
 // The term database is derived from the vault; keep successful lookups only briefly.
@@ -192,88 +136,48 @@ async function legacyTermInfoFor(a, signal) {
   return info;
 }
 
-function paintTermTip(a, info) {
-  const el = ensureTermTipEl();
-  el.querySelector('.term-tip-retry').hidden = true;
-  el.style.maxHeight = '';
-  el.querySelector('.ts').style.maxHeight = '';
-  el.querySelector('.tt').textContent = info.name || '';
-  el.querySelector('.ts').textContent = info.definition || '';
-  // 气泡的显示字符串 = 词条名 + 定义（term-system-v2 词条视觉面批 2026-11-05，
-  // 作者令「不需要显示文档名」）：第三行不再拼「来源：<文档>」——文档名统一落进
-  // 正文尾部自动生成的「词条索引」块（viewers/markdown.js renderTermIndex），
-  // 气泡内不再作为显示文本出现。剩下的跳转提示只在真有导航承载时给（docs
-  // viewer 注入了 termTipNav；聊天气泡 / human 卡没有，那里说「点击跳转」是假话）。
-  el.querySelector('.td').textContent = info.rel && !/^(?:[\\/]|[a-z]:)/i.test(info.rel) ? info.rel : '';
-  el.querySelector('.term-tip-source').hidden = !(info.name && termTipNav && termTipHost && a.dataset.wikiResolved);
-  el.style.display = 'block';
-  // Viewport-clamped placement: above the link when there is room, else below.
-  const r = a.getBoundingClientRect();
-  const viewport = window.visualViewport;
-  const left = viewport?.offsetLeft || 0;
-  const top = viewport?.offsetTop || 0;
-  const vw = viewport?.width || document.documentElement.clientWidth || window.innerWidth;
-  const vh = viewport?.height || document.documentElement.clientHeight || window.innerHeight;
-  const below = Math.max(0, top + vh - 16 - r.bottom - 8);
-  const above = Math.max(0, r.top - top - 24);
-  const useBelow = below >= el.offsetHeight || below >= above;
-  const available = useBelow ? below : above;
-  el.style.maxHeight = Math.max(0, available) + 'px';
-  const body = el.querySelector('.ts');
-  body.style.maxHeight = Math.max(0, available - (el.offsetHeight - body.offsetHeight) - 4) + 'px';
-  const bw = el.offsetWidth;
-  const bh = el.offsetHeight;
-  const x = Math.min(Math.max(left + 16, r.left + r.width / 2 - bw / 2), Math.max(left + 16, left + vw - bw - 16));
-  const y = useBelow ? r.bottom + 8 : r.top - bh - 8;
-  el.style.left = Math.round(x) + 'px';
-  el.style.top = Math.round(y) + 'px';
+function paintTermTip(a, info, retry = false) {
+  const available = info.name && termTipNav && termTipHost && a.dataset.wikiResolved;
+  const host = termTipHost;
+  termCard?.update({
+    title: info.name || a.dataset.wikiTarget || a.dataset.wikiTermFallback || '词条',
+    summary: info.definition || '',
+    metadata: `类型：词条　出处：${info.rel || info.doc || '不可用'}${available ? '' : '　来源不可用'}`,
+    open: available ? () => termTipNav(a, host) : null,
+    retry: retry ? () => requestTermTip(a, host, 0) : null,
+  });
 }
 
-function requestTermTip(a, host, delay) {
+async function requestTermTip(a, host, delay) {
   hideTermTip();
-  ensureTermTipEl(); // bind outside-click cancellation before the request starts
   termTipLink = a;
   termTipHost = host || null;
-  const el = ensureTermTipEl();
-  el.classList.add('interactive');
-  paintTermTip(a, { name: '', definition: t('termPreview.loading') });
-  el.querySelector('.term-tip-close').focus();
   const generation = termTipGeneration;
+  termCard = await showDocumentTermCard(a, {
+    term: { title: a.dataset.wikiTarget || '词条', summary: t('termPreview.loading') },
+    onClose: clearTermTip,
+  });
+  if (generation !== termTipGeneration || termTipLink !== a) return;
   const controller = new AbortController();
   termTipAbort = controller;
   termTipTimer = setTimeout(async () => {
     const info = await termInfoFor(a, controller.signal);
-    if (generation !== termTipGeneration || termTipLink !== a) return;   // superseded/hidden while fetching
-    if (!info) {
-      paintTermTip(a, { name: '', definition: t('termPreview.unavailable') });
-      el.querySelector('.term-tip-retry').hidden = false;
-      return;
-    }
-    paintTermTip(a, info);
+    if (generation !== termTipGeneration || termTipLink !== a) return;
+    if (!info) paintTermTip(a, { definition: t('termPreview.unavailable') }, true);
+    else paintTermTip(a, info);
   }, delay);
 }
 
-/** 自定义内容形态（additive；选区解释等非词条来源复用同一弹窗本体）。
- *  不走词条名解析：直接展示 {title, content}；定位/收泡/样式与词条弹窗同一套。 */
-export function showTermTipCustom(a, data) {
+/** 选区解释复用同一卡片，不请求词条或显示来源动作。 */
+export async function showTermTipCustom(a, data) {
   hideTermTip();
-  const el = ensureTermTipEl();
   termTipLink = a;
-  termTipHost = null;
-  el.querySelector('.tt').textContent = (data && data.title) || '';
-  el.querySelector('.ts').textContent = (data && data.content) || '';
-  el.querySelector('.td').textContent = '';
-  el.style.display = 'block';
-  const r = a.getBoundingClientRect();
-  const vw = document.documentElement.clientWidth || window.innerWidth;
-  const vh = document.documentElement.clientHeight || window.innerHeight;
-  const bw = el.offsetWidth;
-  const bh = el.offsetHeight;
-  const x = Math.min(Math.max(8, r.left + r.width / 2 - bw / 2), Math.max(8, vw - bw - 8));
-  let y = r.top - bh - 8;
-  if (y < 8) y = Math.min(r.bottom + 8, Math.max(8, vh - bh - 8));
-  el.style.left = Math.round(x) + 'px';
-  el.style.top = Math.round(y) + 'px';
+  const generation = termTipGeneration;
+  const card = await showDocumentTermCard(a, {
+    term: { title: data?.title || '', summary: data?.content || '' },
+    onClose: clearTermTip,
+  });
+  if (generation === termTipGeneration) termCard = card;
 }
 
 /** Click toggles the preview on both desktop and touch, without navigation. */

@@ -4054,7 +4054,6 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
  *     打开原文档」，词条弹层仍是「词条名 / 定义 / 脚注」。
  * 新增同族弹层 = 把选择器加进本节的两个选择器表（表 + 材质账本），不许再抄一份。
  * ═══════════════════════════════════════════════════════════════════════════ */
-.nf-term-tip,
 .document-term-card {
   position: fixed;
   z-index: 901;
@@ -4148,6 +4147,7 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   line-height: var(--ds-lh-tight);
   cursor: pointer;
 }
+.document-term-card [hidden] { display: none; }
 @media (hover: hover) {
   .document-term-open:hover { opacity: .88; }
 }
@@ -4159,51 +4159,6 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 @media (prefers-reduced-motion: reduce) {
   .document-term-open:active { transform: none; opacity: var(--btn-press-fade); }
 }
-
-/* 词条点击释义弹层：桌面/触屏均为小弹层，固定在 body 顶层避免滚动容器裁剪。
-   表面在上面的族块里（同表给两面），本块只留词条面自己的显示态。 */
-.nf-term-tip {
-  display: none;
-  width: min(360px, calc(100vw - 32px));
-  max-width: calc(100vw - 32px);
-  max-height: calc(100vh - 32px);
-  overflow-y: auto;
-}
-.nf-term-tip.interactive { pointer-events: auto; }
-.nf-term-tip .term-tip-close,
-.nf-term-tip .term-tip-source,
-.nf-term-tip .term-tip-retry { min-width: 44px; min-height: 44px; }
-.nf-term-tip .term-tip-close { float: right; }
-.nf-term-tip .term-tip-source,
-.nf-term-tip .term-tip-retry {
-  width: auto;
-  padding: var(--ds-space-2) var(--ds-space-3);
-  border-radius: var(--ds-radius-button);
-  font-size: var(--ds-fs-btn);
-  white-space: normal;
-}
-.nf-term-tip button:focus-visible { outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring); outline-offset: calc(var(--nf-focus-ring-w) * -1); }
-/* 悬浮提示（tip 形态）三段字档（canvas-hint-text 批 2026-11-05）：
-   标题 = S 档 strong（12/600/1.45）· 正文 = H 档（12/400/1.45/muted，修前
-   `line-height: 1.55` 是裸值 = 第六把行高尺，收进 --cv-hint-lh-h）·
-   脚注 = M 档（11/400/1/dim）。正文行数上限 = --cv-hint-lines-tip（6）：
-   词条定义是**悬浮提示里唯一需要读完的正文**，故 tip 形态另有上限档，
-   判据脚本按形态取上限（H5）。 */
-.nf-term-tip .tt { font-size: var(--cv-hint-fs-h); font-weight: var(--cv-hint-fw-strong); line-height: var(--cv-hint-lh-h); color: var(--cv-hint-color-strong); margin-bottom: var(--ds-space-1); word-break: break-word; }
-.nf-term-tip .ts {
-  color: var(--cv-hint-color);
-  font-size: var(--cv-hint-fs-h);
-  font-weight: var(--cv-hint-fw);
-  line-height: var(--cv-hint-lh-h);
-  display: block;
-  overflow: auto;
-  max-height: min(50vh, 28rem);
-  overflow-wrap: anywhere;
-}
-.nf-term-tip .td { color: var(--cv-hint-color-dim); font-size: var(--cv-hint-fs-m); font-weight: var(--cv-hint-fw); line-height: var(--cv-hint-lh-m); margin-top: var(--ds-space-1h); }
-/* 第三行（来源文档 / 跳转提示）撤掉后不占位（term-system-v2 词条视觉面批
-   2026-11-05：文档名归词条索引块，气泡只剩词条名 + 定义）。 */
-.nf-term-tip .td:empty { display: none; }
 
 /* 可点击标记的视觉面 —— 手写词条引用 / 正文裸词自动链 ────────────────────
    沿革：term-system-v2（2026-11-05）作者令「词条被使用的时候，应该是一个蓝色的

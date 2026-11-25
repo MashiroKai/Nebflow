@@ -223,9 +223,9 @@ try {
     else console.log(`[${label}] chip cover=${await page.evaluate(() => window.__chipCover)}`);
     const clickErr = chipCount && visIdx ? await page.locator('#chat .bubble a.nf-term.selection-explain-chip[data-probe-chip="1"]').first().click({ timeout: 4000 }).then(() => null, (e) => String(e).slice(0, 200)) : 'no-chip';
     if (clickErr) console.log(`[${label}] chip click: ${clickErr}`);
-    try { await page.waitForFunction((a) => { const x = document.querySelector('.nf-term-tip'); return !!x && x.style.display !== 'none' && x.textContent.includes(a); }, ANSWER, { timeout: 20000 }); expanded = true; } catch (e) { console.log(`[${label}] explain wait failed: ${String(e).slice(0, 160)}`); }
-    answerText = await page.locator('.nf-term-tip .ts').allTextContents();
-    const tipState = await page.evaluate(() => { const t = document.querySelector('.nf-term-tip'); return { display: t ? t.style.display : 'absent', td: t ? t.querySelector('.ts')?.textContent.slice(0, 60) : null, aiEl: document.querySelector('.selection-explain-answer')?.textContent.slice(0, 60) || null, chips: document.querySelectorAll('.bubble a.nf-term.selection-explain-chip').length }; });
+    try { await page.waitForFunction((a) => { const x = document.querySelector('.document-term-card'); return !!x && x.style.display !== 'none' && x.textContent.includes(a); }, ANSWER, { timeout: 20000 }); expanded = true; } catch (e) { console.log(`[${label}] explain wait failed: ${String(e).slice(0, 160)}`); }
+    answerText = await page.locator('.document-term-card .document-term-summary').allTextContents();
+    const tipState = await page.evaluate(() => { const t = document.querySelector('.document-term-card'); return { display: t ? t.style.display : 'absent', td: t ? t.querySelector('.document-term-summary')?.textContent.slice(0, 60) : null, aiEl: document.querySelector('.selection-explain-answer')?.textContent.slice(0, 60) || null, chips: document.querySelectorAll('.bubble a.nf-term.selection-explain-chip').length }; });
     console.log(`[${label}] tipState ${JSON.stringify(tipState)}`);
     // M4'（新契约）：发送的是 selectionExplain 帧（小模型路由），不得有 ask 帧。
     const frames = await page.evaluate(() => window.__sent.filter(f => f.type === 'selectionExplain').map(f => String(f.question || '')));

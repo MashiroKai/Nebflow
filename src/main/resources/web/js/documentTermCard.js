@@ -12,9 +12,10 @@ let generation = 0;
 function closeCard(restore = true) {
   generation++;
   if (!active) return;
-  const { card, trigger } = active;
+  const { card, trigger, onClose } = active;
   card.remove();
   active = null;
+  onClose?.();
   if (restore && trigger.isConnected) trigger.focus();
 }
 document.addEventListener('keydown', e => {
@@ -30,7 +31,9 @@ document.addEventListener('pointerdown', e => {
 document.addEventListener('canvas-tab-switched', () => closeCard(false));
 
 /** Preview an identified document; openDocument preserves its existing navigation. */
-export async function showDocumentTermCard(trigger, { path, title, remote = false, openDocument }) {
+export function closeDocumentTermCard() { closeCard(false); }
+
+export async function showDocumentTermCard(trigger, { path = '', title = '', remote = false, openDocument = null, term = null, onClose = null }) {
   closeCard(false);
   const card = document.createElement('section');
   card.className = 'document-term-card';
@@ -53,21 +56,51 @@ export async function showDocumentTermCard(trigger, { path, title, remote = fals
   pathEl.textContent = path;
   card.append(heading, summary, metadata, pathEl, button);
   document.body.append(card);
-  active = { card, trigger };
+  active = { card, trigger, onClose };
   const current = ++generation;
   const rect = trigger.getBoundingClientRect();
   const x = Math.max(8, Math.min(rect.left, window.innerWidth - card.offsetWidth - 8));
   const y = rect.bottom + 8 + card.offsetHeight <= window.innerHeight ? rect.bottom + 8 : Math.max(8, rect.top - card.offsetHeight - 8);
   card.style.left = `${x}px`; card.style.top = `${y}px`;
   let resolvedPath = '';
-  button.addEventListener('click', () => { closeCard(false); openDocument(resolvedPath); });
+  button.addEventListener('click', () => { if (!term) { closeCard(false); openDocument(resolvedPath); } });
   // Place the button immediately after the trigger in keyboard order without
   // relying on body insertion order.
-  card.addEventListener('keydown', e => { if (e.key === 'Tab' && e.shiftKey && document.activeElement === button) { e.preventDefault(); trigger.focus(); } });
+  card.addEventListener('keydown', e => { if (e.key === 'Tab' && e.shiftKey && document.activeElement === card.querySelector('button:not([hidden])')) { e.preventDefault(); trigger.focus(); } });
   trigger.addEventListener('keydown', function enterCard(e) {
     if (!active || active.trigger !== trigger) { trigger.removeEventListener('keydown', enterCard); return; }
-    if (e.key === 'Tab' && !e.shiftKey) { e.preventDefault(); button.focus(); }
+    if (e.key === 'Tab' && !e.shiftKey) {
+      const action = card.querySelector(/** @type {'button'} */ ('button:not([hidden])'));
+      if (action) { e.preventDefault(); action.focus(); }
+    }
   });
+  if (term) {
+    card.setAttribute('aria-label', '词条预览');
+    summary.setAttribute('aria-live', 'polite');
+    pathEl.hidden = true;
+    button.textContent = '↗ 打开原词条';
+    button.setAttribute('aria-label', '打开原词条');
+    const update = (data) => {
+      if (active?.card !== card) return;
+      heading.textContent = data.title || '词条';
+      summary.textContent = data.summary || '';
+      metadata.textContent = data.metadata || '';
+      button.hidden = !data.open;
+      button.onclick = data.open ? () => { closeCard(false); data.open(); } : null;
+      let retry = /** @type {HTMLButtonElement | null} */ (card.querySelector('.document-term-retry'));
+      if (data.retry && !retry) {
+        retry = document.createElement('button');
+        retry.type = 'button'; retry.className = 'document-term-open document-term-retry';
+        retry.textContent = '重试'; card.append(retry);
+      }
+      if (retry) { retry.hidden = !data.retry; retry.onclick = data.retry || null; }
+      const r = trigger.getBoundingClientRect();
+      card.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - card.offsetWidth - 8))}px`;
+      card.style.top = `${r.bottom + 8 + card.offsetHeight <= window.innerHeight ? r.bottom + 8 : Math.max(8, r.top - card.offsetHeight - 8)}px`;
+    };
+    update(term);
+    return { update };
+  }
   if (remote) { summary.textContent = '远端文档提要不可用'; return; }
   if (!path) return;
   try {
