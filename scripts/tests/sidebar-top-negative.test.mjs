@@ -38,7 +38,7 @@ test('删除基线条目', () => {
   const temp = mkdtempSync(join(tmpdir(),'sidebar-top-gate-'));
   try {
     const copy = join(temp,'gate.mjs'); const source = readFileSync(script,'utf8');
-    writeFileSync(copy,source.replace(/^  \{ file: 'split\.css'.*\n/m,''));
+    writeFileSync(copy,source.replace(/^ {2}\{ file: 'split\.css'.*\n/m,''));
     const result = spawnSync(process.execPath,[copy],{env:{...process.env,SIDEBAR_TOP_ROOT:root},encoding:'utf8'});
     assert.equal(result.status,1,result.stderr); assert.match(result.stderr,/未登记的侧栏顶部样式/);
     console.log(`删除基线条目: RED ${result.stderr.trim().split('\n').slice(1).join(' | ')}`);
