@@ -40,7 +40,7 @@ async function verify(page) {
   expect(await thinkingEl.evaluate(el => el.scrollHeight <= el.clientHeight + 1)).toBe(true);
 }
 for (const width of [390,1280]) for (const theme of ['light','dark']) for (const state of ['running','done','replay']) {
-  test(`${width} ${theme} ${state}`, async ({page}) => {
+  test(`规则6 ${width} ${theme} ${state}`, async ({page}) => {
     await page.setViewportSize({width,height:850});
     await boot(page,state === 'replay');
     if (state === 'replay') {

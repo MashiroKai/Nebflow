@@ -26,7 +26,7 @@ async function boot(page, history = []) {
   await page.evaluate(async sid => { const s = (await import('/js/state.js')).default; s.turnExpecting[sid] = true; s.busySessionIds.add(sid); }, sid);
 }
 async function frame(page, obj) { await page.evaluate(async o => { const s = (await import('/js/state.js')).default; s.ws.onmessage({ data:JSON.stringify(o) }); }, { sessionId:sid, ...obj }); }
-test('root 实际帧：报告正文收口前不可见，toolStart 收口后整条弹出', async ({ page }) => {
+test('规则3：root 实际帧：报告正文收口前不可见，toolStart 收口后整条弹出', async ({ page }) => {
   await boot(page);
   await frame(page,{type:'textDelta', isRoot:true, delta:'外部隐藏<report>报告'});
   await frame(page,{type:'textDelta', isRoot:true, delta:'正文</report>尾部隐藏'});
@@ -152,6 +152,30 @@ test('历史回放直接显示注入且摘要不提供展开', async ({ page }) 
   await expect(items.nth(0)).toContainText('补充一');
   await expect(items.nth(1)).toContainText('补充二');
   await expect(page.locator('#chat [data-nf-injection-stack], #chat .turn-header[role="button"], #chat .turn-header .nf-chevron')).toHaveCount(0);
+});
+
+test('规则1：主会话没有轮组 badge 或展开控件', async ({page}) => {
+  await boot(page); await frame(page,{type:'thinkingDelta',delta:'处理'}); await frame(page,{type:'toolStart',label:'Read',toolId:'a'});
+  await expect(page.locator('#chat .nf-chevron, #chat .turn-header, #chat .nf-workline [role=button]')).toHaveCount(0);
+  await frame(page,{type:'done'});
+  await expect(page.locator('#chat .nf-chevron, #chat .turn-header, #chat .nf-workline [role=button]')).toHaveCount(0);
+});
+test('规则2：思考过程只有一条单行流式工作线', async ({page}) => {
+  await boot(page); await frame(page,{type:'thinkingDelta',delta:'处理第一项'});
+  const line = page.locator('#chat .nf-workline'); await expect(line).toHaveCount(1); await expect(line).toBeVisible();
+  await frame(page,{type:'thinkingDelta',delta:'继续处理第二项'}); await expect(line).toHaveCount(1);
+  expect(await line.evaluate(el => el.getBoundingClientRect().height)).toBeLessThan(60);
+});
+test('规则4：注入行直接显示而不是胶囊', async ({page}) => {
+  await boot(page); await frame(page,{type:'thinkingDelta',delta:'处理'});
+  await page.evaluate(async () => { const m = await import('/js/chat.js'); m.renderInjectedBubble('补充一','mail',Date.now(),'mail'); m.renderInjectedBubble('补充二','mail',Date.now(),'mail'); });
+  await expect(page.locator('#chat .bubble.injected:visible')).toHaveCount(2);
+  await expect(page.locator('#chat [data-nf-injection-stack]')).toHaveCount(0);
+});
+test('规则5：完成后的 human 卡没有过程抽屉', async ({page}) => {
+  await boot(page); await frame(page,{type:'textDelta',isRoot:true,delta:'<report>过程\n\n```human\n结论\n```\n\n过程尾</report>'}); await frame(page,{type:'done'});
+  await expect(page.locator('#chat .nf-human-card')).toContainText('结论');
+  await expect(page.locator('#chat details.nf-human-details')).toHaveCount(0);
 });
 
 test('仅思考不产生正文空气泡', async ({ page }) => {
