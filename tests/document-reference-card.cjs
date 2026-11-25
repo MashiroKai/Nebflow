@@ -10,7 +10,7 @@ const graph = {projects:[{name:'test',device:'self',vault:'/vault'}],nodes:[{id:
 (async () => {
  const srv = http.createServer((req,res) => {
   const url = new URL(req.url,'http://localhost');
-  if (url.pathname === '/api/wiki/terms') { res.setHeader('content-type','application/json'); res.end(JSON.stringify({available:true,terms:provideSummary ? [{name:'目标文档',source:'document_summary',definition:summary,updated_at:'updated',doc:{project:'test',abs_path:'/vault/target.md',title:'目标文档',status:'draft',rel:'target.md'}}] : []})); return; }
+  if (url.pathname === '/api/wiki/doc') { res.setHeader('content-type','application/json'); res.end(JSON.stringify({available:true,path:'/vault/target.md',title:'目标文档',summary:provideSummary ? summary : '',status:'draft'})); return; }
   let file = path.join(root, decodeURIComponent(url.pathname));
   if (!file.startsWith(root + path.sep)) { res.writeHead(403).end(); return; }
   try { res.setHeader('content-type',file.endsWith('.html')?'text/html':file.endsWith('.css')?'text/css':'text/javascript');res.end(fs.readFileSync(file)); } catch {res.writeHead(404).end();}
@@ -45,12 +45,12 @@ const graph = {projects:[{name:'test',device:'self',vault:'/vault'}],nodes:[{id:
    await page.mouse.click(5,5); assert.equal(await dialog.isVisible(),false);
    provideSummary=false;
    await page.locator('.att-ref-card.file-lang').click(); await dialog.waitFor();
-   assert.equal(await dialog.locator('.document-term-summary').textContent(),'此文档暂无提要');
+   await page.waitForFunction(() => document.querySelector('.document-term-summary')?.textContent.startsWith('此文档暂无提要：'));
    await page.keyboard.press('Escape'); provideSummary=true;
    await page.evaluate(async()=>{await window.__openDoc('# 目标文档','/vault/target.md','target.md');});
    await page.locator('.nf-backlinks summary').click();
    await page.locator('.nf-backlink').click(); await dialog.waitFor();
-   assert.equal(await dialog.locator('.document-term-summary').textContent(),'此文档暂无提要');
+   await page.waitForFunction(expected => document.querySelector('.document-term-summary')?.textContent === expected, summary);
    await page.keyboard.press('Escape');
    await page.close(); console.log('PASS',i);
   }

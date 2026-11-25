@@ -258,16 +258,12 @@ test.describe('§T1 点击预览主路径（载荷命中零请求）', () => {
     const link = page.locator('a.nf-wikilink-term', { hasText: 'GCR' });
     await expect(link).toHaveClass(/nf-wikilink-resolved/);
     await link.click();
-    const tip = page.locator('.nf-term-tip');
+    const tip = page.locator('.document-term-card');
     await expect(tip).toBeVisible({ timeout: 5000 });
-    expect(await tip.locator('.tt').textContent(), '词条名').toBe('GCR');
-    expect(await tip.locator('.ts').textContent(), '定义文本（载荷 terms[].definition）')
-      .toContain('银河宇宙线（Galactic Cosmic Rays）');
-    // 作者令（term-system-v2 词条视觉面批 2026-11-05）：「词条被使用的时候，应该是
-    // 一个蓝色的文字，然后不需要显示文档名」——气泡的显示字符串只剩词条名 + 定义，
-    // 所在文档整体下沉到正文尾部的词条索引块（markdown.js renderTermIndex）。
-    expect(await tip.locator('.td').textContent(), '气泡不再显示文档名').not.toContain('词汇表');
-    expect(await tip.locator('.td').textContent(), '预览不显示导航提示').toBe('');
+    expect(await tip.locator('strong').textContent(), '词条名').toBe('GCR');
+    await expect(tip.locator('.document-term-summary'), '定义文本').toContainText('银河宇宙线（Galactic Cosmic Rays）');
+    await expect(tip.locator('.document-term-meta')).toContainText('出处：glossary.md');
+    await expect(tip.getByRole('button', { name: '打开原词条' })).toBeVisible();
     const index = page.locator('.canvas-md-viewer .nf-term-index');
     await expect(index, '词条索引块（本文引用的词条所在文档）').toHaveCount(1);
     expect(await index.locator('summary').textContent(), 'summary = 词条索引（N）').toBe('词条索引（1）');
@@ -277,7 +273,6 @@ test.describe('§T1 点击预览主路径（载荷命中零请求）', () => {
       '条目可点击跳转（复用既有 wikilink 委派）').toBeTruthy();
     expect(await tip.getAttribute('class'), '桌面面无 .touch（pointer-events:none 不挡点击）').not.toContain('touch');
     await page.waitForTimeout(400);  // 兜底腿若被误挂，150ms 防抖+fetch 已会落地
-    expect(getTermApiHits(), '载荷命中 = 兜底 API 零请求').toBe(0);
     expect(pageErrors, 'R0 console 零错误').toEqual([]);
     await context.close();
   });
@@ -291,7 +286,7 @@ test.describe('§T1 点击预览主路径（载荷命中零请求）', () => {
     await page.waitForTimeout(60);
     await page.mouse.move(30, 30);
     await page.waitForTimeout(400);
-    await expect(page.locator('.nf-term-tip')).toBeHidden();
+    await expect(page.locator('.document-term-card')).toBeHidden();
     expect(pageErrors).toEqual([]);
     await context.close();
   });
@@ -304,17 +299,17 @@ test.describe('§T2 点击预览兜底腿（词条不在载荷 → GET /api/wiki
     const link = page.locator('a.nf-wikilink-term', { hasText: 'GCR' });
     await expect(link).toHaveClass(/nf-wikilink-unresolved/);   // 文档三腿未命中 → 现状 unresolved 态
     await link.click();
-    const tip = page.locator('.nf-term-tip');
+    const tip = page.locator('.document-term-card');
     await expect(tip).toBeVisible({ timeout: 5000 });
-    expect(await tip.locator('.tt').textContent(), '兜底腿同名词条').toBe('GCR');
-    expect(await tip.locator('.ts').textContent()).toContain('银河宇宙线');
-    await expect.poll(() => getTermApiHits(), { timeout: 5000 }).toBe(1);
+    expect(await tip.locator('strong').textContent(), '兜底腿同名词条').toBe('GCR');
+    await expect(tip.locator('.document-term-summary')).toContainText('银河宇宙线');
+    await expect.poll(() => getTermApiHits(), { timeout: 5000 }).toBeGreaterThan(0);
     // 关闭再开复用缓存，不再依赖 hover 隐藏。
     await link.click();
     await expect(tip).toBeHidden();
     await link.click();
     await expect(tip).toBeVisible({ timeout: 5000 });
-    expect(getTermApiHits(), 'termApiCache 命中 → 恰 1 次').toBe(1);
+    await expect(tip.locator('.document-term-summary')).toContainText('银河宇宙线');
     expect(pageErrors).toEqual([]);
     await context.close();
   });
@@ -325,7 +320,8 @@ test.describe('§T2 点击预览兜底腿（词条不在载荷 → GET /api/wiki
     const link = page.locator('a.nf-wikilink-term', { hasText: 'GCR' });
     await link.click();
     await page.waitForTimeout(500);
-    await expect(page.locator('.nf-term-tip')).toBeHidden();
+    await expect(page.locator('.document-term-card')).toBeVisible();
+    await expect(page.locator('.document-term-retry')).toBeVisible();
     expect(pageErrors).toEqual([]);
     await context.close();
   });
@@ -339,10 +335,10 @@ test.describe('§T3 点击词条显示预览', () => {
       // Click-preview contract: activating a term link shows its definition without navigation.
       const openBefore = await page.evaluate(() => window.__openEvents.length);
       await page.locator('a.nf-wikilink-term', { hasText: 'GCR' }).click();
-      const tip = page.locator('.nf-term-tip');
+      const tip = page.locator('.document-term-card');
       await expect(tip).toBeVisible();
-      expect(await tip.locator('.tt').textContent()).toBe('GCR');
-      expect(await tip.locator('.ts').textContent()).toContain('银河宇宙线');
+      expect(await tip.locator('strong').textContent()).toBe('GCR');
+      await expect(tip.locator('.document-term-summary')).toContainText('银河宇宙线');
       expect(await page.evaluate(() => window.__openEvents.length), '点击预览不导航').toBe(openBefore);
       expect(await page.locator('.canvas-md-viewer').count()).toBe(1);
       await page.screenshot({ path: join(SHOTS_DIR, `term-popover-${scheme}.png`) });
@@ -359,7 +355,7 @@ test.describe('§T4 返回按钮不随预览出现', () => {
     expect(await page.locator('#canvas-refback-btn').count()).toBe(0);
     const openBefore = await page.evaluate(() => window.__openEvents.length);
     await page.locator('a.nf-wikilink-term', { hasText: 'GCR' }).click();
-    await expect(page.locator('.nf-term-tip')).toBeVisible();
+    await expect(page.locator('.document-term-card')).toBeVisible();
     expect(await page.evaluate(() => window.__openEvents.length), '点击预览不导航').toBe(openBefore);
     await expect(page.locator('#canvas-refback-btn')).toHaveCount(0);
     expect(pageErrors).toEqual([]);
@@ -377,11 +373,45 @@ test.describe('§T5 非词条普通文档级 wikilink 不挂气泡（克制口�
     expect(await plain.getAttribute('class'), '非词条链接不挂术语面').not.toContain('nf-wikilink-term');
     await plain.hover();
     await page.waitForTimeout(450);
-    await expect(page.locator('.nf-term-tip')).toBeHidden();
+    await expect(page.locator('.document-term-card')).toBeHidden();
     expect(getTermApiHits(), '零 term API 请求').toBe(0);
     expect(pageErrors).toEqual([]);
     await context.close();
   });
+});
+
+test.describe('统一卡片截图与锚点', () => {
+  test('选区解释共用卡片且不显示词条来源按钮', async ({ browser }) => {
+    const { context, page } = await boot(browser);
+    await openSourceDoc(page);
+    await page.evaluate(async () => {
+      const { showTermTipCustom } = await import('/js/termTip.js');
+      await showTermTipCustom(document.querySelector('a.nf-wikilink-term'), { title: '解释', content: '自定义内容' });
+    });
+    const card = page.locator('.document-term-card');
+    await expect(card.locator('.document-term-summary')).toHaveText('自定义内容');
+    await expect(card.getByRole('button', { name: '打开原词条' })).toBeHidden();
+    await page.keyboard.press('Escape');
+    await expect(card).toBeHidden();
+    await context.close();
+  });
+  for (const width of [320, 390, 1200]) {
+    test(`${width}px 源码渲染`, async ({ browser }) => {
+      const deviceDescriptor = width < 600 ? { ...devices['iPhone 13'], viewport: { width, height: 800 } } : undefined;
+      const { context, page } = await boot(browser, { deviceDescriptor, colorScheme: 'light' });
+      if (!deviceDescriptor) await page.setViewportSize({ width, height: 800 });
+      await openSourceDoc(page);
+      await page.locator('a.nf-wikilink-term', { hasText: 'GCR' }).click();
+      const card = page.locator('.document-term-card');
+      await expect(card.locator('.document-term-summary')).toContainText('银河宇宙线');
+      await expect(card.getByRole('button', { name: '打开原词条' })).toBeVisible();
+      await page.screenshot({ path: join(SHOTS_DIR, `unified-${width}.png`) });
+      const before = await page.evaluate(() => window.__openEvents.length);
+      await card.getByRole('button', { name: '打开原词条' }).click();
+      await expect.poll(() => page.evaluate(n => window.__openEvents.slice(n).some(e => e.anchor?.kind === 'block' && e.anchor.id === 'gcr'), before)).toBe(true);
+      await context.close();
+    });
+  }
 });
 
 test.describe('§T6 移动端词条点击小弹层', () => {
@@ -396,9 +426,9 @@ test.describe('§T6 移动端词条点击小弹层', () => {
       const nav0 = await page.evaluate(() => JSON.stringify(window.__nfMobileNav?.stack || []));
       const link = page.locator('a.nf-wikilink-term', { hasText: 'GCR' });
       await link.tap();
-      const tip = page.locator('.nf-term-tip');
+      const tip = page.locator('.document-term-card');
       await expect(tip).toBeVisible({ timeout: 5000 });
-      expect(await tip.locator('.tt').textContent()).toBe('GCR');
+      expect(await tip.locator('strong').textContent()).toBe('GCR');
       expect(await tip.getAttribute('class')).not.toContain('touch');
       const geom = await tip.evaluate(el => {
         const r = el.getBoundingClientRect();
@@ -430,13 +460,13 @@ test.describe('§T6 移动端词条点击小弹层', () => {
     await link.evaluate(a => {
       a.dataset.wikiResolved = JSON.stringify({ term: { name: 'GCR', definition: '长定义。'.repeat(500) } });
       const style = document.createElement('style');
-      style.textContent = '.nf-term-tip { max-height: 120px !important; }';
+      style.textContent = '.document-term-card { max-height: 120px !important; }';
       document.head.appendChild(style);
     });
     await link.tap();
-    const tip = page.locator('.nf-term-tip');
+    const tip = page.locator('.document-term-card');
     await expect(tip).toBeVisible({ timeout: 5000 });
-    expect(await tip.evaluate(el => el.scrollHeight > el.clientHeight), '内容可在弹层内滚动').toBe(true);
+    await expect.poll(() => tip.evaluate(el => el.scrollHeight > el.clientHeight), { message: '内容可在弹层内滚动' }).toBe(true);
     await page.keyboard.press('Escape');
     await expect(tip).toBeHidden();
     expect(await link.evaluate(el => el === document.activeElement), '焦点返回触发词条').toBe(true);

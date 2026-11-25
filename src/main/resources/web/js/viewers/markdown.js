@@ -195,7 +195,10 @@ function applyJumpAnchor(mdViewer, anchor, blockIds) {
   } else if (anchor.kind === 'line' && Number.isFinite(anchor.line)) {
     target = blockAtOrBefore(mdViewer, anchor.line);
   }
-  if (!target) return;
+  if (!target) {
+    window.__showToast?.('已打开来源文档，但未找到指定锚点。', 'info');
+    return;
+  }
   scrollHeadingToTop(mdViewer, target);
   // 落点时间戳：阅读位恢复（canvas-tab-activated 腿）在跳后 2s 窗口内让位——
   // 落点滚动是新真源，不被旧阅读位拽回。
@@ -948,6 +951,7 @@ async function onWikilinkClick(a, mdViewer, confirmed = false) {
   // 词条命中落点（F2）：作者未写锚时采用消解产物自带的块锚 —— 深链跳到词条
   // 定义段（applyJumpAnchor 滚动 + nf-jump-flash 高亮的既有通道，零新机制）。
   if (!anchor && resolved.anchor) anchor = resolved.anchor;
+  if (resolved.term && !anchor) window.__showToast?.('来源词条没有有效锚点，将打开来源文档。', 'info');
   // 来源页签 id（F5 返回原文档；v1 单层来源，每次跳转覆写）。
   const refSourceTab = refSourceTabId(mdViewer);
   // F5 阅读位保真：任何跳转派发前固化来源阅读位并冻结 scroll 记账。新开
