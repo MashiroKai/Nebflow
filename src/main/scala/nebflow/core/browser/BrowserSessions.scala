@@ -49,6 +49,13 @@ final case class BrowserRecord(
  */
 object BrowserSessions:
   private val logger = nebflow.shared.NebflowLogger.forName("nebflow.browser.session")
+  val takeoverRegistry = new BrowserTakeoverRegistry
+  private val creator = new ThreadLocal[String]()
+
+  def withCreator[A](owner: Option[String])(body: => A): A =
+    owner.foreach(creator.set)
+    try body
+    finally creator.remove()
 
   /** 运行期句柄：页面 CDP 连接 + 最近一次快照的 ref → backendDOMNodeId 映射。 */
   final class Handle(val record: BrowserRecord, val page: CdpConnection):
@@ -202,7 +209,9 @@ object BrowserSessions:
             attach(rec)
       case _ =>
         closeHandle(name)
+        takeoverRegistry.remove(name)
         val rec = launch(name, home)
+        Option(creator.get()).filter(_.nonEmpty).foreach(owner => takeoverRegistry.created(name, owner))
         writeRecord(home, rec)
         attach(rec)
 
