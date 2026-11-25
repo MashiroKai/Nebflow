@@ -25,6 +25,8 @@ final class BrowserTakeoverRegistry:
         Right(())
   }
 
+  def ownedBy(session: String, owner: String): Boolean = synchronized { owners.get(session).contains(owner) }
+
   def isTakingOver(session: String): Boolean = synchronized { leases.contains(session) }
 
   def remove(session: String): Unit = synchronized {
