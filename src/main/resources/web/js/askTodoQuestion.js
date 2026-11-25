@@ -71,6 +71,33 @@ export function decisionOptionDetail(opt) {
   return d.trim();
 }
 
+/** Shared native option row for decision cards on all form factors. */
+export function buildDecisionOption(itemId, option, multi, checked, onChange) {
+  const row = document.createElement('label');
+  row.className = 'ta-qd-opt';
+  const input = document.createElement('input');
+  input.className = 'ta-qd-opt-input';
+  input.type = multi ? 'checkbox' : 'radio';
+  input.name = `ta-qd-${itemId}`;
+  input.checked = checked;
+  const body = document.createElement('span');
+  body.className = 'ta-qd-opt-body';
+  const label = document.createElement('span');
+  label.className = 'ta-qd-opt-label';
+  label.textContent = decisionOptionLabel(option);
+  body.appendChild(label);
+  const detail = decisionOptionDetail(option);
+  if (detail) {
+    const sub = document.createElement('span');
+    sub.className = 'ta-qd-opt-detail';
+    sub.textContent = detail;
+    body.appendChild(sub);
+  }
+  row.append(input, body);
+  input.addEventListener('change', () => onChange(input.checked));
+  return row;
+}
+
 /** 需要回原卡片操作的题型（secret / 目录选择）——条目侧 fail-closed：
  *  宁可不作答，也不造一个写不回去的半面。 */
 function needsOriginalCard(item) {
@@ -193,7 +220,7 @@ export function buildAskQuestionCard(entry) {
     if (!allAnswered() || card.classList.contains('is-answered')) return;
     const answers = items.map((item, qi) => {
       if (isMulti(item)) return JSON.stringify(picked[qi]);
-      return picked[qi][0] || freeText[qi] || '';
+      return freeText[qi] || picked[qi][0] || '';
     });
     const res = submitAskAnswer({
       requestId: entry.requestId,

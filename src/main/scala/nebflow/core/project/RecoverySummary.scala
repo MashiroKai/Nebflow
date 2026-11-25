@@ -1,9 +1,9 @@
 package nebflow.core.project
 
 import cats.effect.IO
-import io.circe.{Decoder, Encoder, Json}
 import io.circe.generic.semiauto
 import io.circe.syntax.*
+import io.circe.{Decoder, Encoder, Json}
 import nebflow.core.AtomicJson
 import nebflow.core.delegate.{DelegateRegistry, DelegateRoundLedger, DelegateVisibility}
 import nebflow.core.mail.SessionMailbox

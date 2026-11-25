@@ -10,74 +10,106 @@
 //     `GET /api/wiki/term?name=` 单查，命中同样出泡。
 // Popover is body-mounted, viewport-clamped, and has no full-screen mobile state.
 
-let termTipEl = null;
+import { t } from './i18n.js';
+import { showDocumentTermCard, closeDocumentTermCard } from './documentTermCard.js';
+
+let termCard = null;
 let termTipLink = null;
 let termTipHost = null;
 let termTipTimer = 0;
-let termTipDocBound = false;
 let termTipGeneration = 0;
+let termTipAbort = null;
 /** 深链导航回调（docs viewer 注入 onWikilinkClick；无导航面留空 = 收泡即止）。 */
 let termTipNav = null;
-/** @type {Map<string, any>} term-API fallback cache, including misses. */
-const termApiCache = new Map();
-const termApiVersions = new Map();
 
 /** 注入气泡内点击的深链导航（docs viewer = onWikilinkClick；chat 等面不注入）。 */
 export function setTermTipNav(fn) {
   termTipNav = fn;
 }
 
-function ensureTermTipEl() {
-  if (termTipEl) return termTipEl;
-  const el = document.createElement('div');
-  el.className = 'nf-term-tip';
-  el.style.display = 'none';
-  el.innerHTML = '<div class="tt"></div><div class="ts"></div><div class="td"></div>';
-  // Interacting with the preview must never invoke the document link handler.
-  el.addEventListener('click', (e) => e.stopPropagation());
-  el.addEventListener('pointerdown', (e) => {
-    e.stopPropagation();
-    el.classList.add('interactive');
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && termTipLink) {
-      e.preventDefault();
-      const link = termTipLink;
-      hideTermTip();
-      if (link && link.isConnected) link.focus();
-    }
-  });
-  document.body.appendChild(el);
-  termTipEl = el;
-  if (!termTipDocBound) {
-    termTipDocBound = true;
-    // 点击别处收泡（触屏首击开泡后的第二次交互面）。
-    document.addEventListener('pointerdown', (e) => {
-      if (!termTipLink) return;
-      const t = /** @type {Node|null} */ (e.target);
-      if (t && termTipEl.contains(t)) return;
-      if (termTipLink && termTipLink.contains(/** @type {Node|null} */ (t))) return;
-      hideTermTip();
-    }, true);
-    // 换页签收泡（hover 的 pane 隐藏后气泡位置失效）。
-    document.addEventListener('canvas-tab-switched', hideTermTip);
-  }
-  return el;
-}
-
-export function hideTermTip() {
+function clearTermTip() {
   termTipGeneration++;
+  if (termTipAbort) { termTipAbort.abort(); termTipAbort = null; }
   if (termTipTimer) { clearTimeout(termTipTimer); termTipTimer = 0; }
   termTipLink = null;
   termTipHost = null;
-  if (termTipEl) {
-    termTipEl.style.display = 'none';
-    termTipEl.classList.remove('interactive');
-  }
+  termCard = null;
 }
 
-/** 气泡数据两条腿（①载荷直读 ②term API 兜底）的统一取数口。 */
-async function termInfoFor(a) {
+export function hideTermTip() {
+  if (termTipLink) closeDocumentTermCard();
+  clearTermTip();
+}
+
+// The term database is derived from the vault; keep successful lookups only briefly.
+const termIndexCache = new Map();
+let termIndexVersion = null;
+let termIndexStatsAt = 0;
+let termIndexStatsPending = false;
+let termIndexEpoch = 0;
+
+async function checkTermIndexVersion(headers) {
+  const now = Date.now();
+  if (termIndexStatsPending || (termIndexStatsAt && now - termIndexStatsAt < 60000)) return;
+  termIndexStatsAt = now;
+  termIndexStatsPending = true;
+  try {
+    const res = await fetch('/api/wiki/terms/stats', { headers });
+    const data = res.ok ? await res.json() : null;
+    if (data && typeof data.last_rebuild === 'string') {
+      if (termIndexVersion !== null && termIndexVersion !== data.last_rebuild) {
+        termIndexEpoch++;
+        termIndexCache.clear();
+      }
+      termIndexVersion = data.last_rebuild;
+    }
+  } catch (e) { /* TTL remains the fallback when stats is unavailable. */ }
+  finally { termIndexStatsPending = false; }
+}
+
+async function termInfoFor(a, signal) {
+  let resolved = null;
+  try { resolved = JSON.parse(a.dataset.wikiResolved || 'null'); } catch (e) { /* fallback below */ }
+  const name = a.dataset.wikiTermFallback || a.dataset.wikiTarget || resolved?.term?.name || '';
+  const project = a.dataset.wikiProject || '';
+  const rel = resolved?.term?.rel || '';
+  if (name) {
+    try {
+      const { authHeaders } = await import('./flowHelpers.js');
+      const headers = { ...authHeaders() };
+      void checkTermIndexVersion(headers);
+      const key = JSON.stringify([name.toLowerCase(), project, rel]);
+      const cached = termIndexCache.get(key);
+      if (cached && Date.now() - cached.time < 300000) return cached.info;
+      termIndexCache.delete(key);
+      const epoch = termIndexEpoch;
+      const res = await fetch('/api/wiki/terms/lookup?name=' + encodeURIComponent(name), {
+        headers, signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
+      });
+      const body = res.ok ? await res.json() : null;
+      if (body?.available === true && Array.isArray(body.results)) {
+        const matches = body.results.filter((item) => item && typeof item.name === 'string' &&
+          (item.name.toLowerCase() === name.toLowerCase() ||
+            (Array.isArray(item.aliases) && item.aliases.some((alias) => typeof alias === 'string' && alias.toLowerCase() === name.toLowerCase()))));
+        const primary = matches.filter((item) => item.name.toLowerCase() === name.toLowerCase());
+        const candidates = primary.length ? primary : matches;
+        const scoped = candidates.length > 1 && project && rel
+          ? candidates.filter((item) => item.doc?.project === project && item.doc?.rel === rel)
+          : candidates;
+        if (scoped.length === 1) {
+          const hit = scoped[0];
+          const info = { name: hit.name, definition: hit.definition || '', rel: hit.doc?.rel || '', doc: hit.source || '' };
+          if (epoch === termIndexEpoch && !signal.aborted) termIndexCache.set(key, { time: Date.now(), info });
+          return info;
+        }
+      }
+    } catch (e) { /* unavailable, malformed, or timed out: use existing path */ }
+  }
+  return signal.aborted ? null : legacyTermInfoFor(a, signal);
+}
+
+/** Existing resolved payload, then registry lookup. */
+async function legacyTermInfoFor(a, signal) {
   if (a.dataset.wikiResolved) {
     try {
       const hit = JSON.parse(a.dataset.wikiResolved);
@@ -86,16 +118,14 @@ async function termInfoFor(a) {
       }
     } catch (e) { /* fall through to the API leg */ }
   }
-  const name = a.dataset.wikiTermFallback || '';
+  const name = a.dataset.wikiTermFallback || a.dataset.wikiTarget || '';
   if (!name) return null;
-  const key = name.toLowerCase();
-  if (termApiCache.has(key)) return termApiCache.get(key);
-  const version = (termApiVersions.get(key) || 0) + 1;
-  termApiVersions.set(key, version);
+  const project = a.dataset.wikiProject || '';
   let info = null;
   try {
     const { authHeaders } = await import('./flowHelpers.js');
-    const res = await fetch('/api/wiki/term?name=' + encodeURIComponent(name), { headers: { ...authHeaders() } });
+    const query = '?name=' + encodeURIComponent(name) + (project ? '&project=' + encodeURIComponent(project) : '');
+    const res = await fetch('/api/wiki/term' + query, { headers: { ...authHeaders() }, signal });
     if (res.ok) {
       const body = await res.json();
       if (body && body.resolved && body.term) {
@@ -103,69 +133,51 @@ async function termInfoFor(a) {
       }
     }
   } catch (e) { info = null; }
-  if (termApiVersions.get(key) === version) termApiCache.set(key, info);
   return info;
 }
 
-function paintTermTip(a, info) {
-  const el = ensureTermTipEl();
-  el.querySelector('.tt').textContent = info.name || '';
-  el.querySelector('.ts').textContent = info.definition || '';
-  // 气泡的显示字符串 = 词条名 + 定义（term-system-v2 词条视觉面批 2026-11-05，
-  // 作者令「不需要显示文档名」）：第三行不再拼「来源：<文档>」——文档名统一落进
-  // 正文尾部自动生成的「词条索引」块（viewers/markdown.js renderTermIndex），
-  // 气泡内不再作为显示文本出现。剩下的跳转提示只在真有导航承载时给（docs
-  // viewer 注入了 termTipNav；聊天气泡 / human 卡没有，那里说「点击跳转」是假话）。
-  el.querySelector('.td').textContent = '';
-  el.style.display = 'block';
-  // Viewport-clamped placement: above the link when there is room, else below.
-  const r = a.getBoundingClientRect();
-  const vw = document.documentElement.clientWidth || window.innerWidth;
-  const vh = document.documentElement.clientHeight || window.innerHeight;
-  const bw = el.offsetWidth;
-  const bh = el.offsetHeight;
-  const x = Math.min(Math.max(8, r.left + r.width / 2 - bw / 2), Math.max(8, vw - bw - 8));
-  let y = r.top - bh - 8;
-  if (y < 8) y = Math.min(r.bottom + 8, Math.max(8, vh - bh - 8));
-  el.style.left = Math.round(x) + 'px';
-  el.style.top = Math.round(y) + 'px';
+function paintTermTip(a, info, retry = false) {
+  const available = info.name && termTipNav && termTipHost && a.dataset.wikiResolved;
+  const host = termTipHost;
+  termCard?.update({
+    title: info.name || a.dataset.wikiTarget || a.dataset.wikiTermFallback || '词条',
+    summary: info.definition || '',
+    metadata: `类型：词条　出处：${info.rel || info.doc || '不可用'}${available ? '' : '　来源不可用'}`,
+    open: available ? () => termTipNav(a, host) : null,
+    retry: retry ? () => requestTermTip(a, host, 0) : null,
+  });
 }
 
-function requestTermTip(a, host, delay) {
+async function requestTermTip(a, host, delay) {
   hideTermTip();
-  ensureTermTipEl(); // bind outside-click cancellation before the request starts
   termTipLink = a;
   termTipHost = host || null;
   const generation = termTipGeneration;
+  termCard = await showDocumentTermCard(a, {
+    term: { title: a.dataset.wikiTarget || '词条', summary: t('termPreview.loading') },
+    onClose: clearTermTip,
+  });
+  if (generation !== termTipGeneration || termTipLink !== a) return;
+  const controller = new AbortController();
+  termTipAbort = controller;
   termTipTimer = setTimeout(async () => {
-    const info = await termInfoFor(a);
-    if (generation !== termTipGeneration || termTipLink !== a) return;   // superseded/hidden while fetching
-    if (!info) return;               // not a term after all — stay closed
-    paintTermTip(a, info);
+    const info = await termInfoFor(a, controller.signal);
+    if (generation !== termTipGeneration || termTipLink !== a) return;
+    if (!info) paintTermTip(a, { definition: t('termPreview.unavailable') }, true);
+    else paintTermTip(a, info);
   }, delay);
 }
 
-/** 自定义内容形态（additive；选区解释等非词条来源复用同一弹窗本体）。
- *  不走词条名解析：直接展示 {title, content}；定位/收泡/样式与词条弹窗同一套。 */
-export function showTermTipCustom(a, data) {
+/** 选区解释复用同一卡片，不请求词条或显示来源动作。 */
+export async function showTermTipCustom(a, data) {
   hideTermTip();
-  const el = ensureTermTipEl();
   termTipLink = a;
-  termTipHost = null;
-  el.querySelector('.tt').textContent = (data && data.title) || '';
-  el.querySelector('.ts').textContent = (data && data.content) || '';
-  el.querySelector('.td').textContent = '';
-  el.style.display = 'block';
-  const r = a.getBoundingClientRect();
-  const vw = document.documentElement.clientWidth || window.innerWidth;
-  const vh = document.documentElement.clientHeight || window.innerHeight;
-  const bw = el.offsetWidth;
-  const bh = el.offsetHeight;
-  const x = Math.min(Math.max(8, r.left + r.width / 2 - bw / 2), Math.max(8, vw - bw - 8));
-  let y = r.top - bh - 8;
-  if (y < 8) y = Math.min(r.bottom + 8, Math.max(8, vh - bh - 8));
-  el.style.left = Math.round(x) + 'px';
-  el.style.top = Math.round(y) + 'px';
+  const generation = termTipGeneration;
+  const card = await showDocumentTermCard(a, {
+    term: { title: data?.title || '', summary: data?.content || '' },
+    onClose: clearTermTip,
+  });
+  if (generation === termTipGeneration) termCard = card;
 }
 
 /** Click toggles the preview on both desktop and touch, without navigation. */

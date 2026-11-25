@@ -79,6 +79,7 @@ private[gateway] object WsAskHandlers:
         raw.hcursor.downField("name").as[String].getOrElse("file")
       )
     val mainSessionId = raw.hcursor.downField("mainSessionId").as[String].getOrElse("")
+    val device = raw.hcursor.downField("device").as[String].toOption.map(_.trim).filter(d => d.nonEmpty && !d.equalsIgnoreCase("local"))
     // ── 分支管理问答批（gitviz，2026-11-19 第二轮）──────────────────────────
     // 同一个 askOpen 帧承载第二域：`kind="gitviz"` 时作用域 = **项目仓库根**（服务端
     // 由 ProjectStore 解析，不吃客户端报的路径 —— 与 git-graph 端点同一个解析面），
@@ -107,7 +108,8 @@ private[gateway] object WsAskHandlers:
                     root,
                     projectReq,
                     explicitId = sid0,
-                    kind = nebflow.core.ask.AskBinding.KindGitViz
+                    kind = nebflow.core.ask.AskBinding.KindGitViz,
+                    device = device
                   )
                   sid = binding.id
                   _ <- if mainSessionId.nonEmpty then svc.registry.refreshMainSession(sid, mainSessionId) else IO.unit
@@ -147,7 +149,7 @@ private[gateway] object WsAskHandlers:
             )
           else
             for
-              binding <- svc.registry.bind(canonical, fileName)
+              binding <- svc.registry.bind(canonical, fileName, device = device)
               sid = binding.id
               _ <- if mainSessionId.nonEmpty then svc.registry.refreshMainSession(sid, mainSessionId) else IO.unit
               freshBinding <- svc.registry.byId(sid).map(_.getOrElse(binding))
@@ -167,7 +169,7 @@ private[gateway] object WsAskHandlers:
                   // MailAddress.AskPrefix + sid）——dock 头部渲染可复制地址行，
                   // 编排方/用户可经 Mail(ask:<会话id>) 续聊。
                   "mailAddress" -> (nebflow.core.delegate.MailAddress.AskPrefix + sid).asJson,
-                  "messages" -> encodeTranscript(msgs).asJson,
+                  "messages" -> encodeCanvasTranscript(msgs).asJson,
                   // canvas-inline-diff-review：在列审阅态随回放下发（重载/换端后
                   // canvas 审阅页签重建；引擎为权威——服务端重启即清零，前端本
                   // 地态让位）。
@@ -203,6 +205,12 @@ private[gateway] object WsAskHandlers:
    * 不出空泡（live 同样无泡）。
    */
   private[gateway] def encodeTranscript(msgs: List[nebflow.shared.UiMessage]): List[Json] =
+    encodeTranscriptRows(msgs, mergeAi = true)
+
+  private[gateway] def encodeCanvasTranscript(msgs: List[nebflow.shared.UiMessage]): List[Json] =
+    encodeTranscriptRows(msgs, mergeAi = false)
+
+  private def encodeTranscriptRows(msgs: List[nebflow.shared.UiMessage], mergeAi: Boolean): List[Json] =
     val rows = scala.collection.mutable.ListBuffer.empty[Json]
     msgs.foreach {
       case u: nebflow.shared.UiMessage.User if u.injected =>
@@ -215,7 +223,7 @@ private[gateway] object WsAskHandlers:
                  else base.deepMerge(Json.obj("attachments" -> u.attachments.asJson)))
       case a: nebflow.shared.UiMessage.Ai if a.text.trim.nonEmpty =>
         rows.lastOption.flatMap(_.hcursor.downField("role").as[String].toOption) match
-          case Some("ai") =>
+          case Some("ai") if mergeAi =>
             // 同轮相邻段并回一泡（原文直连 = live delta 拼接同形；tool 行透明不隔断，
             // user/sys 行已落行故天然隔断）。时间戳沿用首段（deepMerge 保留既有 timestamp 键）。
             val prev = rows.last.hcursor.downField("text").as[String].getOrElse("")
@@ -225,7 +233,7 @@ private[gateway] object WsAskHandlers:
       case _ => () // tool / agent / ask / system：dock 透明纪律（live 腿同样不进泡列）
     }
     rows.toList
-  end encodeTranscript
+  end encodeTranscriptRows
 
   /** 时间戳随回放行下发（canvas ask 时间分隔线批）：仅 >0 时加 `timestamp` 键；0/缺席 ⇒ 行形态逐字不变。 */
   private[gateway] def withTimestamp(row: Json, ts: Long): Json =

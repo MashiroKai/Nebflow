@@ -183,6 +183,22 @@ class SearchScopeRoutesSpec extends CatsEffectSuite:
       .getOrElse(Nil)
       .flatMap(_.hcursor.downField("id").as[String].toOption)
 
+  test("history latest route returns bounded newest messages and preserves default paging") {
+    val id = store.createSession("history paging route").unsafeRunSync().id
+    store.appendUiMessages(id, (1 to 120).toList.map(i => UiMessage.User(text = s"row-$i", timestamp = i.toLong))).unsafeRunSync()
+    val latest = serve(s"/api/sessions/$id/history?latest=true&limit=10").hcursor
+    val items = latest.downField("messages").as[List[Json]].toOption.get
+    assertEquals(items.size, 10)
+    assertEquals(items.head.hcursor.get[String]("text").toOption, Some("row-111"))
+    assertEquals(items.last.hcursor.get[String]("text").toOption, Some("row-120"))
+    assertEquals(latest.get[Boolean]("latestApplied").toOption, Some(true))
+    val normal = serve(s"/api/sessions/$id/history").hcursor
+    val first = normal.downField("messages").as[List[Json]].toOption.get
+    assertEquals(first.size, 50)
+    assertEquals(first.head.hcursor.get[String]("text").toOption, Some("row-1"))
+    store.deleteSession(id).unsafeRunSync()
+  }
+
   // ── 引擎甲：索引查询 API ──────────────────────────────────────────────────
 
   test("A1 索引引擎：后台 agent 专属词 ⇒ 零结果（total=0，旧库残留也不漏出）") {

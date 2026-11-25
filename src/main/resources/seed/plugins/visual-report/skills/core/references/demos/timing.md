@@ -47,7 +47,7 @@
 
 ## 3 图 1 · 转换触发与采样窗
 
-![图 1 CONVST 触发采样与 BUSY 转换握手](~/.nebflow/plots/20261004_timing_adc_conv.svg)
+![图 1 CONVST 触发采样与 BUSY 转换握手](assets/20261004_timing_adc_conv.png)
 
 逐段解读（时间分辨率：1 slot = 50 ns）：
 
@@ -74,7 +74,7 @@
 
 ## 4 图 2 · SPI 读回握手
 
-![图 2 SPI 读回握手](~/.nebflow/plots/20261004_timing_spi_read.svg)
+![图 2 SPI 读回握手](assets/20261004_timing_spi_read.png)
 
 逐段解读（时间分辨率：1 slot = 1 SCLK 周期 = 50 ns；因果链 d→c→s→f→e→r）：
 

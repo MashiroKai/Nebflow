@@ -63,7 +63,11 @@ abstract class BrowserVerbTool extends Tool:
     else if !BrowserPolicy.validSessionName(session) then
       IO.pure(Left(ToolError(s"$name: invalid session name (use [a-z0-9_-], 1-40 chars).")))
     else
-      IO.blocking(body(session)).attempt.map[Either[ToolError, String]] {
+      IO.blocking {
+        BrowserSessions.takeoverRegistry.withVerb(session) {
+          BrowserSessions.withCreator(ctx.sessionId)(body(session))
+        }
+      }.attempt.map[Either[ToolError, String]] {
         case Right(out) => Right(out)
         case Left(e) => Left(ToolError(s"$name: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"))
       }

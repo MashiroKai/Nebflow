@@ -19,6 +19,7 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
+import { mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { openHubPage } from './_mobile-dock-nav.mjs';
 
@@ -36,7 +37,7 @@ test.use({ viewport: { width: 375, height: 812 }, hasTouch: true, colorScheme: '
 
 function daemonFixture() {
   return [
-    { id: 'd1', name: 'dev-server', port: 8111, portOpen: true, status: 'running', autoStart: true, command: 'npm run dev', hasConfigPanel: false },
+    { id: 'd1', name: 'dev-server', port: 8111, portOpen: true, status: 'running', autoStart: true, command: 'npm run dev', hasConfigPanel: true },
     { id: 'd2', name: 'watcher', port: 9222, portOpen: false, status: 'starting', autoStart: false, command: 'node watch.js --verbose', hasConfigPanel: false },
     { id: 'd3', name: 'legacy', port: 0, portOpen: false, status: 'error', autoStart: false, command: '', hasConfigPanel: false },
   ];
@@ -53,6 +54,7 @@ async function bootApp(page) {
     const url = new URL(route.request().url());
     let p = decodeURIComponent(url.pathname);
     if (p === '/') p = '/index.html';
+    if (p === '/api/daemons/d1/config-panel') return route.fulfill({json:{title:'守护进程配置',fields:Array.from({length:16},(_,i)=>({key:`field${i}`,label:`Field ${i}`,type:'text'})),values:{}}});
     if (p === '/api/daemons' || p.startsWith('/api/daemons/')) {
       if (route.request().method() !== 'GET') {
         writes.push({ method: route.request().method(), path: p, body: route.request().postDataJSON() });
@@ -127,6 +129,60 @@ test.beforeEach(async ({ page }) => {
 /** @type {{method:string,path:string,body:any}[]} */
 let writes = [];
 
+test('mobile daemon audit: containment, header, controls and long text', async ({ page }) => {
+  await openPanel(page);
+  const result = await page.evaluate(() => {
+    const panel = document.querySelector('#daemon-panel');
+    const body = panel.querySelector('.daemon-panel-body');
+    const row = panel.querySelector('.daemon-row');
+    const command = row.querySelector('.daemon-command');
+    command.textContent = 'long-command-without-spaces-'.repeat(20);
+    const header = document.querySelector('.mobile-page[data-page="daemon"] .mobile-back-btn');
+    body.scrollTop = 0;
+    const r = row.getBoundingClientRect();
+    if (!header || !header.getClientRects().length) throw new Error('daemon page header control missing');
+    const h = header.getBoundingClientRect();
+    const c = command.getBoundingClientRect();
+    const controls = [...row.querySelectorAll('button')].filter(el => el.getClientRects().length);
+    const overlap = controls.some(el => { const b = el.getBoundingClientRect(); return b.left < c.right && b.right > c.left && b.top < c.bottom && b.bottom > c.top; });
+    const cs = getComputedStyle(command);
+    return { left: r.left, right: r.right, top: r.top, headerBottom: h.bottom, overlap, controls: controls.length, long: command.scrollWidth > command.clientWidth, clipped: cs.whiteSpace === 'nowrap' && cs.textOverflow === 'ellipsis' && cs.overflowX === 'hidden' };
+  });
+  expect(result.left).toBeGreaterThanOrEqual(0);
+  expect(result.right).toBeLessThanOrEqual(375);
+  expect(result.top).toBeGreaterThanOrEqual(result.headerBottom - 1);
+  expect(result.controls).toBeGreaterThan(0);
+  expect(result.overlap).toBe(false);
+  expect(result.long && result.clipped).toBe(true);
+  const scroll = page.locator('#daemon-panel .daemon-panel-body');
+  for (const f of [0, 0.5, 1]) {
+    const geo = await scroll.evaluate((el, fraction) => {
+      el.scrollTop = (el.scrollHeight - el.clientHeight) * fraction;
+      const b = el.getBoundingClientRect(), h = document.querySelector('.mobile-page[data-page="daemon"] .mobile-back-btn').getBoundingClientRect();
+      const items=[...el.querySelectorAll('.daemon-row')].map(n=>n.getBoundingClientRect()).filter(r=>r.bottom>b.top && r.top<b.bottom).map(r=>({left:r.left,right:r.right}));
+      return {left:b.left,right:b.right,top:b.top,headerBottom:h.bottom,items};
+    }, f);
+    expect(geo.left).toBeGreaterThanOrEqual(0); expect(geo.right).toBeLessThanOrEqual(375);
+    expect(geo.top).toBeGreaterThanOrEqual(geo.headerBottom - 1);
+    expect(geo.items.length).toBeGreaterThan(0); for(const item of geo.items) {expect(item.left).toBeGreaterThanOrEqual(0); expect(item.right).toBeLessThanOrEqual(375);}
+  }
+  await scroll.evaluate(el => { el.scrollTop=0; });
+  await page.locator('#daemon-panel [data-act="config"][data-id="d1"]').click();
+  const overlay=page.locator('#daemon-config-overlay.open'); await expect(overlay).toBeVisible();
+  await expect(overlay.locator('.daemon-config-header')).toBeVisible();
+  const overlayBox=await overlay.boundingBox(); expect(overlayBox.x).toBeGreaterThanOrEqual(0); expect(overlayBox.x+overlayBox.width).toBeLessThanOrEqual(375);
+  for (const f of [0,0.5,1]) {
+    const box=await overlay.locator('.daemon-config-body').evaluate((el,fraction)=>{ el.scrollTop=(el.scrollHeight-el.clientHeight)*fraction; const r=el.getBoundingClientRect(),h=document.querySelector('.daemon-config-header').getBoundingClientRect(); const fields=[...el.querySelectorAll('.daemon-config-field')].map(n=>n.getBoundingClientRect()).filter(n=>n.bottom>r.top && n.top<r.bottom).map(n=>({left:n.left,right:n.right,top:n.top})); return {left:r.left,right:r.right,top:r.top,headerBottom:h.bottom,scroll:el.scrollTop,scrollHeight:el.scrollHeight,clientHeight:el.clientHeight,fields}; },f);
+    expect(box.scrollHeight).toBeGreaterThan(box.clientHeight); expect(Math.abs(box.scroll-(box.scrollHeight-box.clientHeight)*f)).toBeLessThan(2); expect(box.left).toBeGreaterThanOrEqual(0); expect(box.right).toBeLessThanOrEqual(375); expect(box.top).toBeGreaterThanOrEqual(box.headerBottom-1);
+    const hit=await overlay.locator('.daemon-config-btn.primary').evaluate(el=>{const b=el.getBoundingClientRect(),n=document.elementFromPoint(b.left+b.width/2,b.top+b.height/2);return n===el||el.contains(n)}); expect(hit).toBe(true);
+    expect(box.fields.length).toBeGreaterThan(0); for(const field of box.fields) { expect(field.left).toBeGreaterThanOrEqual(0); expect(field.right).toBeLessThanOrEqual(375); if(field.top>=box.top) expect(field.top).toBeGreaterThanOrEqual(box.headerBottom-1); }
+  }
+  const fields=overlay.locator('.daemon-config-field');
+  for(let i=0;i<await fields.count();i++) {const item=fields.nth(i); await item.evaluate(el=>el.scrollIntoView({block:'center',behavior:'instant'})); const b=await item.boundingBox(),h=await overlay.locator('.daemon-config-header').boundingBox(),foot=await overlay.locator('.daemon-config-footer').boundingBox(); expect(b.y).toBeGreaterThanOrEqual(h.y+h.height-1); expect(b.y+b.height).toBeLessThanOrEqual(foot.y+1);}
+  const out = process.env.MOBILE_AUDIT_EVIDENCE;
+  if (out) { mkdirSync(out, { recursive: true }); await page.screenshot({ path: join(out, '守护进程.png'), animations: 'disabled' }); }
+});
+
 test('T1 page geometry: adopted full-bleed in daemon page, radius 0 (dock 批换代判据)', async ({ page }) => {
   const errors = watchErrors(page);
   await openPanel(page);
@@ -153,13 +209,13 @@ test('T2 process row anatomy: status dot + name + :port + command + autostart sw
   await expect(r1.locator('a.daemon-name')).toHaveAttribute('href', 'http://localhost:8111');
   await expect(r1.locator('.daemon-port')).toHaveText(':8111');
   await expect(r1.locator('.daemon-command')).toHaveText('npm run dev');
-  await expect(r1.locator('.daemon-autostart-input')).toBeChecked();
+  await expect(r1.locator('[role="switch"][data-autostart-id]')).toBeChecked();
 
   // 行 2 watcher：starting 点 + 非链名 + 开关未选。
   const r2 = rows.nth(1);
   await expect(r2.locator('.daemon-status')).toHaveClass(/starting/);
   await expect(r2.locator('a.daemon-name')).toHaveCount(0);
-  await expect(r2.locator('.daemon-autostart-input')).not.toBeChecked();
+  await expect(r2.locator('[role="switch"][data-autostart-id]')).not.toBeChecked();
   // 行 3 legacy：error 点。
   await expect(rows.nth(2).locator('.daemon-status')).toHaveClass(/error/);
   expect(errors).toEqual([]);
@@ -180,9 +236,9 @@ test('T4 autostart toggle flips → PUT /api/daemons/:id (open point ④)', asyn
   const errors = watchErrors(page);
   await openPanel(page);
   const r1 = page.locator('#daemon-panel .daemon-row').nth(0);
-  const r1input = r1.locator('.daemon-autostart-input');
-  // 开关 = 自绘 track/thumb（input 本体不可视点）—— 用户路径点 label。
-  const r1label = r1.locator('label.daemon-autostart');
+  const r1input = r1.locator('[role="switch"][data-autostart-id]');
+  // 共享开关以 role=switch 暴露状态和点击入口。
+  const r1label = r1input;
   await expect(r1input).toBeChecked();
   await r1label.click();
   await expect(r1input).not.toBeChecked();

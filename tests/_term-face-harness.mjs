@@ -9,7 +9,7 @@
 //      必须 ≥ 4.5:1（正文文本门槛）；
 //   ③ 结构/行为断言：词条链接字色 = 令牌（不是绿）、裸词同色、索引块 summary
 //      文案 = 「词条索引（N）」、默认收起、幂等（连调两次不叠块）、0 引用不渲染、
-//      气泡第三行（来源文档 / 跳转提示）撤掉后不占位。
+//      共享卡的元信息元素与内容。
 //
 // 🔴 诚实申报（哪里是真、哪里是夹具）：
 //   · 真：CSS 是**磁盘上的真文件**（page.route 从 src/main/resources/web 注入，
@@ -96,10 +96,10 @@ const FIXTURE = `<!doctype html>
     </div>
   </div>
 </div>
-<div class="nf-term-tip" id="tip" style="display:block; left:24px; bottom:24px">
-  <div class="tt">词条注册表</div>
-  <div class="ts">由正文块锚段落派生的显式词条集合，「[[名]]」无锚引用在文档腿全失败后落到它上面。</div>
-  <div class="td"></div>
+<div class="document-term-card" id="tip" style="display:block; left:24px; bottom:24px">
+  <strong>词条注册表</strong>
+  <div class="document-term-summary">由正文块锚段落派生的显式词条集合，「[[名]]」无锚引用在文档腿全失败后落到它上面。</div>
+  <div class="document-term-meta">类型：词条　出处：glossary.md</div>
 </div>
 </body>
 </html>`;
@@ -227,7 +227,7 @@ async function main() {
           termLink: cs('#t1'),
           bareTerm: cs('#t2'),
           fallbackTerm: cs('#t3'),
-          tipDocLine: cs('#tip .td'),
+          tipMetaText: document.querySelector('#tip .document-term-meta')?.textContent,
           tipBox: (() => { const e = document.querySelector('#tip'); const r = e.getBoundingClientRect();
             return { w: +r.width.toFixed(1), h: +r.height.toFixed(1) }; })(),
           indexSummary: cs('.nf-term-index summary'),
@@ -267,7 +267,9 @@ async function main() {
       // 令牌读出来是 `120 160 220` 形态、computed color 是 `rgb(120, 160, 220)`，
       // 两侧都归一成数值三元组再比（比较字面量格式 = 假红）。
       const inkTriple = parseColor(read.termLink.color).slice(0, 3).join(',');
-      const tokenTriple = (String(read.tokens.dsLinkTerm || '').match(/[\d.]+/g) || []).slice(0, 3).map(Number).join(',');
+      const token = String(read.tokens.dsLinkTerm || '');
+      const hex = /^#([0-9a-f]{6})$/i.exec(token);
+      const tokenTriple = hex ? [0, 2, 4].map(i => parseInt(hex[1].slice(i, i + 2), 16)).join(',') : (token.match(/[\d.]+/g) || []).slice(0, 3).map(Number).join(',');
       assert(`[${scheme}/${width}] 词条链接字色 = --ds-link-term`,
         !!tokenTriple && inkTriple === tokenTriple,
         `link=${read.termLink.color} token=${read.tokens.dsLinkTerm}`);
@@ -277,8 +279,8 @@ async function main() {
         `fallback=${read.fallbackTerm.color}`);
       assert(`[${scheme}/${width}] 词条蓝不是品牌绿（绿 #07c160 = 7,193,96）`,
         inkTriple !== '7,193,96', inkTriple);
-      assert(`[${scheme}/${width}] 气泡第三行（文档名/跳转提示）空则收起`,
-        read.tipDocLine.display === 'none', `display=${read.tipDocLine.display}`);
+      assert(`[${scheme}/${width}] 共享卡元信息存在且内容正确`,
+        read.tipMetaText === '类型：词条　出处：glossary.md', `text=${read.tipMetaText}`);
 
       // ── 断言：375 宽不溢出 ────────────────────────────────────
       assert(`[${scheme}/${width}] 索引条目在 ${width} 宽不横向溢出`,

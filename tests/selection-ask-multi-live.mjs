@@ -187,6 +187,8 @@ try {
     if (!warm.ok || hits === 0) throw Error('warmup did not reach loopback model');
     await page.waitForFunction(() => window.__frames.some(f => f.type === 'historyPage'), null, { timeout: 30000 });
     // 两条真实行：我方 user（右气泡）→ 对方 ai（左气泡），连续相邻 ⇒ 跨气泡连续选区。
+    // Warmup is persisted in the shared session across viewports; select the fixture AI,
+    // never the first historical AI (which may be hidden or covered by the mobile panel).
     await page.evaluate(async () => {
       const chat = await import('/js/chat.js');
       chat.renderUserBubble('first user line for multi select', [], Date.now(), { msgId: 'multi-fixture-user' });
@@ -194,7 +196,7 @@ try {
       persist.restoreFromBackendHistory([{ type: 'ai', text: 'second ai line for multi select' }], { scrollToBottom: false, busyTail: false });
     });
     await page.waitForTimeout(400);
-    const aiId = await page.evaluate(() => document.querySelector('#chat .row.ai')?.dataset.msgId || null);
+    const aiId = await page.evaluate(() => [...document.querySelectorAll('#chat .row.ai')].find(row => row.textContent.includes('second ai line for multi select'))?.dataset.msgId || null);
     if (!aiId) throw Error('no ai row');
     // 选区：从 user 行首到 ai 行第 6 字（跨两条气泡）。
     await page.evaluate(() => document.querySelector('#chat .row[data-msg-id="multi-fixture-user"]').scrollIntoView({ block: 'center' }));
@@ -221,9 +223,9 @@ try {
     else console.log(`[${label}] chip cover=${await page.evaluate(() => window.__chipCover)}`);
     const clickErr = chipCount && visIdx ? await page.locator('#chat .bubble a.nf-term.selection-explain-chip[data-probe-chip="1"]').first().click({ timeout: 4000 }).then(() => null, (e) => String(e).slice(0, 200)) : 'no-chip';
     if (clickErr) console.log(`[${label}] chip click: ${clickErr}`);
-    try { await page.waitForFunction((a) => { const x = document.querySelector('.nf-term-tip'); return !!x && x.style.display !== 'none' && x.textContent.includes(a); }, ANSWER, { timeout: 20000 }); expanded = true; } catch (e) { console.log(`[${label}] explain wait failed: ${String(e).slice(0, 160)}`); }
-    answerText = await page.locator('.nf-term-tip .ts').allTextContents();
-    const tipState = await page.evaluate(() => { const t = document.querySelector('.nf-term-tip'); return { display: t ? t.style.display : 'absent', td: t ? t.querySelector('.ts')?.textContent.slice(0, 60) : null, aiEl: document.querySelector('.selection-explain-answer')?.textContent.slice(0, 60) || null, chips: document.querySelectorAll('.bubble a.nf-term.selection-explain-chip').length }; });
+    try { await page.waitForFunction((a) => { const x = document.querySelector('.document-term-card'); return !!x && x.style.display !== 'none' && x.textContent.includes(a); }, ANSWER, { timeout: 20000 }); expanded = true; } catch (e) { console.log(`[${label}] explain wait failed: ${String(e).slice(0, 160)}`); }
+    answerText = await page.locator('.document-term-card .document-term-summary').allTextContents();
+    const tipState = await page.evaluate(() => { const t = document.querySelector('.document-term-card'); return { display: t ? t.style.display : 'absent', td: t ? t.querySelector('.document-term-summary')?.textContent.slice(0, 60) : null, aiEl: document.querySelector('.selection-explain-answer')?.textContent.slice(0, 60) || null, chips: document.querySelectorAll('.bubble a.nf-term.selection-explain-chip').length }; });
     console.log(`[${label}] tipState ${JSON.stringify(tipState)}`);
     // M4'（新契约）：发送的是 selectionExplain 帧（小模型路由），不得有 ask 帧。
     const frames = await page.evaluate(() => window.__sent.filter(f => f.type === 'selectionExplain').map(f => String(f.question || '')));

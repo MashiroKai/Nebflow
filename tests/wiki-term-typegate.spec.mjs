@@ -20,6 +20,8 @@ import { readFileSync, mkdirSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+const { tokenizer } = createRequire(import.meta.url)('acorn');
 import { installTicketMock } from './nf-ticket-mock.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -27,7 +29,7 @@ const WEB_DIR = resolve(HERE, '../src/main/resources/web');
 const GATE_SRC = join(WEB_DIR, 'js/mdHtmlGate.js');
 // package.json 无 "type": "module"——node 直 import 会按 CJS 解。data-URL 导入
 // 真实文件字节（零转译），判据单点的 node 面单测与浏览器消费同一份源码。
-const { MD_HTML_EXTENSIONS, isMdHtmlFile, extOf } = await import(
+const { MD_HTML_EXTENSIONS, isMdHtmlFile, isAskableFile, extOf } = await import(
   'data:text/javascript;base64,' + Buffer.from(readFileSync(GATE_SRC, 'utf8')).toString('base64')
 );
 const PORT = Number(process.env.PORT || 8217);
@@ -73,10 +75,19 @@ ok('U1e extOf 归一读数（与 scala MdHtmlGate.extOf 同语义）',
 // ── U2 单点纪律静态钉 ───────────────────────────────────────────────────────
 const askDockSrc = readFileSync(join(WEB_DIR, 'js/askDock.js'), 'utf8');
 const mdViewerSrc = readFileSync(join(WEB_DIR, 'js/viewers/markdown.js'), 'utf8');
+// Tokenize rather than search comments: no local extension literals or regexes may
+// recreate the markdown/html gate. The imported askable predicate covers md/html,
+// ebooks and PDF via the same gate, at both assignment and submission guards.
+const askTokens = [...tokenizer(askDockSrc, { ecmaVersion: 'latest', sourceType: 'module' })];
+const localMdHtmlPredicate = askTokens.some((token) =>
+  (token.type.label === 'string' && /\.(?:md|markdown|html|htm)(?![a-z])/i.test(token.value)) ||
+  (token.type.label === 'regexp' && /(?:\\\\\.|\[\\\\\.\])(?:md|markdown|html|htm)/i.test(token.value.pattern))
+);
 ok('U2a askDock.js 消费 mdHtmlGate.js 单点（import + 赋值处/守卫调用点在场）',
-  /from '\.\/mdHtmlGate\.js'/.test(askDockSrc) &&
-  /isMdHtmlFile\(entry\.absPath\)/.test(askDockSrc) &&
-  askDockSrc.includes('isMdHtmlFile(currentFile)'),
+  /import\s*\{[^}]*\bisAskableFile\b[^}]*\}\s*from\s*['"]\.\/mdHtmlGate\.js['"]/.test(askDockSrc) &&
+  /\bisAskableFile\s*\(/.test(askDockSrc) &&
+  !localMdHtmlPredicate &&
+  ['/note.md', '/page.html', '/book.epub', '/paper.pdf'].every(isAskableFile),
   '');
 ok('U2b viewers/markdown.js 消费 mdHtmlGate.js 单点（import + 渲染闸调用点在场）',
   /from '\.\.\/mdHtmlGate\.js'/.test(mdViewerSrc) &&

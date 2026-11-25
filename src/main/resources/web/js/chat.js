@@ -839,7 +839,7 @@ export function appendAiText(text, mark) {
     bubble._nfSeg = seg;
     bubble._nfRound = mark.round;
   }
-  if (_aiBodyStream) {
+  if (_aiBodyStream && view.id !== 'primary') {
     // rAF 合批 ⇒ 每帧至多一次渲染（多帧 delta 合并成一帧），尾块增量 ⇒ 单帧成本
     // 与「未闭合尾块长度」同阶而非与累积全文同阶。跟随钉底收进 rAF 同拍（与
     // agent/ask 两腿同构）——因此这里不再同步读一次 scrollHeight（把该几何读留给
@@ -916,7 +916,21 @@ export function finishAi(durationMs, model) {
       bubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '', true, rootFace ? { report: true } : undefined);
       if (rootFace) markZeroBlockFace(bubble, activeView.stream.aiText || '');
     }
+    if (activeView.dom.chat.id === 'chat') bubble.querySelectorAll('details.nf-human-details').forEach(el => el.remove());
     bubble._nfText = activeView.stream.aiText || '';
+    const termText = bubble._nfText;
+    void import('./viewers/markdown.js').then(({ termLinkify }) => {
+      if (!bubble.isConnected || bubble._nfText !== termText) return;
+      return termLinkify(bubble, null, () => bubble.isConnected && bubble._nfText === termText).then(() => {
+        if (!bubble.isConnected || bubble._nfText !== termText) return;
+        bubble.querySelectorAll('a.nf-wikilink-term').forEach((link) => {
+          link.addEventListener('click', (event) => {
+            event.preventDefault();
+            void import('./termTip.js').then(({ termTapExpand }) => termTapExpand(link, null));
+          });
+        });
+      });
+    }).catch(() => {});
     bubble._nfRendered = true;
     if (askBox) bubble.appendChild(askBox);
     activeView.stream.aiStreamAskBox = null;
@@ -2311,16 +2325,11 @@ function fillOptionText(host, label, desc, wrapInSpan) {
 /** 媒体选项的**卡片体**（askuser-media 批 2026-11-18）：媒体面在上、文字在下
  *  （label + 可选 description），整块占满选项行宽。
  *
- *  选中语义（本批裁定）：点击**媒体面本身**也要选中该选项——媒体组的叠卡组件
- *  把「面内真点击」经 `onPick` 回灌到选项按钮的既有 pick 逻辑（同一个 `onclick`），
- *  而拖划/横滑翻页、`展开 N`、视频播放键各自消费自己的事件（不选中）。
- *  `btn.onclick` 在此刻**尚未赋值**（调用方随后才挂）——闭包惰性求值，点击时才读。 */
-function buildOptionMediaBody(pv, label, desc, btn) {
+ *  媒体组消费自身操作；文字及媒体组外的选项区域仍由选项按钮处理。 */
+function buildOptionMediaBody(pv, label, desc) {
   const body = document.createElement('div');
   body.className = 'option-media-body';
-  const node = buildAskPreviewNode(pv, {
-    onPick: () => { if (typeof btn.onclick === 'function') btn.onclick(); },
-  });
+  const node = buildAskPreviewNode(pv);
   if (node) body.appendChild(node);
   fillOptionText(body, label, desc, true);
   return body;
@@ -2860,7 +2869,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
           btn.appendChild(check);
           if (mediaPreview) {
             btn.classList.add('has-media');
-            btn.appendChild(buildOptionMediaBody(preview, label, desc, btn));
+            btn.appendChild(buildOptionMediaBody(preview, label, desc));
           } else {
             const pvNode = buildOptionPreviewEl(preview);
             if (pvNode) btn.appendChild(pvNode);
@@ -2879,7 +2888,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
           if (preview) btn.classList.add('has-preview');
           if (preview && askPreviewKind(preview) === 'media') {
             btn.classList.add('has-media');
-            btn.appendChild(buildOptionMediaBody(preview, label, desc, btn));
+            btn.appendChild(buildOptionMediaBody(preview, label, desc));
           } else if (pvNode) {
             btn.appendChild(pvNode);
             fillOptionText(btn, label, desc, true);
@@ -4783,9 +4792,9 @@ const THINKING_WINDOW_EM = THINKING_WINDOW_MAX_LINES * 1.5; // 13px 档行高 1.
 /** 把思考内容窗钉在上限并写行数计数读数（源文本行数，非渲染行数）。
  *  写点＝四处：live rAF（appendThinkingDelta 流式帧）／finishThinking（终态
  *  帧）／persistence 两条历史重放腿——四点同一入口，读数与窗形不分家。 */
-export function applyThinkingWindowCap(contentEl, text) {
+export function applyThinkingWindowCap(contentEl, text, bareProcess = false) {
   if (!contentEl) return;
-  contentEl.style.maxHeight = THINKING_WINDOW_EM + 'em';
+  contentEl.style.maxHeight = bareProcess || contentEl.closest('[data-nf-bare-process-rows="1"]') ? 'none' : THINKING_WINDOW_EM + 'em';
   const lines = String(text || '').split('\n').length;
   contentEl.dataset.nfThinkLines = String(lines);
 }
@@ -4829,7 +4838,7 @@ export function appendThinkingDelta(delta, mark) {
     // computes 思考 <N>s from nfStart/nfEnd on the bubble).
     bubble.dataset.nfStart = String(Date.now());
     const label = document.createElement('div');
-    label.className = 'thinking-label thinking-streaming collapsible expanded';
+    label.className = bareProcessRows(activeView) ? 'thinking-label thinking-streaming' : 'thinking-label thinking-streaming collapsible expanded';
     const labelText = document.createElement('span');
     labelText.className = 'thinking-label-text';
     labelText.textContent = t('chat.thinkingInProgress');
@@ -4855,7 +4864,7 @@ export function appendThinkingDelta(delta, mark) {
     appendChatRow(chat, row);
     // Click/Enter folds or re-reveals the live content (rAF keeps rendering
     // into it); finishThinking auto-collapses regardless at stream end.
-    bindCollapsibleToggle(label, () => content);
+    if (!bareProcessRows(activeView)) bindCollapsibleToggle(label, () => content);
     activeView.stream.currentThinkingBubble = bubble;
   }
   // stream-ux §二.1.1: 思考 = 单行流式揭示 — the work-line reveals the same
@@ -4960,14 +4969,16 @@ export function finishThinking() {
     // text「思考过程」, streaming dots removed, no chevron.
     if (label) {
       label.classList.remove('thinking-streaming');
-      label.classList.add('collapsible');
+      if (!bareProcessRows(activeView)) label.classList.add('collapsible');
       label.querySelectorAll('.thinking-dot').forEach((d) => d.remove());
       const labelText = label.querySelector('.thinking-label-text');
       if (labelText) labelText.textContent = t('chat.thinkingLabel');
-      if (content) content.style.display = 'none';
-      label.classList.remove('expanded');
-      label.setAttribute('aria-expanded', 'false');
-      bindCollapsibleToggle(label, () => content);
+      if (!bareProcessRows(activeView)) {
+        if (content) content.style.display = 'none';
+        label.classList.remove('expanded');
+        label.setAttribute('aria-expanded', 'false');
+        bindCollapsibleToggle(label, () => content);
+      }
     } else if (content) {
       content.style.display = 'none';
     }
@@ -5029,16 +5040,18 @@ export function finalizeStreamingFaces(view) {
     const content = bubble.querySelector('.thinking-content');
     if (label) {
       label.classList.remove('thinking-streaming');
-      label.classList.add('collapsible');
-      label.classList.remove('expanded');
-      label.setAttribute('aria-expanded', 'false');
+      if (!bareProcessRows(v)) {
+        label.classList.add('collapsible');
+        label.classList.remove('expanded');
+        label.setAttribute('aria-expanded', 'false');
+        if (content) bindCollapsibleToggle(label, () => content);
+      }
       label.querySelectorAll('.thinking-dot').forEach((d) => d.remove());
       const labelText = label.querySelector('.thinking-label-text');
       if (labelText) labelText.textContent = t('chat.thinkingLabel');
-      if (content) bindCollapsibleToggle(label, () => content);
     }
     if (content) {
-      content.style.display = 'none';
+      content.style.display = bareProcessRows(v) ? '' : 'none';
       content.querySelectorAll('.cursor').forEach((el) => el.remove());
     }
   });

@@ -49,6 +49,13 @@ final case class BrowserRecord(
  */
 object BrowserSessions:
   private val logger = nebflow.shared.NebflowLogger.forName("nebflow.browser.session")
+  val takeoverRegistry = new BrowserTakeoverRegistry
+  private val creator = new ThreadLocal[String]()
+
+  def withCreator[A](owner: Option[String])(body: => A): A =
+    owner.foreach(creator.set)
+    try body
+    finally creator.remove()
 
   /** 运行期句柄：页面 CDP 连接 + 最近一次快照的 ref → backendDOMNodeId 映射。 */
   final class Handle(val record: BrowserRecord, val page: CdpConnection):
@@ -202,7 +209,9 @@ object BrowserSessions:
             attach(rec)
       case _ =>
         closeHandle(name)
+        takeoverRegistry.remove(name)
         val rec = launch(name, home)
+        Option(creator.get()).filter(_.nonEmpty).foreach(owner => takeoverRegistry.created(name, owner))
         writeRecord(home, rec)
         attach(rec)
 
@@ -219,6 +228,11 @@ object BrowserSessions:
       closeHandle(name)
       attach(rec)
     }
+
+  /** Caller must already hold a takeover lease; callbacks must not block the CDP listener. */
+  private[nebflow] def takeoverPage(name: String): CdpConnection =
+    if !takeoverRegistry.isTakingOver(name) then throw new IllegalStateException("接管未授权")
+    existing(name).page
 
   // ── 页面读数 ────────────────────────────────────────────────────────
 
@@ -263,11 +277,12 @@ object BrowserSessions:
   // ── 动词实现 ────────────────────────────────────────────────────────
 
   /** browser_open：打开/复用会话；url 非空则导航。返回页面读数（脱敏）。 */
-  def open(name: String, url: Option[String], home: Path = homeRoot()): String = synchronized {
-    val h = ensure(name, home)
-    url.foreach(u => navigate(h, u))
-    pageInfoJson(name, h).spaces2
-  }
+  def open(name: String, url: Option[String], home: Path = homeRoot()): String =
+    takeoverRegistry.withVerb(name) {
+      val h = ensure(name, home)
+      url.foreach(u => navigate(h, u))
+      pageInfoJson(name, h).spaces2
+    }
 
   /** browser_snapshot：无障碍树 + ref 映射（替换上一份映射——旧 ref 即刻失效）。 */
   def snapshot(name: String, maxNodes: Int, home: Path = homeRoot()): String =
@@ -394,6 +409,16 @@ object BrowserSessions:
   private def stamp(): String =
     DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS").format(java.time.LocalDateTime.now)
 
+  private[browser] def writePrivateScreenshot(file: Path, bytes: Array[Byte]): Unit =
+    import java.nio.file.attribute.PosixFilePermissions
+    if Files.getFileStore(file.getParent).supportsFileAttributeView("posix") then
+      val attrs = PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------"))
+      Files.createFile(file, attrs)
+      Files.write(file, bytes)
+    else
+      Files.write(file, bytes)
+    ()
+
   /** browser_screenshot：PNG 落盘到 screenshots/<session>/，返回绝对路径（视觉判定请用 Read 打开）。 */
   def screenshot(name: String, fullPage: Boolean, home: Path = homeRoot()): String =
     val h = existing(name, home)
@@ -406,7 +431,7 @@ object BrowserSessions:
     val dir = home.resolve("screenshots").resolve(name)
     Files.createDirectories(dir)
     val file = dir.resolve(stamp() + ".png")
-    Files.write(file, Base64.getDecoder.decode(data))
+    writePrivateScreenshot(file, Base64.getDecoder.decode(data))
     file.toAbsolutePath.toString
 
   /**
@@ -484,7 +509,8 @@ object BrowserSessions:
    * browser_close：优雅 Browser.close → 仅当 pid 仍是本会话记录的 Chrome 可执行文件时发 SIGTERM
    * （防 pid 复用误杀）→ 校验 pid 消失与端口无监听，把校验结果写进回执。profile 保留。
    */
-  def close(name: String, home: Path = homeRoot()): String = synchronized {
+  def close(name: String, home: Path = homeRoot()): String = takeoverRegistry.withVerb(name) {
+    takeoverRegistry.remove(name)
     closeHandle(name)
     readRecord(home, name) match
       case None => s"no session '$name' (nothing to close)"

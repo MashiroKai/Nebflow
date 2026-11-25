@@ -27,33 +27,43 @@ class DualModeToolFaceSpec extends FunSuite:
       buildAllowedToolSet(defn, 0, delegateSession = delegateSession, delegateMode = delegateMode)
 
     def askFace(defn: AgentDef): Set[String] =
-      buildAllowedToolSet(defn, 1, askSession = true, delegateSession = true, delegateMode = Some("dispatcher"))
+      buildAllowedToolSet(defn, 0, askSession = true)
 
-  test("Ask effective face stays independent of dispatcher and declared tools") {
-    val definition = AgentDef(name = "subagent", description = "", tools = List("*"))
-    val face = CoreProbe.askFace(definition)
-    assertEquals(
-      face,
-      Set(
-        "message_record_search",
-        "send_message_to_main_chat",
-        "ask_edit",
-        "ask_write",
-        "PdfPage",
-        "Card",
-        "Read",
-        "Glob",
-        "Grep",
-        "WebSearch",
-        "WebFetch",
-        "Bash",
-        // gitviz 只读件（分支管理问答批 2026-11-19 第二轮：ask-gv-* 会话专属，
-        // 工具内自带 GITVIZ_FORBIDDEN 作用域闸，故属 Ask 面）
-        "gitviz_graph",
-        "gitviz_handoff"
-      )
-    )
-    assert(!face.contains("GitQuery"))
+    def gitvizAndAskFace(defn: AgentDef): Set[String] =
+      buildAllowedToolSet(defn, 0, askGitViz = true, askSession = true)
+
+    def standaloneFace(defn: AgentDef): Set[String] = buildAllowedToolSet(defn, 0)
+
+  test("real Ask and GitViz definitions share ordinary standalone authorization") {
+    val file = tmp / "notes.md"
+    os.write(file, "notes")
+    val registry = new nebflow.core.ask.AskSessionRegistry(tmp / "registry")
+    val sources = new nebflow.core.ask.AskContextSources:
+      def fileStat(p: String) = cats.effect.IO.pure(None)
+      def fileText(p: String) = cats.effect.IO.pure(None)
+      def graphNeighbors(p: String) = cats.effect.IO.pure(Nil)
+      def recallHits(q: String) = cats.effect.IO.pure(Nil)
+      def recallDbMtime = cats.effect.IO.pure(0L)
+      def graphVersion = cats.effect.IO.pure("")
+    val services = nebflow.core.ask.AskServices(registry, sources, new nebflow.core.ask.AskPromptCache)
+    val fileBinding = registry.bind(file.toString, file.last).unsafeRunSync()
+    val gvBinding = registry.bind(tmp.toString, "project", explicitId = "ask-gv-12345678", kind = nebflow.core.ask.AskBinding.KindGitViz).unsafeRunSync()
+    val ask = services.agentDefFor(fileBinding.id).unsafeRunSync()
+    val gitviz = services.agentDefFor(gvBinding.id).unsafeRunSync()
+    val standalone = AgentDef(name = "ordinary-standalone", description = "", tools = Nil)
+    val ordinary = CoreProbe.standaloneFace(standalone)
+    val askFace = CoreProbe.askFace(ask)
+    val gitvizFace = CoreProbe.gitvizAndAskFace(gitviz)
+    assertEquals(askFace -- nebflow.core.ask.AskSessions.AskExclusiveTools, ordinary)
+    assertEquals(gitvizFace -- nebflow.core.ask.AskSessions.AskExclusiveTools, ordinary)
+    assert(AgentCore.BaseTools.subsetOf(ordinary))
+    val privileged = Set("Project", "AskHost", "AskHostReply", "AskHostClarify")
+    assertEquals(askFace.intersect(privileged), Set.empty[String])
+    assertEquals(gitvizFace.intersect(privileged), Set.empty[String])
+    assertEquals(ask.pluginMcpServers, standalone.pluginMcpServers)
+    assertEquals(ask.pluginTools, standalone.pluginTools)
+    assertEquals(gitviz.pluginMcpServers, standalone.pluginMcpServers)
+    assertEquals(gitviz.pluginTools, standalone.pluginTools)
   }
 
   test("non-Ask roles retain Bash without gaining Ask-exclusive tools") {
@@ -362,26 +372,21 @@ class DualModeToolFaceSpec extends FunSuite:
     assert(line.contains("Dispatcher mode"), "the section is unmistakably labeled for the dispatcher mode")
   }
 
-  test("F12 三面隔离口径统一：node/delegate/dispatcher 同句自主隔离 + main 保护；旧禁令零残留") {
-    // 自管隔离批：托管树退役后节点/delegate/dispatcher 三面统一为「按需自建自管
-    // branch/worktree + 永不直提 main」；旧「never create branches or worktrees」
-    // 全封禁句在三面均不得残留（生成节点面 = Roles.NebflowNodePrompt 经 entry 路径
-    // 实读，判据门 PromptFaceSplitSpec）。
-    val faces = List(
-      "node" -> nebflow.prompts.PromptCatalog.Roles.NebflowNodePrompt,
-      "delegate" -> nebflow.prompts.PromptCatalog.Roles.NebflowDelegatePrompt,
-      "dispatcher" -> nebflow.core.tools.DelegateTool.DispatcherDisciplineLine
-    )
-    for (name, face) <- faces do
-      assert(
-        face.contains("own branch/worktree"),
-        s"[$name] on-demand self-isolation is stated"
-      )
-      assert(face.contains("straight to `main`"), s"[$name] the main-protection seal is stated")
-      assert(
-        !face.contains("never create branches or worktrees"),
-        s"[$name] the retired blanket isolation ban must be gone"
-      )
+  test("F12 repository-specific branch discipline and on-demand isolation across faces") {
+    // Author order 2026-11-22 20:08, #3143: generic prompts follow the target
+    // repository's rules rather than imposing Stand's branch policy everywhere.
+    val node = nebflow.prompts.PromptCatalog.Roles.NebflowNodePrompt
+    val delegate = nebflow.prompts.PromptCatalog.Roles.NebflowDelegatePrompt
+    val dispatcher = nebflow.core.tools.DelegateTool.DispatcherDisciplineLine
+    assert(node.contains("Follow the target repository's branch and commit rules and the branch named in the brief"))
+    assert(delegate.contains("Branch discipline: follow the target repository's branch and commit rules and the branch named in the brief"))
+    for (name, face) <- List("node" -> node, "delegate" -> delegate) do
+      assert(face.contains("create and manage your own branch/worktree with git"), s"[$name] self-isolation")
+      assert(!face.contains("never commit straight to"), s"[$name] no generic main-branch ban")
+    assert(dispatcher.contains("never commits straight to `main`"), "dispatcher main-protection seal")
+    for (name, face) <- List("node" -> node, "delegate" -> delegate, "dispatcher" -> dispatcher) do
+      assert(face.contains("own branch/worktree"), s"[$name] on-demand self-isolation")
+      assert(!face.contains("never create branches or worktrees"), s"[$name] retired isolation ban")
   }
 
   test("F8 SubAgentTask mode 字段：缺键容忍（旧盘面照读解码 None）；在键透传") {

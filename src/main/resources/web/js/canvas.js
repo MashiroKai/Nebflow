@@ -26,7 +26,7 @@ import { setSideBarCollapsed, isMobileViewport } from './activityBar.js';
 // 切法单源在 capsuleLabel.js（桌面/触屏腿与手机层腿共用一份），本模块只消费。
 import { splitCapsuleLabel, createTextMeasurer, capsuleTextAvail, CAPSULE_ELLIPSIS } from './capsuleLabel.js';
 // 文档收藏（2026-11-23 前端功能批）：胶囊左座收藏钮 + 侧边栏收藏区；存储与渲染单源在 canvasFavorites.js。
-import { toggleFavoritePath, isFavoritePath, mountSidebarFavorites, onFavoritesChange } from './canvasFavorites.js';
+import { toggleFavoritePath, isFavoritePath, onFavoritesChange } from './canvasFavorites.js';
 // keyboard-first 三期：叠卡/胶囊环/卡窗的键位搬进规则表（keyRules.js），本模块
 // 提供三件事——① 状态 → 上下文键（派生，无推送）② 动作函数（deckKeyAction 等）
 // ③ 不再持有任何 document 级 keydown 监听。
@@ -2150,7 +2150,7 @@ async function openOptimisticFile({ id, title, absPath, pinned }) {
   return previewWithProgress({
     id,
     title,
-    fileName: title,
+    fileName: (absPath && absPath.split('/').pop()) || title,
     absPath,
     pinned,
     cacheKey: 'nf:' + absPath,
@@ -2160,11 +2160,20 @@ async function openOptimisticFile({ id, title, absPath, pinned }) {
     allowExcluded: true,
     timeoutMs: OPTIMISTIC_FILE_TIMEOUT_MS,
     load: async ({ onProgress, signal }) => {
-      const [{ ticketUrl }, { fetchBlobWithProgress }] = await Promise.all([
+      const [{ ticketUrl, reMint }, { fetchBlobWithProgress }] = await Promise.all([
         import('./nfTicket.js'),
         import('./nfFileCache.js'),
       ]);
-      const res = await fetchBlobWithProgress(await ticketUrl(absPath), onProgress, { signal });
+      let res;
+      try {
+        res = await fetchBlobWithProgress(await ticketUrl(absPath), onProgress, { signal });
+      } catch (error) {
+        // A gateway restart discards its in-memory tickets while this tab may
+        // still consider one fresh. Retry only explicit ticket expiry/loss.
+        if (signal.aborted || error.status !== 403 || !['invalid-ticket', 'expired'].includes(error.nfReason)) throw error;
+        const freshUrl = await reMint(absPath);
+        res = await fetchBlobWithProgress(freshUrl, onProgress, { signal });
+      }
       return { blob: res.blob, version: res.version };
     },
   });
@@ -2188,6 +2197,18 @@ export async function openWorkspaceItem(item) {
   // Pop 卡 / 引用跳转等显式打开无标记，语义不变。骨架错误腿（下方 error
   // 分支）同受此闸：恢复一个「文件不可读」骨架也是复活。
   const viaRestore = requestedFilePaths.delete(absPath) || requestedFilePaths.delete(item.path);
+
+  // BEGIN BROWSER TAKEOVER VIEWER GLUE
+  if (itemType === 'browser-takeover') {
+    if (!item.correlationId || !item.ticket) return;
+    if (tabs.has(id)) { setActiveTab(id); return; }
+    const entry = openTab(id, '浏览器人工接管', { type: 'browser-takeover' });
+    if (!entry) return;
+    const { mountBrowserTakeover } = await import('./viewers/browserTakeover.js');
+    entry.paneEl._nfViewerDispose = mountBrowserTakeover(entry.paneEl, item.ticket, item.correlationId);
+    return;
+  }
+  // END BROWSER TAKEOVER VIEWER GLUE
 
   // URL type — render the page in a sandboxed iframe. Handled before all
   // file logic: URL tabs have no absPath (scheduleFileRefresh skips them)
@@ -5050,6 +5071,9 @@ function initCapsuleRing() {
     const pop = hdr.querySelector('.canvas-pop-btn');
     const on = !!pop && getComputedStyle(pop).display !== 'none';
     root.style.setProperty('--cr-popw', on ? '32px' : '0px');
+    const fav = hdr.querySelector('.canvas-fav-btn');
+    const favVisible = !!fav && getComputedStyle(fav).display !== 'none';
+    root.style.setProperty('--cr-favw', favVisible ? `${fav.getBoundingClientRect().width + parseFloat(getComputedStyle(fav).marginRight) + parseFloat(getComputedStyle(hdr).columnGap)}px` : '0px');
   };
 
   const layout = () => {
@@ -5492,8 +5516,7 @@ export function quoteActiveCardRef() {
 
 /** Initialize canvas event listeners. Call on DOM ready. */
 export function initCanvas() {
-  // 文档收藏（2026-11-23）：侧边栏收藏区挂载（幂等）+ 收藏变化回写胶囊钮态。
-  mountSidebarFavorites();
+  // 收藏变化回写胶囊钮态；列表由独立收藏面板承载。
   onFavoritesChange(() => syncFavoriteButton());
   writerChanged('reader');
   canvasWriter.refresh();
@@ -6263,7 +6286,9 @@ function collectSerializableTabs() {
     // branch would re-open them as empty dead panes (canvas-tab-restore
     // has no renderer for type 'url'). Losing URL tabs across a reload is
     // acceptable per spec.
-    if (t.type === 'url') continue;
+    // BEGIN BROWSER TAKEOVER VIEWER GLUE
+    if (t.type === 'url' || t.type === 'browser-takeover') continue;
+    // END BROWSER TAKEOVER VIEWER GLUE
     // Skip retired panel tabs (2026-09-05 旧 UI 退役): the legacy
     // Teams/Flows panels no longer exist client-side — persisting them
     // would re-open dead panes on every reload.

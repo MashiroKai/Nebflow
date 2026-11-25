@@ -13,9 +13,9 @@ import { join } from 'node:path';
 import { ROOT, loadPlaywright, launchBrowser, createSession, settle } from '../scripts/lib/visual-harness.mjs';
 
 const PRIMARY = ROOT.includes('/.stand/worktrees/') ? ROOT.split('/.stand/worktrees/')[0] : ROOT;
-const SHOT_DIR = process.env.FAV_FLOW_SHOT_DIR || join(PRIMARY, '.stand', 'tmp', 'canvas-favorites-r2', 'evidence', 'screenshots');
+const SHOT_DIR = process.env.FAV_FLOW_SHOT_DIR || join(PRIMARY, '.stand', 'tmp', 'fav-star-corner', 'evidence', 'screenshots');
 const BOOT = { config: { llm: { providers: {} }, features: {} }, sessionId: 'fav-flow', messages: [] };
-const PAGE = '#canvas-fav-page';
+let PAGE = '#canvas-fav-page';
 // 1x1 透明 PNG：图片缩略图桩（真字节，避免破图干扰截图）。
 const PNG_1PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
 
@@ -73,13 +73,23 @@ async function starRoundTrip(page, tag, openPage) {
   // 手机端：文档页顶胶囊只在 canvas dock 页可见 ⇒ 先切到 canvas 页再找星标。
   if (tag === 'mobile') await page.evaluate(async () => (await import('/js/mobile/navController.js')).dockTo('canvas'));
   const starSel = tag === 'mobile' ? '.mf-cv-star' : '#canvas-fav-btn';
-  const headSel = tag === 'mobile' ? '.mf-cv-toolbar' : '#canvas-panel .canvas-header';
+  const headSel = '#canvas-panel .canvas-header';
   await page.waitForSelector(starSel, { state: 'attached', timeout: 15000 });
   await page.waitForFunction((q) => { const b = document.querySelector(q); return !!b && !b.hidden && b.getBoundingClientRect().width > 0; }, starSel, { timeout: 15000 });
   await settle(page, 300);
   const star = page.locator(starSel);
   const offClass = await star.getAttribute('class');
   check(`${tag}: 星标初始描边态`, offClass.indexOf('is-on') < 0);
+  if (tag === 'mobile') {
+    const geometry = await page.evaluate(() => {
+      const rect = sel => document.querySelector(sel).getBoundingClientRect();
+      const close = rect('.mf-cv-close'), star = rect('.mf-cv-star'), label = rect('.mf-strip-label'), quote = rect('.mf-strip-quote'), stack = rect('.mf-cv-stack');
+      return { closeRight: close.right, starLeft: star.left, starRight: star.right, labelLeft: label.left, labelRight: label.right, quoteLeft: quote.left, quoteRight: quote.right, stackLeft: stack.left, chips: document.querySelectorAll('.mf-strip-chip').length };
+    });
+    check('mobile: close, star, title, quote and stack do not overlap', geometry.closeRight <= geometry.starLeft && geometry.starRight <= geometry.labelLeft && geometry.labelRight <= geometry.quoteLeft && geometry.quoteRight <= geometry.stackLeft && geometry.chips === 1, JSON.stringify(geometry));
+    await shot(page, 'mobile-star-off.png', 'mobile star off and chip');
+    await shot(page, 'mobile-star-off-close.png', 'mobile star off close-up', starSel);
+  }
   await star.click({ timeout: 8000 }).catch(async (e) => {
     const diag = await page.evaluate(() => {
       const el = document.querySelector(starSel);
@@ -96,9 +106,21 @@ async function starRoundTrip(page, tag, openPage) {
   check(`${tag}: 点亮弹出成功 toast`, toast);
   // 胶囊/工具条截图按包围盒裁切（工具条为悬浮带，locator 截图会因稳定性等待超时）。
   try {
-    const box = await page.locator(headSel).first().boundingBox();
-    if (!box) throw new Error('no bounding box');
-    await page.screenshot({ path: join(SHOT_DIR, `${tag}-star-on-capsule.png`), clip: { x: Math.max(0, box.x - 8), y: Math.max(0, box.y - 8), width: box.width + 16, height: box.height + 16 }, timeout: 8000 });
+    if (tag === 'mobile') {
+      await page.locator('.mf-strip').waitFor({ state: 'visible' });
+      await page.screenshot({ path: join(SHOT_DIR, `${tag}-star-on-capsule.png`), clip: { x: 0, y: 0, width: 375, height: 160 }, timeout: 8000 });
+      await page.screenshot({ path: join(SHOT_DIR, 'mobile-star-on-page.png'), timeout: 8000 });
+    } else {
+      const box = await page.locator(headSel).first().boundingBox();
+      if (!box || box.height < 20) throw new Error('invalid capsule bounding box');
+      await page.screenshot({ path: join(SHOT_DIR, `${tag}-star-on-capsule.png`), clip: { x: Math.max(0, box.x - 8), y: Math.max(0, box.y - 8), width: box.width + 16, height: box.height + 16 }, timeout: 8000 });
+      const geometry = await page.evaluate(() => {
+        const rect = sel => document.querySelector(sel).getBoundingClientRect();
+        const star = rect('#canvas-fav-btn'), title = rect('.cr-capsule.is-center .cr-icon');
+        return { starRight: star.right, iconLeft: title.left };
+      });
+      check('desktop: hover star and icon do not overlap', geometry.starRight <= geometry.iconLeft, JSON.stringify(geometry));
+    }
     check(`screenshot: ${tag} star lit (capsule)`, true);
   } catch (e) {
     check(`screenshot: ${tag} star lit (capsule)`, false, String(e.message).split('\n')[0]);
@@ -120,11 +142,17 @@ async function starRoundTrip(page, tag, openPage) {
 }
 
 async function closePage(page) {
-  await page.keyboard.press('Escape');
-  await page.waitForSelector(PAGE, { state: 'detached', timeout: 5000 }).catch(() => {});
+  if (PAGE === '#canvas-fav-sidebar-page') {
+    await page.click('#files-btn');
+    await page.waitForSelector('#panel-favorites.active', { state: 'detached' });
+  } else {
+    await page.keyboard.press('Escape');
+    await page.waitForSelector(PAGE, { state: 'detached', timeout: 5000 });
+  }
 }
 
 async function desktopCase(browser, failures) {
+  PAGE = '#canvas-fav-sidebar-page';
   const s = await createSession(browser, { width: 1200, height: 800, colorScheme: 'light' });
   const page = s.page;
   page.on('pageerror', (e) => failures.push(`[desktop] pageerror ${e.message}`));
@@ -132,8 +160,9 @@ async function desktopCase(browser, failures) {
   await s.boot(BOOT);
   await seed(page);
   const openPage = async () => {
-    await page.click('#canvas-fav-section .canvas-fav-head');
+    await page.click('#favorites-btn');
     await page.waitForSelector(`${PAGE}.is-open .cfp-row`, { timeout: 15000 });
+    await page.fill(`${PAGE} .cfp-search-input`, '');
     await settle(page, 200);
   };
   await openPage();
@@ -176,13 +205,13 @@ async function desktopCase(browser, failures) {
   await settle(page, 150);
   check('desktop: 清空搜索恢复全部', (await rowPaths(page)).length === 4);
 
-  // 点条目 → canvas 打开，收藏页关闭（桌面不切页）。
+  // 桌面收藏是持久侧栏；打开条目后仍保留侧栏，移动端才关闭页面。
   await page.fill(`${PAGE} .cfp-search-input`, '论文');
   await settle(page, 150);
   await page.click(`${PAGE} .cfp-row[data-fav-path="/w/docs/t.pdf"]`);
-  const closed = await page.waitForSelector(PAGE, { state: 'detached', timeout: 15000 }).then(() => true, () => false);
-  check('desktop: 点 PDF 条目后收藏页关闭', closed);
   await settle(page, 300);
+  check('desktop: 点 PDF 条目后收藏侧栏保持打开', await page.locator('#panel-favorites.active').count() === 1);
+  await closePage(page);
 
   await starRoundTrip(page, 'desktop', openPage);
   await openPage();
@@ -192,7 +221,8 @@ async function desktopCase(browser, failures) {
 }
 
 async function mobileCase(browser, failures) {
-  const s = await createSession(browser, { width: 390, height: 844, colorScheme: 'light', clock: 0 });
+  PAGE = '#canvas-fav-page';
+  const s = await createSession(browser, { width: 375, height: 812, colorScheme: 'light', clock: 0 });
   const page = s.page;
   page.on('pageerror', (e) => failures.push(`[mobile] pageerror ${e.message}`));
   await wireStubs(page);
@@ -202,6 +232,7 @@ async function mobileCase(browser, failures) {
   const openPage = async () => {
     await page.click('.mobile-page[data-page="workbench"].live .mf-hub-row[data-hub-page="favorites"]');
     await page.waitForSelector(`${PAGE}.is-open .cfp-row`, { timeout: 15000 });
+    await page.fill(`${PAGE} .cfp-search-input`, '');
     await settle(page, 200);
   };
   await openPage();

@@ -10,8 +10,8 @@
 //     aria-label 保留；只动层级，语义零变）
 //   B 目录可见性 + 内容变更**非拦截**（需引擎轨 C6 字段）：
 //     无记录包 ⇒ 进分发器目录（在位即信任的可见结果）；
-//     改 fixture 文件 ⇒ digest 变 ⇒ **仍进目录**、仍有派发许可，只在面板上标
-//     「内容已变更」（可见性，不提供任何拦截）——这是与旧语义的分水岭
+//     改 fixture 文件 ⇒ digest 变 ⇒ **仍进目录**、仍有派发许可；
+//     contentChanged 保留在 API，面板的变更提示已退役。
 //   C 封禁（**引擎侧** API / CLI 发起——面板已无该入口）⇒ 出目录 + 面板「已封禁」
 //     + 派发开关锁死 + 封禁态下也不得长回入口；解封 ⇒ 回目录（需 C6 字段）
 //   D 双主题截图（形态留档）
@@ -208,21 +208,26 @@ test.describe('plugins panel redesign — card form + non-blocking content chang
     expect(st.dispatchDisabled, '派发开关可用（封禁是唯一的禁用前提）').toBe(false);
   });
 
-  test('B 内容变更**非拦截**：改 fixture 内容 ⇒ 仍进目录 + 仍可派发，面板只多一条可见性提示', async ({ page }) => {
-    test.skip(!hasC6, 'engine track C6 (`contentChanged`) not live on this instance — content change still blocks loading here; rerun after the plugin-nogate engine track merges');
-    // Precondition: 已有 trust 记录（旧语义的「已审批」基准），随后改内容。
-    await rest('POST', `/api/plugins/${ALPHA}/approve`);
+  test('B 内容变更不拦截：API 记录变更，面板不显示变更提示', async ({ page }) => {
+    test.skip(!hasC6, 'engine track C6 (`contentChanged`) not live on this instance');
+    const approved = await rest('POST', `/api/plugins/${ALPHA}/approve`);
+    expect(approved.status).toBeGreaterThanOrEqual(200);
+    expect(approved.status).toBeLessThan(300);
     const skillPath = join(pluginsDir, ALPHA, 'skills', 'greet', 'SKILL.md');
     await writeFile(skillPath, skillMd({ name: 'greet', description: 'Greets from the alpha fixture (v2)', line: 'Hello from alpha — EDITED.' }));
-
+    await expect.poll(async () => {
+      const { body } = await rest('GET', '/api/plugins');
+      const item = (body.plugins || []).find(p => p.name === ALPHA);
+      return item && { changed: item.contentChanged, blocked: item.blocked };
+    }).toEqual({ changed: true, blocked: false });
     await loadPluginsPage(page);
     const st = await cardState(page, ALPHA);
-    expect(st.pill, '内容已变更 ⇒ 药丸 = 内容已变更').toBe('内容已变更');
-    expect(st.pillClass, 'pill 带 changed class').toContain('changed');
-    expect(st.changedHint, '可见性提示（非拦截）').toBeTruthy();
-    expect(st.dispatchDisabled, '内容变更不锁派发开关（非拦截）').toBe(false);
-    expect(await catalogContains(ALPHA), '内容已变更的包**仍进目录**（不拦装载）').toBe(true);
-    expect(st.classes, '卡片带 changed 态但**不**带 blocked 态').not.toContain('blocked');
+    expect(st.pillElCount).toBe(0);
+    expect(st.changedHint).toBeNull();
+    expect(st.classes).not.toContain('changed');
+    expect(st.classes).not.toContain('blocked');
+    expect(st.dispatchDisabled, '内容变更不锁派发开关').toBe(false);
+    expect(await catalogContains(ALPHA), '内容已变更的包仍进目录').toBe(true);
   });
 
   test('C 封禁（引擎侧 API/CLI）⇒ 出目录 + 派发锁死 + 面板零封禁入口；解封 ⇒ 回目录', async ({ page }) => {

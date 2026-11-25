@@ -6,14 +6,14 @@ const source = p => readFileSync(new URL('../../src/main/resources/web/' + p, im
 
 test('FCI-SCN-001 stale term responses are invalidated', async () => {
   const code = source('js/termTip.js');
-  const fragment = code.slice(code.indexOf('function requestTermTip('), code.indexOf('/** Mark existing term'));
+  const fragment = code.slice(code.indexOf('async function requestTermTip('), code.indexOf('/** 选区解释'));
   const pending = []; const painted = [];
-  const ctx = { ensureTermTipEl() {}, setTimeout: fn => { pending.push(fn); return pending.length; }, clearTimeout() {}, termTipLink: null, termTipHost: null, termTipTimer: 0, termTipGeneration: 0, termInfoFor: () => new Promise(resolve => pending.push(resolve)), paintTermTip: (_a, info) => painted.push(info), hideTermTip() { ctx.termTipGeneration++; ctx.termTipLink = null; } };
-  vm.runInNewContext(fragment.replace('export function', 'function') + '\nthis.tap = termTapExpand;', ctx);
+  const ctx = { AbortController, t: key => key, setTimeout: fn => { pending.push(fn); return pending.length; }, termTipLink: null, termTipHost: null, termTipTimer: 0, termTipGeneration: 0, termTipAbort: null, termCard: null, showDocumentTermCard: async () => ({}), clearTermTip() {}, termInfoFor: () => new Promise(resolve => pending.push(resolve)), paintTermTip: (_a, info) => painted.push(info.definition), hideTermTip() { ctx.termTipGeneration++; ctx.termTipLink = null; } };
+  vm.runInNewContext(fragment + '\nthis.request = requestTermTip;', ctx);
   const a = {dataset: {wikiTermKind: 'term'}};
-  ctx.tap(a); const first = pending.shift(); const p1 = first(); const resolve1 = pending.shift();
-  ctx.tap(a); ctx.tap(a); const second = pending.shift(); const p2 = second(); const resolve2 = pending.shift();
-  resolve2('new'); await p2; resolve1('old'); await p1;
+  await ctx.request(a, null, 0); const first = pending.shift(); const p1 = first(); const resolve1 = pending.shift();
+  await ctx.request(a, null, 0); const second = pending.shift(); const p2 = second(); const resolve2 = pending.shift();
+  resolve2({ definition: 'new' }); await p2; resolve1({ definition: 'old' }); await p1;
   assert.deepEqual(painted, ['new']);
   assert.doesNotMatch(code, /addEventListener\('mouseenter'/);
 });

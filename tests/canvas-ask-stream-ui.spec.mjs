@@ -158,8 +158,8 @@ const askGeo = (page) => page.evaluate(() => {
   const col = document.querySelector('.ask-dock .ask-col');
   const pill = document.querySelector('.ask-dock .scroll-new-pill');
   const input = document.querySelector('.ask-dock .ask-input');
-  const dots = document.querySelectorAll('.ask-dock .ask-stream-line .thinking-dot');
-  const line = document.querySelector('.ask-dock .ask-stream-line');
+  const dots = document.querySelectorAll('.ask-dock .nf-workline .thinking-dot');
+  const line = document.querySelector('.ask-dock .nf-workline');
   const bubbles = document.querySelectorAll('.ask-dock .ask-col .ask-bub');
   const pr = pill ? pill.getBoundingClientRect() : null;
   const ir = input ? input.getBoundingClientRect() : null;
@@ -217,15 +217,15 @@ try {
   g = await askGeo(page);
   ok('S1a 等待期零空 ai 泡（双泡纪律不回归）', g.bubbles === 25, `bubbles=${g.bubbles}`);
   ok('S1b 思考期三点 spinner（主会话 .thinking-dot 族）', g.dots === 3, `dots=${g.dots}`);
-  ok('S1c 思考中文案（= chat.thinking.now 字面）', (g.lineText || '').includes('思考中'), `line=${g.lineText}`);
+  ok('S1c 使用主会话工作线', g.lineText !== null, `line=${g.lineText}`);
   await shot(page, '01-thinking-spinner');
 
   // 首个非空 token：spinner 让位流式文本（不并存打架）
   wsSend({ type: 'textDelta', sessionId: sid, delta: '结论：召回优先，' });
   await sleep(250);
   g = await askGeo(page);
-  ok('S1d 首 token 后 dots 归零（与流式指示不同相）', g.dots === 0, `dots=${g.dots}`);
-  ok('S1e 流式文本接管同一行', (g.lineText || '').includes('结论：召回优先'), `line=${g.lineText}`);
+  ok('S1d 正文增量期间工作线保留', g.lineText !== null, `line=${g.lineText}`);
+  ok('S1e 增量正文不逐字出现', g.bubbles === 25 && !(g.lineText || '').includes('结论：召回优先'), `line=${g.lineText} bubbles=${g.bubbles}`);
   ok('S2b 贴底流式跟随（latch 生效不被打断）', g.dist !== null && g.dist <= 4, `dist=${g.dist}`);
   await shot(page, '02-streaming-text');
   wsSend({ type: 'textDelta', sessionId: sid, delta: '延迟次之；缓存命中率作为第三优先级。' });

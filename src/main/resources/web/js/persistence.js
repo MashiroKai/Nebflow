@@ -15,6 +15,7 @@ import { dropDeviceMessageCache } from './fmDropboxCache.js';
 // 单向依赖、无环；`evict` 自带 L2/L5 降级（配额失败 ⇒ 本池清空重试 ⇒ 只读镜像）。
 import { evict as evictLocalStore } from './localStore.js';
 import { activeView } from './chatView.js';
+import { startWorklineDots } from './workline.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, appendUserTextWithFences, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId, shouldFollowBottom, deviceTagHtml } from './utils.js';
 // output 块语法批（作者令 2026-10-31）：历史重放腿同 live 腿一个 output 面——
@@ -723,26 +724,26 @@ export function restoreFromStorage(opts = {}) {
         const tBubble = document.createElement('div');
         tBubble.className = 'bubble ai thinking-bubble thinking-done';
         const tLabel = document.createElement('div');
-        tLabel.className = 'thinking-label collapsible';
+        tLabel.className = chat.dataset.nfBareProcessRows === '1' ? 'thinking-label' : 'thinking-label collapsible';
         tLabel.textContent = t('chat.thinkingLabel'); // pre-#345 label restored (2026-08-24 ruling)
         const tContent = document.createElement('div');
         tContent.className = 'thinking-content';
         tContent.innerHTML = renderMarkdownWithMath(m.thinking);
         // §③ 思考窗硬上限（stream-919-unify 批）：历史重放腿同窗钉限＋计数
         // 读数（与 live 腿同一入口——四写点不分家，读数与窗形一致）。
-        applyThinkingWindowCap(tContent, m.thinking);
+        applyThinkingWindowCap(tContent, m.thinking, !!(activeView && activeView.nfBareProcessRows));
         // 重连折叠持久批（2026-10-20，续作 chain 69e5e2e1）：thinking 恒折叠。
         // 旧的「无 text 保持展开」例外与重放契约冲突 —— 每次重连重放都把
         // thinking-only 行的全文抖开（症状①「thinking 突然完整显示」）。
         // 折叠态跨重放持久；读全文 = 点 label 展开（collapsible 面不变）。
-        tContent.style.display = 'none';
+        tContent.style.display = (activeView && activeView.nfBareProcessRows) ? '' : 'none';
         tBubble.appendChild(tLabel);
         tBubble.appendChild(tContent);
         tRow.appendChild(tBubble);
         // 2026-09-06 二次裁定: thinking rows carry NO footer (intermediate
         // process, not message-class). Corrects f8ea9385's classification.
         chat.appendChild(tRow);
-        bindCollapsibleToggle(tLabel, () => tContent);
+        if (!(activeView && activeView.nfBareProcessRows)) bindCollapsibleToggle(tLabel, () => tContent);
       }
       // replay-terminal 批（2026-10-28，案一「A 根治」实施）两处渲染面变化：
       //  ① 徽章渲染从 if (m.text) 提出 —— 「有 durationMs 但 text 为空」的纯工具
@@ -769,10 +770,11 @@ export function restoreFromStorage(opts = {}) {
           // 与改前逐字一致）。无平衡块 ⇒ 全文，但 root 面照过 `report:true` 管线
           // （散标签转义字面，防 marked 当 HTML 块吞文）。
           const rootFace = m.isRoot === true;
-          if (!rootFace || !applyOutputFace(bubble, m.text || '')) {
+          if (!rootFace || !applyOutputFace(bubble, m.text || '', chat.id === 'chat')) {
             bubble.innerHTML = renderMarkdownWithMath(m.text || '', true, rootFace ? { report: true } : undefined);
             if (rootFace && m.text) markZeroBlockFace(bubble, m.text || '');
           }
+          if (chat.id === 'chat') bubble.querySelectorAll('details.nf-human-details').forEach(node => node.remove());
           row.appendChild(bubble);
         }
         if (isTurnTerminal) {
@@ -899,7 +901,7 @@ export function restoreFromStorage(opts = {}) {
         mountToolCardBody(card, { detailHtml, promptText, content: m.content, label: m.label, labelTail: lParts[1] || '' });
         row.appendChild(card);
         chat.appendChild(row);
-        if (hasBody) attachToolClick(card);
+        if (hasBody) attachToolClick(card, !!(activeView && activeView.nfBareProcessRows));
         // Schedule 卡片（schedule-created-card 批 2026-11-05）：重放腿与 live
         // renderTool 同形 —— 进程行 + 卡片行两行制，同一个 builder（零第二套判据）。
         const schedRow = scheduleCardRowForTool({
@@ -1212,26 +1214,26 @@ function buildHistoryRow(m, i, ctx) {
         const tBubble = document.createElement('div');
         tBubble.className = 'bubble ai thinking-bubble thinking-done';
         const tLabel = document.createElement('div');
-        tLabel.className = 'thinking-label collapsible';
+        tLabel.className = chatEl.dataset.nfBareProcessRows === '1' ? 'thinking-label' : 'thinking-label collapsible';
         tLabel.textContent = t('chat.thinkingLabel'); // pre-#345 label restored (2026-08-24 ruling)
         const tContent = document.createElement('div');
         tContent.className = 'thinking-content';
         deferMd(tContent, m.thinking);
         // §③ 思考窗硬上限（stream-919-unify 批）：历史重放腿（deferMd 版）
         // 同窗钉限＋计数读数——窗是元素常驻样式，与 deferMd 异步渲染正交。
-        applyThinkingWindowCap(tContent, m.thinking);
+        applyThinkingWindowCap(tContent, m.thinking, !!(activeView && activeView.nfBareProcessRows));
         // 重连折叠持久批（2026-10-20，续作 chain 69e5e2e1）：thinking 恒折叠。
         // 旧的「无 text 保持展开」例外与重放契约冲突 —— 每次重连重放都把
         // thinking-only 行的全文抖开（症状①「thinking 突然完整显示」）。
         // 折叠态跨重放持久；读全文 = 点 label 展开（collapsible 面不变）。
-        tContent.style.display = 'none';
+        tContent.style.display = (activeView && activeView.nfBareProcessRows) ? '' : 'none';
         tBubble.appendChild(tLabel);
         tBubble.appendChild(tContent);
         tRow.appendChild(tBubble);
         // 2026-09-06 二次裁定: thinking rows carry NO footer (intermediate
         // process, not message-class). Corrects f8ea9385's classification.
         fragment.appendChild(tRow);
-        bindCollapsibleToggle(tLabel, () => tContent);
+        if (!(activeView && activeView.nfBareProcessRows)) bindCollapsibleToggle(tLabel, () => tContent);
       }
       // replay-terminal 批（2026-10-28，案一「A 根治」实施）——与 restoreFromStorage
       // ai 分支同款两处渲染面变化（①徽章出 if (m.text)：凡 durationMs>0 一律渲染，
@@ -1402,7 +1404,7 @@ function buildHistoryRow(m, i, ctx) {
         mountToolCardBody(card, { detailHtml, promptText, content: m.content, label: m.label, labelTail: lParts[1] || '' });
         row.appendChild(card);
         fragment.appendChild(row);
-        if (hasBody) attachToolClick(card);
+        if (hasBody) attachToolClick(card, !!(activeView && activeView.nfBareProcessRows));
         // Schedule 卡片（schedule-created-card 批 2026-11-05）：与 storage 腿逐字
         // 同形（进程行 + 卡片行；同一 builder、同一行 id 后缀）。
         const schedRow = scheduleCardRowForTool({
@@ -1653,6 +1655,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
   // 可能在本页靠后位置，创建顺序倒挂 ⇒ 此刻才有完整答案）。
   syncQuoteJumpStates(chat);
   buildTurnSummariesForHistory(chat, { busyTail }); // #346 E4: re-derive turn headers from flat rows
+  if (busyTail && chat.id === 'chat') startWorklineDots(activeView);
   // #491: doc-order replay keeps each artifact beside its Pop tool row — same
   // as the live path and the storage-replay path; no re-anchor.
   // Scroll to bottom: immediate sync (for stable initial position before any async iframe load)
@@ -1694,6 +1697,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         // 第二处裸 innerHTML 赋值点——component-contract R5「只许减不许增」）。
         const faced = el.dataset && el.dataset.nfDeferOutput === '1' && applyOutputFace(el, text);
         if (!faced) el.innerHTML = renderMarkdownWithMath(text, parseVoice, opts);
+        if (el.closest('#chat')) el.querySelectorAll('details.nf-human-details').forEach(node => node.remove());
       } catch (e) {
         el.textContent = text; // 回落纯文本（renderer 自身另有永不抛护栏，双保险）
       }
@@ -1801,7 +1805,7 @@ export async function mountHistoryPageChunked(msgs, opts = {}, hooks = {}) {
       }
     }
     syncQuoteJumpStates(container);
-    buildTurnSummariesForHistory(container, { busyTail: false });
+    buildTurnSummariesForHistory(container, { busyTail: false, mainChat: activeView.dom.chat.id === 'chat', bareProcess: !!activeView.nfBareProcessRows });
     if (hooks.onBuilt && hooks.onBuilt(container) === false) return;
     const anchorChat = opts.scrollAnchor || null;
     const jobs = [];
@@ -1813,6 +1817,7 @@ export async function mountHistoryPageChunked(msgs, opts = {}, hooks = {}) {
       // 批）。短路由 && 承担，赋值点仍只有一处（component-contract R5 零新增）。
       const faced = j.el.dataset && j.el.dataset.nfDeferOutput === '1' && applyOutputFace(j.el, j.text);
       if (!faced) j.el.innerHTML = renderMarkdownWithMath(j.text, j.parseVoice, j.opts);
+      if (j.el.closest('#chat')) j.el.querySelectorAll('details.nf-human-details').forEach(node => node.remove());
     });
     for (let ji = 0; ji < jobs.length; ji += MOUNT_UPGRADE_BATCH) {
       const end = Math.min(ji + MOUNT_UPGRADE_BATCH, jobs.length);

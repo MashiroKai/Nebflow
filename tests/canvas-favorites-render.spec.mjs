@@ -99,6 +99,33 @@ async function desktopCase(browser, failures) {
     return { btnRight: b.right, titleLeft: t.left };
   });
   check('desktop: 收藏钮位于胶囊左侧', geo.btnRight <= geo.titleLeft + 1, JSON.stringify(geo));
+  const measureEnds = () => s.page.evaluate(() => {
+    const r = q => document.querySelector(q).getBoundingClientRect();
+    const h = r('#canvas-panel .canvas-header'), a = r('#canvas-fav-btn'), b = r('#canvas-pop-btn');
+    const ai = r('#canvas-fav-btn svg'), bi = r('#canvas-pop-btn .pop-ic-pop');
+    const delta = (x, y) => Math.abs(x - y);
+    const center = (x) => [x.left + x.width / 2, x.top + x.height / 2];
+    const [ax, ay] = center(a), [bx, by] = center(b), [aix, aiy] = center(ai), [bix, biy] = center(bi);
+    return { inset: delta(a.left - h.left, h.right - b.right), vertical: Math.max(delta(ay, h.top + h.height / 2), delta(by, h.top + h.height / 2)), optical: Math.max(delta(ax, aix), delta(ay, aiy), delta(bx, bix), delta(by, biy)), size: delta(ai.width, bi.width), radii: delta(parseFloat(getComputedStyle(document.querySelector('#canvas-fav-btn')).borderRadius), parseFloat(getComputedStyle(document.querySelector('#canvas-pop-btn')).borderRadius)) };
+  });
+  const valid = g => Object.values(g).every(v => v <= 1);
+  const endGeometry = await measureEnds();
+  check('desktop: capsule end optical geometry', valid(endGeometry), JSON.stringify(endGeometry));
+  await s.page.locator('#canvas-fav-btn svg').evaluate(el => { el.style.transform = 'translateX(4px)'; });
+  check('desktop: optical geometry negative control', !valid(await measureEnds()));
+  await s.page.locator('#canvas-fav-btn svg').evaluate(el => { el.style.transform = ''; });
+  const navGeometry = await s.page.evaluate(() => {
+    const a = document.querySelector('#social-btn').getBoundingClientRect(), b = document.querySelector('#favorites-btn').getBoundingClientRect();
+    const icon = document.querySelector('#favorites-btn svg').getBoundingClientRect();
+    return { sameColumn: Math.abs(a.left - b.left) < 1 && Math.abs(a.width - b.width) < 1, adjacent: b.top >= a.bottom && b.top - a.bottom <= 12, iconFits: icon.left >= b.left && icon.right <= b.right && icon.top >= b.top && icon.bottom <= b.bottom, label: !!document.querySelector('#favorites-btn').getAttribute('aria-label') };
+  });
+  check('desktop: favorites below phone access, aligned and unclipped', Object.values(navGeometry).every(Boolean), JSON.stringify(navGeometry));
+  await s.page.click('#favorites-btn');
+  await s.page.waitForSelector('#panel-favorites.active #canvas-fav-sidebar-page', { state: 'visible' });
+  check('desktop: favorites view within sidebar', await s.page.locator('#sidebar-panel #panel-favorites.active .cfp-sidebar').isVisible());
+  await shot(s.page, '#activity-bar', 'desktop-favorites-entry.png', 'desktop favorites entry');
+  await shot(s.page, '#panel-favorites', 'desktop-favorites-panel.png', 'desktop favorites sidebar panel');
+  await s.page.click('#files-btn');
   check('desktop: 初始未收藏态（描边）', (await btn.getAttribute('class')).indexOf('is-on') < 0);
   await shot(s.page, '#canvas-panel .canvas-header', 'desktop-capsule-off.png', 'desktop capsule off');
 
@@ -108,10 +135,12 @@ async function desktopCase(browser, failures) {
   check('desktop: aria-pressed=true', (await btn.getAttribute('aria-pressed')) === 'true');
   await shot(s.page, '#canvas-panel .canvas-header', 'desktop-capsule-on.png', 'desktop capsule on');
 
-  const rows = s.page.locator('#canvas-fav-section .canvas-fav-row');
-  check('desktop: 侧边栏收藏区出现条目', (await rows.count()) === 1, `count=${await rows.count()}`);
-  check('desktop: 条目标题为快照 a.md', ((await textOf(s.page, '#canvas-fav-section .canvas-fav-row')) || '').includes('a.md'));
-  await shot(s.page, '#canvas-fav-section', 'sidebar-with-entry.png', 'sidebar with entry');
+  await s.page.click('#favorites-btn');
+  const rows = s.page.locator('#panel-favorites .cfp-row');
+  check('desktop: 独立收藏面板出现条目', (await rows.count()) === 1, `count=${await rows.count()}`);
+  check('desktop: 条目标题为快照 a.md', ((await textOf(s.page, '#panel-favorites .cfp-row')) || '').includes('a.md'));
+  check('desktop: 文件面板无紧凑收藏区', await s.page.locator('#canvas-fav-section').count() === 0);
+  await shot(s.page, '#panel-favorites', 'sidebar-with-entry.png', 'sidebar with entry');
 
   // 去重（重复收藏置顶、保留 savedAt）：经存储注入重复条目，渲染面须归一化成一条。
   await s.page.evaluate(() => {
@@ -143,9 +172,9 @@ async function desktopCase(browser, failures) {
     window.dispatchEvent(new Event('nebflow-favorites-change'));
   });
   await settle(s.page, 150);
-  const emptyText = await textOf(s.page, '#canvas-fav-section');
+  const emptyText = await textOf(s.page, '#panel-favorites');
   check('sidebar: 空态文案', emptyText.includes('还没有收藏'), emptyText.slice(0, 60));
-  await shot(s.page, '#canvas-fav-section', 'sidebar-empty.png', 'sidebar empty');
+  await shot(s.page, '#panel-favorites', 'sidebar-empty.png', 'sidebar empty');
   await s.close();
 }
 
@@ -176,7 +205,15 @@ async function mobileCase(browser, failures) {
   check('mobile: 有效条目不置灰', (await s.page.locator(HUB + ' .cfp-row[data-fav-path="/w/a.md"]').getAttribute('class')).indexOf('is-invalid') < 0);
   check('mobile: 403 不置灰（非 404/410 不判失效）', (await s.page.locator(HUB + ' .cfp-row[data-fav-path="/w/forbidden.md"]').getAttribute('class')).indexOf('is-invalid') < 0);
   check('mobile: 500 不置灰（非 404/410 不判失效）', (await s.page.locator(HUB + ' .cfp-row[data-fav-path="/w/flaky.md"]').getAttribute('class')).indexOf('is-invalid') < 0);
-  await shot(s.page, '#canvas-fav-page', 'mobile-favorites-page.png', 'mobile favorites page');
+  for (const [name, width, height] of [['mobile', 390, 844], ['tablet', 768, 1024], ['desktop', 1280, 800]]) {
+    await s.page.setViewportSize({ width, height });
+    const back = s.page.locator('#canvas-fav-page .cfp-back');
+    const box = await back.boundingBox();
+    const style = await back.evaluate(el => ({ font: getComputedStyle(el).fontSize, color: getComputedStyle(el).color, parentColor: getComputedStyle(el.parentElement).color }));
+    check(`${name}: back geometry and color`, !!box && box.width === 36 && box.height === 36 && style.font === '30px' && style.color === style.parentColor, JSON.stringify({ box, style }));
+    await shot(s.page, '#canvas-fav-page', `back-${name}.png`, `${name} favorites page`);
+  }
+  await s.page.setViewportSize({ width: 390, height: 844 });
 
   // 点失效条目：toast 可读提示，不开 canvas。
   await s.page.evaluate(() => {

@@ -1,9 +1,5 @@
 package nebflow.agent
 
-import nebflow.neblink.attachment.*
-import nebflow.neblink.core.*
-import nebflow.neblink.social.*
-
 import cats.effect.std.Dispatcher
 import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
@@ -21,9 +17,9 @@ import nebflow.core.workspace.KnowledgeStore
 import nebflow.core.{RateLimiter, SessionStore, *}
 import nebflow.dropbox.DropboxService
 import nebflow.llm.*
-import nebflow.neblink.attachment.AttachUploadRegistry
-import nebflow.neblink.social.FriendService
-import nebflow.neblink.core.NeblinkService
+import nebflow.neblink.attachment.{AttachUploadRegistry, *}
+import nebflow.neblink.core.{NeblinkService, *}
+import nebflow.neblink.social.{FriendService, *}
 import nebflow.shared.{FileHistory, ReadTracker, *}
 
 /** A recovered protected attempt whose runner Resource is retained by this runtime. */
@@ -264,6 +260,12 @@ case class SharedResources(
     Ref.unsafe[IO, Map[String, ActiveProtectedRecovery]](Map.empty)
 ) extends AgentRuntimePort,
       SubAgentTaskPort:
+
+  override def wakeDelegateByMail(
+    wsSend: Option[Json => IO[Unit]],
+    delegateId: String,
+    instruction: String
+  ): IO[Either[String, String]] = DelegateWakeLeg.wake(this, wsSend, delegateId, instruction, "mail")
 
   override def externalThinkingConfig: IO[ThinkingConfig] = thinkingConfigRef.get
 
@@ -752,7 +754,8 @@ case class SharedResources(
 
   /** 共享 spawn:readTracker/fileHistory 创建 + AgentActor spawn(NodeRunner 原体)。 */
   def spawnAgentActor(system: ActorSystem, p: NodeRunner.SpawnParams): IO[ActorRef[AgentCommand]] =
-    if p.protectedExecution.nonEmpty || protectedExecutions.contains(p.sessionId) || !p.admissionGuard then spawnActor(system, p)
+    if p.protectedExecution.nonEmpty || protectedExecutions.contains(p.sessionId) || !p.admissionGuard then
+      spawnActor(system, p)
     else executionCommitPort.withUnprotectedSession(p.sessionId)(spawnActor(system, p))
 
   private def spawnActor(system: ActorSystem, p: NodeRunner.SpawnParams): IO[ActorRef[AgentCommand]] =

@@ -405,6 +405,36 @@ private[gateway] object WsTasksWorkspaceHandlers:
           "message" -> v.message.asJson
         )
       )
+    else if crKindTodo && crTriggerAt != 0L && nebflow.core.scheduler.TodoDue
+        .requireCreationZone(None, nebflow.core.scheduler.TodoDue.deviceZoneFromFrame(json))
+        .isLeft then
+      wsSend(
+        io.circe.Json.obj(
+          "type" -> "error".asJson,
+          "msgType" -> "createScheduledTask".asJson,
+          "requestId" -> createRequestId.asJson,
+          "message" -> "Please clarify the creation time zone".asJson
+        )
+      )
+    else if crKindTodo && crTriggerAt != 0L && crRepeat.exists(r => r != "once" && r != "weekly") then
+      wsSend(
+        io.circe.Json.obj(
+          "type" -> "error".asJson,
+          "msgType" -> "createScheduledTask".asJson,
+          "requestId" -> createRequestId.asJson,
+          "message" -> "Todo repeat must be once or weekly".asJson
+        )
+      )
+    else if crKindTodo && crTriggerAt != 0L && crRepeat.contains("weekly") && crTriggerAt % 60000L != 0L then
+      wsSend(
+        io.circe.Json.obj(
+          "type" -> "error".asJson,
+          "msgType" -> "createScheduledTask".asJson,
+          "requestId" -> createRequestId.asJson,
+          "code" -> "weekly-requires-whole-minute".asJson,
+          "message" -> s"Please clarify triggerAt=$crTriggerAt: weekly deadlines require a whole minute".asJson
+        )
+      )
     else if crKindTodo && crSessionId.nonEmpty && crContent.nonEmpty then
       val surfaceAt = nebflow.core.scheduler.ScheduledTask.nextTodoSurfaceAt(
         System.currentTimeMillis(),
@@ -424,14 +454,27 @@ private[gateway] object WsTasksWorkspaceHandlers:
         crDetail,
         crDecision.toOption.flatten.map(nebflow.core.scheduler.TodoTaxonomy.normalizeDecision)
       )
+      val due = Option.when(crTriggerAt != 0L) {
+        val zone = nebflow.core.scheduler.TodoDue.deviceZoneFromFrame(json).get
+        val wall = java.time.Instant.ofEpochMilli(crTriggerAt).atZone(java.time.ZoneId.of(zone)).toLocalDateTime.toString
+        if crRepeat.contains("weekly") then
+          val local = java.time.LocalDateTime.parse(wall)
+          nebflow.core.scheduler.TodoDue.Weekly(local.getDayOfWeek.getValue, local.toLocalTime.toString, zone, wall)
+        else nebflow.core.scheduler.TodoDue.Once(crTriggerAt, zone, wall, None)
+      }
       val userTodo = todo.copy(
         id = createRequestId.getOrElse(todo.id),
-        source = Some(nebflow.core.scheduler.TodoTaxonomy.SourceUser)
+        source = Some(nebflow.core.scheduler.TodoTaxonomy.SourceUser),
+        due = due,
+        nextDueAt = due.map(_ => crTriggerAt)
       )
       (for
         saved <- createRequestId match
-          case Some(_) => sharedResources.scheduledTaskStore.addUserTodoOnce(userTodo)
-          case None => sharedResources.scheduledTaskStore.addTask(userTodo).as(userTodo)
+          case Some(_) => sharedResources.scheduledTaskStore.addUserTodoOnce(userTodo, requireFutureDue = true)
+          case None =>
+            if crTriggerAt != 0L && crTriggerAt <= System.currentTimeMillis() then
+              IO.raiseError(new IllegalArgumentException("Please clarify a future reminder time"))
+            else sharedResources.scheduledTaskStore.addTask(userTodo).as(userTodo)
         removed = List.empty[nebflow.core.scheduler.ScheduledTask]
         _ <- sharedResources.scheduledTaskService.traverse_(_.notifyTaskChange())
         _ <- removed.traverse_(old =>
@@ -454,6 +497,8 @@ private[gateway] object WsTasksWorkspaceHandlers:
               "creator" -> io.circe.Json.Null,
               "content" -> saved.content.asJson,
               "triggerAt" -> saved.triggerAt.asJson,
+              "due" -> saved.due.asJson,
+              "nextDueAt" -> saved.nextDueAt.asJson,
               "createdAt" -> saved.createdAt.asJson,
               "referencePath" -> io.circe.Json.Null,
               "repeat" -> io.circe.Json.Null,
@@ -634,6 +679,7 @@ private[gateway] object WsTasksWorkspaceHandlers:
       "createdAt" -> t.createdAt.asJson,
       "triggered" -> t.triggered.asJson,
       "triggeredAt" -> t.triggeredAt.asJson,
+      "lastTriggered" -> t.lastFiredAt.asJson,
       "referencePath" -> t.referencePath.asJson,
       "repeat" -> t.repeat.asJson,
       "enabled" -> t.enabled.asJson,
@@ -665,7 +711,9 @@ private[gateway] object WsTasksWorkspaceHandlers:
       "todoClass" -> nebflow.core.scheduler.TodoClass
         .wire(nebflow.core.scheduler.TodoTaxonomy.classify(t))
         .asJson,
-      "decision" -> t.decision.asJson
+      "decision" -> t.decision.asJson,
+      "due" -> t.due.asJson,
+      "nextDueAt" -> t.nextDueAt.asJson
     )
 
   private def handleDeleteScheduledTask(
@@ -817,6 +865,29 @@ private[gateway] object WsTasksWorkspaceHandlers:
       )
     if upId.isEmpty then
       failUpdate("updateScheduledTask requires id — call listScheduledTasks first, then pass the entry's id.")
+    else if json.hcursor.downField("creationZone").succeeded then
+      val zone = json.hcursor.get[String]("creationZone").toOption.map(_.trim)
+      val mixed = List("content", "project", "priority", "name", "detail", "triggerAt", "repeat")
+        .exists(key => json.hcursor.downField(key).succeeded)
+      if mixed then failUpdate("creationZone correction must be submitted separately from other edits")
+      else if !zone.exists(java.time.ZoneId.getAvailableZoneIds.contains) then
+        failUpdate("creationZone must be a valid IANA region")
+      else
+        sharedResources.scheduledTaskStore.findTaskById(upId).flatMap {
+          case None => failUpdate(s"No entry with id $upId")
+          case Some(task) if !task.isTodo || task.due.isEmpty => failUpdate("entry has no todo due rule")
+          case Some(_) =>
+            (for
+              _ <- sharedResources.scheduledTaskStore.changeCreationZone(upId, zone.get, System.currentTimeMillis())
+              saved <- sharedResources.scheduledTaskStore.findTaskById(upId)
+              _ <- sharedResources.scheduledTaskService.traverse_(_.notifyTaskChange())
+              _ <- saved match
+                case Some(task) => wsSend(io.circe.Json.obj(
+                  "type" -> "scheduledTaskUpdated".asJson, "sessionId" -> task.sessionId.asJson,
+                  "task" -> listTaskJson(task)))
+                case None => failUpdate("entry no longer exists")
+            yield ()).handleErrorWith(e => failUpdate(s"creationZone correction failed: ${e.getMessage}"))
+        }
     else
       triggerAtOpt match
         case Left(msg) => failUpdate(msg)
@@ -958,8 +1029,7 @@ private[gateway] object WsTasksWorkspaceHandlers:
           // secret 题本期不可作答 ⇒ 给出专属码，客户端据码禁用而非弹串。
           val d = t.decision.get
           val (code, msg) =
-            if d.secret then
-              nebflow.core.scheduler.DecisionAnswerRules.CodeSecret -> "这是敏感决策题，本期不能在待办里完成；请走原始会话。"
+            if d.secret then nebflow.core.scheduler.DecisionAnswerRules.CodeSecret -> "这是敏感决策题，本期不能在待办里完成；请走原始会话。"
             else nebflow.core.scheduler.DecisionAnswerRules.CodeUnanswered -> "先作答再完成：这是决策待办，请先选择或填写答案。"
           wsSend(
             io.circe.Json.obj(
@@ -1082,8 +1152,7 @@ private[gateway] object WsTasksWorkspaceHandlers:
           "message" -> msg.asJson
         )
       )
-    if ansSessionId.isEmpty || ansId.isEmpty then
-      fail("decision_bad_request", "作答帧缺 sessionId 或 id。")
+    if ansSessionId.isEmpty || ansId.isEmpty then fail("decision_bad_request", "作答帧缺 sessionId 或 id。")
     else
       sharedResources.scheduledTaskStore.findTaskById(ansId).flatMap {
         case Some(t) if t.isTodo && t.decision.nonEmpty && t.isCompleted =>

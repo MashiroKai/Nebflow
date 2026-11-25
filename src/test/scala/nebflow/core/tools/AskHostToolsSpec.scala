@@ -12,6 +12,132 @@ import nebflow.shared.{PathUtil, ThinkingConfig}
 
 class AskHostToolsSpec extends CatsEffectSuite:
 
+  test("takeover admission requires trusted root, outstanding marked request and browser ownership") {
+    val pending = AskHostLedger.Pending("req", "worker", "root", "agent", "call")
+    val marked = AskHostLedger.RequestState(pending, "[BU-TAKEOVER]\nsession: work", None, Nil)
+    val registry = new nebflow.core.browser.BrowserTakeoverRegistry
+    registry.created("work", "worker")
+    assert(AskHostTool.admitBrowserTakeover(false, "root", Some(marked), "work", registry).isLeft)
+    assert(AskHostTool.admitBrowserTakeover(true, "other-root", Some(marked), "work", registry).isLeft)
+    assert(AskHostTool.admitBrowserTakeover(true, "root", Some(marked.copy(question = "ordinary")), "work", registry).isLeft)
+    assert(AskHostTool.admitBrowserTakeover(true, "root", Some(marked.copy(terminal = Some(AskHostLedger.Terminal.Answered("done")))), "work", registry).isLeft)
+    assert(AskHostTool.admitBrowserTakeover(true, "root", Some(marked), "unknown", registry).isLeft)
+    val other = marked.copy(pending = pending.copy(workerSession = "intruder"))
+    assert(AskHostTool.admitBrowserTakeover(true, "root", Some(other), "work", registry).isLeft)
+    assertEquals(AskHostTool.admitBrowserTakeover(true, "root", Some(marked), "work", registry), Right(()))
+  }
+
+  test("timeout closes input gate for an active takeover before releasing the worker") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    val registry = nebflow.core.browser.BrowserSessions.takeoverRegistry
+    val session = "timeout-test-" + java.util.UUID.randomUUID().toString.take(8)
+    registry.created(session, "worker")
+    (for
+      (request, _) <- AskHostLedger.beginForCall("worker", "root", "agent", s"[BU-TAKEOVER]\nsession: $session", "timeout-gate-call")
+      _ <- AskHostLedger.admitTakeoverCurrent(request.correlationId, "root", session, registry)
+      _ = assertEquals(registry.withInput(session, request.correlationId)("sent"), Right("sent"))
+      _ <- AskHostLedger.releaseOnTimeout(request.correlationId, "timeout")
+      _ = assert(registry.withInput(session, request.correlationId)("sent").isLeft)
+    yield ()).guarantee(IO { registry.remove(session); PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("takeover finish answers pending once and releases lease") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    val registry = new nebflow.core.browser.BrowserTakeoverRegistry
+    registry.created("work", "worker")
+    (for
+      (request, waiter) <- AskHostLedger.beginForCall("worker", "root", "agent", "[BU-TAKEOVER]\nsession: work", "finish-call")
+      _ <- AskHostLedger.admitTakeoverCurrent(request.correlationId, "root", "work", registry)
+      first <- AskHostLedger.finishTakeover(request.correlationId, "work", registry)
+      second <- AskHostLedger.finishTakeover(request.correlationId, "work", registry)
+      decision <- waiter.get
+      _ = assertEquals(first, AskHostLedger.TakeoverFinish.Answered)
+      _ = assertEquals(second, AskHostLedger.TakeoverFinish.NoLease)
+      _ = assertEquals(decision, AskHostLedger.TakeoverDecision)
+      _ = assert(!registry.isTakingOver("work"))
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("takeover finish claims a timed-out request once") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    val registry = new nebflow.core.browser.BrowserTakeoverRegistry
+    registry.created("work", "worker")
+    (for
+      (request, _) <- AskHostLedger.beginForCall("worker", "root", "agent", "[BU-TAKEOVER]\nsession: work", "late-finish-call")
+      _ <- AskHostLedger.releaseOnTimeout(request.correlationId, "timeout")
+      _ <- AskHostLedger.admitTakeoverCurrent(request.correlationId, "root", "work", registry)
+      _ = assert(registry.withInput("work", request.correlationId)("event").isLeft)
+      first <- AskHostLedger.finishTakeover(request.correlationId, "work", registry)
+      second <- AskHostLedger.finishTakeover(request.correlationId, "work", registry)
+      _ = assertEquals(first, AskHostLedger.TakeoverFinish.LateClaimed)
+      _ = assertEquals(second, AskHostLedger.TakeoverFinish.NoLease)
+      rows <- IO(os.read.lines(tmp / "askhost" / "ledger.jsonl"))
+      _ = assertEquals(rows.count(_.contains("takeover-late-claimed")), 1)
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("stale takeover snapshot cannot open after answer or cancellation") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    val registry = new nebflow.core.browser.BrowserTakeoverRegistry
+    registry.created("work", "worker")
+    (for
+      (answered, _) <- AskHostLedger.beginForCall("worker", "root", "agent", "[BU-TAKEOVER]\nsession: work", "answer-call")
+      staleAnswer <- AskHostLedger.requestState(answered.correlationId)
+      accepted <- AskHostLedger.answer(answered.correlationId, "done")
+      duplicate <- AskHostLedger.answer(answered.correlationId, "done")
+      _ = assert(accepted && !duplicate)
+      refusedAnswer <- AskHostLedger.admitTakeoverCurrent(answered.correlationId, "root", "work", registry)
+      _ = assert(staleAnswer.exists(_.terminal.isEmpty))
+      _ = assert(refusedAnswer.isLeft)
+      (cancelled, _) <- AskHostLedger.beginForCall("worker", "root", "agent", "[BU-TAKEOVER]\nsession: work", "cancel-call")
+      staleCancel <- AskHostLedger.requestState(cancelled.correlationId)
+      cancelledOnce <- AskHostLedger.cancel(cancelled.correlationId, "cancelled")
+      cancelledTwice <- AskHostLedger.cancel(cancelled.correlationId, "cancelled")
+      _ = assert(cancelledOnce && !cancelledTwice)
+      refusedCancel <- AskHostLedger.admitTakeoverCurrent(cancelled.correlationId, "root", "work", registry)
+      _ = assert(staleCancel.exists(_.terminal.isEmpty))
+      _ = assert(refusedCancel.isLeft)
+      _ = assert(!registry.isTakingOver("work"))
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("concurrent takeover admissions grant exactly one lease") {
+    val pending = AskHostLedger.Pending("req", "worker", "root", "agent", "call")
+    val state = AskHostLedger.RequestState(pending, "[BU-TAKEOVER]\nsession: work", None, Nil)
+    val registry = new nebflow.core.browser.BrowserTakeoverRegistry
+    registry.created("work", "worker")
+    (for
+      gate <- Deferred[IO, Unit]
+      first <- (gate.get *> IO(AskHostTool.admitBrowserTakeover(true, "root", Some(state), "work", registry))).start
+      second <- (gate.get *> IO(AskHostTool.admitBrowserTakeover(true, "root", Some(state), "work", registry))).start
+      _ <- gate.complete(())
+      a <- first.joinWithNever
+      b <- second.joinWithNever
+      _ = assertEquals(List(a, b).count(_.isRight), 1)
+    yield ())
+  }
+
+  test("takeover session parser rejects missing duplicate or malformed session fields") {
+    assertEquals(AskHostTool.takeoverSession("[BU-TAKEOVER]\nsession: work"), Some("work"))
+    assertEquals(AskHostTool.takeoverSession("[BU-TAKEOVER]\nsession: work\nsession: other"), None)
+    assertEquals(AskHostTool.takeoverSession("[BU-TAKEOVER]\nsession: ../bad"), None)
+    assertEquals(AskHostTool.takeoverSession("ordinary\nsession: work"), None)
+  }
+
+  test("BU takeover marker is recognized only as the exact leading line") {
+    assert(AskHostTool.isBrowserTakeover("[BU-TAKEOVER]\nsession: work\nscreenshot: /tmp/a.png"))
+    assert(!AskHostTool.isBrowserTakeover("ordinary [BU-TAKEOVER]"))
+    assert(!AskHostTool.isBrowserTakeover("[BU-TAKEOVER] suffix"))
+  }
+
   test("AskHost ledger persists pending source/question and accepts one correlated decision") {
     val tmp = os.temp.dir()
     val previous = PathUtil.dataRoot
@@ -297,6 +423,39 @@ class AskHostToolsSpec extends CatsEffectSuite:
 
   private def replyInput(id: String, decision: String): JsonObject =
     JsonObject("correlationId" -> id.asJson, "decision" -> decision.asJson)
+
+  test("takeover recovery replays marker metadata and delivers correlated reply") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    import nebflow.core.mail.SessionMailbox
+    val question = "[BU-TAKEOVER]\nsession: work\nscreenshot: /private/shot.png"
+    (for
+      (request, _) <- AskHostLedger.beginForCall("worker-takeover", "sid-root", "agent", question, "call-takeover")
+      _ <- IO(AskHostLedger.clearForTests())
+      count <- AskHostLedger.recoverPending(resourcesWith(Map.empty))
+      entries <- SessionMailbox.scanPending("sid-root")
+      _ = assertEquals(count, 1)
+      _ = assertEquals(entries.size, 1)
+      event = entries.head.event
+      _ = assertEquals(event.metadata("browserTakeover").flatMap(_.asBoolean), Some(true))
+      _ = assertEquals(event.metadata("correlationId").flatMap(_.asString), Some(request.correlationId))
+      _ = assert(event.payload.contains(question))
+      waiter <- AskHostLedger.restoreWaiter(request.correlationId)
+      response <- AskHostReplyTool.call(replyInput(request.correlationId, "点确认"), rootCtx(resourcesWith(Map.empty)))
+      result <- AskHostTool.awaitReply(request.correlationId, waiter, scala.concurrent.duration.DurationInt(3).seconds)
+      _ = assert(response.isRight)
+      _ = assertEquals(result.toOption, Some("点确认"))
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("takeover instructions require a fresh snapshot after completion") {
+    val instructions = os.read(os.pwd / "src" / "main" / "resources" / "seed" / "plugins" / "browser-use" / "skills" / "browser-session" / "SKILL.md")
+    val handoff = instructions.split("## BU 动词阻塞接管", 2)(1).split("## 三、", 2)(0)
+    assert(handoff.contains("收到答复（含迟答）后先重新 browser_snapshot"))
+    assert(handoff.contains("作者直接操作页面"))
+    assert(handoff.contains("等待期间不执行浏览器动词"))
+  }
 
   test("timeout release is a distinct neutral state, never conflated with an unknown id") {
     val tmp = os.temp.dir()

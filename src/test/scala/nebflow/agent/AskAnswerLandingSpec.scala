@@ -43,7 +43,7 @@ class AskAnswerLandingSpec extends CatsEffectSuite:
     Ref.of[IO, List[(String, Boolean)]](Nil).flatMap { seen =>
       lazy val behavior: nebflow.actor.Behavior[nebflow.actor.AgentCommand] =
         Behaviors.receiveMessage[nebflow.actor.AgentCommand] {
-          case nebflow.actor.AgentCommand.ImmediateInput(text, _, _, _, _, _, _, fromUser, _, _, _) =>
+          case nebflow.actor.AgentCommand.ImmediateInput(text, _, _, _, _, _, _, fromUser, _, _, _, _) =>
             seen.update(_ :+ ((text, fromUser))).as(behavior)
           case _ => IO.pure(behavior)
         }

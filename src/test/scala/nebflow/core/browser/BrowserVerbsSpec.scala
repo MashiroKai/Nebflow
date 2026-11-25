@@ -30,6 +30,188 @@ class BrowserVerbsSpec extends CatsEffectSuite:
 
   private val nineNames = BrowserVerbNames.All.toSet
 
+  test("takeover registry rejects unowned and wrong-owner sessions and prevents duplicate leases") {
+    val registry = new BrowserTakeoverRegistry
+    assertEquals(registry.begin("old", "agent-a", "req-1"), Left("该浏览器会话没有归属记录"))
+    registry.created("work", "agent-a")
+    registry.created("work", "agent-b")
+    assert(registry.begin("work", "agent-b", "req-1").isLeft)
+    assertEquals(registry.begin("work", "agent-a", "req-1"), Right(()))
+    assert(registry.begin("work", "agent-a", "req-2").isLeft)
+    assert(registry.isTakingOver("work"))
+    registry.finish("req-1")
+    assert(!registry.isTakingOver("work"))
+  }
+
+  test("takeover ticket is single-use, expires, and checks live request and ownership") {
+    var now = 1000L
+    val tickets = new BrowserTakeoverTickets(() => now, 120000L)
+    val a = tickets.issue("req-a", "agent-a", "browser-a")
+    assert(tickets.consume(a, _ => false).isEmpty)
+    assert(tickets.consume(a, _ => true).isDefined)
+    assert(tickets.consume(a, _ => true).isEmpty)
+    val b = tickets.issue("req-b", "agent-b", "browser-b")
+    now += 120001L
+    assert(tickets.consume(b, _ => true).isEmpty)
+    val c = tickets.issue("req-c", "agent-c", "browser-c")
+    assert(tickets.consume(c, t => t.agent == "different-owner").isEmpty)
+  }
+
+  test("screencast lifecycle sends start, acknowledges frames asynchronously and stops once") {
+    val calls = scala.collection.mutable.ListBuffer.empty[(String, Json)]
+    val ack = new java.util.concurrent.CountDownLatch(1)
+    val stream = new BrowserScreencast((method, params) => calls.synchronized { calls += ((method, params)); if method == "Page.screencastFrameAck" then ack.countDown(); () })
+    stream.start()
+    stream.frame(Json.obj("sessionId" -> 7.asJson, "data" -> "frame".asJson))
+    assert(ack.await(2, java.util.concurrent.TimeUnit.SECONDS))
+    stream.close()
+    stream.close()
+    assertEquals(calls.toList.map(_._1), List("Page.startScreencast", "Page.screencastFrameAck", "Page.stopScreencast"))
+    assertEquals(calls(1)._2.hcursor.get[Int]("sessionId").toOption, Some(7))
+    assertEquals(stream.take().flatMap(io.circe.parser.parse(_).toOption).flatMap(_.hcursor.get[String]("data").toOption), Some("frame"))
+  }
+
+  test("takeover viewport conversion uses remote viewport rather than screenshot pixels") {
+    assertEquals(BrowserTakeoverInput.viewportPoint(640.0, 320.0, 1280.0, 640.0, 1400.0, 700.0), (700.0, 350.0))
+  }
+
+  test("takeover input translates only validated actions to CDP methods") {
+    val calls = scala.collection.mutable.ListBuffer.empty[String]
+    val stream = new BrowserScreencast((method, _) => { calls += method; () })
+    stream.input(Json.obj("type" -> "insertText".asJson, "text" -> "a".asJson))
+    stream.input(Json.obj("type" -> "keyDown".asJson, "key" -> "Enter".asJson))
+    intercept[IllegalArgumentException](stream.input(Json.obj("type" -> "Runtime.evaluate".asJson)))
+    assertEquals(calls.toList, List("Input.insertText", "Input.dispatchKeyEvent"))
+  }
+
+  test("takeover input protocol admits only bounded mouse keyboard and wheel events") {
+    assert(BrowserTakeoverInput.valid(Json.obj("type" -> "mouseMoved".asJson, "x" -> 12.asJson, "y" -> 20.asJson)))
+    assert(!BrowserTakeoverInput.valid(Json.obj("type" -> "Runtime.evaluate".asJson)))
+    assert(!BrowserTakeoverInput.valid(Json.obj("type" -> "mouseMoved".asJson, "x" -> (-1).asJson, "y" -> 1.asJson)))
+    assert(!BrowserTakeoverInput.valid(Json.obj("type" -> "insertText".asJson, "text" -> ("x" * 4097).asJson)))
+  }
+
+  test("ACK failure signals without allowing callback exceptions to escape") {
+    val signalled = new java.util.concurrent.CountDownLatch(1)
+    val stream = new BrowserScreencast((method, _) => if method == "Page.screencastFrameAck" then throw new RuntimeException("ack"),
+      () => { signalled.countDown(); throw new RuntimeException("callback") })
+    stream.frame(Json.obj("sessionId" -> 1.asJson, "data" -> "frame".asJson))
+    assert(signalled.await(2, java.util.concurrent.TimeUnit.SECONDS))
+    stream.close()
+  }
+
+  test("failure notification is retained when wakeup is unavailable") {
+    val signal = new BrowserFailureSignal
+    assert(!signal.failed)
+    assert(signal.fail())
+    assert(signal.failed)
+    assert(!signal.fail())
+    assert(signal.claim())
+    assert(!signal.claim())
+  }
+
+  test("failure before registration is observed at registration and cleanup runs once") {
+    val lifecycle = new BrowserFailureLatch
+    var cleanups = 0
+    lifecycle.fail()
+    lifecycle.register(() => cleanups += 1)
+    lifecycle.finish()
+    assertEquals(cleanups, 1)
+  }
+
+  test("failure after registration and during cleanup still cleans exactly once") {
+    val lifecycle = new BrowserFailureLatch
+    var cleanups = 0
+    lifecycle.register(() => { cleanups += 1; lifecycle.fail() })
+    lifecycle.fail()
+    lifecycle.finish()
+    assertEquals(cleanups, 1)
+  }
+
+  test("frame pump bounded under sustained overload and retains newest frame") {
+    val queue = new BrowserFramePump
+    (1 to 8).foreach(i => queue.offer(i, i.toString))
+    assert(queue.pendingCount <= 8)
+    assertEquals(queue.takeFrame(), Some("8"))
+    assertEquals((1 to 8).flatMap(_ => queue.nextAck()), 1 to 8)
+    intercept[IllegalStateException] { (1 to 9).foreach(i => queue.offer(i, i.toString)) }
+  }
+
+  test("screencast acknowledgements are bounded while retaining the newest image") {
+    val queue = new BrowserFramePump
+    assert(queue.offer(1, "first"))
+    assert(!queue.offer(2, "second"))
+    assertEquals(queue.nextAck(), Some(1))
+    assertEquals(queue.takeFrame(), Some("second"))
+    assertEquals(queue.nextAck(), Some(2))
+    assertEquals(queue.nextAck(), None)
+  }
+
+  test("screencast frames acknowledge every received frame and retain only the newest") {
+    val acknowledgements = scala.collection.mutable.ListBuffer.empty[Int]
+    val frames = new BrowserFrameBuffer(id => acknowledgements += id)
+    frames.receive(1, "first")
+    frames.receive(2, "second")
+    assertEquals(acknowledgements.toList, List(1, 2))
+    assertEquals(frames.take(), Some("second"))
+    assertEquals(frames.take(), None)
+  }
+
+  test("CDP event subscribers receive only their event and can unsubscribe") {
+    val events = new CdpEventSubscriptions
+    var received = List.empty[Int]
+    val cancel = events.subscribe("Page.screencastFrame", json => received = received :+ json.hcursor.get[Int]("sessionId").toOption.get)
+    events.dispatch("Other", Json.obj("sessionId" -> 1.asJson))
+    events.dispatch("Page.screencastFrame", Json.obj("sessionId" -> 2.asJson))
+    cancel()
+    events.dispatch("Page.screencastFrame", Json.obj("sessionId" -> 3.asJson))
+    assertEquals(received, List(2))
+  }
+
+  test("external and pre-restart unowned sessions refuse takeover but permit ordinary verbs") {
+    for scenario <- List("external", "pre-restart") do
+      val registry = new BrowserTakeoverRegistry
+      assertEquals(registry.begin(scenario, "agent-a", "req"), Left("该浏览器会话没有归属记录"))
+      assertEquals(registry.withVerb(scenario)("normal verb ran"), "normal verb ran")
+  }
+
+  test("input gate accepts only active request and rejects it after finish") {
+    val registry = new BrowserTakeoverRegistry
+    registry.created("work", "agent")
+    assert(registry.withInput("work", "req")("event").isLeft)
+    assertEquals(registry.begin("work", "agent", "req"), Right(()))
+    assertEquals(registry.withInput("work", "req")("event"), Right("event"))
+    assert(registry.withInput("work", "other")("event").isLeft)
+    registry.disableInput("req")
+    assert(registry.withInput("work", "req")("event").isLeft)
+    registry.finish("req")
+    assert(registry.withInput("work", "req")("event").isLeft)
+  }
+
+  test("takeover blocks normal browser verbs until completion") {
+    val registry = new BrowserTakeoverRegistry
+    registry.created("work", "agent-a")
+    assertEquals(registry.begin("work", "agent-a", "req"), Right(()))
+    assertEquals(intercept[IllegalStateException](registry.withVerb("work")("wrong")).getMessage, "作者正在接管")
+    registry.finish("req")
+    assertEquals(registry.withVerb("work")("ok"), "ok")
+  }
+
+  test("new screenshot file is owner read-write only on POSIX") {
+    val dir = Files.createTempDirectory("bu-private-shot")
+    val file = dir.resolve("shot.png")
+    try
+      if Files.getFileStore(dir).supportsFileAttributeView("posix") then
+        BrowserSessions.writePrivateScreenshot(file, Array[Byte](1, 2, 3))
+        import scala.jdk.CollectionConverters.*
+        import java.nio.file.attribute.PosixFilePermission.*
+        assertEquals(Files.getPosixFilePermissions(file).asScala.toSet, Set(OWNER_READ, OWNER_WRITE))
+        assertEquals(Files.readAllBytes(file).toList, List[Byte](1, 2, 3))
+    finally
+      Files.deleteIfExists(file)
+      Files.deleteIfExists(dir)
+  }
+
   // ══════════ 1. 纯策略 ══════════
 
   test("会话名：小写字母数字连字符下划线，1–40 位，禁路径字符") {

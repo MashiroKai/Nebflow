@@ -9,6 +9,8 @@
 import { t } from './../i18n.js';
 import { escapeHtml, highlightCode } from './../utils.js';
 import { getAuthToken } from './../neblink.js';
+import { emit, EVENTS } from './../events.js';
+import { setHtmlTree } from './../dom.js';
 
 const MODES = ['follow', 'slots', 'rules'];
 
@@ -97,12 +99,8 @@ export function mountModelRulesSection(host) {
       : '';
     const srcHtml = highlightCode(saved, 'model-rules.dsl') ||
       `<pre class="mr-source">${escapeHtml(saved)}</pre>`;
-    host.innerHTML = `
+    setHtmlTree(host, `
       <div class="mr-root" data-mode="${mode}">
-        <div class="mr-topbar" role="radiogroup" aria-label="${escapeHtml(t('modelRules.modeLabel'))}">
-          ${MODES.map((m) => `<button type="button" role="radio" aria-checked="${m === mode}"
-            class="mr-mode${m === mode ? ' is-on' : ''}" data-mode-set="${m}">${escapeHtml(t('modelRules.mode.' + m))}</button>`).join('')}
-        </div>
         ${loadError ? `<div class="mr-error">${escapeHtml(loadError)}</div>` : ''}
         <div class="mr-cols">
           <section class="mr-left">
@@ -124,7 +122,7 @@ export function mountModelRulesSection(host) {
             ${diffHtml}
           </section>
         </div>
-      </div>`;
+      </div>`);
     bind();
   };
 
@@ -148,14 +146,14 @@ export function mountModelRulesSection(host) {
       return;
     }
     if (el.dataset.act === 'stage') {
-      const dr = host.querySelector('.mr-draft');
+      const dr = /** @type {HTMLTextAreaElement|null} */ (host.querySelector('.mr-draft'));
       if (dr) draft = dr.value;
       status = '';
       errors = [];
       return render();
     }
     if (el.dataset.act === 'apply') {
-      const dr = host.querySelector('.mr-draft');
+      const dr = /** @type {HTMLTextAreaElement|null} */ (host.querySelector('.mr-draft'));
       if (dr) draft = dr.value;
       await apply();
     }
@@ -195,6 +193,7 @@ export function mountModelRulesSection(host) {
       errors = [];
       status = t('modelRules.applied');
       await load();
+      emit(host, EVENTS.MODEL_RULES_SAVED);
       return;
     }
     errors = [];
@@ -209,11 +208,11 @@ export function mountModelRulesSection(host) {
   };
 
   host.addEventListener('click', onClick);
-  host.innerHTML = `<div class="mr-empty">${escapeHtml(t('modelRules.loading'))}</div>`;
+  setHtmlTree(host, `<div class="mr-empty">${escapeHtml(t('modelRules.loading'))}</div>`);
   void load();
 
   return () => {
     host.removeEventListener('click', onClick);
-    host.innerHTML = '';
+    host.replaceChildren();
   };
 }

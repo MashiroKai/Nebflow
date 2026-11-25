@@ -164,6 +164,10 @@ test.describe('injected turn opens its OWN badge group (16:54 追加令)', () =>
     expect(after.linePresent).toBe(true);
     expect(after.linePrevIsUser).toBe(true);                    // 行线未动（isConnected 短路）
     expect(after.linePrevIsInjected).toBe(false);
+    await expect(page.locator('[data-nf-injection-stack] button')).toContainText('1');
+    await page.evaluate(() => window.__tdInject('第二条轮内注入', 'nodeMessage'));
+    await expect(page.locator('[data-nf-injection-stack] button')).toContainText('2');
+    expect(await page.locator('.row .bubble.injected').count()).toBe(2);
 
     // turn 1 闭合；排队腿随后开 turn 2 → 自己的行线贴注入泡、自己的 badge。
     await page.evaluate(() => window.__tdDone('Bash\n  (sleep 30)', 'No output', 'ok', false, '{"command":"sleep 30"}'));
@@ -185,6 +189,94 @@ test.describe('injected turn opens its OWN badge group (16:54 追加令)', () =>
 
     await context.close();
   });
+
+  test('ownership: multiple pre-badge opening injections and later injection belong to one turn', async ({ browser }) => {
+    const { context, page } = await newPage(browser);
+    await page.evaluate(() => window.__tdInject('开轮一', 'nodeMessage'));
+    await page.evaluate(() => window.__tdInject('开轮二', 'nodeMessage'));
+    await page.evaluate(() => window.__tdCallStart('Read'));
+    await page.evaluate(() => window.__tdInject('轮中三', 'nodeMessage'));
+    await page.evaluate(() => window.__tdDone('Read', 'ok', 'x', false, '{}'));
+    await page.evaluate(() => window.__tdFinishTurn());
+    const order = await page.evaluate(() => [...document.querySelector('#chat').children].map(el => ({html: el.outerHTML.slice(0, 180), text: el.textContent.trim().slice(0, 40)})));
+    console.log('OPENING_DOM ' + JSON.stringify(order));
+    const header = page.locator('.turn-header');
+    const injections = page.locator('#chat > .row:has(.bubble.injected)');
+    expect(await header.evaluate(el => [...el.parentNode.children].indexOf(el))).toBeGreaterThan(await injections.nth(1).evaluate(el => [...el.parentNode.children].indexOf(el)));
+    await expect(page.locator('[data-nf-injection-stack] button')).toContainText('3');
+    for (const row of await injections.all()) await expect(row).toBeHidden();
+    await context.close();
+  });
+
+  test('closed group membership remains unchanged across new injections and stack toggles', async ({ browser }) => {
+    const { context, page } = await newPage(browser);
+    await page.evaluate(() => window.__tdUser('第一轮'));
+    await page.evaluate(() => window.__tdCallStart('Read'));
+    await page.evaluate(() => window.__tdInject('第一轮注入', 'nodeMessage'));
+    await page.evaluate(() => window.__tdDone('Read', 'ok', 'x', false, '{}'));
+    await page.evaluate(() => window.__tdFinishTurn());
+    const groups = () => page.evaluate(() => {
+      const children = [...document.querySelector('#chat').children];
+      const headers = children.filter(el => el.classList.contains('turn-header'));
+      return headers.map(header => {
+        const rows = [];
+        for (let el = header.nextElementSibling; el && !el.classList.contains('turn-header'); el = el.nextElementSibling) {
+          if (el.classList.contains('row') && el.classList.contains('user') && !el.querySelector('.bubble.injected') && !el.hasAttribute('data-nf-mid-turn')) break;
+          if (el.classList.contains('row')) rows.push(el.textContent);
+        }
+        return rows;
+      });
+    });
+    const initial = await groups();
+    await page.locator('[data-nf-injection-stack] button').first().click();
+    expect(await groups()).toEqual(initial);
+    await page.locator('[data-nf-injection-stack] button').first().click();
+    expect(await groups()).toEqual(initial);
+    await page.evaluate(() => window.__tdUser('第二轮'));
+    await page.evaluate(() => window.__tdCallStart('Read'));
+    await page.evaluate(() => window.__tdInject('第二轮注入', 'nodeMessage'));
+    await page.evaluate(() => window.__tdDone('Read', 'ok', 'y', false, '{}'));
+    await page.evaluate(() => window.__tdFinishTurn());
+    const after = await groups();
+    expect(after).toHaveLength(2);
+    expect(after[0]).toEqual(initial[0]);
+    expect(after[1].some(text => text.includes('第二轮注入'))).toBe(true);
+    for (const button of await page.locator('[data-nf-injection-stack] button').all()) await button.click();
+    expect(await groups()).toEqual(after);
+    for (const button of await page.locator('[data-nf-injection-stack] button').all()) await button.click();
+    expect(await groups()).toEqual(after);
+    await context.close();
+  });
+
+  for (const reducedMotion of ['no-preference', 'reduce']) {
+    test(`streamed count rolls and settles (${reducedMotion})`, async ({ browser }) => {
+      const context = await browser.newContext({ locale: 'zh-CN', reducedMotion });
+      const page = await context.newPage();
+      await page.goto(`http://127.0.0.1:${port}${HARNESS_PATH}`);
+      await page.waitForFunction(() => window.__ready === true);
+      await page.evaluate(() => window.__tdUser('运行'));
+      await page.evaluate(() => window.__tdCallStart('Read'));
+      await page.evaluate(() => window.__tdInject('一', 'nodeMessage'));
+      const observed = await page.evaluate(() => {
+        window.__tdInject('二', 'nodeMessage');
+        const digit = document.querySelector('.nf-injection-stack-digit');
+        return { value: digit.textContent, animation: getComputedStyle(digit).animationName, running: digit.getAnimations().length };
+      });
+      expect(observed.value).toBe('2');
+      if (reducedMotion === 'reduce') {
+        expect(observed.animation).toBe('none');
+        expect(observed.running).toBe(0);
+      } else {
+        expect(observed.animation).toBe('nf-injection-count-roll');
+        expect(observed.running).toBeGreaterThan(0);
+        await page.locator('.nf-injection-stack-digit').evaluate(el => { const a = el.getAnimations()[0]; a.pause(); a.currentTime = 100; });
+        await page.screenshot({ path: path.join(SHOT_DIR, 'injection-animation-mid.png') });
+        await page.locator('.nf-injection-stack-digit').evaluate(async el => { const a = el.getAnimations()[0]; a.play(); await a.finished; });
+        await expect(page.locator('.nf-injection-stack-digit')).toHaveText('2');
+      }
+      await context.close();
+    });
+  }
 
   test('user-message path regression: header still lands right after the user row (原路径不伤)', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);

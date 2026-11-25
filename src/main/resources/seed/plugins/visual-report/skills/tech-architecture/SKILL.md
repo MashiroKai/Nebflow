@@ -37,7 +37,7 @@ description: 技术架构调研报告（graphviz 分层集群）；梳理架构�
 
 - **降级链（不得空转，core §5）**：mermaid-cli → graphviz(dot) → 纯文本缩进框线（`├─` / `└─` 层级清单表达层次，禁止 ASCII 画箭头、禁止猜坐标）。
 - **Mac 侧差异**：`brew install graphviz` 后 dot 进 PATH（实测 Mac 侧 `dot -V` → 14.1.5）；中文字体用 PingFang SC；mmdc 同样未装，npx 直调路径相同。
-- **dark-mode 内嵌规范（core §3）**：优先 SVG（`currentColor` 或内嵌 `@media (prefers-color-scheme: dark)`）；PNG 无主题适配——透明底或浅色实底出图，节点浅底深字，亮色底对比度 ≥4.5:1；嵌文档前亮暗主题各目检一遍。
+- **dark-mode 正文图**：知识文档内容图内嵌 PNG，SVG 可选下载；PNG 用适合亮暗主题的底色与对比度，嵌入前两主题目检。
 
 ## 质量红线（场景追加）
 

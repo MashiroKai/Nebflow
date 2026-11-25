@@ -475,6 +475,10 @@ body.mobile-layer .note-dock .ds-resize-handle {
   align-items: baseline;
   min-width: 0;
 }
+.ask-workline-host { align-self: stretch; min-width: 0; width: 100%; }
+.ask-process-details { align-self: stretch; min-width: 0; font-size: var(--ds-fs-hint); color: var(--color-text-dim); }
+.ask-process-details summary { cursor: pointer; }
+.ask-process-details pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
 .ask-handoff[hidden] { display: none; }
 .ask-handoff-tag { color: var(--color-primary); white-space: nowrap; }
 .ask-handoff.failed .ask-handoff-tag { color: var(--cv-hint-color-dim); }
@@ -500,6 +504,8 @@ body.mobile-layer .note-dock .ds-resize-handle {
  * 观感两类（作者令点名的区分）：正常干活 = 中性 dim（不抢注意力）；前置不可用 =
  * warn 档；失败 = error 档。三段是并列的 flex 项，右对齐（面板右缘钉位）。 */
 .ask-state-line {
+  position: relative;
+  z-index: 2;
   /* 毛玻璃胶囊（ask-status-glass 批）：内容宽、右缘钉位，材质由 glass.css 成员登记表
      （`.ask-dock .ask-state-line`）供给 —— 单一配方，本块零材质声明。 */
   align-self: flex-end;

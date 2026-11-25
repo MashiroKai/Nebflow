@@ -2,6 +2,7 @@ package nebflow.social
 
 import cats.effect.IO
 import cats.effect.Ref
+import cats.syntax.all.*
 import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import io.circe.syntax.*
@@ -22,8 +23,8 @@ import nebflow.social.outbound.{AskPromptCodec, PromptView}
  *     tolerance + out-of-range refusals);
  *   - the intake splitter: the ask legs sit BETWEEN the allowlist gate and
  *     the injection arms; non-ask text falls through byte-identically;
- *   - B-3: a new ask retires the previous OPEN one by precise CloseRequest
- *     and takes the slot; askUserClosed clears it; an answered tombstone
+ *   - B-3: a new ask takes the channel slot without closing the previous
+ *     hub request; askUserClosed clears it; an answered tombstone
  *     refuses a repeat read of the numbers (never a second injection);
  *   - B-4 案甲: a >4000-char reply degrades to 摘要+拉取指令 with the full
  *     text on a 「全文」 pull, segmented within the first tier;
@@ -50,6 +51,7 @@ class WeixinAskLegSpec extends CatsEffectSuite:
     val injected: Ref[IO, List[(String, String)]] = Ref.unsafe[IO, List[(String, String)]](Nil)
     val forwarded: Ref[IO, List[(String, String, Json)]] = Ref.unsafe[IO, List[(String, String, Json)]](Nil)
     val closed: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+    val onClose: Ref[IO, String => IO[Unit]] = Ref.unsafe[IO, String => IO[Unit]](_ => IO.unit)
 
     val mediaInjected
       : Ref[IO, List[(String, List[nebflow.bridge.BridgeAttachment], Option[nebflow.bridge.BridgeOrigin])]] =
@@ -77,7 +79,9 @@ class WeixinAskLegSpec extends CatsEffectSuite:
 
     override def forwardInteractionAnswer(requestId: String, rootSessionId: String, payload: Json): IO[Unit] =
       forwarded.update(_ :+ ((requestId, rootSessionId, payload)))
-    override def closeInteractionRequest(requestId: String): IO[Unit] = closed.update(_ :+ requestId)
+
+    override def closeInteractionRequest(requestId: String): IO[Unit] =
+      closed.update(_ :+ requestId) *> onClose.get.flatMap(_(requestId))
     def interruptAgent(sessionId: String): IO[Unit] = IO.unit
     def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
     def listSessions: IO[List[SessionMeta]] = IO.pure(sessions)
@@ -465,20 +469,86 @@ class WeixinAskLegSpec extends CatsEffectSuite:
     end for
   }
 
-  test("WI-B1 B-3 top-old: a new ask retires the previous OPEN one by precise CloseRequest") {
+  test("WI-B1 new ask changes only the Weixin address, without closing the previous hub request") {
     val out = Out()
     for
       (p, ctx) <- started(out, List(meta("wx_a")))
       _ <- p.onAgentEvent("s1", askFrame("rid-1", "s1", simpleItems))
       _ <- p.onAgentEvent("s1", askFrame("rid-2", "s1", simpleItems))
+      _ <- p.onAgentEvent("s1", askFrame("rid-3", "s1", simpleItems))
       closed <- ctx.closed.get
       v <- p.intake(ctx, WeixinIlinkBridgePlugin.Inbound(Some("wx_a"), Some("1"), Some("m1")))
       fw <- ctx.forwarded.get
     yield
-      assertEquals(closed, List("rid-1")) // precise, never the session-wide sweep
-      assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Answered("rid-2")) // the NEW ask answers
-      assertEquals(fw.map(_._1), List("rid-2"))
+      assertEquals(closed, List.empty) // other channels retain both previous requests
+      assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Answered("rid-3")) // only the latest is addressed
+      assertEquals(fw.map(_._1), List("rid-3"))
     end for
+  }
+
+  test("WI-B1 three hub requests survive Weixin displacement and answer independently") {
+    val system = nebflow.actor.ActorSystem("weixin-three-pending")
+    val out = Out()
+    val ctx = AskCtx(List(meta("wx_a")))
+    val p = new WeixinIlinkBridgePlugin(
+      tmpRoot(),
+      pinnedAllowedIlinkUserIds = None,
+      rootSessionGate = Some(_ => true),
+      send = _ => out.seam
+    )
+    val seen = List.fill(3)(cats.effect.Deferred.unsafe[IO, Unit])
+    val answers = List.fill(3)(cats.effect.Deferred.unsafe[IO, List[String]])
+    def sink(i: Int): nebflow.actor.ActorRef[List[String]] = new nebflow.actor.ActorRef[List[String]]:
+      def path: nebflow.actor.ActorPath = nebflow.actor.ActorPath("weixin-three-pending", List(s"sink-$i"))
+      def !(value: List[String]): IO[Unit] = answers(i).complete(value).void
+      def ?[R](
+        makeMsg: nebflow.actor.ActorRef[R] => List[String],
+        timeout: Option[scala.concurrent.duration.FiniteDuration]
+      ): IO[R] =
+        IO.raiseError(new UnsupportedOperationException("tell-only"))
+    val test = for
+      hub <- system.spawn(nebflow.agent.InteractionHub(), "hub")
+      _ <- ctx.onClose.set(rid => (hub ! nebflow.actor.InteractionHubCommand.CloseRequest(rid)).void)
+      _ <- p.start(ctx)
+      _ <- hub ! nebflow.actor.InteractionHubCommand.RegisterRoot(
+        "s1",
+        (frame: Json) =>
+          if frame.hcursor.get[String]("type").toOption.contains("askUser") then
+            p.onAgentEvent("s1", frame) *> frame.hcursor.get[String]("requestId").toOption.fold(IO.unit) { rid =>
+              seen(rid.stripPrefix("three-").toInt).complete(()).void
+            }
+          else IO.unit
+      )
+      _ <- List(0, 1, 2).traverse_ { i =>
+        val rid = s"three-$i"
+        (hub ! nebflow.actor.InteractionHubCommand.Request(
+          nebflow.actor.InteractionRequest(
+            requestId = rid,
+            kind = nebflow.actor.InteractionKind.AskUser,
+            payload = Json.obj("items" -> Json.fromValues(simpleItems)),
+            reply = nebflow.actor.InteractionReply.AskUserReply(Some(sink(i))),
+            rootSessionId = "s1",
+            sourceAgent = "probe",
+            sourceSession = "s1"
+          )
+        )) *> seen(i).get.timeout(scala.concurrent.duration.DurationInt(10).seconds)
+      }
+      closed <- ctx.closed.get
+      pending <- hub.?[List[Json]](reply => nebflow.actor.InteractionHubCommand.ListPendingAsks("s1", reply))
+      _ = assertEquals(closed, List.empty)
+      _ = assertEquals(pending.size, 3)
+      _ <- List(1, 0, 2).traverse_ { i =>
+        hub ! nebflow.actor.InteractionHubCommand.Answered(
+          nebflow.actor.InteractionAnswered(
+            s"three-$i",
+            "s1",
+            Json.obj("answers" -> Json.arr(Json.fromString(s"answer-$i")))
+          )
+        )
+      }
+      received <- answers.traverse(_.get.timeout(scala.concurrent.duration.DurationInt(10).seconds))
+    yield assertEquals(received, List(List("answer-0"), List("answer-1"), List("answer-2")))
+    test.guarantee(p.stop *> system.stopAll)
   }
 
   test("WI-B2 askUserClosed clears the slot; a later number is chat again") {

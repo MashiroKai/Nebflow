@@ -94,7 +94,7 @@
    .mh-sr-*，socialSearchCore 单一构建器产出）：样式应用点各归各层 —— 手机档在
    mobileLayer.css（body.mobile-layer 门控），桌面档在此（#panel-messages 门控），
    数值同源（见各条注）。 */
-#panel-messages .fm-msg-search {
+.panel-top-search {
   display: flex;
   flex-direction: column;
   flex: none;

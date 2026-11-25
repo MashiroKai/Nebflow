@@ -8,9 +8,8 @@ import nebflow.core.AskHandoffPort
 import nebflow.core.ask.{AskGatewayServices, AskHandoffWire, AskSessions}
 import nebflow.shared.PathUtil
 
-import scala.concurrent.duration.DurationLong
-
 import scala.collection.concurrent.TrieMap
+import scala.concurrent.duration.DurationLong
 import scala.util.control.NonFatal
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -85,7 +84,7 @@ object SendMessageToMainChatTool extends Tool:
   override def name: String = Name
 
   override def description: String =
-    """Hand a task to the MAIN session — the ask session's only outbound channel. Use it whenever the request is bigger than this one document: several files, several steps, a command/build/install, a repo-wide change or anything needing tools this session does not hold. Send a STRUCTURED handoff request: `task` (what must be done), `paths` (which files/paths are involved), `reason` (why the main session is needed — e.g. it spans files or needs the shell), `expected` (what output the user wants back). After sending, tell the user it was sent and that the main session can ask back — then stay in this window and keep serving this document. Never try to reach another file by another route (write tools, shell, path tricks): the engine refuses those and this is the sanctioned path. Payload becomes an injected message in the main session tagged with this file's ask source."""
+    """Optionally send a structured task to the main session: task, paths, reason and expected output. The payload is tagged with this Ask source; report the handoff to the user."""
 
   override def inputSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,
@@ -101,7 +100,7 @@ object SendMessageToMainChatTool extends Tool:
       ),
       "reason" -> Json.obj(
         "type" -> "string".asJson,
-        "description" -> "Why the main session is needed: it spans several files, several steps, or needs the shell / tools this ask session does not hold.".asJson
+        "description" -> "Why collaboration with the main session is useful.".asJson
       ),
       "expected" -> Json.obj(
         "type" -> "string".asJson,

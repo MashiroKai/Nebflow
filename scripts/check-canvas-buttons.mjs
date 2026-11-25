@@ -17,7 +17,7 @@ for (const [file, patterns] of Object.entries({
   'js/viewers/html.js': ['glass-control nf-frame-nav-back'],
   'js/askDock.js': ['ask-fab', 'ask-fab note-fab'],
   'js/canvas.js': ['deck-fab g2-fab', 'g2-fab canvas-button', 'canvas-pop-btn', 'canvas-refback-btn', 'deck-card-pop', 'canvas-merge-btn'],
-  'js/mobile/navController.js': ['mf-cv-close g2-fab', 'mf-cv-stack g2-fab', 'mf-cv-star g2-fab'],
+  'js/mobile/navController.js': ['mf-cv-close g2-fab', 'mf-cv-stack g2-fab', 'mf-cv-star canvas-button'],
 })) {
   const src = read(file);
   for (const name of patterns) {

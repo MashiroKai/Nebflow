@@ -10,8 +10,8 @@ import nebflow.actor.AgentCommand.*
 import nebflow.core.*
 import nebflow.core.compact.*
 import nebflow.llm.*
-import nebflow.shared.{NebflowLogger, *}
 import nebflow.shared.given
+import nebflow.shared.{NebflowLogger, *}
 
 import scala.concurrent.duration.*
 
@@ -749,9 +749,14 @@ private[agent] object AgentProcessing:
         else
           val immediate = nextState.execution.pendingImmediateInputs
           val queued = nextState.execution.pendingUserInputs
-          val cleanState =
-            nextState.copy(execution = nextState.execution.copy(pendingImmediateInputs = Nil, pendingUserInputs = Nil))
           val users = queued.collect { case input: UserInput => input }
+          // A merged LLM request cannot attribute a tool call to an individual input.
+          val turnZone = nebflow.core.scheduler.TodoDue.mergedDeviceZone(
+            immediate.map(_.deviceZone) ++ users.map(_.deviceZone)
+          )
+          val cleanState = nextState.copy(execution = nextState.execution.copy(
+            pendingImmediateInputs = Nil, pendingUserInputs = Nil, deviceZone = turnZone, deviceZoneFallbackAllowed = false
+          ))
           val selectedImmediate = immediate.map { input =>
             val content =
               input.blocks.filter(_.nonEmpty).fold[Either[String, List[ContentBlock]]](Left(input.text))(Right(_))
@@ -789,7 +794,7 @@ private[agent] object AgentProcessing:
         val assistantBlocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
         tc.thinking.foreach(t => assistantBlocks += ContentBlock.Thinking(t, tc.thinkingSignature))
         if !tc.originalText.isBlank then assistantBlocks += ContentBlock.Text(tc.originalText)
-        toolCalls.foreach(c => assistantBlocks += ContentBlock.ToolUse(c.id, c.name, c.input))
+        toolCalls.foreach(c => assistantBlocks += ContentBlock.ToolUse(c.id, c.name, c.input, tc.delegatedTo.get(c.id)))
         val assistantMsg = Message(MessageRole.Assistant, Right(assistantBlocks.toList))
         val resultBlocks = tc.results.map { (call, r) =>
           ContentBlock.ToolResult(call.id, r.content, Some(r.isError))
@@ -1047,6 +1052,15 @@ private[agent] object AgentProcessing:
             state.execution
               .copy(
                 messages = newMessages,
+                // Mid-turn inputs share the next LLM request: any unknown or differing
+                // source makes the whole turn ambiguous, without changing batching.
+                deviceZoneFallbackAllowed = if immInputs.nonEmpty || mailInputs.nonEmpty || humanFrameInputs.nonEmpty then false else state.execution.deviceZoneFallbackAllowed,
+                deviceZone = if immInputs.nonEmpty || mailInputs.nonEmpty || humanFrameInputs.nonEmpty then
+                  nebflow.core.scheduler.TodoDue.mergedDeviceZone(
+                    List(state.execution.deviceZone) ++ immInputs.map(_.deviceZone) ++
+                      mailInputs.map(_ => None) ++ humanFrameInputs.map(_.deviceZone)
+                  )
+                else state.execution.deviceZone,
                 // D3: keep a pending permission across the turn boundary — the
                 // root holds the sub-agent's Deferred while waiting for the user
                 // answer; clearing it here would strand the sub-agent until the
@@ -2084,7 +2098,7 @@ private[agent] object AgentProcessing:
       .flatMap(_.content match
         case Right(blocks) =>
           blocks.collect {
-            case ContentBlock.ToolUse(id, name, _) if name == "Mail" => id
+            case ContentBlock.ToolUse(id, name, _, _) if name == "Mail" => id
           }
         case _ => Nil)
       .toSet
@@ -2220,7 +2234,7 @@ private[agent] object AgentProcessing:
       // Extract the tool name for the error message
       val toolName = messages(lastToolUseIdx).content match
         case Right(blocks) =>
-          blocks.collectFirst { case ContentBlock.ToolUse(_, name, _) => name }.getOrElse("unknown")
+          blocks.collectFirst { case ContentBlock.ToolUse(_, name, _, _) => name }.getOrElse("unknown")
         case _ => "unknown"
       // Truncate from the tool call onwards
       val truncated = messages.take(lastToolUseIdx)
@@ -2338,7 +2352,7 @@ private[agent] object AgentProcessing:
     val assistantBlocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
     tc.thinking.foreach(t => assistantBlocks += ContentBlock.Thinking(t, tc.thinkingSignature))
     if !tc.originalText.isBlank then assistantBlocks += ContentBlock.Text(tc.originalText)
-    toolCalls.foreach(c => assistantBlocks += ContentBlock.ToolUse(c.id, c.name, c.input))
+    toolCalls.foreach(c => assistantBlocks += ContentBlock.ToolUse(c.id, c.name, c.input, tc.delegatedTo.get(c.id)))
     val resultBlocks = tc.results.map { (call, r) =>
       ContentBlock.ToolResult(call.id, r.content, Some(r.isError))
     }

@@ -1,17 +1,17 @@
 /* canvasFavorites.css — Canvas 文档收藏三端样式（2026-11-23 前端功能批）。
-   收藏钮 = 顶部胶囊左座（.canvas-fav-btn）；侧边栏区 = #canvas-fav-section；手机 = .mf-hub-fav 内的同源列表。
+   收藏钮位于顶部标题左侧（.canvas-fav-btn）；侧边栏区 = #canvas-fav-section；手机 = .mf-hub-fav 内的同源列表。
    颜色 / 圆角 / 焦点环只经 var(--ds-*) 令牌；文本不截断（换行而非省略号）。 */
 
 .canvas-fav-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
-  margin-right: 6px;
+  width: var(--ds-capsule-end-size);
+  height: var(--ds-capsule-end-size);
+  margin-right: 0;
   padding: 0;
   border: 0;
-  border-radius: var(--ds-radius-pill);
+  border-radius: var(--ds-capsule-end-radius);
   background: transparent;
   color: inherit;
   opacity: 0.62;
@@ -24,7 +24,21 @@
 .canvas-fav-btn.is-on { opacity: 1; }
 .canvas-fav-btn .canvas-fav-ic { fill: none; }
 .canvas-fav-btn.is-on .canvas-fav-ic { fill: currentColor; color: var(--ds-fav-star, currentColor); }
-/* 手机工具条星标（.mf-cv-star，族 = g2-fab，尺寸/态层由 g2-fab 供给）：只补星形填充。 */
+/* 手机展开胶囊内星标。 */
+body.mobile-layer .mf-strip-chip .mf-cv-star {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+}
+body.mobile-layer .mf-strip-chip .mf-cv-star[hidden] { display: none; }
+body.mobile-layer .mf-strip-chip .mf-cv-star svg { width: 18px; height: 18px; }
 .mf-cv-star .canvas-fav-ic { fill: none; }
 .mf-cv-star.is-on .canvas-fav-ic { fill: currentColor; color: var(--ds-fav-star, currentColor); }
 /* 点亮动效：星标缩放回弹 + 光晕扩散（r2）。 */
@@ -108,28 +122,18 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 52px;
+  min-height: 52px;
   padding: env(safe-area-inset-top, 0) 16px 0;
   position: relative;
   flex: none;
 }
-.cfp-back {
-  width: 36px; height: 36px; border: 0; background: transparent; color: inherit;
-  font-size: 30px; line-height: 1; cursor: pointer; padding: 0;
-}
-.cfp-title { position: absolute; left: 50%; transform: translateX(-50%); margin: 0; font-size: 17px; font-weight: 600; }
+.cfp-back { flex: none; height: auto; min-height: var(--ds-page-back-size); overflow-wrap: anywhere; }
+.cfp-title { flex: 1; min-width: 0; margin: 0; text-align: center; overflow-wrap: anywhere; font-size: 17px; font-weight: 600; }
 .cfp-search { padding: var(--ds-space-2) var(--ds-space-6); flex: none; }
-.cfp-search-input {
-  width: 100%;
-  box-sizing: border-box;
-  height: 36px;
-  padding: 0 12px;
-  color: inherit;
-  font-size: 15px;
-}
-/* 搜索框造型 + 焦点环 = 共享输入面 .nf-field（inputSurface.css 单源，I2/F1 口径）。 */
+/* 搜索字段由消息面板共用的 sf-field 构建，圆角由输入面单源提供。 */
 .cfp-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 18px;
   padding: 6px 16px 10px;
   overflow-x: auto;
@@ -137,7 +141,7 @@
 }
 .cfp-tabs[hidden] { display: none; }
 .cfp-tab {
-  flex: none; border: 0; background: transparent; color: var(--color-text-muted);
+  flex: 0 1 auto; min-width: 0; max-width: 100%; overflow-wrap: anywhere; border: 0; background: transparent; color: var(--color-text-muted);
   font-size: 15px; padding: 4px 0; cursor: pointer; position: relative;
 }
 .cfp-tab.is-on { color: var(--color-text); font-weight: 600; }
@@ -161,10 +165,36 @@
   cursor: pointer;
 }
 .cfp-row:active { opacity: .75; }
+.cfp-row-container { position: relative; min-width: 0; }
+.cfp-row-container .cfp-row { box-sizing: border-box; align-items: flex-start; }
+.cfp-row-container .cfp-thumb { align-self: flex-end; margin-top: var(--ds-capsule-end-size); }
+.cfp-remove { position: absolute; right: 0; top: 0; opacity: 0; }
+.cfp-remove svg { width: 18px; height: 18px; }
+.cfp-row-container:hover .cfp-remove, .cfp-row-container:focus-within .cfp-remove { opacity: 1; }
+@media (hover: none) { .cfp-remove { opacity: 1; } }
 .cfp-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--ds-space-1); }
 .cfp-row-title { color: var(--color-text); font-size: var(--ds-fs-title); font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; white-space: normal; }
 .cfp-row-meta { display: flex; gap: var(--ds-space-2); font-size: var(--ds-fs-hint); color: var(--color-text-muted); line-height: 1.4; }
-.cfp-row-src { min-width: 0; overflow-wrap: anywhere; }
+.cfp-row-src { min-width: 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.cfp-row-src.is-expanded { display: block; overflow: visible; }
+.cfp-path-tooltip {
+  position: fixed;
+  z-index: 10000;
+  box-sizing: border-box;
+  width: min(calc(100vw - 16px), 600px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: var(--ds-space-3);
+  border-radius: var(--ds-radius-input);
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: var(--ds-shadow-favorites-path);
+  overflow-wrap: anywhere;
+  white-space: normal;
+  pointer-events: none;
+}
+.cfp-path-tooltip.is-keyboard { pointer-events: auto; }
+.cfp-path-tooltip[hidden] { display: none; }
 .cfp-row-date { flex: none; }
 .cfp-thumb {
   flex: none;
@@ -175,7 +205,7 @@
 }
 .cfp-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .cfp-pdf-badge { color: inherit; font-size: inherit; font-weight: 600; }
-.cfp-empty { text-align: center; padding: var(--ds-space-12) var(--ds-space-4); color: var(--color-text-muted); font-size: var(--ds-fs-body); line-height: 1.6; }
+.cfp-empty { text-align: center; padding: var(--ds-space-12) var(--ds-space-4); color: var(--color-text-muted); font-size: var(--ds-fs-body); line-height: 1.6; overflow-wrap: anywhere; }
 
 /* 收藏页在 1200 档（桌面）：居中定宽卡片，手机 ≤ 480 撑满。 */
 @media (min-width: 768px) {
@@ -184,3 +214,29 @@
   .cfp-body { padding-bottom: 40px; }
 }
 .cfp-row.is-invalid { opacity: .45; }
+
+/* Sidebar instance shares the page renderer without escaping the panel. */
+#panel-favorites .cfp-sidebar {
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border-radius: inherit;
+  transform: none;
+}
+#panel-favorites .cfp-sidebar { color: var(--color-frame-text); background: transparent; }
+#panel-favorites .cfp-sidebar .cfp-bar {
+  min-height: 0;
+  padding: var(--ds-space-3) var(--ds-space-4);
+}
+#panel-favorites .cfp-sidebar .cfp-title {
+  text-align: left;
+  font-size: var(--ds-fs-body);
+  font-weight: var(--ds-fw-btn);
+}
+#panel-favorites .cfp-sidebar .cfp-bar,
+#panel-favorites .cfp-sidebar .cfp-search,
+#panel-favorites .cfp-sidebar .cfp-tabs,
+#panel-favorites .cfp-sidebar .cfp-body { max-width: none; }

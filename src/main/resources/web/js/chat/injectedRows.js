@@ -1,5 +1,6 @@
 // chat.js 拆分(FE组件化批次三 2026-09-27):注入行显示(source 标签表 + 注入行 builder + live 渲染) 可复用模块(行为保持)。
 import { activeView } from '../chatView.js';
+import { EVENTS } from '../events.js';
 import { t } from '../i18n.js';
 import { createIconsIn, renderMarkdownWithMath, shouldFollowBottom } from '../utils.js';
 import { parseTaskReturnText, buildTaskRefLine } from '../reference.js';
@@ -765,6 +766,18 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
   // （diff 块挂载点在 delegate 卡分支内胶囊旁相邻组——见上「diff 统计块」段；
   //   载荷/点击/aria-pressed 语义承继，右缘贴卡对齐随版式批②退役。）
   bubble.appendChild(content);
+  if (source === 'askhost' && /^\[AskHost request ([0-9a-f-]+) from [^\n]+\]\n\[BU-TAKEOVER\](?:\n|$)/.test(trimmed)) {
+    const requestId = trimmed.match(/^\[AskHost request ([0-9a-f-]+) from /)[1];
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = '打开浏览器接管';
+    button.addEventListener('click', async event => {
+      event.stopPropagation();
+      const { requestBrowserTakeover } = await import('../viewers/browserTakeover.js');
+      requestBrowserTakeover(requestId);
+    });
+    bubble.appendChild(button);
+  }
   row.appendChild(bubble);
 
   // Timestamp + copy button (unified v1.2 footer pill). History restore may
@@ -802,5 +815,6 @@ export function renderInjectedBubble(text, source, timestamp, eventType, sender,
   // A 侧 #491 单点落序（chat.js appendChatRow = `chat.append(row)`）随簇同位落此：
   // 纯 doc-order 追加，等价语义、同为唯一追加语义（禁反向 import chat.js 成环）。
   chat.append(row);
+  chat.dispatchEvent(new CustomEvent(EVENTS.NF_INJECTION_APPENDED, { bubbles: true, detail: { row } }));
   if (shouldFollowBottom(activeView, chat)) chat.scrollTop = chat.scrollHeight;
 }

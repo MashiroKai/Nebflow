@@ -132,12 +132,14 @@ export function displayOutputText(text) {
  *  `data-nf-output="1"` + `bubble._nfOutputFull = fullText` for the expand
  *  face, and the inner content is rendered into it. An EMPTY pair renders as an
  *  empty (hidden) bubble — the block is complete, it just carries no text. */
-export function applyOutputFace(bubble, fullText) {
+export function applyOutputFace(bubble, fullText, mainChat = false) {
   const inner = extractOutputInner(fullText);
   if (inner === null) return false;
   bubble.dataset.nfOutput = '1';
   bubble._nfOutputFull = fullText;
   setHtmlTree(bubble, inner.trim() ? renderMarkdownWithMath(inner) : '');
+  // 主会话不再提供过程抽屉；保留 human 卡片并移除其框外过程。
+  if (mainChat || bubble.closest('#chat')) bubble.querySelectorAll('details.nf-human-details').forEach(el => el.remove());
   bubble.hidden = !inner.trim();
   return true;
 }

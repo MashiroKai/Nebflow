@@ -1,10 +1,10 @@
 package nebflow.llm
 
+import nebflow.shared.NebflowServiceConfig
+
 import java.io.IOException
 import java.net.{Proxy, ProxySelector, SocketAddress, URI}
 import java.util.List as JList
-
-import nebflow.shared.NebflowServiceConfig
 
 /**
  * Direct-connect routing for the engine's LLM transport (作者令 2026-11-19 16:06：

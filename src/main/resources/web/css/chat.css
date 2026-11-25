@@ -1819,7 +1819,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 /* 段落缩进撤回（撤回批 2026-11-05 16:43 作者令「你发的消息不加缩进功能」）：agent
    发出的消息正文回到普通段落形态 —— 气泡内不做首行缩进、不做层级缩进，正文与列表
    只保留一条常规列表层级（ul/ol 各自的左缘缩进，浏览器同款）。此处**不再有**
-   text-indent 声明；文档面（Canvas 阅读器）的首行缩进是另一回事，见 css/split.css。 */
+   text-indent 声明；作者 2026-11-24 令文档首行缩进也「都去掉」。 */
 .bubble.ai p:first-child, .bubble.injected p:first-child, .ask-bub.ai p:first-child { margin-top: 0; }
 .bubble.ai p:last-child, .bubble.injected p:last-child, .ask-bub.ai p:last-child { margin-bottom: 0; }
 /* 列表缩进走 token（原 18px / --ds-space-5 裸值退役，取 --ds-list-indent）：每级
@@ -3391,6 +3391,12 @@ body:not(.mobile-layer) .option-preview-media {
   font-size: var(--ds-fs-row);
   text-align: left;
   transition: color 0.15s ease, background 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.option-opts .option-btn:focus-visible,
+.ask-card .opt-row .option-btn:focus-visible {
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 .option-opts .option-btn:first-child,
 .ask-card .opt-row .option-btn:first-child {
@@ -3943,6 +3949,16 @@ body:not(.mobile-layer) .option-preview-media {
    per-frame layout cost of the stream. Skipping the CONTENTS of the tucked
    face removes that layout; the row is released the moment the class comes
    off, so the on-demand expand still paints the full content. */
+.nf-injection-stack { display: flex; justify-content: flex-end; align-items: center; }
+.nf-injection-stack[hidden], .row.nf-injection-stack-hidden { display: none !important; }
+
+.nf-injection-stack button { display: flex; align-items: center; min-height: 25px; }
+.nf-injection-stack button[aria-expanded="true"] { background: var(--ds-media-pill-bg-hover); }
+.nf-injection-stack-count { display: inline-flex; align-items: center; justify-content: center; min-width: 3ch; min-height: 19px; text-align: center; font-variant-numeric: tabular-nums; }
+.nf-injection-stack-digit { display: block; animation: nf-injection-count-roll 200ms ease-out; }
+@keyframes nf-injection-count-roll { from { opacity: 0; transform: rotateX(-70deg); } to { opacity: 1; transform: rotateX(0); } }
+@media (prefers-reduced-motion: reduce) { .nf-injection-stack-digit { animation: none; } }
+
 .row.nf-tucked .thinking-content {
   content-visibility: hidden;
 }
@@ -5443,6 +5459,9 @@ body:not(.mobile-layer) .option-preview-media {
   max-width: var(--msg-bubble-max-w);
 }
 
+.pop-file-unit { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }
+.pop-file-unit > .file-card { max-width: 100%; }
+
 /* ── media stack (WeChat-style: front card + peeking layers right) ──
    UI 统一批（ui-unification-20261103-canvas-overlay）：栈区与「展开 N」钮的
    **形**已上收 design-system.css ⑨ .ds-media-stack / .ds-media-stack__pill
@@ -5973,6 +5992,9 @@ body:not(.mobile-layer) .option-preview-media {
 .row.pop-artifact.user .pop-stack-view .media-layer.layer-back { transform: translateX(-26px) rotate(-3.5deg); }
 .row.pop-artifact.user .pop-stack-area { width: max-content; }
 .row.pop-artifact.user .pop-stack-area > .pill { margin-right: var(--ds-space-8); }
+/* Expanded media retain their own aspect ratios and can be narrower than the
+   stack column. Anchor each user card (and its footer) to the bubble edge. */
+.row.pop-artifact.user .pop-expanded-card { align-items: flex-end; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    attach-bubble-unify (2026-10-20 author ruling 「用户发送附件与气泡设计语言统一

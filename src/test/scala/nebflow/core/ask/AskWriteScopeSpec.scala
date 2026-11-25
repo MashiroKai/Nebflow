@@ -187,6 +187,7 @@ final class AskWriteScopeSpec extends munit.FunSuite:
 
   // ── 第二条通道（shell）不是写通道，但越权尝试必须留痕 ────────────────────
 
+  /* Historical Ask-only Bash executor, no longer connected to live Ask sessions.
   test("E: a shell write attempt is refused and audited (Bash is not a second write channel)") {
     val auditFile = Files.createTempFile("ask-scope-audit-bash-", ".jsonl")
     AskWriteAudit.injectTargetForTest(Some(auditFile))
@@ -232,6 +233,14 @@ final class AskWriteScopeSpec extends munit.FunSuite:
     assert(prompt.contains("send_message_to_main_chat"), "the handoff channel must be named")
     assert(prompt.contains("task = 做什么"), "the structured handoff fields must be named")
     assert(prompt.contains("expected = 期望产出"), "the structured handoff fields must be named")
+  }
+
+  */
+  test("F: handoff is optional and no obsolete Ask-only restriction is advertised") {
+    val prompt = AskContextAssembler.promptFor("notes.md", "/vault/notes.md", "CONTEXT")
+    assert(prompt.contains("转交是可选的"))
+    assert(!prompt.contains("本会话只能编辑它对应的那份文档"))
+    assert(!prompt.contains("QUERY-ONLY, fail-closed"))
   }
 
   // ── 第四条：转交请求结构化 + 机器可读 + 面板可见帧 ────────────────────────

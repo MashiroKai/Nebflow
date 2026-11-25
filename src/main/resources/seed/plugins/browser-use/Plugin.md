@@ -16,7 +16,7 @@ browser-use 是网页交互、持久登录会话与论文下载包：节点用�
 ## 2. 安装与启用
 
 - **安装**：本包属 Stand seed 官方分发，随实例 seed mirror 自动下发，无需手工安装。
-- **启用/选配**：装载为「在位即生效」；分发器按 description 触发词选配（登录态/SSO 平台操作、验证码人工配合、校园网论文下载、批量 PDF 下载、反爬拦截识别、网页/前端功能测试、复现页面 bug、截图取证、UI 验收等），派发时把各 SKILL.md 全文注入节点。
+- **启用/选配**：装载为「在位即生效」；分发器按 description 触发词选配（登录态/SSO 平台操作、验证码人工配合、校园网论文下载、批量 PDF 下载、反爬拦截识别、网页/前端功能测试、复现页面 bug、截图取证、UI 验收等），派发时注入本文件，各 SKILL.md 按需查阅。
 - **运行时自备**：脚本依赖 playwright 包（不依赖其浏览器——attach 本机 Chrome，免下载 chromium）。首次使用按脚本报错提示执行一次 bootstrap（装到用户目录运行时区，不进插件包、不进仓库）。
 - **停用**：面板「更多 → 封禁该插件」/ `POST /api/plugins/browser-use/revoke` / `nebflow plugin revoke browser-use`。
 - **内容变更**：包内任何字节改动都会漂移 digest，面板把该包标为「内容已变更」（可见性提示，不拦截装载）。
@@ -53,7 +53,7 @@ browser-use/                      （包根）
 | ⑥ 出结论 | 通过/失败/阻塞三列 ＋ 每点引用已查看截图 | 双通道铁律；被反爬拦 ⇒ 如实报告阻塞 | web-gui-tester 阶段四；browser-session §四 |
 
 - **委派边界**：浏览器工作必须由拿到本包的会话自己做完，不委派——委派体拿不到本纪律与观测记录，证据链断裂，等价于没做。
-- **边界登记**：浏览器与页面内容的容器级隔离暂无载体；常驻服务的 **mcp.json 形态**仍未采用（2.0 的持久会话走 CDP attach + 持久 profile，非 MCP server）——细则见 `control-browser/references/deferred-capabilities.md`。
+- **边界登记**：合法授权的外域交互可用本机有头 Chrome 的专用 profile 与 CDP attach，须先自检；容器级隔离是尚未实现的增强项，不是外域交互前置。原版 MCP 形态与宿主浏览器面板仍缺，细则见 `control-browser/references/deferred-capabilities.md`。
 
 ## 5. 各技能总目录与按需 Read 索引
 
@@ -111,4 +111,4 @@ web-gui-tester 无 references（方法全量在其 SKILL.md 单文件内）。
 
 - **新增/修改纪律**：改 browser-session/paper-download 的载体口径须同步本文件 §1/§4/§5/§6 与对方 skill 的引用表述；改 control-browser 的口径须同步其 references 与 web-gui-tester。
 - **暂不可用面**：能力登记只进 `control-browser/references/deferred-capabilities.md` 与本文件 §8，不在其他文件散写。
-- **本文件定位**：Plugin.md 是按需 Read 面——装载器不注入；SKILL.md 是注入面权威，两者不一致时以 SKILL.md 为准并回改本文。
+- **本文件定位**：Plugin.md 是分配注入面；SKILL.md 是按需查阅的作业权威，两者不一致时以 SKILL.md 为准并回改本文。

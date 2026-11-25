@@ -1,7 +1,7 @@
 package nebflow.db
 
-import cats.effect.{Fiber, IO}
 import cats.effect.unsafe.implicits.global
+import cats.effect.{Fiber, IO}
 import org.slf4j.LoggerFactory
 
 import scala.concurrent.duration.*

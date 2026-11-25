@@ -82,6 +82,8 @@ const MEASURE = ({ scrollSel, headerSel, firstSel, fabSels = [], rowSel, bubbleS
   scroll.style.scrollBehavior = 'auto';
   scroll.scrollTop = 0;
   const header = headerSel ? document.querySelector(headerSel) : null;
+  if (headerSel && !(header && header.getClientRects().length)) out.violations.push({ rule: 'O0', what: 'declared header missing or hidden', headerSel });
+  if (firstSel && ![...scroll.querySelectorAll(firstSel)].some(e => e.getClientRects().length)) out.violations.push({ rule: 'O0', what: 'declared first item missing or hidden', firstSel });
   const rows = [...scroll.querySelectorAll(rowSel)].filter((e) => e.getClientRects().length);
   out.measured = rows.length;
   // O0 非空闸：没有可量内容 = 闸空转（会让负对照与正对照同时「绿」）⇒ 直接红。
@@ -112,6 +114,7 @@ const MEASURE = ({ scrollSel, headerSel, firstSel, fabSels = [], rowSel, bubbleS
   }
   // O3：气泡不得越出其行（左右）。
   const bubbles = bubbleSel ? [...scroll.querySelectorAll(bubbleSel)].filter((e) => e.getClientRects().length) : [];
+  if (bubbleSel && !bubbles.length) out.violations.push({ rule: 'O0', what: 'declared bubble missing or hidden', bubbleSel });
   for (const b of bubbles) {
     const row = b.closest(rowSel) || b.parentElement;
     const br = R(b), rr = R(row);
@@ -123,11 +126,12 @@ const MEASURE = ({ scrollSel, headerSel, firstSel, fabSels = [], rowSel, bubbleS
   }
   // O4：标注省略的文字必须真的溢出（否则是「未截断却被裁」的假省略）；
   // 且溢出的字必须有省略（scrollWidth > clientWidth ⇒ text-overflow 为 ellipsis）。
-  for (const el of scroll.querySelectorAll(bubbleSel + ' *')) {
-    if (!el.getClientRects().length) continue;
+  for (const root of bubbles) for (const el of [root, ...root.querySelectorAll('*')]) {
+    if (!el.getClientRects().length || ![...el.childNodes].some(n => n.nodeType === Node.TEXT_NODE && n.textContent.trim())) continue;
     const cs = getComputedStyle(el);
-    if (cs.overflow === 'hidden' && cs.textOverflow === 'ellipsis' && el.scrollWidth > el.clientWidth + 1 && cs.whiteSpace !== 'nowrap') {
-      out.violations.push({ rule: 'O4', what: 'clipped without nowrap ellipsis', cls: (el.className || '').slice(0, 60) });
+    const clipped = /hidden|clip/.test(cs.overflowX) && el.scrollWidth > el.clientWidth + 1;
+    if (clipped && !(cs.textOverflow === 'ellipsis' && cs.whiteSpace === 'nowrap')) {
+      out.violations.push({ rule: 'O4', what: 'text clipped without nowrap ellipsis', cls: (el.className || '').slice(0, 60) });
       break;
     }
   }
@@ -208,7 +212,7 @@ const PANELS = [
     name: 'P1-create-group',
     setup: openCreateGroup,
     // firstSel = 窗体内首个可见项（群名输入 / 章节标签）——修前它正被窗头盖住一半。
-    cfg: { scrollSel: '#fm-group-create-overlay .fm-pick-body', headerSel: '#fm-group-create-overlay .fm-pick-header', firstSel: '#fm-group-create-overlay .fm-gs-rename-input, #fm-group-create-overlay .fm-gs-title', fabSels: ['#fm-group-create-overlay .fm-pick-fab'], rowSel: '.fm-pick-row', bubbleSel: '.fm-pick-row .__none__' },
+    cfg: { scrollSel: '#fm-group-create-overlay .fm-pick-body', headerSel: '#fm-group-create-overlay .fm-pick-header', firstSel: '#fm-group-create-overlay .fm-gs-rename-input, #fm-group-create-overlay .fm-gs-title', fabSels: ['#fm-group-create-overlay .fm-pick-fab'], rowSel: '.fm-pick-row', bubbleSel: '.fm-pick-row' },
     // 修前形态：主体顶部让位归零（首行落在窗头之下）。
     negative: '#fm-group-create-overlay .fm-pick-body { padding-top: 2px !important; }',
   },
@@ -261,7 +265,7 @@ const PANELS = [
     // 下穿过」会被误判成压内容。
     // firstSel = 滚动体**首个可见内容块**（.fm-nf-entry 名册入口卡；首个 .fm-row
     // 在它下方约 180px —— 只看行会漏掉「入口卡穿坞」这一档违例）。
-    cfg: { scrollSel: '#fm-contacts-body', headerSel: '.mobile-page[data-page="contacts"] .mh-search-dock', firstSel: '#fm-contacts-body .fm-nf-entry', fabSels: ['#mobile-dock'], rowSel: '.fm-row', bubbleSel: '.__none__' },
+    cfg: { scrollSel: '#fm-contacts-body', headerSel: '.mobile-page[data-page="contacts"] .mh-search-dock', firstSel: '#fm-contacts-body .fm-nf-entry', fabSels: ['#mobile-dock'], rowSel: '.fm-row', bubbleSel: '.fm-row' },
     // 修前形态：页体顶让位归零（入口卡顶 24 < 搜索坞底 80 ⇒ O1 必红）。
     negative: '#fm-contacts-body { padding-top: 12px !important; }',
   },
@@ -272,7 +276,7 @@ const PANELS = [
       await page.waitForSelector('#settings-content .set-card', { timeout: 15000 });
     },
     // 窗头 = 返回圆钮（悬浮）；底 = dock；行 = set-card（settingsRows 单源组件）。
-    cfg: { scrollSel: '#settings-content', headerSel: '.mobile-page[data-page="settings"] .mobile-back-btn', fabSels: ['#mobile-dock'], rowSel: '.set-card', bubbleSel: '.__none__' },
+    cfg: { scrollSel: '#settings-content', headerSel: '.mobile-page[data-page="settings"] .mobile-back-btn', fabSels: ['#mobile-dock'], rowSel: '.set-card', bubbleSel: '.set-card' },
     negative: '#settings-content { padding-bottom: 12px !important; scroll-padding-bottom: 12px !important; }',
   },
   {
@@ -281,7 +285,7 @@ const PANELS = [
     // 列表页自身无悬浮钮（.ta-fab 双钮属 tasks 页，push 后仍挂在下层但被本页
     // 不透明页体盖住 —— 选择器必须限定在本页可见控件，跨页取矩形 = 误报）。
     // 本页底部浮件 = dock；负对照（页体底垫归零）由 dock 这条 O2 接住。
-    cfg: { scrollSel: '.mobile-page[data-page="todo-apple-list"] .mobile-page-body', headerSel: null, fabSels: ['#mobile-dock'], rowSel: '.ta-item', bubbleSel: '.__none__' },
+    cfg: { scrollSel: '.mobile-page[data-page="todo-apple-list"] .mobile-page-body', headerSel: null, fabSels: ['#mobile-dock'], rowSel: '.ta-item', bubbleSel: '.ta-item' },
     // 修前形态：**作用层**底让位归零 —— 列表页的滚动末端净空落在他内层
     // `.ta-root { padding-bottom: var(--mobile-scroll-end) }`（= 72px），
     // 页体那条 72 是 dock 净空；只归零页体测不到（净空叠着两层）。
@@ -290,7 +294,7 @@ const PANELS = [
   {
     name: 'P7-canvas-doc',
     setup: openCanvasDoc,
-    cfg: { scrollSel: '.mf-cv-host .canvas-md-scroll', headerSel: null, fabSels: ['.mf-cv-host .canvas-find-toggle', '.ask-fab:not(.note-fab)', '.ask-fab.note-fab'], rowSel: 'p', bubbleSel: '.__none__' },
+    cfg: { scrollSel: '.mf-cv-host .canvas-md-scroll', headerSel: null, fabSels: ['.mf-cv-host .canvas-find-toggle', '.ask-fab:not(.note-fab)', '.ask-fab.note-fab'], rowSel: 'p', bubbleSel: 'p' },
     // 修前形态（同 canvas-hit-clearance 闸的负对照面）：阅读面贴底、无底让位。
     negative: '.mf-cv-host .canvas-md-scroll { bottom: 0px !important; padding-bottom: 8px !important; }',
   },
@@ -321,7 +325,7 @@ const PANELS = [
     name: 'D1-create-group-desktop',
     view: { width: 1280, height: 800 },
     setup: openCreateGroup,
-    cfg: { scrollSel: '#fm-group-create-overlay .fm-pick-body', headerSel: '#fm-group-create-overlay .fm-pick-header', firstSel: '#fm-group-create-overlay .fm-gs-rename-input, #fm-group-create-overlay .fm-gs-title', fabSels: ['#fm-group-create-overlay .fm-pick-fab'], rowSel: '.fm-pick-row', bubbleSel: '.fm-pick-row .__none__' },
+    cfg: { scrollSel: '#fm-group-create-overlay .fm-pick-body', headerSel: '#fm-group-create-overlay .fm-pick-header', firstSel: '#fm-group-create-overlay .fm-gs-rename-input, #fm-group-create-overlay .fm-gs-title', fabSels: ['#fm-group-create-overlay .fm-pick-fab'], rowSel: '.fm-pick-row', bubbleSel: '.fm-pick-row' },
     // 桌面窗头 116px 档（--fm-head-h 桌面覆写）；让位归零 ⇒ 首行必须落进窗头之下。
     // 判据量的是 **scrollTop=0 静止态**（首项 ≥ 窗头底）；截图发生在 MEASURE 滚到
     // 底之后，行从悬浮玻璃头下穿过是设计内行为（同联系人搜索坞），不构成违例，
@@ -348,16 +352,18 @@ const PANELS = [
         const m = await import('/js/canvasFavorites.js');
         m.toggleFavoritePath({ path: '/w/sweep-long.md', title: 'A-very-long-document-title-that-must-wrap-without-truncation-in-the-workbench-favorites-block.md' });
         m.toggleFavoritePath({ path: '/w/sweep-short.md', title: 'short.md' });
-        (await import('/js/mobile/navController.js')).dockTo('workbench');
+        (await import('/js/canvasFavoritesPage.js')).openFavoritesPage();
       });
-      await page.waitForSelector('.mobile-page[data-page="workbench"].live .mf-hub-fav .canvas-fav-row', { timeout: 15000 });
+      await page.waitForSelector('#canvas-fav-page .cfp-row', { timeout: 15000 });
       await new Promise((r) => setTimeout(r, 400));
     },
-    cfg: { scrollSel: '.mobile-page[data-page="workbench"] .mobile-page-body', headerSel: null, fabSels: [], rowSel: '.mf-hub-fav .canvas-fav-row', bubbleSel: '.mf-hub-fav .canvas-fav-row' },
-    // 修前形态：标题改为不换行且裁切（pre + overflow），须被 O4 判红（假省略/溢出被裁）。
-    negative: '.mf-hub-fav .canvas-fav-title { width: 40px !important; white-space: pre !important; overflow: hidden !important; text-overflow: ellipsis !important; }',
+    cfg: { scrollSel: '#canvas-fav-page .cfp-body', headerSel: null, fabSels: [], rowSel: '.cfp-row', bubbleSel: '.cfp-row' },
+    // 修前形态：标题改为不换行且裁切（pre + overflow），须被 O4 判红。
+    negative: '#canvas-fav-page .cfp-row-title { width: 40px !important; white-space: pre !important; overflow: hidden !important; text-overflow: ellipsis !important; }',
   },
 ];
+
+const acceptsNegative = (violations, expected) => violations.some(v => v.rule === expected) && !violations.some(v => v.rule === 'O0');
 
 async function main() {
   const pwRes = loadPlaywright();
@@ -376,7 +382,8 @@ async function main() {
     }
     if (p.negative) {
       const neg = await runPanel(browser, p, p.negative);
-      if (neg.violations.length) {
+      const expected = p.name.startsWith('P9-') ? 'O4' : /^(P1|P4|D1)-/.test(p.name) ? 'O1' : 'O2';
+      if (acceptsNegative(neg.violations, expected)) {
         console.log(`PASS negative-control ${p.name} (red as expected: ${neg.violations.map((v) => v.rule).join(',')})`);
       } else {
         failed++;

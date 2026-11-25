@@ -1,9 +1,8 @@
 package nebflow.core.tools
 
 import cats.effect.IO
-import io.circe.Json
 import io.circe.syntax.*
-import io.circe.JsonObject
+import io.circe.{Json, JsonObject}
 import nebflow.core.ask.{AskEditHunk, AskEditReviews, AskGatewayServices, AskSessions}
 
 import scala.util.control.NonFatal
@@ -100,14 +99,14 @@ object AskEditTool extends Tool:
   override def name: String = Name
 
   override def description: String =
-    """Apply a search-and-replace edit to THE file this ask session is bound to. That document is the ONLY editable path in this session — the engine normalises the path (relative spellings resolve against the bound file's directory; `.`, `..`, symlinks, case variants and alias mounts are all canonicalised) and refuses anything that does not resolve to the same document, with an explicit reason plus a handoff suggestion. The edit is applied to the file IMMEDIATELY; the user reviews it as an inline diff in the canvas file tab (per-block accept/reject — rejecting a block reverts it). Prefer ask_edit for targeted changes; use ask_write to rewrite the whole file. For a task that spans several files, several steps or shell commands, hand it to the main session with send_message_to_main_chat instead of trying another path here."""
+    """Apply a search-and-replace edit with Canvas inline diff review. Changes are written immediately; rejection reverts them. Ordinary Edit is also available for general file edits."""
 
   override def inputSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,
     "properties" -> Json.obj(
       "path" -> Json.obj(
         "type" -> "string".asJson,
-        "description" -> "Path of the bound file (the ask session's only editable document). Any spelling that normalises to that same document is accepted (relative to its directory, `.`/`..`, symlink, case variant); anything else is refused with an explicit reason and a handoff suggestion.".asJson
+        "description" -> "Absolute path of an existing text file to review.".asJson
       ),
       "old_str" -> Json.obj(
         "type" -> "string".asJson,
@@ -206,14 +205,14 @@ object AskWriteTool extends Tool:
   override def name: String = Name
 
   override def description: String =
-    """Apply a whole-file rewrite of THE file this ask session is bound to. That document is the ONLY editable path in this session — the engine normalises the path (relative spellings resolve against the bound file's directory; `.`, `..`, symlinks, case variants and alias mounts are all canonicalised) and refuses anything that does not resolve to the same document, with an explicit reason plus a handoff suggestion. The new content is written IMMEDIATELY; the user reviews it as an inline diff in the canvas file tab (per-block accept/reject — rejecting a block reverts it). Use for restructuring that is larger than a few replacements; otherwise prefer ask_edit. For a task that spans several files, several steps or shell commands, hand it to the main session with send_message_to_main_chat instead of trying another path here."""
+    """Rewrite an existing text file with Canvas inline diff review. Changes are written immediately; rejection reverts them. Ordinary Write is also available for general file writes."""
 
   override def inputSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,
     "properties" -> Json.obj(
       "path" -> Json.obj(
         "type" -> "string".asJson,
-        "description" -> "Path of the bound file (the ask session's only editable document). Any spelling that normalises to that same document is accepted (relative to its directory, `.`/`..`, symlink, case variant); anything else is refused with an explicit reason and a handoff suggestion.".asJson
+        "description" -> "Absolute path of an existing text file to review.".asJson
       ),
       "content" -> Json.obj(
         "type" -> "string".asJson,

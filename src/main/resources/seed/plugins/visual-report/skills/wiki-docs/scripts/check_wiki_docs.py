@@ -225,6 +225,9 @@ RULES = (
     # 不得不补充的细节，就放在可点击展开的块里」）：条款原文见 SKILL.md ⑬。
     ("R19", "image-required", "以图为主：一篇文档至少要有一张图——图片引用（`![[…]]` / `![](…)` / `<img src>`）或 ```mermaid 围栏块，两种形态都算。一张图都没有的文档读者拿不到「图里一眼看懂」的那一层，只剩散文 ⇒ 违规。例外必须写在文档里：`<!-- wiki-figure-exempt: 理由 -->`（理由非空，对应条款 ⑬(d)「允许例外但必须显式声明为什么」）"),
     ("R20", "stacked-detail", "逐条细节不得敞在正文：一个 `##` 章节里连续 ≥12 行「逐条细节」（列表项 / 代码围栏内的行；```mermaid 与表格不算——前者是图、后者是压缩形态）且该节没有 `<details>` 折叠块 ⇒ 违规，提示移入 `<details><summary>过程</summary>`。已被折叠包住的行不判；一节只报最长那一段（缺省 12 行，`--fold-run` 可调）"),
+    # R21/R22 已被安装实例占用，待作者裁定是否并回，不复用编号。
+    ("R23", "png-primary", "禁止正文内嵌 PDF；新文件硬查，旧文件告警；普通下载链接允许。"),
+    ("R24", "latex-math", "疑似非 LaTeX 公式默认告警；--math-strict 全库硬查。抽样精确率不足 95%。"),
 )
 
 # ── R5 文档命名制（作者令 2026-11-04 18:12；条款原文见 wiki-docs SKILL.md
@@ -2445,6 +2448,15 @@ def check(root, docs, resolve, glossary_rel, exclude_glossary_check, terms_by_re
                     advisories.append({"rule": rule, "file": _rel, "line": line,
                                        "detail": detail, "scope": "legacy"})
 
+            for issue in collect_png_latex_issues('\n'.join(doc.raw_lines)):
+                hard = style_scoped_v2(rel, doc, '20261126_000500', False)
+                if issue['rule'] == 'latex-math':
+                    hard = bool(style_opts.get('math_strict'))
+                if hard:
+                    add(issue['rule'], rel, issue['line'], issue['detail'])
+                elif advisories is not None:
+                    advisories.append({**issue, 'file': rel, 'scope': 'legacy-or-warning'})
+
             # R17 — 裸名嵌入 / R18 — human 围栏内嵌图：渲染器断点（「图不显示」批）
             embed_issues = collect_image_embed_issues(rel, doc, vault_files, by_base, vault_abs)
             if embed_issues:
@@ -2829,6 +2841,56 @@ def dump_terms(docs, terms_by_rel, resolve_term=None, root=None):
     }
 
 
+def collect_png_latex_issues(text):
+    """检查正文 PDF 嵌入和疑似非 LaTeX 公式；代码和引用不参与。"""
+    lines = text.splitlines()
+    cleaned = []
+    fence = None
+    for line in lines:
+        marker = re.match(r'^\s*(`{3,}|~{3,})', line)
+        if marker:
+            if fence is None:
+                fence = marker.group(1)[0]
+            elif marker.group(1)[0] == fence:
+                fence = None
+            cleaned.append('')
+            continue
+        if fence or re.match(r'^\s*>', line):
+            cleaned.append('')
+            continue
+        cleaned.append(re.sub(r'(`+).*?\1', '', line))
+    visible = '\n'.join(cleaned)
+    issues = []
+    pdf_pattern = r'''!\[\[[^\]\n|]*\.pdf(?:\|[^\]\n]*)?\]\]|!\[[^\]]*\]\(\s*<?[^)\s>]*\.pdf(?:[?#][^\s)>]*)?>?(?:\s+["'][^"']*["'])?\s*\)|<(?:img|embed|object|iframe)\b[^>]*\b(?:src|data)\s*=\s*["'][^"']*\.pdf(?:[?#][^"']*)?["'][^>]*>'''
+    for match in re.finditer(pdf_pattern, visible, re.I):
+        issues.append({'rule': 'png-primary', 'line': visible.count('\n', 0, match.start()) + 1, 'detail': '正文不得内嵌 PDF 图件；改用 PNG，PDF 可提供下载'})
+    without_math = re.sub(r'(?s)(?<!\\)\$\$.*?(?<!\\)\$\$|(?<!\\)\$(?!\$)[^\n]*?(?<!\\)\$', lambda m: re.sub(r'[^\n]', ' ', m.group()), visible)
+    operand = r'(?:[A-Za-zα-ωΑ-Ω](?:_[A-Za-z0-9]|[₀-₉])?|\d+(?:\.\d+)?)'
+    binary = rf'{operand}\s*[\^*+·×/-]\s*{operand}'
+    frontmatter = False
+    for number, line in enumerate(without_math.splitlines(), 1):
+        if number == 1 and line.strip() == '---':
+            frontmatter = True
+            continue
+        if frontmatter:
+            if line.strip() in ('---', '...'):
+                frontmatter = False
+            continue
+        if re.match(r'^\s*(?:#{1,6}\s|[\w-]+\s*:|\|?\s*:?-{3,})', line):
+            continue
+        line = re.sub(r'!?\[[^\]]*\]\([^)]*\)|!?\[\[[^]]*\]\]|https?://\S+', ' ', line)
+        line = re.sub(r'\S*(?:\./|~/|\.stand/|attachments/|\.[A-Za-z]{2,5}\b)\S*', ' ', line)
+        line = re.sub(r'\b\d+(?:\.\d+)?\s*×\s*\d+(?:\.\d+)?\b', ' ', line)
+        has_power = re.search(r'(?<!\d)10⁻?[⁰¹²³⁴⁵⁶⁷⁸⁹]+', line)
+        special = '=' in line and re.search(r'[∑∫√∏∂∇]', line)
+        equation_line = re.sub(r'(?<![\w.])\d+(?:\.\d+)?\s*[+*/^·×-]\s*\d+(?:\.\d+)?\s*=\s*\d+(?:\.\d+)?', ' ', line) if '|' in line else line
+        equation = re.search(rf'(?<![\w/])(?:{binary}\s*=\s*{operand}|{operand}\s*=\s*{binary})(?![\w/])', equation_line)
+        fraction = re.search(rf'\(\s*{binary}\s*\)\s*/\s*\(\s*{binary}\s*\)', line)
+        if has_power or special or equation or fraction:
+            issues.append({'rule': 'latex-math', 'line': number, 'detail': '疑似公式须写在 LaTeX 定界符内'})
+    return sorted(issues, key=lambda i: i['line'])
+
+
 def print_exempts(exempts):
     """行内豁免单独显形（不计违规）：豁免不是沉默，必须看得见理由。
 
@@ -2914,6 +2976,7 @@ def main():
                     help="命令行追加禁用词（可多次；逗号/空白分隔）")
     ap.add_argument("--fold-threshold", type=int, default=DETAIL_FOLD_THRESHOLD,
                     help=f"R16 细节折叠的敞开正文阈值（可视字符；缺省 {DETAIL_FOLD_THRESHOLD}）")
+    ap.add_argument('--math-strict', action='store_true', help='公式检查全库硬查；缺省仅告警')
     args = ap.parse_args()
 
     if args.fold_run and args.fold_run > 0:
@@ -2995,7 +3058,7 @@ def main():
                                        "since_v2": args.style_since_v2,
                                        "since_img": args.image_since,
                                        "since_fig": args.figure_since,
-                                       "strict": args.strict_style, "allow": abbrev_allow,
+                                       "strict": args.strict_style, "math_strict": args.math_strict, "allow": abbrev_allow,
                                        "plainwords": plain_block,
                                        "fold_threshold": args.fold_threshold,
                                        "stats": stats},

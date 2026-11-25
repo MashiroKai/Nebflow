@@ -1,14 +1,154 @@
 package nebflow.core.scheduler
 
-import io.circe.Codec
+import io.circe.{Codec, Decoder, DecodingFailure, Encoder, Json}
+import io.circe.syntax.*
 import io.circe.derivation.{Configuration, ConfiguredCodec}
 
-import java.time.{Instant, ZoneId, ZonedDateTime}
+import java.time.{Instant, LocalDateTime, LocalTime, ZoneId, ZoneOffset, ZonedDateTime}
+import scala.util.Try
 import java.util.UUID
+import cats.effect.IO
+
+final case class DeviceZoneReport(deviceId: String, zoneId: String, reportedAt: Long, frameSource: String)
+final case class DueZoneSource(kind: String, deviceId: Option[String] = None, reportedAt: Option[Long] = None)
+object DueZoneSource:
+  given Codec[DueZoneSource] = io.circe.generic.semiauto.deriveCodec
+
+class DeviceZoneReports(root: os.Path):
+  private val path = root / "device-zone-reports.json"
+  private val lock = new ScheduledTaskStore(root / "device-zone-lock")
+  private given Codec[DeviceZoneReport] = io.circe.generic.semiauto.deriveCodec
+
+  private def readReports(): List[DeviceZoneReport] =
+    if !os.exists(path) then Nil
+    else io.circe.parser.decode[List[DeviceZoneReport]](os.read(path)).fold(throw _, identity)
+
+  def recordIdentify(frame: Json, authenticated: Boolean, now: Long): IO[Unit] =
+    val id = frame.hcursor.get[String]("clientId").toOption.map(_.trim).filter(s => s.nonEmpty && s.length <= 128)
+    val zone = TodoDue.deviceZoneFromFrame(frame)
+    if !authenticated || !frame.hcursor.get[String]("type").toOption.contains("takeoverIdentify") || id.isEmpty || zone.isEmpty then IO.unit
+    else lock.withStoreLock(IO.blocking {
+      os.makeDir.all(root)
+      val deviceId = s"browser:${id.get}"
+      val previous = readReports()
+      val report = DeviceZoneReport(deviceId, zone.get, now, "takeoverIdentify")
+      val updated = previous.find(_.deviceId == deviceId) match
+        case Some(old) if old.reportedAt > now => previous
+        case _ => previous.filterNot(_.deviceId == deviceId) :+ report
+      val temp = root / s".device-zone-${UUID.randomUUID()}"
+      os.write(temp, updated.asJson.noSpaces)
+      os.move.over(temp, path, replaceExisting = true, atomicMove = true)
+    })
+
+  def latest: IO[Option[DeviceZoneReport]] =
+    lock.withStoreLock(IO.blocking(readReports().sortBy(r => (-r.reportedAt, r.deviceId)).headOption))
+
 
 // `TodoDecision` / `DecisionOption` / `DecisionMedia` 已迁至本包
 // [[TodoDecisionModel]]（待办数据模型与命名规范批 2026-11-18）：决策/选项/媒体
 // 是同一份线格式，模型与校验（[[TodoTaxonomy]]）同处一地，避免「两张表两处改」。
+
+/** Stored reminder intent; weekly local time is interpreted in the saved region, never the host zone. */
+sealed trait TodoDue
+
+object TodoDue:
+  def deviceZone(value: Option[String]): Option[String] =
+    value.filter(ZoneId.getAvailableZoneIds.contains)
+
+  // A tool call cannot be attributed to one input in a merged LLM request;
+  // retain the zone only when every merged message has the same valid source.
+  def mergedDeviceZone(zones: List[Option[String]]): Option[String] =
+    zones match
+      case Some(first) :: rest if deviceZone(Some(first)).isDefined && rest.forall(_.contains(first)) => Some(first)
+      case _ => None
+
+  def deviceZoneFromFrame(frame: Json): Option[String] =
+    val cursor = frame.hcursor
+    val raw = cursor.downField("timeZone").as[String].toOption.orElse(
+      cursor.downField("device").downField("timeZone").as[String].toOption
+    )
+    deviceZone(raw)
+
+  def requireCreationZone(explicit: Option[String], device: Option[String]): Either[String, String] =
+    explicit match
+      case Some(zone) => deviceZone(Some(zone)).toRight("Please clarify a valid IANA time zone")
+      case None => deviceZone(device).toRight("Please clarify the creation time zone")
+
+  final case class Once(dueAt: Long, zoneId: String, wallClock: String, originalOffset: Option[String]) extends TodoDue
+  final case class Weekly(dayOfWeek: Int, localTime: String, zoneId: String, wallClock: String) extends TodoDue
+
+  given Encoder[TodoDue] = Encoder.instance {
+    case Once(at, zone, wall, offset) =>
+      Json.obj(
+        "type" -> "once".asJson,
+        "dueAt" -> at.asJson,
+        "zoneId" -> zone.asJson,
+        "wallClock" -> wall.asJson,
+        "originalOffset" -> offset.asJson
+      )
+    case Weekly(day, time, zone, wall) =>
+      Json.obj(
+        "type" -> "weekly".asJson,
+        "dayOfWeek" -> day.asJson,
+        "localTime" -> time.asJson,
+        "zoneId" -> zone.asJson,
+        "wallClock" -> wall.asJson
+      )
+  }
+
+  given Decoder[TodoDue] = Decoder.instance { c =>
+    def valid(value: Boolean, message: String): Decoder.Result[Unit] =
+      Either.cond(value, (), DecodingFailure(message, c.history))
+    for
+      kind <- c.get[String]("type")
+      zone <- c.get[String]("zoneId")
+      _ <- valid(ZoneId.getAvailableZoneIds.contains(zone), "zoneId must be a valid IANA region")
+      wall <- c.get[String]("wallClock")
+      _ <- valid(Try(LocalDateTime.parse(wall)).isSuccess, "wallClock must be a local date and time")
+      due <- kind match
+        case "once" =>
+          for
+            at <- c.get[Long]("dueAt")
+            offset <- c.get[Option[String]]("originalOffset")
+            _ <- valid(offset.forall(value => Try(ZoneOffset.of(value)).isSuccess), "originalOffset must be a valid UTC offset")
+          yield Once(at, zone, wall, offset)
+        case "weekly" =>
+          for
+            day <- c.get[Int]("dayOfWeek")
+            _ <- valid(day >= 1 && day <= 7, "dayOfWeek must be between 1 and 7")
+            time <- c.get[String]("localTime")
+            _ <- valid(
+              Try(LocalTime.parse(time)).toOption.exists(t => t.getSecond == 0 && t.getNano == 0),
+              "localTime must be a valid local hour and minute"
+            )
+          yield Weekly(day, time, zone, wall)
+        case _ => Left(DecodingFailure("type must be once or weekly", c.history))
+    yield due
+  }
+end TodoDue
+
+final case class TodoRuleSnapshot(version: Long, rule: TodoDue)
+
+object TodoRuleSnapshot:
+  given Codec[TodoRuleSnapshot] = io.circe.generic.semiauto.deriveCodec
+
+/** One planned reminder, with snoozing separate from its immutable identity. */
+final case class TodoOccurrence(
+  todoId: String,
+  scheduledAt: Long,
+  ruleVersion: Long,
+  nextReminderAt: Option[Long] = None,
+  settledAt: Option[Long] = None,
+  stableId: Option[String] = None,
+  missedReason: Option[String] = None
+):
+  def key: String = stableId.getOrElse(s"${todoId.length}:$todoId:$scheduledAt")
+
+object TodoOccurrence:
+  given Codec[TodoOccurrence] = io.circe.generic.semiauto.deriveCodec
+
+  def create(todoId: String, scheduledAt: Long, ruleVersion: Long): TodoOccurrence =
+    TodoOccurrence(todoId, scheduledAt, ruleVersion)
 
 /** A scheduled task attached to a session — fires once or on a recurring schedule. */
 case class ScheduledTask(
@@ -134,8 +274,22 @@ case class ScheduledTask(
    * [[TodoTaxonomy.validateCreate]]）。None = 无决策（存量行 / 提醒面 / 定时任务面
    * 一律 None，缺键零迁移）。
    */
-  decision: Option[TodoDecision] = None
+  decision: Option[TodoDecision] = None,
+  /** Independent human reminder schedule; absent on legacy records. */
+  due: Option[TodoDue] = None,
+  nextDueAt: Option[Long] = None,
+  occurrences: List[TodoOccurrence] = Nil,
+  dueRuleVersion: Long = 0L,
+  dueRuleHistory: List[TodoRuleSnapshot] = Nil,
+  dueZoneSource: Option[DueZoneSource] = None
 ):
+
+  /** Resolve the rule frozen at an occurrence's creation; missing versions are not guessed. */
+  def ruleForOccurrence(occurrence: TodoOccurrence): Option[TodoDue] =
+    if occurrence.todoId != id then None
+    else if occurrence.ruleVersion == dueRuleVersion then due
+    else dueRuleHistory.find(_.version == occurrence.ruleVersion).map(_.rule)
+
   /** true = 待办面（周期浮出直至销账），false = 定时任务面（现状）。 */
   def isTodo: Boolean = kind.contains(ScheduledTask.KindTodo)
 
@@ -184,8 +338,24 @@ object ScheduledTask:
   // ConfiguredCodec + withDefaults（库内先例：TaskListEntry/NotifyConfig）——
   // 缺键一律回默认值，老文件零迁移；升级前文件没有 name/kind/condition 键 →
   // 解码 None，没有 idleStreak/reviewFlag 键 → 0/false。
+  // 回滚注意：旧版本写回会丢弃 due、dueRuleVersion 及偏移字段。回滚前须保留
+  // 整份数据快照；回滚期间禁止旧版本写入这些任务数据。无需迁移或双写。
   given Configuration = Configuration.default.withDefaults
-  given Codec[ScheduledTask] = ConfiguredCodec.derived
+  private val derivedCodec: Codec[ScheduledTask] = ConfiguredCodec.derived
+
+  given Codec[ScheduledTask] = Codec.from(
+    derivedCodec,
+    Encoder.instance { t =>
+      derivedCodec(t).mapObject { obj =>
+        val noDue = if t.due.isEmpty then obj.remove("due") else obj
+        val noNext = if t.nextDueAt.isEmpty then noDue.remove("nextDueAt") else noDue
+        val noOccurrences = if t.occurrences.isEmpty then noNext.remove("occurrences") else noNext
+        val noVersion = if t.dueRuleVersion == 0L then noOccurrences.remove("dueRuleVersion") else noOccurrences
+        val noHistory = if t.dueRuleHistory.isEmpty then noVersion.remove("dueRuleHistory") else noVersion
+        if t.dueZoneSource.isEmpty then noHistory.remove("dueZoneSource") else noHistory
+      }
+    }
+  )
 
   def create(
     sessionId: String,

@@ -7,6 +7,7 @@ import fs2.Stream
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
+import nebflow.core.compact.TokenEstimator
 import nebflow.llm.{
   AdapterResponse,
   CacheAttribution,
@@ -15,7 +16,6 @@ import nebflow.llm.{
   ResolvedThinking,
   SendMessageParams
 }
-import nebflow.core.compact.TokenEstimator
 import nebflow.shared.*
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.*
@@ -98,7 +98,7 @@ class AnthropicAdapter(
                   "data" -> data.asJson
                 )
               )
-            case ContentBlock.ToolUse(id, name, input) =>
+            case ContentBlock.ToolUse(id, name, input, _) =>
               Json.obj(
                 "type" -> "tool_use".asJson,
                 "id" -> id.asJson,
@@ -184,7 +184,7 @@ class AnthropicAdapter(
     messages.map {
       case msg @ Message(MessageRole.Assistant, Right(blocks), _, _, _, _) =>
         blocks.foreach {
-          case ContentBlock.ToolUse(id, _, _) => seen += id
+          case ContentBlock.ToolUse(id, _, _, _) => seen += id
           case _ => ()
         }
         msg

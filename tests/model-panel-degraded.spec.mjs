@@ -42,15 +42,17 @@ const HEALTHY = (name) => ({
 });
 
 /** 最小 boot：全路由拦截 + 假 WS（configData 带 provider）。mode = 全部角色
- *  模型读数的 HTTP 状态（401 = 全失败态；'partial' = 仅 nebflow 401）。 */
+ *  模型读数的 HTTP 状态（401 = 全失败态；'partial' = 仅 kernel 401）。 */
 async function bootApp(page, mode) {
   await page.route('**/*', (route) => {
     const url = new URL(route.request().url());
     let p = decodeURIComponent(url.pathname);
     if (p === '/') p = '/index.html';
+    if (p === '/api/model-rules') return route.fulfill({ status: 200, contentType: 'application/json', body: '{"mode":"follow","source":""}' });
+    if (p === '/api/model-rules/mode') return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
     if (p.startsWith('/api/agents/') && p.endsWith('/model')) {
       const role = decodeURIComponent(p.split('/')[3]);
-      const status = mode === 'partial' && role === 'nebflow' ? 401 : (mode === 401 ? 401 : 200);
+      const status = mode === 'partial' && role === 'kernel' ? 401 : (mode === 401 ? 401 : 200);
       if (status !== 200) return route.fulfill({ status, contentType: 'application/json', body: '{"error":"unauthorized"}' });
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(HEALTHY(role)) });
     }
@@ -145,7 +147,11 @@ test('P3 重试恢复腿：API 转健康后一把拉起完整面板（blocks 渲
   });
   await page.click('.mp-load-error-retry');
   await expect(page.locator('.mp-load-error'), '降级面退场').toHaveCount(0);
-  await expect(page.locator('.mp-roleblock')).toHaveCount(2);
+  await expect(page.locator('.mp-roleblock')).toHaveCount(5);
+  for (const role of ['kernel', 'project-dispatcher', 'node', 'subagent']) {
+    await expect(page.locator(`.mp-roleblock-follower[data-role="${role}"]`)).toHaveCount(1);
+  }
+  await expect(page.locator('.mp-roleblock-nebula')).toHaveCount(1);
   // refs 由 configData providers 供给 ⇒ 「独立配置」fork 钮可用（不再是永久禁用）。
   const forkBtn = page.locator('.mp-roleblock-nebula button');
   await expect(forkBtn).toBeEnabled();
@@ -160,14 +166,18 @@ test('P4 partial 失败（一角 401）不走面板级降级：可用角色照�
   await openPanel(page);
 
   await expect(page.locator('.mp-load-error')).toHaveCount(0);
-  await expect(page.locator('.mp-roleblock')).toHaveCount(2);
-  // 失败角（nebflow follower）自己带「加载失败」小字（展开后可见）。
+  await expect(page.locator('.mp-roleblock')).toHaveCount(5);
+  for (const role of ['kernel', 'project-dispatcher', 'node', 'subagent']) {
+    await expect(page.locator(`.mp-roleblock-follower[data-role="${role}"]`)).toHaveCount(1);
+  }
+  await expect(page.locator('.mp-roleblock-nebula')).toHaveCount(1);
+  // 失败角（kernel follower）自己带「加载失败」小字（展开后可见）。
   // follower 组的可见性归 panelVisibility 管：unified 态整组隐藏（show iff
   // separate），先切「分开配置」再展开失败角。
   await page.click('.mp-mode-btn[data-mode="separate"]');
-  await page.locator('.mp-role-head-toggle').first().click();
+  await page.locator('.mp-roleblock-follower[data-role="kernel"] .mp-role-head-toggle').click();
   // 只钉失败角本体（.mp-role-body 有两处：Nebula 健康块不含失败文案）。
-  await expect(page.locator('.mp-roleblock-follower[data-role="nebflow"] .mp-role-body')).toContainText(/加载失败|Failed to load/);
+  await expect(page.locator('.mp-roleblock-follower[data-role="kernel"] .mp-role-body')).toContainText(/加载失败|Failed to load/);
 
   expect(pageErrors, '零新增页面错误').toEqual([]);
 });

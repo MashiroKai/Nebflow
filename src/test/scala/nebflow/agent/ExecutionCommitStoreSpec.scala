@@ -218,8 +218,12 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
                 _ <- IO.blocking(
                   Files.writeString(path, envelope.deepMerge(Json.obj("payload" -> Json.fromString("other"))).noSpaces)
                 )
+                _ <- IO(fail.set("before-terminal-confirm"))
                 conflict <- runner.installTerminal(terminal, envelope)
                 _ = assertEquals(conflict, ExecutionCommitResult.Rejected("terminal-envelope-conflict"))
+                _ = assertEquals(fail.get(), "before-terminal-confirm", "conflict must skip terminal confirmation")
+                afterConflict <- store.observeChain("session", "run")
+                _ = assertEquals(afterConflict, afterFailure)
                 _ <- IO.blocking(Files.writeString(path, envelope.noSpaces))
                 _ <- IO(fail.set("after-terminal-confirm"))
                 lost <- runner.installTerminal(terminal, envelope)

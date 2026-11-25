@@ -261,6 +261,187 @@ class TodoTaxonomySpec extends CatsEffectSuite:
   private def callTool(input: Json): Either[ToolError, String] =
     ScheduleTool.call(input.asObject.get, mkCtx()).unsafeRunSync()
 
+  test("Schedule zone correction rejects mixed content without partial changes"):
+    val at = java.time.Instant.parse("2035-01-01T09:00:00Z").toEpochMilli
+    val task = ScheduledTask(id = "mixed-zone", sessionId = "s1", content = "original", triggerAt = at,
+      createdAt = 1L, kind = Some(ScheduledTask.KindTodo),
+      due = Some(TodoDue.Once(at, "Europe/London", "2035-01-01T09:00", None)), nextDueAt = Some(at))
+    val input = Json.obj("action" -> "edit".asJson, "id" -> task.id.asJson,
+      "creationZone" -> "Asia/Tokyo".asJson, "content" -> "changed".asJson)
+    for
+      _ <- reset()
+      _ <- taskStore.addTask(task)
+      result <- ScheduleTool.call(input.asObject.get, mkCtx())
+      rows <- taskStore.loadTasks("s1")
+    yield
+      assert(result.isLeft)
+      assertEquals(rows.head.due, task.due)
+      assertEquals(rows.head.content, task.content)
+
+  test("Schedule edit explicitly corrects the creation zone and preserves occurrence identity"):
+    val at = java.time.Instant.parse("2035-01-01T09:00:00Z").toEpochMilli
+    val moved = java.time.Instant.parse("2035-01-01T00:00:00Z").toEpochMilli
+    val occurrence = TodoOccurrence.create("correct-zone", at, 0L)
+    val task = ScheduledTask(id = "correct-zone", sessionId = "s1", content = "remind", triggerAt = at,
+      createdAt = 1L, kind = Some(ScheduledTask.KindTodo),
+      due = Some(TodoDue.Once(at, "Europe/London", "2035-01-01T09:00", None)),
+      nextDueAt = Some(at), occurrences = List(occurrence))
+    val input = Json.obj("action" -> "edit".asJson, "id" -> task.id.asJson, "creationZone" -> "Asia/Tokyo".asJson)
+    for
+      _ <- reset()
+      _ <- taskStore.addTask(task)
+      result <- ScheduleTool.call(input.asObject.get, mkCtx())
+      rows <- taskStore.loadTasks("s1")
+    yield
+      assert(result.isRight, s"zone correction must succeed: $result")
+      assertEquals(rows.head.occurrences.head.scheduledAt, moved)
+      assertEquals(rows.head.occurrences.head.key, occurrence.key)
+
+  test("explicitly sourceless tool turn uses the latest reported device with auditable provenance"):
+    val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
+    val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision, "triggerAt" -> "2035-01-01T09:00".asJson)
+    val report = DeviceZoneReport("browser:test", "Asia/Tokyo", 123L, "takeoverIdentify")
+    for
+      _ <- reset()
+      result <- ScheduleTool.call(input.asObject.get, mkCtx().copy(recentDeviceZone = Some(report), deviceZoneFallbackAllowed = true))
+      stored <- taskStore.getAllTodos
+    yield
+      assert(result.isRight, s"a known recent device should permit creation: $result")
+      val audit = stored.head.asJson.hcursor.downField("dueZoneSource")
+      assertEquals(audit.get[String]("kind").toOption, Some("recent-device"))
+      assertEquals(audit.get[String]("deviceId").toOption, Some("browser:test"))
+      assertEquals(audit.get[Long]("reportedAt").toOption, Some(123L))
+
+  test("tool offset with explicit region preserves the input instant and original offset"):
+    val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
+    val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision,
+      "triggerAt" -> "2035-01-01T09:00:00+08:00[Europe/Paris]".asJson)
+    for
+      _ <- reset()
+      result <- ScheduleTool.call(input.asObject.get, mkCtx())
+      stored <- taskStore.getAllTodos
+    yield
+      assert(result.isRight, s"input offset determines instant: $result")
+      val due = stored.head.due.get.asJson.hcursor
+      assertEquals(due.get[String]("zoneId").toOption, Some("Europe/Paris"))
+      assertEquals(due.get[String]("originalOffset").toOption, Some("+08:00"))
+      assertEquals(due.get[Long]("dueAt").toOption, Some(java.time.Instant.parse("2035-01-01T01:00:00Z").toEpochMilli))
+
+  test("tool weekly todo persists a wall-clock rule in the device zone"):
+    val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
+    val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision,
+      "triggerAt" -> "2035-01-01T09:00".asJson, "repeat" -> "weekly".asJson)
+    for
+      _ <- reset()
+      result <- ScheduleTool.call(input.asObject.get, mkCtx().copy(deviceZone = Some("Asia/Tokyo")))
+      stored <- taskStore.getAllTodos
+    yield
+      assert(result.isRight, s"weekly deadline must be accepted: $result")
+      val due = stored.head.due.get.asJson.hcursor
+      assertEquals(due.get[String]("type").toOption, Some("weekly"))
+      assertEquals(due.get[String]("zoneId").toOption, Some("Asia/Tokyo"))
+      assertEquals(due.get[String]("localTime").toOption, Some("09:00"))
+      assertEquals(stored.head.nextDueAt, Some(java.time.Instant.parse("2035-01-01T00:00:00Z").toEpochMilli))
+
+  test("tool todo overlap selects earlier instant and exposes chosen offset"):
+    val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
+    val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision, "triggerAt" -> "2035-11-04T01:30".asJson)
+    for
+      _ <- reset()
+      result <- ScheduleTool.call(input.asObject.get, mkCtx().copy(deviceZone = Some("America/New_York")))
+      stored <- taskStore.getAllTodos
+    yield
+      assert(result.isRight, s"overlap must resolve: $result")
+      assertEquals(stored.head.nextDueAt, Some(java.time.Instant.parse("2035-11-04T05:30:00Z").toEpochMilli))
+      assert(result.toOption.get.contains("-04:00"), "the selected overlap offset must appear in the receipt")
+
+  test("tool todo gap resolves to the first valid local instant"):
+    val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
+    val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision, "triggerAt" -> "2035-03-11T02:30".asJson)
+    for
+      _ <- reset()
+      result <- ScheduleTool.call(input.asObject.get, mkCtx().copy(deviceZone = Some("America/New_York")))
+      stored <- taskStore.getAllTodos
+    yield
+      assert(result.isRight, s"gap must be resolved: $result")
+      assert(result.toOption.get.toLowerCase.contains("adjust"), "gap adjustment must be visible in the receipt")
+      assertEquals(stored.head.due.get.asJson.hcursor.get[String]("wallClock").toOption, Some("2035-03-11T02:30"))
+      assertEquals(stored.head.nextDueAt, Some(java.time.Instant.parse("2035-03-11T07:00:00Z").toEpochMilli))
+
+  test("tool todo relative tomorrow resolves using its device region"):
+    val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
+    val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision, "triggerAt" -> "tomorrow at 09:00".asJson)
+    val zone = java.time.ZoneId.of("Asia/Tokyo")
+    val expectedDate = java.time.LocalDate.now(zone).plusDays(1)
+    for
+      _ <- reset()
+      result <- ScheduleTool.call(input.asObject.get, mkCtx().copy(deviceZone = Some("Asia/Tokyo")))
+      stored <- taskStore.getAllTodos
+    yield
+      assert(result.isRight, s"tomorrow should resolve in device region: $result")
+      assertEquals(stored.size, 1)
+      val due = stored.head.due.get.asJson.hcursor
+      assertEquals(due.get[Long]("dueAt").toOption, Some(expectedDate.atTime(9, 0).atZone(zone).toInstant.toEpochMilli))
+
+  test("tool todo offset fixes instant but cannot substitute for a device region"):
+    val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
+    val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision, "triggerAt" -> "2035-01-01T09:00:00+08:00".asJson)
+    for
+      _ <- reset()
+      missing <- ScheduleTool.call(input.asObject.get, mkCtx())
+      result <- ScheduleTool.call(input.asObject.get, mkCtx().copy(deviceZone = Some("Asia/Tokyo")))
+      stored <- taskStore.getAllTodos
+    yield
+      assert(missing.isLeft, "an offset alone is not a creation region")
+      assert(result.isRight, s"offset and device region should succeed: $result")
+      assertEquals(stored.size, 1)
+      val due = stored.head.due.get.asJson.hcursor
+      assertEquals(due.get[String]("zoneId").toOption, Some("Asia/Tokyo"))
+      assertEquals(due.get[String]("originalOffset").toOption, Some("+08:00"))
+      assertEquals(due.get[Long]("dueAt").toOption, Some(java.time.Instant.parse("2035-01-01T01:00:00Z").toEpochMilli))
+
+  test("tool todo explicit IANA zone overrides device region"):
+    val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
+    val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision, "triggerAt" -> "2035-01-01T09:00:00+01:00[Europe/Paris]".asJson)
+    for
+      _ <- reset()
+      result <- ScheduleTool.call(input.asObject.get, mkCtx().copy(deviceZone = Some("Asia/Tokyo")))
+      stored <- taskStore.getAllTodos
+    yield
+      assert(result.isRight, s"explicit region must be accepted: $result")
+      assertEquals(stored.size, 1)
+      val due = stored.head.due.get.asJson.hcursor
+      assertEquals(due.get[String]("zoneId").toOption, Some("Europe/Paris"))
+      assertEquals(due.get[String]("originalOffset").toOption, Some("+01:00"))
+      assertEquals(due.get[Long]("dueAt").toOption, Some(java.time.Instant.parse("2035-01-01T08:00:00Z").toEpochMilli))
+
+  test("tool todo local due uses the device region and preserves no offset"):
+    val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
+    val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision, "triggerAt" -> "2035-01-01T09:00".asJson)
+    for
+      _ <- reset()
+      result <- ScheduleTool.call(input.asObject.get, mkCtx().copy(deviceZone = Some("Asia/Tokyo")))
+      stored <- taskStore.getAllTodos
+    yield
+      assert(result.isRight, s"device region should permit due creation: $result")
+      assertEquals(stored.size, 1)
+      val due = stored.head.due.get.asJson.hcursor
+      assertEquals(due.get[String]("zoneId").toOption, Some("Asia/Tokyo"))
+      assertEquals(due.get[Long]("dueAt").toOption, Some(java.time.Instant.parse("2035-01-01T00:00:00Z").toEpochMilli))
+      assert(due.downField("originalOffset").focus.forall(_.isNull))
+
+  test("tool todo due without a region requests clarification"):
+    val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
+    val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision, "triggerAt" -> "2035-01-01T09:00".asJson)
+    for
+      _ <- reset()
+      result <- IO(callTool(input))
+      stored <- taskStore.getAllTodos
+    yield
+      assert(result.isLeft, "a missing source must be clarified")
+      assert(result.swap.toOption.get.message.toLowerCase.contains("clarif"))
+      assertEquals(stored, Nil)
+
   test("② [端到端] 工具面 kind=todo 无选项 ⇒ 拒绝且零落库"):
     (for
       _ <- reset()

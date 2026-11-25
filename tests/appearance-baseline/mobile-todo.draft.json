@@ -1,0 +1,212 @@
+{
+  "approved": false,
+  "approvedBy": null,
+  "approvedAt": null,
+  "sourceCommit": "3cf3dac5c962eaaf3a584e9ba4d62ab6db0db3d7",
+  "panel": "mobile-todo",
+  "viewportNA": {
+    "width": 1280,
+    "reason": "手机层仅在不超过768px时启用"
+  },
+  "browser": "151.0.7922.34",
+  "variants": {
+    "light": {
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "dpr": 1
+      },
+      "elements": {
+        "detail": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-detail",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(27, 30, 38)",
+            "padding": "0px",
+            "border": "0px none rgb(27, 30, 38)"
+          }
+        },
+        "title": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-dtitle",
+          "styles": {
+            "color": "rgb(59, 130, 246)",
+            "fontSize": "28px",
+            "fontWeight": "700"
+          }
+        },
+        "items": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-items",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(27, 30, 38)",
+            "padding": "0px 16px",
+            "border": "0px none rgb(27, 30, 38)"
+          }
+        },
+        "item": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-item",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(27, 30, 38)",
+            "padding": "0px",
+            "border": "0px none rgb(27, 30, 38)"
+          }
+        },
+        "check": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-check",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(0, 0, 0)",
+            "height": "48px",
+            "padding": "0px",
+            "border": "0px none rgb(0, 0, 0)"
+          }
+        },
+        "item-title": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-item-title",
+          "styles": {
+            "color": "rgb(27, 30, 38)",
+            "fontSize": "17px",
+            "fontWeight": "400"
+          }
+        },
+        "list": {
+          "selector": ".mobile-page[data-page=todo-apple-list]",
+          "styles": {
+            "backgroundColor": "rgb(245, 246, 248)",
+            "color": "rgb(27, 30, 38)",
+            "fontSize": "16px",
+            "fontWeight": "400"
+          },
+          "box": {
+            "x": 0,
+            "y": 0,
+            "width": 390,
+            "height": 844
+          }
+        },
+        "back": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .mobile-back-btn",
+          "styles": {
+            "borderRadius": "50%",
+            "backgroundColor": "rgba(255, 255, 255, 0.16)",
+            "color": "rgb(27, 30, 38)",
+            "boxShadow": "none",
+            "height": "48px",
+            "padding": "0px",
+            "border": "1px solid rgba(255, 255, 255, 0.35)"
+          },
+          "box": {
+            "x": 16,
+            "y": 16,
+            "width": 48,
+            "height": 48
+          }
+        }
+      }
+    },
+    "dark": {
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "dpr": 1
+      },
+      "elements": {
+        "detail": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-detail",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(232, 234, 237)",
+            "padding": "0px",
+            "border": "0px none rgb(232, 234, 237)"
+          }
+        },
+        "title": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-dtitle",
+          "styles": {
+            "color": "rgb(59, 130, 246)",
+            "fontSize": "28px",
+            "fontWeight": "700"
+          }
+        },
+        "items": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-items",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(232, 234, 237)",
+            "padding": "0px 16px",
+            "border": "0px none rgb(232, 234, 237)"
+          }
+        },
+        "item": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-item",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(232, 234, 237)",
+            "padding": "0px",
+            "border": "0px none rgb(232, 234, 237)"
+          }
+        },
+        "check": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-check",
+          "styles": {
+            "borderRadius": "0px",
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(0, 0, 0)",
+            "height": "48px",
+            "padding": "0px",
+            "border": "0px none rgb(0, 0, 0)"
+          }
+        },
+        "item-title": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .ta-item-title",
+          "styles": {
+            "color": "rgb(232, 234, 237)",
+            "fontSize": "17px",
+            "fontWeight": "400"
+          }
+        },
+        "list": {
+          "selector": ".mobile-page[data-page=todo-apple-list]",
+          "styles": {
+            "backgroundColor": "rgb(19, 22, 28)",
+            "color": "rgb(232, 234, 237)",
+            "fontSize": "16px",
+            "fontWeight": "400"
+          },
+          "box": {
+            "x": 0,
+            "y": 0,
+            "width": 390,
+            "height": 844
+          }
+        },
+        "back": {
+          "selector": ".mobile-page[data-page=todo-apple-list] .mobile-back-btn",
+          "styles": {
+            "borderRadius": "50%",
+            "backgroundColor": "rgba(24, 28, 38, 0.16)",
+            "color": "rgb(232, 234, 237)",
+            "boxShadow": "none",
+            "height": "48px",
+            "padding": "0px",
+            "border": "1px solid rgba(255, 255, 255, 0.06)"
+          },
+          "box": {
+            "x": 16,
+            "y": 16,
+            "width": 48,
+            "height": 48
+          }
+        }
+      }
+    }
+  }
+}

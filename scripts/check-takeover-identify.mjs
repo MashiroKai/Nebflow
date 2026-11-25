@@ -20,8 +20,8 @@
 //    notices.
 //
 // ② 真多开 = 静默接管 + 失权端自动落草稿（2026-11-19 作者令「直接静默吧 交给主会话
-//    实现」；取代 2026-11-18 的「非抢占 = 第二个窗口只读」）。剔除的仍是**卡片与状态机**
-//    （「让出 / 取回控制权」弹窗、HTTP retake 入口）；变的是席位本身——**申请即授予**：
+//    实现」；取代 2026-11-18 的「非抢占 = 第二个窗口只读」）。Console 卡片与状态机
+//    后由 18b7da220 恢复；canvas 席位仍是独立路径，**申请即授予**：
 //    已有别的写者时**静默接管**（翻位 + epoch 自增），被顶下的写者由前端静默落
 //    「未合并草稿」承接「不丢」。失效面同样是静默的——把静默接管悄悄改回非抢占、
 //    或把「定向通知被顶下的写者」这条腿删掉（失权端就再也收不到落草稿的信号了），
@@ -35,16 +35,17 @@
 //   D. ws.js still carries the handshake `?clientId=` rail (direct face keeps working);
 //   F. automation declaration stays in lockstep (navigator.webdriver / declaredAutomated /
 //      endprintOf+sameEnd) — a silent rename re-opens the false-positive face;
-//   G. no console-takeover / yield CARD and no ownership-retake state machine remain
-//      (takeoverModal.js gone, ConsoleTakeoverRoutes.scala gone, no #takeover-* card node,
-//      no handleRetake / claimAndReverseKick);
-//   H. write rejection carries a REAL save-failure message (never takeover/yield wording),
-//      on both the server payload and the client notice;
+//   G. restored console retake card and state machine remain isolated from canvas;
+//   H. write rejection carries a REAL save-failure message on the server, while the
+//      client retains unsynced reader state silently (862f93c9e1);
 //   I. the writer seat is a SILENT PREEMPTIVE seat (申请即授予 + 定向通知被顶下的写者).
+//      Browser takeover viewer glue is a separate surface, allowed only in marked blocks;
+//      the console takeover surface remains forbidden in canvas.
 //
 // Usage: node scripts/check-takeover-identify.mjs
 
 import { existsSync, readFileSync } from 'node:fs';
+import { stripBrowserTakeoverGlue } from './lib/browser-takeover-glue.mjs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -134,22 +135,16 @@ if (!/\?clientId=\$\{encodeURIComponent\(clientIdParam\)\}/.test(wsJs)) {
   fail('D: ws.js no longer appends ?clientId= to the handshake URL (direct-face rail regressed)');
 }
 
-// ── G. no console-takeover / yield CARD and no ownership-retake state machine ──
-if (existsSync(join(JS, 'takeoverModal.js'))) {
-  fail('G: web/js/takeoverModal.js is back — the「让出/取回控制权」card must stay retired');
+// ── G. Console retake was explicitly restored by 18b7da220; canvas remains separate. ──
+const modal = readIf(join(JS, 'takeoverModal.js'));
+const routes = readIf(join(SCALA, 'ConsoleTakeoverRoutes.scala'));
+if (!modal || !routes || !/id="takeover-retake"/.test(indexHtml) ||
+    !/def\s+handleRetake\s*\(/.test(takeoverSrc) ||
+    !/def\s+claimAndReverseKick\s*\(/.test(takeoverSrc)) {
+  fail('G: restored console retake card, route or state machine is missing');
 }
-if (existsSync(join(SCALA, 'ConsoleTakeoverRoutes.scala'))) {
-  fail('G: gateway/ConsoleTakeoverRoutes.scala is back — the HTTP retake entry point must stay retired');
-}
-const cardRe = /\bid="takeover-(?:box|title|msg|error|actions|exit|retake)"/;
-if (cardRe.test(indexHtml)) {
-  fail('G: index.html carries a #takeover-* card node again — the retired takeover modal is back in the DOM');
-}
-if (/showCanvasTakeover|takeover-retake|takeover-exit/.test(canvasJs + indexHtml)) {
-  fail('G: a canvas takeover entry point (showCanvasTakeover / takeover-retake / takeover-exit) is back in the web assets');
-}
-if (/def\s+handleRetake\s*\(/.test(takeoverSrc) || /def\s+claimAndReverseKick\s*\(/.test(takeoverSrc)) {
-  fail('G: ConsoleTakeover still exposes handleRetake / claimAndReverseKick — the retake state machine must stay retired');
+if (/showCanvasTakeover|takeover-retake|takeover-exit/.test(canvasJs)) {
+  fail('G: console retake UI leaked into the separate canvas writer path');
 }
 
 // ── H. the refusal carries a REAL save-failure message (never takeover/yield wording) ──
@@ -176,10 +171,9 @@ for (const hit of configRoutesSrc.matchAll(refusalRe)) {
   }
 }
 const failedWire = /failed:\s*\(\)\s*=>\s*\{([^}]*)\}/.exec(canvasJs);
-if (!failedWire || !/保存失败/.test(failedWire[1])) {
-  fail('H: canvas.js no longer surfaces a real 保存失败 notice when the server refuses a write');
-} else if (/接管|让出|取回|控制权/.test(failedWire[1])) {
-  fail('H: canvas.js refused-write notice uses takeover/yield wording — the ruling forbids it');
+// 862f93c9e1: failed writes remain silent but must retain unsynced reader state.
+if (!failedWire || !/localUnsynced\s*=\s*true/.test(failedWire[1]) || !/writerChanged\('reader'\)/.test(failedWire[1])) {
+  fail('H: failed writes must retain unsynced state and switch to reader');
 }
 
 // ── I. the writer seat is a SILENT PREEMPTIVE seat（静默接管批 2026-11-19 作者令
@@ -218,8 +212,13 @@ if (!/function captureSeatDraft\s*\(/.test(canvasJs)) {
 if (!/captureSeatDraft\(\)/.test(canvasJs)) {
   fail('I: captureSeatDraft is never called — the seat-loss hook is unwired');
 }
-if (/takeover/i.test(canvasJs)) {
-  fail('I: canvas.js still references the console-takeover surface — the canvas producer must carry none of it');
+try {
+  const { outside } = stripBrowserTakeoverGlue(canvasJs);
+  if (/takeover/i.test(outside)) {
+    fail('I: canvas.js still references the console-takeover surface — the canvas producer must carry none of it');
+  }
+} catch (error) {
+  fail(`I: ${error.message}`);
 }
 
 if (failures.length > 0) {
@@ -231,6 +230,7 @@ if (failures.length > 0) {
 
 console.log(
   `check-takeover-identify: PASS — identity declared in-band as "${frameType}" (client emit ↔ receive-pipe intercept), ` +
-  `handshake ?clientId= rail intact, no takeover/yield card or retake state machine, ` +
-  `refusal speaks the real save-failure copy, writer seat silently preemptive (displaced writer notified → draft)`
+  `handshake ?clientId= rail intact, console retake restored and isolated from canvas, ` +
+  `refusal preserves unsynced reader state, writer seat silently preemptive (displaced writer notified → draft); ` +
+  `marked browser takeover viewer glue is a separate surface, console takeover remains forbidden in canvas`
 );

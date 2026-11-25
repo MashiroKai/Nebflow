@@ -548,10 +548,10 @@ test.describe('C6 手机档 375×812 全屏页：同一条链（无滑动）', (
   });
 });
 
-/* ── C7 媒体面点击 = 选中该选项（不打开 Canvas）────────────────────────── */
+/* ── C7 媒体面打开画廊，展开不选中 ───────────────────────────────────── */
 
-test.describe('C7 点媒体面 = 选中该选项；点「展开」不选中', () => {
-  test('叠卡整面点击选中；展开钮点击只展开', async ({ browser }) => {
+test.describe('C7 媒体操作不选中选项', () => {
+  test('叠卡整面打开画廊；展开钮点击只展开', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'light' });
     const page = await ctx.newPage();
     await bootWithAsk(page, { items: MIXED_ITEMS });
@@ -568,8 +568,10 @@ test.describe('C7 点媒体面 = 选中该选项；点「展开」不选中', ()
       picked: [...document.querySelectorAll('#chat .option-box .option-btn')].map((b, i) => (b.classList.contains('picked') ? i : -1)).filter((i) => i >= 0),
       openEvents: (window.__open || []).length,
     }));
-    expect(afterFace.picked, '点媒体面 ⇒ 选中该选项').toEqual([3]);
-    expect(afterFace.openEvents, '点媒体面不打开 Canvas（选项语义优先）').toBe(0);
+    expect(afterFace.picked, '点媒体面不选中').toEqual([]);
+    expect(afterFace.openEvents, '点媒体面不打开 Canvas').toBe(0);
+    await expect(page.locator('.nf-lightbox')).toBeVisible();
+    await page.locator('.nf-lightbox-close').click();
 
     // 点「展开 N」⇒ 只展开，不改变选择。
     await page.locator('#chat .option-box .option-btn').nth(3).locator('.pill').click();
@@ -579,7 +581,7 @@ test.describe('C7 点媒体面 = 选中该选项；点「展开」不选中', ()
       picked: [...document.querySelectorAll('#chat .option-box .option-btn')].map((b, i) => (b.classList.contains('picked') ? i : -1)).filter((i) => i >= 0),
     }));
     expect(afterPill.expanded, '展开钮展开').toBe(true);
-    expect(afterPill.picked, '展开钮不选中').toEqual([3]);
+    expect(afterPill.picked, '展开钮不选中').toEqual([]);
     opened.push(afterFace);
     await shot(page, 'c7-face-pick');
     await ctx.close();

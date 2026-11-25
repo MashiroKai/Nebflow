@@ -1,7 +1,7 @@
 package nebflow.core.project
 
-import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
@@ -279,16 +279,18 @@ class ChainLedgerStore private (
       }.map(_.reverse)
     else
       val text =
-        try if name.endsWith(".gz") then gunzip(f) else os.read(f)
+        try Some(if name.endsWith(".gz") then gunzip(f) else os.read(f))
         catch
           case e: Exception =>
             logger.warnSync(s"chain-ledger[$project] cold file unreadable: $name: ${e.getMessage} — skipped")
-            return None
-      jsonParse(text).flatMap(_.as[RoundFile]) match
-        case Right(r) => Some(List(r))
-        case Left(e) =>
-          logger.warnSync(s"chain-ledger[$project] cold file corrupt: $name: $e — skipped")
-          None
+            None
+      text.flatMap { value =>
+        jsonParse(value).flatMap(_.as[RoundFile]) match
+          case Right(r) => Some(List(r))
+          case Left(e) =>
+            logger.warnSync(s"chain-ledger[$project] cold file corrupt: $name: $e — skipped")
+            None
+      }
     end if
   end parseColdFile
 

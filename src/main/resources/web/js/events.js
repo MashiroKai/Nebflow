@@ -16,6 +16,7 @@
 export const EVENTS = Object.freeze({
   // workspace 面：工作区条目打开（树/搜索/最近三腿共用一个事件）
   WORKSPACE_OPEN_ITEM: 'workspace-open-item',
+  BROWSER_TAKEOVER_FINISHED: 'browser-takeover-finished',
   // 资源管理器面：发 readFile 前把「该路径已固定 / 这次是后台重读」投给 explorer.js
   // 的 pendingPinned / pendingRefresh（canvas.js 多条重读腿共用此通道；
   // explorer.js 的监听端按既有树逐字听 'explorer-preload-pinned'）。
@@ -32,6 +33,7 @@ export const EVENTS = Object.freeze({
   AGENT_VIEW_REQUESTED: 'nebflow-agent-view-requested',
   // i18n 面：语言切换（content-i18n 重渲染腿）
   LOCALE_CHANGED: 'locale-changed',
+  MODEL_RULES_SAVED: 'model-rules-saved',
   // Delegate mirror refresh and archive notifications.
   DELEGATE_CHAIN_MIRROR_UPDATED: 'delegate-chain-mirror-updated',
   DELEGATE_ARCHIVED: 'delegate-archived',
@@ -39,6 +41,8 @@ export const EVENTS = Object.freeze({
   // expand/collapse state (msgQuote.js listens on the artifact row).
   NF_QUOTE_FRONT: 'nf-quote-front',
   NF_POP_EXPANDED: 'nf-pop-expanded',
+  NF_INJECTION_APPENDED: 'nf-injection-appended',
+  NF_WORKLINE_CREATED: 'nf-workline-created',
   // 折叠态：本名在当日树里是**存储键**字面量（branding.js LEGACY_IRREGULAR
   // .task_collapsed），登记它是为了让折叠态通道只有一处拼写来源 —— 将来若升级成
   // 事件，收发两端不必再改名字。

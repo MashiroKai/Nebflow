@@ -9,6 +9,8 @@ import nebflow.core.scheduler.{
   ScheduledTask,
   ScheduledTaskService,
   ScheduledTaskStore,
+  TodoDue,
+  DueZoneSource,
   TodoDecision,
   TodoTaxonomy
 }
@@ -247,6 +249,10 @@ Your context does NOT show the current date/time — never invent an absolute da
         "condition" -> Json.obj(
           "type" -> "string".asJson,
           "description" -> "(create, kind=\"task\" only) conditional trigger — fires only when TRUE at trigger time. Forms: bare `sh -c` probe (exit 0 = true; fast, absolute paths, 60s timeout = unmet); \"git-tip:<repoPath>[#<branch>]\" (stateful sentinel — fires when branch tip changed since last check); \"task-terminal:<project>:<nodeId>\" (fires when that flow-map node reaches a terminal state). Unmet: repeating tasks skip silently to the next cycle; one-shots re-check every 30 min for up to 24h then auto-PAUSE. Nothing is injected while unmet.".asJson
+        ),
+        "creationZone" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "(edit) Explicit IANA creation-zone correction; submit separately from other edits.".asJson
         ),
         "id" -> Json.obj(
           "type" -> "string".asJson,
@@ -573,7 +579,28 @@ Your context does NOT show the current date/time — never invent an absolute da
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
     val idOpt = input("id").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
-    idOpt match
+    val correction = input("creationZone")
+    if correction.isDefined then
+      val zone = correction.flatMap(_.asString).map(_.trim)
+      val mixed = List("content", "project", "name", "detail").exists(input.contains)
+      if idOpt.isEmpty then IO.pure(Left(ToolError("edit requires id")))
+      else if mixed then IO.pure(Left(ToolError("creationZone correction must be submitted separately")))
+      else if !zone.exists(ZoneId.getAvailableZoneIds.contains) then IO.pure(Left(ToolError("creationZone must be a valid IANA region")))
+      else taskStore.findTaskById(idOpt.get).flatMap {
+        case None => IO.pure(Left(ToolError("entry not found")))
+        case Some(task) if !task.isTodo || task.due.isEmpty => IO.pure(Left(ToolError("entry has no todo due rule")))
+        case Some(_) =>
+          (for
+            _ <- taskStore.changeCreationZone(idOpt.get, zone.get, System.currentTimeMillis())
+            saved <- taskStore.findTaskById(idOpt.get)
+            _ <- taskService.traverse_(_.notifyTaskChange())
+            _ <- ctx.wsSend.traverse_(send => saved.traverse_(row =>
+              send(Json.obj("type" -> "scheduledTaskUpdated".asJson,
+                "sessionId" -> row.sessionId.asJson, "task" -> row.asJson))))
+          yield saved.toRight(ToolError("entry no longer exists")).map(_ => s"Updated creation zone to ${zone.get}"))
+            .handleError(e => Left(ToolError(s"creationZone correction failed: ${e.getMessage}")))
+      }
+    else idOpt match
       case None =>
         IO.pure(Left(ToolError("edit requires id — call Schedule {action:\"list\"} first, then pass the entry's id.")))
       case Some(id) =>
@@ -664,7 +691,6 @@ Your context does NOT show the current date/time — never invent an absolute da
               }
             end if
         }
-    end match
   end editAction
 
   // ---------------------------------------------------------------------------
@@ -797,16 +823,41 @@ Your context does NOT show the current date/time — never invent an absolute da
     val todoDetail = input("detail").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
     val project = input("project").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
     val now = System.currentTimeMillis()
+    val dueInput = input("triggerAt").filter(j => !j.isNull && !j.asNumber.flatMap(_.toLong).contains(0L))
+    val dueResult: Either[String, Option[(TodoDue, Long)]] = dueInput match
+      case None => Right(None)
+      case Some(raw) =>
+        val zoned = raw.asString.flatMap(s => scala.util.Try(ZonedDateTime.parse(s)).toOption)
+        val originalOffset = raw.asString.flatMap(s => scala.util.Try(OffsetDateTime.parse(s.takeWhile(_ != '['))).toOption)
+        val local = raw.asString.flatMap(s => scala.util.Try(LocalDateTime.parse(s)).toOption)
+        val explicit = zoned.map(_.getZone.getId).filter(ZoneId.getAvailableZoneIds.contains)
+        for
+          region <- TodoDue.requireCreationZone(explicit, ctx.deviceZone.orElse(Option.when(ctx.deviceZoneFallbackAllowed)(ctx.recentDeviceZone).flatten.map(_.zoneId)))
+          repeat = input("repeat").flatMap(_.asString).getOrElse("once")
+          _ <- Either.cond(Set("", "once", "weekly").contains(repeat), (), "Todo repeat must be once or weekly")
+          _ <- Either.cond(repeat != "weekly" || local.exists(t => t.getSecond == 0 && t.getNano == 0), (), "Weekly reminders require a local date and minute")
+          _ <- Either.cond(zoned.isDefined || raw.asString.exists(s => scala.util.Try(LocalDateTime.parse(s)).isSuccess || s.trim.toLowerCase.startsWith("tomorrow")), (), "Please clarify an explicit local date and time")
+          at <- originalOffset.map(z => Right(z.toInstant.toEpochMilli)).orElse(local.map { value =>
+            val zone = ZoneId.of(region)
+            val transition = zone.getRules.getTransition(value)
+            val resolved = if transition != null && transition.isGap then transition.getDateTimeAfter else value
+            Right(resolved.atZone(zone).toInstant.toEpochMilli)
+          }).getOrElse(parseTriggerAt(Some(raw), now, ZoneId.of(region)))
+          _ <- Either.cond(at > now, (), "Please clarify a future reminder time")
+        yield
+          val wall = local.map(_.toString).getOrElse(Instant.ofEpochMilli(at).atZone(ZoneId.of(region)).toLocalDateTime.toString)
+          val offset = originalOffset.map(_.getOffset.toString)
+          val rule = if repeat == "weekly" then
+            val value = local.get
+            TodoDue.Weekly(value.getDayOfWeek.getValue, value.toLocalTime.toString, region, wall)
+          else TodoDue.Once(at, region, wall, offset)
+          Some((rule, at))
     if content.isBlank then
-      IO.pure(
-        Left(
-          ToolError(
-            "content is required and must not be blank (for list/cancel/done use action=\"list\"/\"cancel\"/\"done\")"
-          )
-        )
-      )
+      IO.pure(Left(ToolError("content is required and must not be blank")))
+    else if dueResult.isLeft then
+      IO.pure(Left(ToolError(dueResult.swap.toOption.get)))
     else
-      // triggerAt 不属于待办面（无固定触发时间）——首次浮出固定为下一次 09:00。
+      // The daily digest surface remains separate from the reminder deadline.
       val surfaceAt = ScheduledTask.nextTodoSurfaceAt(now, ZoneId.systemDefault())
       val todo = ScheduledTask.create(
         sessionId,
@@ -822,7 +873,19 @@ Your context does NOT show the current date/time — never invent an absolute da
         todoDetail,
         decision
       )
-      val ownedTodo = todo.copy(source = Some(TodoTaxonomy.SourceTool))
+      val preparedDue = dueResult.toOption.flatten
+      val due = preparedDue.map(_._1)
+      val zoneSource = due.map { _ =>
+        val explicit = dueInput.flatMap(_.asString).flatMap(s => scala.util.Try(ZonedDateTime.parse(s)).toOption)
+          .exists(z => ZoneId.getAvailableZoneIds.contains(z.getZone.getId))
+        if explicit then DueZoneSource("explicit-region")
+        else if ctx.deviceZone.isDefined then DueZoneSource("initiating-device")
+        else
+          val report = ctx.recentDeviceZone.get
+          DueZoneSource("recent-device", Some(report.deviceId), Some(report.reportedAt))
+      }
+      val ownedTodo = todo.copy(source = Some(TodoTaxonomy.SourceTool), due = due,
+        nextDueAt = preparedDue.map(_._2), dueZoneSource = zoneSource)
       for
         rearm <- taskName match
           case Some(n) => taskStore.upsertTaskByName(ownedTodo, ScheduledTaskStore.toolOwnsLegacyNamedTask)
@@ -871,9 +934,22 @@ Your context does NOT show the current date/time — never invent an absolute da
           case olds =>
             s" — replaced ${olds.size} existing todo(s) with the same name (${olds.map(_.id).mkString(", ")})"
         val nameNote = taskName.map(n => s" [name: $n]").getOrElse("")
+        val dueNote = preparedDue.map { (rule, at) =>
+          val (wall, region) = rule match
+            case r: TodoDue.Once => (r.wallClock, r.zoneId)
+            case r: TodoDue.Weekly => (r.wallClock, r.zoneId)
+          val local = LocalDateTime.parse(wall)
+          val transition = ZoneId.of(region).getRules.getTransition(local)
+          val adjustment =
+            if transition != null && transition.isGap then " (adjusted to first valid time)"
+            else if transition != null && transition.isOverlap then
+              s" (overlap: ${Instant.ofEpochMilli(at).atZone(ZoneId.of(region)).getOffset})"
+            else ""
+          s" [due: $wall $region$adjustment]"
+        }.getOrElse("")
         Right(
           s"Todo ${saved.id} registered (surfaces daily at ${formatTime(saved.triggerAt).takeRight(5)} until done/cancelled)" +
-            s"$nameNote: ${content.take(80)}$replacedNote"
+            s"$nameNote$dueNote: ${content.take(80)}$replacedNote"
         )
       end for
     end if

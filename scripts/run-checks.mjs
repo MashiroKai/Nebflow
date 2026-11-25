@@ -32,6 +32,10 @@ if (!weixinTests.length) throw new Error('No weixin-sidecar unit tests found; re
 export const CHECKS = [
   nodeCheck('test-hermetic', 'check-test-hermetic', ['static']),
   nodeCheck('css-structure', 'check-css-structure'),
+  { name: 'appearance-baseline', profiles: ['frontend'], timeoutMs: 240_000,
+    argv: [process.execPath, 'tests/appearance-baseline/panel.mjs', 'compare', 'all'] },
+  { name: 'ask-option-highlight', profiles: ['frontend'], timeoutMs: 120_000,
+    argv: [process.execPath, 'tests/ask-option-highlight.spec.mjs'] },
   nodeCheck('floating-clearance', 'check-floating-clearance'),
   nodeCheck('floating-discovery', 'check-floating-discovery'),
   nodeCheck('mobile-floating-inventory', 'check-mobile-floating-inventory'),
@@ -50,6 +54,8 @@ export const CHECKS = [
   // ⇒ FAIL）。判据 O0–O4 与修前同尺，不因面板增多而放宽。
   { name: 'mobile-overlap-sweep', profiles: ['frontend'], timeoutMs: 240_000,
     argv: [process.execPath, 'tests/mobile-overlap-sweep.spec.mjs'] },
+  { name: 'mobile-overlap-contract', profiles: ['frontend'], timeoutMs: 120_000,
+    argv: [process.execPath, '--test', 'tests/mobile-overlap-contract.test.mjs'] },
   // 手机图片「点开大图预览失败」闸（2026-11-23 · IMG_2039）：原图腿败 + 卡面缩略在场 ⇒ 仍开灯箱
   // 不 toast；原图腿通 ⇒ 灯箱图解码；负对照无缩略 ⇒ toast 必现（路径活着）。
   { name: 'mobile-image-preview-fallback', profiles: ['frontend'], timeoutMs: 120_000,
@@ -68,6 +74,8 @@ export const CHECKS = [
   // 全面板圆角令牌覆盖（2026-11-23 作者第三次点名「按钮是方的」）：全局扫描，任何未接令牌的
   // 方角 / 字面量圆角命中即红，除非登记放行理由（ALLOW 表）。
   nodeCheck('radius-tokens', 'check-radius-tokens'),
+  nodeCheck('sidebar-top', 'check-sidebar-top'),
+  nodeCheck('page-back-tokens', 'check-page-back-tokens'),
   // 文档收藏纯逻辑闸（2026-11-23 前端功能批）：收藏切换 / 同文档去重=置顶 / 归一化 / 上限。
   // 主会话多选合并 Ask 现场探针（loopback mock LLM + 隔离网关；CI 安全）。
   { name: 'selection-ask-multi-live', profiles: ['static'], timeoutMs: 300_000,
@@ -82,6 +90,11 @@ export const CHECKS = [
   // 文档收藏渲染级闸（真 Chromium，三端）：需浏览器 ⇒ frontend 腿（与其它 spec 同档）。
   { name: 'canvas-favorites-render', profiles: ['frontend'], timeoutMs: 240_000,
     argv: [process.execPath, 'tests/canvas-favorites-render.spec.mjs'] },
+  // Canvas 文档首行零缩进及首续行对齐：桌面、手机真实浏览器。
+  { name: 'canvas-doc-indent-desktop', profiles: ['frontend'], timeoutMs: 120_000,
+    argv: [process.execPath, 'tests/indent-revert-shots.mjs'] },
+  { name: 'canvas-doc-indent-mobile', profiles: ['frontend'], timeoutMs: 120_000,
+    argv: [process.execPath, 'tests/indent-revert-shots.mjs', '--mobile'] },
   // 按钮样式统一闸（button-style-unify-canvas-ref 批 2026-11-22）：全站实底静止按钮面
   // 消费统一阴影令牌 var(--btn-shadow)（canvas 基准）；裸写投影/字面量圆角即红。
   nodeCheck('button-style-unify', 'check-button-style-unify'),
@@ -224,6 +237,12 @@ export const CHECKS = [
   nodeCheck('canvas-seat-draft', 'check-canvas-seat-draft'),
   { name: 'canvas-save-failure-dedup', profiles: ['frontend'], timeoutMs: 180_000,
     argv: ['npm', 'exec', '--no', '--', 'playwright', 'test', 'tests/canvas-save-failure-dedup.spec.mjs', '--workers=1'] },
+  { name: 'favorites-path-clamp', profiles: ['frontend'], timeoutMs: 180_000,
+    argv: [process.execPath, 'tests/favorites-path-clamp.spec.mjs'] },
+  { name: 'favorites-slot-text', profiles: ['frontend'], timeoutMs: 180_000,
+    argv: [process.execPath, 'tests/favorites-slot-text.spec.mjs'] },
+  { name: 'favorites-slot-geometry', profiles: ['frontend'], timeoutMs: 180_000,
+    argv: [process.execPath, 'tests/favorites-slot-geometry.spec.mjs'] },
   { name: 'canvas-button-geom', profiles: ['frontend'], timeoutMs: 180_000,
     argv: [process.execPath, 'tests/canvas-button-unify-geom.spec.mjs'] },
   { name: 'canvas-button-diff', profiles: ['frontend'], timeoutMs: 240_000,
@@ -247,6 +266,12 @@ export const CHECKS = [
   // 逐值同源 + 主会话冻结常数 + 源码消重（C 腿）+ 真状态机（busy 臂/点停帧）。
   { name: 'ask-button-unify', profiles: ['frontend'], timeoutMs: 300_000,
     argv: [process.execPath, 'tests/ask-button-unify.spec.mjs'] },
+  // Ask 回答正文相对路径图片走票据闸（ask-image-ticket 批 2026-11-24，作者报
+  // 「Ask 回答正文相对路径图片看不了」）：S1 Pop 文档卡重开旧票自愈（d6e1a349b
+  // 断言）/ S2 同目录·子目录·无文档上下文三形 / S3 迟到结果竞争闸（askState 重渲
+  // 与切文档两形，旧轮结果不回填、不对已弃图取字节）。双核（chromium+webkit）。
+  { name: 'ask-image-ticket', profiles: ['frontend'], timeoutMs: 300_000,
+    argv: [process.execPath, 'tests/ask-image-ticket.spec.mjs'] },
   nodeCheck('canvas-families', 'check-canvas-families', ['static']),
   // PDF note/ask 入口单源闸（文本层批 2026-11-19，作者逐字纠形「pdf note and ask
   // 不是在侧边栏加一个控件，是让 canvas 的 note 和 ask 能够支持 pdf 的阅读」）：

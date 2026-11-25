@@ -242,6 +242,11 @@
   background: rgba(128, 128, 128, 0.07);
 }
 
+/* Filtering uses the hidden attribute; the tree item's flex rule must not override it. */
+.explorer-item[hidden] {
+  display: none;
+}
+
 /* ── Multi-select selection state (aligned with .session-item.selected) ── */
 .explorer-item.selected {
   background: rgba(128, 128, 128, 0.08);
@@ -251,6 +256,16 @@
 }
 .explorer-item.selected:hover {
   background: rgba(128, 128, 128, 0.12);
+}
+
+/* ── 定位高亮（S2 · canvas-doc-terms 批 2026-11-24）────────────────────
+   文档名词条点击后文件浏览器定位到的目标行。视觉 = 键盘焦点环同 token
+   （keyboard.css :focus-visible 是唯一色源/几何源）——程序化 focus() 在鼠标
+   手势链之后不必然命中 :focus-visible（UA 判定差异），显式类把「这一行就是
+   定位目标」钉成跨引擎确定可见；行失焦即自摘（JS once 监听），不留常驻环。 */
+.explorer-item.reveal-target {
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: calc(var(--nf-focus-ring-w) * -1);
 }
 
 /* ── Floating selection action bar (tree top, ≥2 items selected) ── */
@@ -398,6 +413,7 @@
   opacity: 0.4;
 }
 .explorer-empty {
+  overflow-wrap: anywhere;
   padding: var(--ds-space-1) var(--ds-space-5);
   font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
@@ -896,7 +912,7 @@ body:not(.mobile-layer):not(.card-window) #canvas-panel.stacked .canvas-header {
 body:not(.mobile-layer) .canvas-header {
   height: var(--capsule-h, 36px);
   width: var(--capsule-w, 180px);
-  padding: var(--ds-capsule-pad-desk);
+  padding: var(--ds-capsule-end-inset);
   /* #926 件1 兜底（作者令 2026-10-26「任何状态不溢出」）：胶囊本体裁切盒 ——
      .t-name ellipsis 为主收口，本体裁切防过渡中途/字体度量抖动等任何态的
      子元素出界（pop 钮无出界装饰，裁切零副作用；手机层通栏头不受本条）。 */
@@ -1583,7 +1599,7 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
      收口裁定（作者 2026-11-05 09:40）：间距按 main 侧形态走档位令牌
      （gap 用 --ds-space-1h），不保留裸 7px。 */
   border: var(--ds-border-width) solid transparent;
-  padding: var(--ds-space-1) calc(7px + var(--cr-popw, 0px)) var(--ds-space-1) var(--ds-space-3);
+  padding: var(--ds-space-1) calc(7px + var(--cr-popw, 0px)) var(--ds-space-1) calc(var(--ds-space-3) + var(--cr-favw, 0px));
   background: transparent;
   border-color: transparent;
   box-shadow: none;
@@ -2235,16 +2251,8 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 }
 /* Markdown element styling — mirrors .bubble.ai */
 .canvas-md-viewer p { margin: var(--ds-space-1) 0; }
-/* 文档正文首行缩进（撤回批 2026-11-05 16:43 作者令第二条「文档只缩进首行」）：
-   中文排版习惯 = 正文段落**首行**缩两字、续行齐左；**只有**首行缩进，没有挂起缩进
-   / 整块左移 / 层级缩进。实现口径：
-     · 只对阅读面的**直接子** p 生效（值走 --ds-text-indent = 2em）；列表项内 /
-       引用块内 / 表格单元格 / 代码块内的段落与块本身都不是直接子 p ⇒ 零缩进，
-       天然不错位（不加例外清单，避免漏一条就歪一片）。
-     · 源文件里以 `&emsp;&emsp;` 起行的段落（文档写作纪律，作者 11:09 令：求
-       Obsidian 与渲染器同形）由 viewers/markdown.js 的段首空白归一剥掉，保证
-       「两字」是恒量而不是 2em + 2em 的四字。 */
-.canvas-md-viewer > p { text-indent: var(--ds-text-indent); }
+/* 作者 2026-11-24 令文档首行缩进「都去掉」；源文件段首全角空格仍由
+   viewers/markdown.js 归一。列表、引用、代码块的结构性缩进不变。 */
 .canvas-md-viewer p:first-child { margin-top: 0; }
 .canvas-md-viewer p:last-child { margin-bottom: 0; }
 /* 列表缩进走 token（原 18px / --ds-space-5 裸值退役，取 --ds-list-indent；二三级按级
@@ -4046,7 +4054,6 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
  *     打开原文档」，词条弹层仍是「词条名 / 定义 / 脚注」。
  * 新增同族弹层 = 把选择器加进本节的两个选择器表（表 + 材质账本），不许再抄一份。
  * ═══════════════════════════════════════════════════════════════════════════ */
-.nf-term-tip,
 .document-term-card {
   position: fixed;
   z-index: 901;
@@ -4140,6 +4147,7 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   line-height: var(--ds-lh-tight);
   cursor: pointer;
 }
+.document-term-card [hidden] { display: none; }
 @media (hover: hover) {
   .document-term-open:hover { opacity: .88; }
 }
@@ -4151,31 +4159,6 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 @media (prefers-reduced-motion: reduce) {
   .document-term-open:active { transform: none; opacity: var(--btn-press-fade); }
 }
-
-/* 词条点击释义弹层：桌面/触屏均为小弹层，固定在 body 顶层避免滚动容器裁剪。
-   表面在上面的族块里（同表给两面），本块只留词条面自己的显示态。 */
-.nf-term-tip {
-  display: none;
-}
-.nf-term-tip.interactive { pointer-events: auto; }
-/* 悬浮提示（tip 形态）三段字档（canvas-hint-text 批 2026-11-05）：
-   标题 = S 档 strong（12/600/1.45）· 正文 = H 档（12/400/1.45/muted，修前
-   `line-height: 1.55` 是裸值 = 第六把行高尺，收进 --cv-hint-lh-h）·
-   脚注 = M 档（11/400/1/dim）。正文行数上限 = --cv-hint-lines-tip（6）：
-   词条定义是**悬浮提示里唯一需要读完的正文**，故 tip 形态另有上限档，
-   判据脚本按形态取上限（H5）。 */
-.nf-term-tip .tt { font-size: var(--cv-hint-fs-h); font-weight: var(--cv-hint-fw-strong); line-height: var(--cv-hint-lh-h); color: var(--cv-hint-color-strong); margin-bottom: var(--ds-space-1); word-break: break-word; }
-.nf-term-tip .ts {
-  color: var(--cv-hint-color);
-  font-size: var(--cv-hint-fs-h);
-  font-weight: var(--cv-hint-fw);
-  line-height: var(--cv-hint-lh-h);
-  display: -webkit-box; -webkit-line-clamp: var(--cv-hint-lines-tip); -webkit-box-orient: vertical; overflow: hidden;
-}
-.nf-term-tip .td { color: var(--cv-hint-color-dim); font-size: var(--cv-hint-fs-m); font-weight: var(--cv-hint-fw); line-height: var(--cv-hint-lh-m); margin-top: var(--ds-space-1h); }
-/* 第三行（来源文档 / 跳转提示）撤掉后不占位（term-system-v2 词条视觉面批
-   2026-11-05：文档名归词条索引块，气泡只剩词条名 + 定义）。 */
-.nf-term-tip .td:empty { display: none; }
 
 /* 可点击标记的视觉面 —— 手写词条引用 / 正文裸词自动链 ────────────────────
    沿革：term-system-v2（2026-11-05）作者令「词条被使用的时候，应该是一个蓝色的
@@ -4651,11 +4634,11 @@ body:not(.mobile-layer) .canvas-header .canvas-title { flex: 1; min-width: 0; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: var(--cv-size-btn);
-  height: var(--cv-size-btn);
+  width: var(--ds-capsule-end-size);
+  height: var(--ds-capsule-end-size);
   padding: 0;
   border: none;
-  border-radius: var(--cv-radius-btn);
+  border-radius: var(--ds-capsule-end-radius);
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -4666,7 +4649,7 @@ body:not(.mobile-layer) .canvas-header .canvas-title { flex: 1; min-width: 0; }
 }
 
 .canvas-pop-btn:active { transform: scale(var(--cv-active-scale)); }
-.canvas-pop-btn svg { width: 13px; height: 13px; }
+.canvas-pop-btn svg, .canvas-fav-btn svg { width: var(--ds-capsule-end-icon); height: var(--ds-capsule-end-icon); }
 .canvas-pop-btn .pop-ic-merge { display: none; }
 .canvas-pop-btn.is-independent { color: rgb(var(--sapphire)); }
 .canvas-pop-btn.is-independent .pop-ic-pop { display: none; }

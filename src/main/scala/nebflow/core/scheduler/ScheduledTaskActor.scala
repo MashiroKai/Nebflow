@@ -3,9 +3,8 @@ package nebflow.core.scheduler
 import cats.effect.std.Dispatcher
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import io.circe.Json
 import io.circe.syntax.*
-import io.circe.JsonObject
+import io.circe.{Json, JsonObject}
 import nebflow.actor.AgentCommand
 import nebflow.core.{InjectionChannel, SessionStorePort}
 import nebflow.shared.{NebflowLogger, UiMessage}
@@ -165,6 +164,7 @@ class ScheduledTaskService(
   /** One poll cycle — exposed private[scheduler] for spec. */
   private[scheduler] def fireDueTasks: IO[Unit] =
     for
+      _ <- taskStore.materializeDueOccurrences(System.currentTimeMillis())
       due <- taskStore.getAllDueTasks
       // ①条件预评：条件任务先评估——Met/无条件 ⇒ 进同窗合并面；Unmet ⇒ 静默顺延
       // （评估器状态在预评时落库，defer 路径不再重复评估）。

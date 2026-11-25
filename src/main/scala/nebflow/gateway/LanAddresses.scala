@@ -1,6 +1,7 @@
 package nebflow.gateway
 
 import java.net.{Inet4Address, InetAddress, NetworkInterface}
+
 import scala.jdk.CollectionConverters.*
 
 /**

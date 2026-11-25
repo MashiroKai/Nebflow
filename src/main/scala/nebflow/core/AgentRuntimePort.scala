@@ -40,6 +40,12 @@ import java.util.concurrent.atomic.AtomicReference
  */
 trait AgentRuntimePort extends AgentRegistryPort:
 
+  def wakeDelegateByMail(
+    wsSend: Option[Json => IO[Unit]],
+    delegateId: String,
+    instruction: String
+  ): IO[Either[String, String]] = IO.pure(Left("Delegate wake unavailable"))
+
   def externalThinkingConfig: IO[ThinkingConfig] = IO.pure(ThinkingConfig())
 
   def executionCommitPort: ExecutionCommitPort = ExecutionCommitPort.unsupported

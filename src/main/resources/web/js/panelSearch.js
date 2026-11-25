@@ -35,7 +35,7 @@ function buildMsgSearch() {
   const header = panel.querySelector('.panel-header');
 
   const wrap = document.createElement('div');
-  wrap.className = 'fm-msg-search';
+  wrap.className = 'fm-msg-search panel-top-search';
   wrap.setAttribute('role', 'search');
   wrap.setAttribute('aria-label', t('mhsearch.placeholder'));
 

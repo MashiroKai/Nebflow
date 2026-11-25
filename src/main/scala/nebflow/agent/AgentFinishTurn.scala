@@ -7,8 +7,8 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.actor.*
 import nebflow.core.*
-import nebflow.shared.{NebflowLogger, *}
 import nebflow.shared.given
+import nebflow.shared.{NebflowLogger, *}
 
 /**
  * turn 收尾族:原 object AgentActor 内 handleLlmCompleteBranch / finishTurn /
@@ -922,6 +922,7 @@ private[agent] object AgentFinishTurn:
             .idle(messagesWithImmediate, state.execution.turnIdx)
             .copy(
               pendingImmediateInputs = remainingInputs,
+              deviceZone = nebflow.core.scheduler.TodoDue.mergedDeviceZone(immInputs.map(_.deviceZone)),
               pendingMailQueueCount = state.execution.pendingMailQueueCount,
               pendingUserInputs = state.execution.pendingUserInputs,
               // Sub-agent barrier: held subtask/delegate results and the

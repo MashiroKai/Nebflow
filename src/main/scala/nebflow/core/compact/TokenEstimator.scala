@@ -52,7 +52,7 @@ object TokenEstimator:
         case Right(blocks) =>
           blocks.foldLeft((tc, ic)) {
             case ((t, i), ContentBlock.Text(text)) => (t + estimateWeightedChars(text), i)
-            case ((t, i), ContentBlock.ToolUse(_, _, input)) => (t + estimateWeightedChars(input.toString), i)
+            case ((t, i), ContentBlock.ToolUse(_, _, input, _)) => (t + estimateWeightedChars(input.toString), i)
             case ((t, i), ContentBlock.ToolResult(_, content, _)) => (t + estimateWeightedChars(content), i)
             case ((t, i), ContentBlock.Image(_, _)) => (t, i + 1) // 每张图按固定 token 计
             case ((t, i), ContentBlock.Thinking(t2, _)) => (t + estimateWeightedChars(t2), i)

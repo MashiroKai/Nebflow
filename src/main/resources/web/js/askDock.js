@@ -91,7 +91,7 @@
 
 import { key } from './branding.js';
 import state from './state.js';
-import { sendWs, setAskFrameSink, onReconnect } from './ws.js';
+import { sendWs, setAskFrameSink, onReconnect, onDisconnect } from './ws.js';
 import { activeCanvasEntry, activeCanvasPane } from './canvas.js';
 import { isAskableFile, isPdfFile } from './mdHtmlGate.js';
 // PDF note/ask 批残留面收口（文本层批 2026-11-19）：侧边栏面板全链已删净（见
@@ -217,7 +217,7 @@ const ICONS = {
     ]),
 };
 
-/** @type {Map<string, {sid: string, fileName: string, msgs: Array<{role: string, text: string}>, stateSent: boolean, unread: boolean, busy?: boolean, lastFrameAt?: number, mailAddress?: string, turn?: object|null, handoff?: {ok: boolean, task: string, paths: Array<string>, reason: string, expected: string, summary: string, error: string}|null}>} */
+/** @type {Map<string, {sid: string, fileName: string, msgs: Array<{role: string, text: string}>, stateSent: boolean, unread: boolean, busy?: boolean, recoveryUnknown?: boolean, askBufferedText?: string, lastFrameAt?: number, mailAddress?: string, turn?: object|null, handoff?: {ok: boolean, task: string, paths: Array<string>, reason: string, expected: string, summary: string, error: string}|null}>} */
 const sessions = new Map(); // key: absPath
 let el = null; // 组件内部节点引用 { fab, dock, col, colwrap, inputRow, resize, input, send, stop }（建一次，跨宿主迁移复用）
 let root = null; // 组件宿主元素 <nf-ask-dock>（迁移时搬它）
@@ -460,6 +460,10 @@ function buildDialog() {
     activeSession,
     canSubmit: () => !!currentFile && isAskableFile(currentFile),
     ensureSession: () => ensureActiveSession(),
+    // 回答正文相对路径图片的基准（ask-image-ticket 批 2026-11-24）：canvas 档的
+    // 「所问文档」= 当前活动文件卡（isAskableFile 闸后的 currentFile）。切卡即换
+    // 基准——旧会话在飞的图片 pass 由内核的 epoch 闸弃写。
+    docPath: () => currentFile,
     ensureBound: (s) => askOpen(s),
     // 状态可见性与失败上报批：sendWs 的返回值**不再被丢弃**（内核把它经通用挂钩
     // cfg.onQueued 原样回传）——false = 连接未开、帧进了 ws.js 的 pending 队列
@@ -476,12 +480,13 @@ function buildDialog() {
     onQueued: (s, sent) => { noteAskQueued(s, !sent); },
     // 帧事实喂入口（状态可见性与失败上报批）：内核 consume 每收一帧就回调一次
     //（通用挂钩，内核不知道帧语义）；本文件按 msg.type 记事实/上报/重投影。
-    onFrame: (kind, msg, s) => { onKernelFrame(msg, kind, s); },
+    onFrame: (kind, msg, s) => { onKernelFrame(kind, msg, s); },
     // 草稿变化即时重投影：「待发送 ⇄ 空闲」这一拍不必等 1s 节拍（状态可见性批）。
     onInput: () => { syncTurnStatus(); },
     // 中止动作（取消 ≠ 失败）：canvas 档自己收口回合事实（settleTurn({cancel:true})）
     // 并即刻还 UI；内核的 dlg.stopAsk 仍是未挂钩档（选区档）的默认实现。
     onStop: () => { stopAsk(); },
+    workline: true,
     frameKind: canvasFrameKind,
     onUnread: () => syncUnreadDot(),
     onPersist: (s) => persistSession(s),
@@ -545,6 +550,15 @@ function canvasFrameKind(msg) {
 function buildStateLine() {
   const stateText = h('span', { class: 'ask-state-text' });
   const stateNext = h('span', { class: 'ask-state-next' });
+  const retry = h('button', { type: 'button', class: 'ask-state-retry' }, [tt('重试', 'Retry')]);
+  retry.hidden = true;
+  retry.addEventListener('click', () => {
+    const s = activeSession();
+    if (!s || !state.connected) return;
+    s.recoveryUnknown = true;
+    askOpen(s);
+    syncTurnStatus();
+  });
   const stateDiag = h('button', {
     type: 'button',
     class: 'ask-state-diag',
@@ -569,7 +583,7 @@ function buildStateLine() {
     'data-ask-state-line': true,
     role: 'status',
     'aria-live': 'polite',
-  }, [stateText, stateNext, stateDiag]);
+  }, [stateText, stateNext, retry, stateDiag]);
   line.hidden = true;
   return line;
 }
@@ -701,6 +715,7 @@ function ensureInner() {
     stateLine: dock.querySelector('[data-ask-state-line]'),
     stateText: dock.querySelector('.ask-state-text'),
     stateNext: dock.querySelector('.ask-state-next'),
+    stateRetry: dock.querySelector('.ask-state-retry'),
     stateDiag: dock.querySelector('.ask-state-diag'),
     // 转交状态行（ask-scope 批）：唯一写点 = renderHandoff()。
     handoff: dock.querySelector('[data-ask-handoff]'),
@@ -1160,9 +1175,19 @@ function wireObserversOnce() {
       seatRaf = requestAnimationFrame(() => { seatRaf = 0; syncSeat(); });
     }).observe(document.body, { childList: true, subtree: true });
   }
+  onDisconnect(() => {
+    for (const s of sessions.values()) {
+      if (s.busy || s.turn?.inflight) {
+        s.recoveryUnknown = true;
+        // Reconnect replays the authoritative transcript; never append stale partial text to it.
+        s.askBufferedText = '';
+      }
+    }
+    syncTurnStatus();
+  });
   onReconnect(() => {
-    // WS 重连：会话状态标脏，下次打开时 askOpen 重新回放（服务端为权威）。
     for (const s of sessions.values()) s.stateSent = false;
+    syncTurnStatus();
     // 持久化缺陷批：断连期间没推上去的记事本编辑在重连后补推（含「本机离线写过
     // 内容」这一常见形态——不补推就等于那个文件在引擎侧永远是空的）。
     resyncNotesAfterReconnect();
@@ -2110,6 +2135,7 @@ function settleTurn(s, outcome) {
   if (!s) return;
   const t = turnOf(s);
   const o = outcome || {};
+  s.recoveryUnknown = false;
   t.inflight = false;
   t.queued = false;
   t.settledAt = Date.now();
@@ -2179,8 +2205,8 @@ function reportAskFailure(s, raw) {
 function noteAskQueued(s, queued) {
   const t = turnOf(s);
   if (!t) return;
-  t.queued = !!queued;
-  syncTurnStatus();
+  s.recoveryUnknown = false;
+  armTurn(s, { queued });
 }
 
 /** 最近一次投影结论（reportAskFailure 读它决定是否弹 toast——投影只读一次）。 */
@@ -2195,6 +2221,9 @@ function syncTurnStatus() {
   const s = activeSession();
   const now = Date.now();
   const turn = s ? s.turn : null;
+  const recovering = !!s?.recoveryUnknown;
+  el.stateRetry.hidden = !recovering;
+  el.stateRetry.disabled = !state.connected;
   const turnState = askTurnState({
     connected: !!state.connected,
     open: isOpen(),
@@ -2202,7 +2231,8 @@ function syncTurnStatus() {
     turn,
     now,
   });
-  const view = askStateView(turnState, { lang: uiLang(), turn, now });
+  const projected = askStateView(turnState, { lang: uiLang(), turn, now });
+  const view = recovering ? { ...projected, quiet: false, tone: 'warn', detail: '', hint: '', diagnostic: '', label: state.connected ? tt('连接中断，状态未知', 'Connection interrupted; status unknown') : tt('连接中断，正在重连', 'Connection interrupted; reconnecting') } : projected;
   const hint = view.hint || '';
   const diag = view.diagnostic || '';
   // 分隔符**跟随前一段**（见 ASK_SEP）：有后续段才补一枚，补在前一段的文本尾巴上。
@@ -2230,10 +2260,9 @@ function askSilenceWatch(now) {
   for (const s of sessions.values()) {
     const t = s.turn;
     if (t && t.inflight && now - (t.lastFrameAt || 0) > ASK_SILENCE_MS) {
-      reportAskFailure(s, {
-        message: tt('等待响应超时：长时间没有任何流式帧', 'Timed out: no stream frame for a long time'),
-        timedOut: true,
-      });
+      reportAskFailure(s, { message: 'Connection interrupted', timedOut: true });
+      s.recoveryUnknown = true;
+      syncTurnStatus();
     }
   }
 }
@@ -2314,6 +2343,10 @@ function consumeFrame(msg) {
     if (s.sid && s.sid === sid) { entry = s; break; }
   }
   if (!entry) return; // 本页未见过的 ask 会话（其它设备/页面）——忽略。
+  if (['thinking', 'thinkingDelta', 'toolCallDetected', 'toolStart', 'toolArgDelta', 'toolEnd', 'roundComplete'].includes(msg.type)) {
+    dlg.processWorkline(entry, msg);
+    if (entry.busy) turnOf(entry).lastFrameAt = Date.now();
+  }
   switch (msg.type) {
     case 'askHandoffAck': {
       // ask-scope 批（2026-11-18）：转交回执**不再静默**——面板状态行呈现
@@ -2364,11 +2397,8 @@ function consumeFrame(msg) {
       // 单开第三种记录形状）；卡的来源工具在 ask 面由授权单点决定（唯一 HTML 卡
       // 生产者 = Card），渲染时按常量标源即可。
       const cardMsg = { role: 'card', text: cardContent };
-      // 落列位置 = 当前流式 ai 泡**之前**：卡是这一拍的中间产物，末位必须仍是 ai
-      // 泡，流式增量腿（内核 updateStreaming 认末元素为 ai 泡）判据不受影响。
-      const tail = entry.msgs[entry.msgs.length - 1];
-      if (tail && tail.role === 'ai') entry.msgs.splice(entry.msgs.length - 1, 0, cardMsg);
-      else entry.msgs.push(cardMsg);
+      // 工具开始已收口前一条正文；卡按事件顺序排在它之后、下一条正文之前。
+      entry.msgs.push(cardMsg);
       // 卡载荷落 localStorage 转录持久面（作者令 2026-11-19「要留存」）：卡行与
       // user/ai 同族进 PERSISTED_ROLES，写穿单点 = persistSession（SESS_MAX_MSGS
       // 容量闸照旧 60 行、私密模式/quota 仍静默降级）。与内核 consume 的每一拍同律：

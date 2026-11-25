@@ -1,7 +1,7 @@
 package nebflow.db.format
 
-import io.circe.{Decoder, Encoder, Json}
 import io.circe.syntax.*
+import io.circe.{Decoder, Encoder, Json}
 
 /**
  * 调度任务记录（设计 §3.4(d)，案 B 类④）：envelope 4 字段〔提案〕，

@@ -32,7 +32,7 @@ import { createIconsIn, looksLikeMarkdown, renderMarkdownWithMath } from '../uti
 import { setHtmlTree } from '../dom.js';
 import { bindMdExtGate } from '../mdLinkGate.js';
 import { todoStore, TAG_COLOR_PRESETS, PRIORITY_COLORS } from '../todoStore.js';
-import { isAskRow, buildAskCardForRow, decisionOptionLabel, decisionOptionDetail } from '../askTodoQuestion.js';
+import { isAskRow, buildAskCardForRow, buildDecisionOption, decisionOptionLabel, decisionOptionDetail } from '../askTodoQuestion.js';
 import { bindImeGuard, commitEnter } from '../imeGuard.js';
 import state from '../state.js';
 // 次级 LLM 输入框唯一模板（todo-mobile 批 2026-11-18 作者令）：详情页「回复这个
@@ -701,10 +701,9 @@ function buildHome(root, section, nav) {
   const quickCount = el('span', 'dock-badge is-count');
   quickCount.hidden = true;
   quickFab.appendChild(quickCount);
-  const fab = iconBtn('ta-fab g2-fab', 'plus', t('todoapple.newTodo'));
-  fabWrap.append(quickFab, fab);
+  // 2026-11-24: retain quick decisions, but do not render self-create entries.
+  fabWrap.append(quickFab);
   quickFab.addEventListener('click', () => nav.push('todo-quick-decision'));
-  fab.addEventListener('click', () => openCreateSheet(section, null, fab));
 
   /** @returns {void} */
   function render() {
@@ -868,13 +867,6 @@ function buildList(root, section, nav) {
   const itemsBox = elIn(wrap, 'div', 'ta-items');
   const empty = elIn(wrap, 'div', 'ta-empty');
 
-  // White capsule top right: the only backed capability = create a todo into
-  // this list (createItem)
-  const cluster = elIn(section, 'div', 'ta-cluster');
-  const pill = elIn(cluster, 'div', 'ta-pill nf-glass');
-  const addBtn = iconBtn('ta-pill-btn', 'list-plus', t('todoapple.newTodo'));
-  pill.appendChild(addBtn);
-  addBtn.addEventListener('click', () => openCreateSheet(section, listTarget.mode === 'tag' ? listTarget.tagId : null, addBtn));
 
   /** 行 id 台账（只用于「新入场」判据：首帧只登记，之后每次 render 的差集 = 新行）。 */
   const listIds = new Set();
@@ -990,7 +982,7 @@ function buildList(root, section, nav) {
         const answeredIds = new Set(answered && Array.isArray(dec.answer.selectedOptionIds) ? dec.answer.selectedOptionIds : []);
         const errLine = el('div', 'ta-decision-error');
         errLine.setAttribute('role', 'alert');
-        const submit = el('button', 'ta-decision-submit', t('todoapple.answerSubmit'));
+        const submit = /** @type {HTMLButtonElement} */ (el('button', 'ta-decision-submit', t('todoapple.answerSubmit')));
         submit.type = 'button';
         options.forEach((option, i) => {
           // 选项真源形 = {id,title,detail,media}：取 title（有 detail 附一行），
@@ -1024,7 +1016,7 @@ function buildList(root, section, nav) {
             errLine.textContent = `${t('todoapple.answerRejected')}：${res.message || res.code || ''}`;
             submit.disabled = false;
           }
-          // 成功：answeredHandler 以后端 task 真值回写 ⇒ 重渲染后行内已作答态。
+          else todoStore.completeItem(it.id);
         });
         detail.append(errLine, submit);
         bodyBtn.addEventListener('click', () => {
@@ -1407,7 +1399,7 @@ let qdFilterOpen = false;
 /** @typedef {{id:string, tagId:string|null, name:string, detail:string, due:number|null,
  *   priority:number, completed:boolean, createdAt:number,
  *   sessionId:string|null,
- *   decision?:{question?:string, options?:string[], multiSelect?:boolean, allowOther?:boolean}|null}} QdRow */
+ *   decision?:{question?:string, options?:Array<{id:string,title?:string,detail?:string}>, multiSelect?:boolean, allowOther?:boolean, answer?:any, secret?:boolean}|null}} QdRow */
 
 /** The card queue = open todos in the store's own order (no second sort recipe),
  *  narrowed by the filter panel (single source for both the deck and the home
@@ -1857,21 +1849,11 @@ function buildQuick(root, section) {
 
   /** One option row. `.ta-qd-opt-body` = the layout slot the per-option media
    *  group will be inserted into (column flow: media above the label).
-   *  @param {QdRow} item @param {number} i @param {string} option @param {boolean} multi
+   *  @param {QdRow} item @param {number} i @param {{id:string,title?:string,detail?:string}} option @param {boolean} multi
    *  @returns {HTMLElement} */
   const optionRow = (item, i, option, multi) => {
-    const row = el('label', 'ta-qd-opt');
-    const input = inputEl('ta-qd-opt-input');
-    input.type = multi ? 'checkbox' : 'radio';
-    input.name = `ta-qd-${item.id}`;
-    input.checked = selectedSet(item.id).has(i);
-    const body = el('span', 'ta-qd-opt-body');
-    body.appendChild(el('span', 'ta-qd-opt-label', decisionOptionLabel(option)));
-    const sub = decisionOptionDetail(option);
-    if (sub) body.appendChild(el('span', 'ta-qd-opt-detail', sub));
-    row.append(input, body);
-    input.addEventListener('change', () => selectOption(item.id, i, input.checked, multi));
-    return row;
+    return buildDecisionOption(item.id, option, multi, selectedSet(item.id).has(i),
+      (checked) => selectOption(item.id, i, checked, multi));
   };
 
   /** 顶带胶囊里的计数读法（作者令 ④）：牌堆长度 + 过滤态一句。

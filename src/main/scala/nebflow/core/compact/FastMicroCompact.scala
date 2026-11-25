@@ -77,7 +77,7 @@ object FastMicroCompact:
     val allToolUseIds = messages.flatMap {
       case Message(MessageRole.Assistant, Right(blocks), _, _, _, _) =>
         blocks.collect {
-          case ContentBlock.ToolUse(id, name, _) if CompactableTools.contains(name) => id
+          case ContentBlock.ToolUse(id, name, _, _) if CompactableTools.contains(name) => id
         }
       case _ => Nil
     }

@@ -2333,6 +2333,10 @@ export default {
   'canvas.imgFailUnsupported': 'This type is not served as image bytes (HTTP {status})',
   'canvas.imgFailUnreachable': 'Cannot read this image (invalid path or no permission)',
   'canvas.imgFailUnknown': 'Read failed (HTTP {status})',
+  // ask-image-ticket batch (2026-11-24): placeholder reason when an answer has no
+  // document context (selection Ask has no asked file) — explicit placeholder
+  // instead of a guaranteed-404 page-relative request.
+  'canvas.imgFailNoDoc': 'This answer has no document context; relative-path images cannot be resolved',
   'canvas.closeTab': 'Close tab',
   'canvas.fav.add': 'Favorite document',
   'canvas.fav.remove': 'Remove from favorites',
@@ -2341,11 +2345,12 @@ export default {
   'canvas.fav.invalid': 'Unavailable',
   'canvas.fav.added': 'Added to favorites',
   'canvas.fav.removed': 'Removed from favorites',
+  'canvas.fav.saveFailed': 'Could not remove favorite. Please try again',
   'canvas.fav.open': 'Favorites',
   'canvas.favPage.open': 'Open favorites',
   'canvas.favPage.title': 'Favorites',
   'canvas.favPage.back': 'Back',
-  'canvas.favPage.search': 'Search',
+  'canvas.favPage.search': 'Search favorites',
   'canvas.favPage.empty': 'No favorites yet. Tap the star at the top of a document to save it.',
   'canvas.favPage.noMatch': 'No matching favorites',
   'canvas.favPage.tab.note': 'Notes',
@@ -2891,6 +2896,11 @@ export default {
   'wiki.kindAttachment': 'attachment',
   'wiki.unresolved': 'Unresolved reference — no document with this name in any project vault',
   'wiki.backlinks': 'Backlinks',
+  'termPreview.loading': 'Loading…',
+  'termPreview.unavailable': 'Term temporarily unavailable',
+  'termPreview.retry': 'Retry',
+  'termPreview.close': 'Close',
+  'termPreview.openSource': 'Open source',
   // Term citation batch 2 (hover bubble + back-to-source button)
   'wiki.termSource': 'Source: ',
   'wiki.termJumpHint': 'Click to jump',
@@ -2958,6 +2968,9 @@ export default {
   'lightbox.zoomIn': 'Zoom in',
   'lightbox.zoomOut': 'Zoom out',
   'lightbox.zoomFit': 'Fit to view',
+  'lightbox.downloadSvg': 'Download SVG',
+  'lightbox.downloadPng': 'Download PNG',
+  'lightbox.downloadError': 'Could not download diagram',
 
   // === Usage dashboard (token consumption dashboard, spec §7.5) ===
   'usage.title': 'Usage Dashboard',
@@ -3176,6 +3189,10 @@ export default {
   'explorer.loadingRemote': 'Loading directories on {device}…',
   'explorer.listTimeout': 'Directory listing timed out (network congestion or reconnect) — retry to reload',
   'explorer.retry': 'Retry',
+  // === canvas-doc-terms batch S2 (2026-11-24): document mention → file browser reveal ===
+  'explorer.revealOutsideRoot': 'This path is outside the current explorer root',
+  'explorer.revealSwitchRoot': 'Switch to that directory',
+  'explorer.revealMissing': 'File not found',
   'explorer.pickupLoading': 'Fetching…',
   'explorer.pickupFailed': 'Fetch failed',
   'explorer.pickupClose': 'Close',
@@ -3539,7 +3556,7 @@ export default {
   'todoapple.createUnconfirmed': 'Save not confirmed. Check your connection and retry in the original session to avoid duplicates.',
   'todoapple.discardPending': 'Discard retry',
   'todoapple.replyFailed': 'Reply not sent. Please try again.',
-  'todoapple.answerFirst': 'Answer first, then complete',
+  'todoapple.answerFirst': 'Choose an option first',
   'todoapple.decisionPending': 'Awaiting answer',
   'todoapple.decisionAnswered': 'Answered',
   'todoapple.answerSubmit': 'Submit answer',

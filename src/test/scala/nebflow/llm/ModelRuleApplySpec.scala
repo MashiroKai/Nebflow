@@ -3,6 +3,7 @@ package nebflow.llm
 import munit.FunSuite
 import nebflow.llm.rules.{ModelRuleDsl, ModelRuleStore}
 import nebflow.shared.*
+
 import java.time.LocalDateTime
 
 /**
@@ -87,7 +88,6 @@ class ModelRuleApplySpec extends FunSuite:
     assertEquals(refs(out), List("a/m1", "b/m1"))
   }
 
-
   test("P6 三态门：仅 rules 态暴露脚本；缺失/非法模式回落 follow") {
     val root = os.temp.dir(prefix = "mr-gate-")
     val l = loadedOf("rule 冻结 { when time 09:00..18:00 freeze model a/* }")
@@ -99,6 +99,29 @@ class ModelRuleApplySpec extends FunSuite:
     os.write.over(ModelRuleStore.modeOf(root), "bogus")
     assertEquals(ModelRuleStore.mode(root), "follow")
     assert(ModelRuleStore.setMode(root, "bogus").isLeft)
+  }
+
+  test("concurrent mode writes retain one complete legal value") {
+    val root = os.temp.dir(prefix = "mr-concurrent-")
+    try
+      for _ <- 1 to 100 do
+        val start = new java.util.concurrent.CountDownLatch(1)
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(2)
+        try
+          val writes = List("slots", "rules").map { mode =>
+            pool.submit(
+              new java.util.concurrent.Callable[Either[String, Unit]]:
+                def call(): Either[String, Unit] =
+                  start.await()
+                  ModelRuleStore.setMode(root, mode)
+            )
+          }
+          start.countDown()
+          writes.foreach(f => assert(f.get().isRight))
+          assert(Set("slots\n", "rules\n").contains(os.read(ModelRuleStore.modeOf(root))))
+          assertEquals(os.list(root).map(_.last).toList, List("model-rules.mode"))
+        finally pool.shutdownNow()
+    finally os.remove.all(root)
   }
 
   test("P6 保存期校验：不合格脚本返回行号错误且不落盘") {

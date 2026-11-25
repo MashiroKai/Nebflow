@@ -1,0 +1,12 @@
+{"panel":"desktop-settings","route":"desktop:settings-overlay","viewportGroups":[{"width":1280,"height":800,"themes":["light","dark"],"dpr":[1]}],"viewportNA":{"width":390,"reason":"手机层使用独立设置页"},"openSteps":[{"action":"click","selector":"#settings-btn"},{"action":"wait","selector":"#settings-overlay:not(.hidden)"}],"elements":[
+{"id":"overlay","selector":"#settings-overlay:not(.hidden)","properties":["backgroundColor","color","fontSize","fontWeight"],"box":true},
+{"id":"modal","selector":"#settings-modal","properties":["borderRadius","backgroundColor","color","boxShadow","padding","border"],"box":true},
+{"id":"header","selector":".settings-modal-header","properties":["borderRadius","backgroundColor","color","padding","border"],"box":true},
+{"id":"title","selector":"#settings-modal-title","properties":["color","fontSize","fontWeight"],"box":false},
+{"id":"close","selector":"#settings-modal-close","properties":["borderRadius","backgroundColor","color","boxShadow","height","padding","border"],"box":true},
+{"id":"content","selector":"#settings-content","properties":["borderRadius","backgroundColor","color","boxShadow","padding","border"],"box":true},
+{"id":"group","selector":"#settings-content .sp-panel-group","properties":["borderRadius","backgroundColor","color","padding","border"],"box":false},
+{"id":"card","selector":"#settings-content .set-card","properties":["borderRadius","backgroundColor","color","boxShadow","padding","border"],"box":false},
+{"id":"row","selector":"#settings-content .set-row","properties":["borderRadius","backgroundColor","color","fontSize","fontWeight","padding","border"],"box":false},
+{"id":"select","selector":"#settings-content .nf-select-trigger","properties":["borderRadius","backgroundColor","color","boxShadow","fontSize","fontWeight","height","padding","border"],"box":false}
+]}

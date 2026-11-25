@@ -129,6 +129,47 @@ test.beforeEach(async ({ page }) => {
   await bootApp(page);
 });
 
+test('mobile search audit: mounted results, three scroll positions and long line', async ({ page }) => {
+  const searchQueries = [];
+  await page.route(`**/api/sessions/${SID}/history*`, route => {
+    const params = new URL(route.request().url()).searchParams;
+    if (params.has('latest')) searchQueries.push({ latest: params.get('latest'), limit: params.get('limit') });
+    return route.fulfill({json:{messages:Array.from({length:30},(_,i)=>({type:'user',text:`量子纠缠 item ${i} ${'long-search-line '.repeat(12)}`,timestamp:T0-i*1000}))}});
+  });
+  await openPanel(page);
+  await page.locator('#search-keyword').fill('量子纠缠');
+  const rows = page.locator('#search-results .search-result');
+  await expect(rows).toHaveCount(30);
+  await expect.poll(() => searchQueries).toContainEqual({ latest: 'true', limit: '4000' });
+  const header = page.locator('.mobile-page[data-page="search"] .mobile-back-btn');
+  await expect(header).toBeVisible();
+  await rows.first().locator('.search-result-preview').evaluate(el => { el.textContent = '量子纠缠 long-search-result-without-spaces-'.repeat(20); });
+  const long = await rows.first().locator('.search-result-preview').evaluate(el => {
+    const cs = getComputedStyle(el), r = el.getBoundingClientRect();
+    return {width: r.width, scroll: el.scrollWidth, left:r.left, right:r.right, clamp:cs.webkitLineClamp, wrap:cs.wordBreak};
+  });
+  expect(long.left).toBeGreaterThanOrEqual(0); expect(long.right).toBeLessThanOrEqual(375);
+  expect(long.clamp).toBe('2'); expect(long.wrap).toBe('break-word');
+  const scroll = page.locator('#search-results');
+  for (const fraction of [0, 0.5, 1]) {
+    const geometry = await scroll.evaluate((el, f) => {
+      el.scrollTop = (el.scrollHeight-el.clientHeight)*f;
+      const r=el.getBoundingClientRect(), h=document.querySelector('.mobile-page[data-page="search"] .mobile-back-btn').getBoundingClientRect();
+      const items=[...el.querySelectorAll('.search-result')].map(item=>item.getBoundingClientRect()).filter(b=>b.bottom>r.top && b.top<r.bottom);
+      return {left:r.left,right:r.right,top:r.top,headerBottom:h.bottom,scroll:el.scrollTop,max:el.scrollHeight-el.clientHeight,items:items.map(b=>({left:b.left,right:b.right,top:b.top}))};
+    }, fraction);
+    expect(geometry.left).toBeGreaterThanOrEqual(0); expect(geometry.right).toBeLessThanOrEqual(375);
+    expect(geometry.top).toBeGreaterThanOrEqual(geometry.headerBottom-1);
+    expect(geometry.max).toBeGreaterThan(0); expect(Math.abs(geometry.scroll-geometry.max*fraction)).toBeLessThan(2);
+    const hit=await header.evaluate(el=>{const r=el.getBoundingClientRect(),n=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return n===el||el.contains(n)}); expect(hit).toBe(true);
+    expect(geometry.items.length).toBeGreaterThan(0);
+    for(const item of geometry.items) { expect(item.left).toBeGreaterThanOrEqual(0); expect(item.right).toBeLessThanOrEqual(375); if(item.top>=geometry.top) expect(item.top).toBeGreaterThanOrEqual(geometry.headerBottom-1); }
+  }
+  for(let i=0;i<30;i++) {const item=rows.nth(i); await item.evaluate(el=>el.scrollIntoView({block:'center',behavior:'instant'})); await page.evaluate(() => new Promise(requestAnimationFrame)); const b=await item.boundingBox(),h=await header.boundingBox(),d=await page.locator('#mobile-dock').boundingBox(); expect(b, 'result bounding box').not.toBeNull(); expect(h, 'header bounding box').not.toBeNull(); expect(d, 'dock bounding box').not.toBeNull(); expect(b.y).toBeGreaterThanOrEqual(h.y+h.height); expect(b.y+b.height).toBeLessThanOrEqual(d.y);}
+  const out = process.env.MOBILE_AUDIT_EVIDENCE;
+  if(out) { const { mkdirSync } = await import('node:fs'); mkdirSync(out,{recursive:true}); await page.screenshot({path:join(out,'搜索.png'),animations:'disabled'}); }
+});
+
 test('T1 page geometry: adopted full-bleed in search page, radius 0 (dock 批换代判据)', async ({ page }) => {
   const errors = watchErrors(page);
   await openPanel(page);

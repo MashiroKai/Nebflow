@@ -153,6 +153,7 @@
 
 | 档 | 变量 | 值 | 用在哪 |
 |---|---|---|---|
+| none | `--ds-radius-none` | 0px | 结构性直角 |
 | badge | `--ds-radius-badge` | 4px | 徽标 pill、行内 code、极小微片 |
 | chip | `--ds-radius-chip` | 6px | 28px 图标钮、小 chip、路径片、卡片容器（cfg-card） |
 | input | `--ds-radius-input` | 8px | 输入/下拉、面板档按钮、玻璃小钮（原 7px 档归此） |
@@ -357,6 +358,7 @@ node scripts/check-design-spec-sync.mjs --json   # 机器读
 <!-- design-spec-scale:begin -->
 | 变量 | 值 | 用在哪 |
 |---|---|---|
+| `--ds-radius-none` | `0px` | 结构性直角 |
 | `--ds-radius-badge` | `4px` | 徽标 pill、行内 code |
 | `--ds-radius-chip` | `6px` | 图标钮、小 chip、卡片容器 |
 | `--ds-radius-input` | `8px` | 输入/下拉、面板档按钮 |
@@ -403,6 +405,7 @@ node scripts/check-design-spec-sync.mjs --json   # 机器读
 | `--ds-fs-display` | `20px` | 页面级大标题、空态主句 |
 | `--ds-fs-card-hero` | `21px` | 过渡卡主标题（具名槽） |
 | `--ds-fs-title-lg` | `28px` | 手机大标题档 |
+| `--ds-fs-page-back` | `30px` | 页面返回钮图标字形（返回钮单源） |
 | `--ds-bubble-pad` | `10px 14px` | 气泡内距（文字离边·气泡） |
 | `--ds-row-pad` | `8px 12px` | 列表行内距（标准） |
 | `--ds-row-pad-tight` | `8px 10px` | 列表行内距（双行名） |
@@ -416,6 +419,10 @@ node scripts/check-design-spec-sync.mjs --json   # 机器读
 | `--ds-capsule-pad` | `6px 8px 6px 14px` | 标题胶囊内距（手机/基线档） |
 | `--ds-capsule-pad-desk` | `4px 7px 4px 12px` | 36px 固定高胶囊内距（桌面腿） |
 | `--ds-capsule-gap` | `6px` | 胶囊内件缝 |
+| `--ds-capsule-end-inset` | `4px` | 桌面胶囊两端对称内缩 |
+| `--ds-capsule-end-size` | `26px` | 端部动作视觉盒 |
+| `--ds-capsule-end-icon` | `13px` | 端部图标视觉盒 |
+| `--ds-capsule-end-radius` | `calc(var(--capsule-h) / 2 - var(--ds-capsule-end-inset) - var(--ds-border-width))` | 同心内角 |
 | `--ds-media-pill-pad` | `10px 18px` | 「展开 N」钮内距 |
 | `--ds-tab-pad-x` | `10px` | 看板页签横内距 |
 | `--ds-tab-track-pad` | `3px` | 页签轨内距（微缝） |

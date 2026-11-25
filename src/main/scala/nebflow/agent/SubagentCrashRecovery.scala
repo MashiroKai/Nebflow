@@ -3,7 +3,7 @@ package nebflow.agent
 import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.actor.AgentCommand
-import nebflow.shared.{Message, ContentBlock, MessageRole, NebflowLogger}
+import nebflow.shared.{ContentBlock, Message, MessageRole, NebflowLogger}
 
 /**
  * 子代理等待三缺口批（2026-10-25，缺口②）：**checkpoint 恢复的在飞工具调用终结面**。
@@ -71,7 +71,7 @@ object SubagentCrashRecovery:
       msg match
         case Message(MessageRole.Assistant, Right(blocks), _, _, _, _) =>
           val dangling = blocks.collect {
-            case u @ ContentBlock.ToolUse(id, name, _) if !answered.contains(id) => (u, name)
+            case u @ ContentBlock.ToolUse(id, name, _, _) if !answered.contains(id) => (u, name)
           }
           if dangling.nonEmpty then
             dangling.foreach { case (u, name) => terminated += ((name, u.id)) }

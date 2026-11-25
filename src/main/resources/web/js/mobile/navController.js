@@ -822,14 +822,14 @@ const DECK_SWIPE_Y_PX = 48;      // 纵拖过阈：上滑或下滑关闭当前�
  *  拖不动 + .panning 类泄漏）。逃逸口 = [data-nf-content-gesture] 标记。
  *  判据走 closest 委托：内容面内的子元素（img/文字层）同享仲裁。 */
 const CONTENT_GESTURE_SELECTOR =
-  '.canvas-image-viewport, .wiki-canvas, .fm-viewport, [data-nf-content-gesture]';
+  '.canvas-image-viewport, .wiki-canvas, .fm-viewport, .canvas-md-viewer pre, .canvas-md-viewer pre > code.hljs, [data-nf-content-gesture]';
 
 /** 边缘返回手势（bindEdgeBack）认领横滑后的抑制旗：bindDocSwipe 在 move/finish
  *  查它 —— 认领期内切卡手势整体让路（同模块直读，零 DOM 事件戏法）。 */
 let swipeSuppressed = false;
 
 /** @type {{strip: HTMLElement, toolbar: HTMLElement, host: HTMLElement,
- *          empty: HTMLElement, dots: HTMLElement}|null} */
+ *          empty: HTMLElement, dots: HTMLElement, star: HTMLButtonElement}|null} */
 let canvasUI = null;
 /** @type {{pane: Element, parent: Node, next: Node|null}|null} 活动文档 pane 收编槽（单槽）。 */
 let canvasDocAnchor = null;
@@ -1068,6 +1068,11 @@ function chipInnerWidth(chip) {
       inner -= quote.getBoundingClientRect().width / rsc;
     }
   }
+  const star = chip.querySelector('.mf-cv-star');
+  if (star && getComputedStyle(star).display !== 'none') {
+    const rsc = parseFloat((/** @type {HTMLElement} */ (chip)).style.getPropertyValue('--rsc')) || 1;
+    inner -= star.getBoundingClientRect().width / rsc;
+  }
   return inner;
 }
 
@@ -1144,14 +1149,14 @@ function syncCanvasPage() {
     setActiveTab(docs[0].id);
     return;
   }
-  const sig = docs.map((d) => d.id).join('|');
+  const sig = `${docs.map((d) => d.id).join('|')}::${activeId}`;
   if (canvasUI.strip.dataset.sig !== sig) {
     canvasUI.strip.dataset.sig = sig;
+    canvasUI.star.remove();
     canvasUI.strip.innerHTML = '';
-    for (const d of docs) {
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'mf-strip-chip';
+    for (const d of docs.filter((doc) => doc.id === activeId)) {
+      const chip = document.createElement('div');
+      chip.className = 'mf-strip-chip on is-expanded';
       chip.dataset.tabId = d.id;
       chip.setAttribute('role', 'tab');
       const label = document.createElement('span');
@@ -1176,10 +1181,11 @@ function syncCanvasPage() {
       // 同一条通路、同一枚 chip 组件（composer 附件条 `.att-ref`）。另一支
       // feat/todo-card-click-left 的「点待办卡片补 # 引用」走的是同一条
       // appendRefToActiveView；本批不改通路、只改入口的外观与命中层。
-      const quote = document.createElement('span');
-      quote.className = 'mf-strip-quote';
+      const quote = document.createElement('button');
+      quote.type = 'button';
       quote.setAttribute('role', 'button');
       quote.setAttribute('tabindex', '0');
+      quote.className = 'mf-strip-quote';
       quote.setAttribute('aria-label', tt('引用此看板', 'Quote this Canvas'));
       quote.title = tt('引用此看板', 'Quote this Canvas');
       // 钮面 = **一枚小图标**（作者令 · 2026-11-18 22:10 逐字「引用只需要一个小图标就行
@@ -1215,25 +1221,15 @@ function syncCanvasPage() {
         }
       });
       chip.appendChild(quote);
-      // 全名三处保留（对齐修正批：视觉上不再有「…」，但读屏/悬停仍拿得到全名）：
+      // 全名三处保留（对齐修正批：视觉上不再有「…」，但读屏/悬停仍拿得到全名）:
       //   ① label.textContent = 全名（读屏直接读 DOM 文本，mask 只影响绘制）；
       //   ② chip.title = 全名（桌面悬停 / 长按提示）；
       //   ③ 触屏展开腿 = 点活签 `.is-expanded`（宽度解一档，超宽继续 mask 淡出）。
       chip.title = d.label;
-      chip.addEventListener('click', () => {
-        if (chip.classList.contains('on')) {
-          // 活签再点 = 展开/收起全名（长标签专利；其余签点击一律换签）。
-          const open = !chip.classList.contains('is-expanded');
-          chip.classList.toggle('is-expanded', open);
-          fitRingLabels();          // 展开档另一档宽度 ⇒ 重新按整字收束（全名放得下就全显）
-          logEvent('tab-label-expand', { tab: d.id, open });
-          if (open) armLabelCollapse(chip);
-          return;
-        }
-        logEvent('card-switch', { via: 'strip', tab: d.id });
-        setActiveTab(d.id);
-      });
+      const star = canvasUI.star;
+      chip.insertBefore(star, label);
       canvasUI.strip.appendChild(chip);
+      if (typeof lucide !== 'undefined') createIconsIn(chip);
     }
   }
   // 活签的全名展开态不跨切签存活（换签即收，防宽签压邻签）。
@@ -1856,7 +1852,7 @@ function buildCanvasPage(body) {
   const star = document.createElement('button');
   star.type = 'button';
   // Author-approved r2 mobile favorite star: same g2-fab + canvas-button family as mf-cv-stack.
-  star.className = 'mf-cv-star g2-fab canvas-button';
+  star.className = 'mf-cv-star canvas-button';
   star.innerHTML = '<i data-lucide="star" class="canvas-fav-ic"></i>';
   const paintStar = () => {
     const tgt = activeFavoriteTarget();
@@ -1881,7 +1877,7 @@ function buildCanvasPage(body) {
   });
   window.addEventListener(FAV_SYNC_EVENT, paintStar);
   onFavoritesChange(paintStar);
-  toolbar.append(close, count, stack, star);
+  toolbar.append(close, count, stack);
   paintStar();
 
   const host = document.createElement('div');
@@ -1918,7 +1914,7 @@ function buildCanvasPage(body) {
   // 悬浮钮统一批：工具条 = 页面悬浮 chrome 带控件 —— 挂 section 根（与页头带同
   // 定位上下文，top:16+safe 落位），mf-canvas-page 只吃环带/文档区/小点/空态。
   body.parentElement?.appendChild(toolbar);
-  canvasUI = { strip, toolbar, host, empty, dots };
+  canvasUI = { strip, toolbar, host, empty, dots, star };
   // 标签栏重做批①：图标替换覆盖到 toolbobar 子树（根因修复 —— 修前只 createIconsIn(wrap)，
   // 而 ✕/堆叠两钮在 toolbar 内、wrap 之外 ⇒ 永远停在 <i data-lucide>）。
   if (typeof lucide !== 'undefined') {
@@ -2810,9 +2806,16 @@ function paintDockCenterAvatar() {
   }
   holder.classList.remove('has-avatar');
   if (holder.querySelector('.dock-center-logo')) return; // logo 已就位（幂等零重建）
-  holder.innerHTML =
-    `<picture><source media="(prefers-color-scheme: dark)" srcset="${brand.logoDarkUrl}">` +
-    `<img class="dock-center-logo" src="${brand.logoUrl}" alt=""></picture>`;
+  const picture = document.createElement('picture');
+  const source = document.createElement('source');
+  source.media = '(prefers-color-scheme: dark)';
+  source.srcset = brand.logoDarkUrl;
+  const logo = document.createElement('img');
+  logo.className = 'dock-center-logo';
+  logo.src = brand.logoUrl;
+  logo.alt = '';
+  picture.append(source, logo);
+  holder.replaceChildren(picture);
 }
 
 /** 徽标镜像：桌面徽标读数（#messages-badge/#contacts-badge，手机层按钮不可见

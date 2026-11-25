@@ -20,15 +20,16 @@ try {
   const geometry = await page.evaluate(() => {
     const q = sel => { const el = document.querySelector(sel); return el?.getBoundingClientRect().toJSON() ?? null; };
     const root = document.querySelector('.mobile-page.live');
-    const button = root.querySelector('.ta-fab');
+    const button = root.querySelector('.ta-quick-fab');
     const rect = button.getBoundingClientRect();
     const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
-    return {back:q('.mobile-page.live .mobile-back-btn'), capsule:q('.mobile-page.live .ta-pill'), fab:q('.mobile-page.live .ta-fab'), dock:q('#mobile-dock'), hit: button === hit || button.contains(hit)};
+    return {back:q('.mobile-page.live .mobile-back-btn'), capsule:q('.mobile-page.live .ta-pill'), fab:q('.mobile-page.live .ta-quick-fab'), dock:q('#mobile-dock'), hit: button === hit || button.contains(hit)};
   });
   console.log('actual control rectangles:', JSON.stringify(geometry));
   ok(geometry.back?.height > 0, 'actual back control exists');
   ok(geometry.capsule?.height > 0, 'actual todo capsule exists');
-  ok(geometry.fab?.height > 0, 'actual FAB exists');
+  ok(geometry.fab?.height > 0, 'quick decision FAB exists');
+  ok(await page.locator('.mobile-page.live .ta-fab').count() === 0, 'self-create FAB is not rendered');
   ok(geometry.fab.bottom <= geometry.dock.top && geometry.hit, 'FAB above dock and receives hits');
   const endpoint = await page.evaluate(() => {
     const card = document.querySelector('.mobile-page.live .ta-listcard');
@@ -37,7 +38,7 @@ try {
     if (!scroller) return null;
     scroller.scrollTop = scroller.scrollHeight;
     const last = [...card.querySelectorAll('.ta-row')].filter(el => el.getBoundingClientRect().height > 0).at(-1);
-    return { scrollTop: scroller.scrollTop, max: scroller.scrollHeight-scroller.clientHeight, card:card.getBoundingClientRect().toJSON(), last:last?.getBoundingClientRect().toJSON(), scroller:scroller.getBoundingClientRect().toJSON(), scrollClass: scroller.className, root:card.closest('.ta-root')?.getBoundingClientRect().toJSON(), rootPadding:getComputedStyle(card.closest('.ta-root')).paddingBottom, fab:document.querySelector('.mobile-page.live .ta-fab').getBoundingClientRect().toJSON(), dock:document.querySelector('#mobile-dock').getBoundingClientRect().toJSON() };
+    return { scrollTop: scroller.scrollTop, max: scroller.scrollHeight-scroller.clientHeight, card:card.getBoundingClientRect().toJSON(), last:last?.getBoundingClientRect().toJSON(), scroller:scroller.getBoundingClientRect().toJSON(), scrollClass: scroller.className, root:card.closest('.ta-root')?.getBoundingClientRect().toJSON(), rootPadding:getComputedStyle(card.closest('.ta-root')).paddingBottom, fab:document.querySelector('.mobile-page.live .ta-quick-fab').getBoundingClientRect().toJSON(), dock:document.querySelector('#mobile-dock').getBoundingClientRect().toJSON() };
   });
   console.log('todo end geometry:', JSON.stringify(endpoint));
   ok(endpoint && endpoint.max > 0 && endpoint.scrollTop >= endpoint.max - 1, 'real list reaches scroll end');

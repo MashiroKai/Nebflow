@@ -103,6 +103,40 @@ class DbWriteFaceSpec extends FunSuite:
     // 原文件字节不动（拒绝路径零修改）。
     assert(Files.readString(f).contains("NOT-JSON-AT-ALL"))
 
+  test("prepareAppend handles missing empty and entirely torn files without validation"):
+    val dir = Files.createTempDirectory("db-tail-empty")
+    val f = dir.resolve("stream.jsonl")
+    val never: String => Either[String, Unit] = _ => fail("unexpected validation")
+    assertEquals(WriteFace.prepareAppend(f, never), WriteFace.TailState.Clean)
+    Files.writeString(f, "")
+    assertEquals(WriteFace.prepareAppend(f, never), WriteFace.TailState.Clean)
+    Files.writeString(f, "torn")
+    assertEquals(WriteFace.prepareAppend(f, never), WriteFace.TailState.RepairedTornTail(4L))
+    assertEquals(Files.size(f), 0L)
+    Files.writeString(f, "\n")
+    assertEquals(WriteFace.prepareAppend(f, never), WriteFace.TailState.Clean)
+
+  test("prepareAppend scans backwards over chunk boundaries to the last complete frame"):
+    val dir = Files.createTempDirectory("db-tail-chunk")
+    val f = dir.resolve("stream.jsonl")
+    val frame = "a" * 8200
+    Files.writeString(f, s"older\n$frame\ntorn")
+    var seen = ""
+    assertEquals(WriteFace.prepareAppend(f, line => { seen = line; Right(()) }), WriteFace.TailState.RepairedTornTail(4L))
+    assertEquals(seen, frame)
+    assertEquals(Files.readString(f), s"older\n$frame\n")
+
+  test("prepareAppend finds the last frame beyond a multi-block torn tail"):
+    val dir = Files.createTempDirectory("db-tail-long-torn")
+    val f = dir.resolve("stream.jsonl")
+    val torn = "x" * 8193
+    Files.writeString(f, s"older\nlast-frame\n$torn")
+    val seen = scala.collection.mutable.ListBuffer.empty[String]
+    val state = WriteFace.prepareAppend(f, line => { seen += line; Right(()) })
+    assertEquals(state, WriteFace.TailState.RepairedTornTail(8193L))
+    assertEquals(seen.toList, List("last-frame"))
+    assertEquals(Files.readString(f), "older\nlast-frame\n")
+
   test("appendDurable rejects multi-line records (framing constraint)"):
     val dir = Files.createTempDirectory("db-v1-append")
     intercept[IllegalArgumentException] {

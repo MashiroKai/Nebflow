@@ -1,9 +1,7 @@
 package nebflow.gateway
 
-import nebflow.neblink.portal.*
-
 import cats.effect.IO
-import nebflow.neblink.portal.PortalHostFaces
+import nebflow.neblink.portal.{PortalHostFaces, *}
 import nebflow.shared.NebflowLogger
 import org.http4s.*
 import org.http4s.dsl.io.*

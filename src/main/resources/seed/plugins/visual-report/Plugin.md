@@ -21,7 +21,7 @@ visual-report 是可视化报告包：节点按场景出图与人读报告。共
 - **样张与验收基准**：`skills/core/references/demos/`（场景示例落此）。
 - **文档批纪律**：凡交付属于项目知识库的 markdown/HTML 文档（报告/设计稿/复盘），必读 `skills/wiki-docs/SKILL.md` 三条强制条款，交付前跑 `skills/wiki-docs/scripts/check_wiki_docs.py` 校验。
 - **词条检索/构建**：查已有概念与实体、登记新词条、查反向引用、一次摊开一致性 → 走包根 `mcp.json` 声明的 MCP 面（六个 `glossary_*` 工具，见 §8），别用 grep 硬找。
-- **冲突裁决**：图表生成层各场景表述不一致时以 `skills/core/SKILL.md` 为准；人读交付体例以既有 visual-report skill 为准。
+- **冲突裁决**：图表生成层各场景表述不一致时以 `skills/core/SKILL.md` 为准；人读交付体例以 visual-report skill 为准。文档正文图用可在手机上读清的内嵌 PNG，PDF/SVG 仅作可选下载或放大入口；公式用 LaTeX，详见 wiki-docs 和 visual-report。
 
 ## 2. 安装与启用
 

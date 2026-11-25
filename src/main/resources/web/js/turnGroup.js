@@ -75,6 +75,7 @@
 // data-nf-turn-terminal read here, so the last bare tool card folds too.
 
 import { t } from './i18n.js';
+import { EVENTS } from './events.js';
 import { chevronSvg } from './chat.js';
 import { isNearBottom } from './utils.js';
 // stream-ux redesign (2026-10-03 author demo): the running turn's line and the
@@ -267,6 +268,83 @@ function untuckRows(rows) {
   }
 }
 
+/* ---------- injected-message secondary collapse ---------- */
+
+// A turn may be opened by an injection immediately before its badge. Keep
+// that original row in place while treating it as part of this badge's stack.
+function injectionRowsForHeader(header) {
+  const rows = scopeFromHeader(header).filter(isInjectedRow);
+  let opener = header.previousElementSibling;
+  while (opener && isInjectedRow(opener)) {
+    rows.unshift(opener);
+    opener = opener.previousElementSibling;
+  }
+  return rows;
+}
+
+function syncInjectionStack(header) {
+  if (header.closest('#chat')) {
+    const stack = header.nextElementSibling;
+    if (stack?.hasAttribute('data-nf-injection-stack')) stack.remove();
+    for (const row of injectionRowsForHeader(header)) row.classList.remove('nf-injection-stack-hidden');
+    return;
+  }
+  const rows = injectionRowsForHeader(header);
+  let stack = header.nextElementSibling;
+  if (!stack || !stack.hasAttribute('data-nf-injection-stack')) stack = null;
+  if (!rows.length) {
+    if (stack) stack.remove();
+    return;
+  }
+  if (!stack) {
+    stack = document.createElement('div');
+    stack.dataset.nfInjectionStack = '1';
+    stack.className = 'nf-injection-stack';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'pill ds-media-stack__pill';
+    const count = document.createElement('span');
+    count.className = 'nf-injection-stack-count';
+    button.append(count);
+    stack.append(button);
+    header.after(stack); // single anchoring decision
+    button.onclick = () => {
+      header.dataset.nfInjectionExpanded = header.dataset.nfInjectionExpanded === '1' ? '0' : '1';
+      syncInjectionStack(header);
+    };
+  }
+  const expanded = header.dataset.nfInjectionExpanded === '1';
+  const forced = header.dataset.turnState === 'done-expanded';
+  const button = stack.firstElementChild;
+  stack.hidden = forced;
+  button.setAttribute('aria-expanded', String(expanded));
+  const count = button.lastElementChild;
+  if (count.textContent !== String(rows.length)) {
+    const digit = document.createElement('span');
+    digit.className = 'nf-injection-stack-digit';
+    digit.textContent = String(rows.length);
+    count.replaceChildren(digit);
+  }
+  button.setAttribute('aria-label', `${expanded ? '收起' : '展开'} ${rows.length} 条注入消息`);
+  for (const row of rows) row.classList.toggle('nf-injection-stack-hidden', !expanded && !forced);
+}
+
+// Events are dispatched by the live workline and injection append paths. A
+// settled header is deliberately not selected: post-closure mail starts a
+// new turn, never changes a previous badge's count.
+if (typeof document !== 'undefined') {
+  document.addEventListener(EVENTS.NF_INJECTION_APPENDED, event => {
+    const chat = event.target;
+    if (!(chat instanceof Element)) return;
+    const line = Array.from(chat.children).find(el => el.classList.contains('nf-workline'));
+    if (line) syncInjectionStack(line);
+  });
+  document.addEventListener(EVENTS.NF_WORKLINE_CREATED, event => {
+    if (!(event instanceof CustomEvent) || !(event.detail?.row instanceof Element)) return;
+    syncInjectionStack(event.detail.row);
+  });
+}
+
 /* ---------- header build / toggle ---------- */
 
 /** Build the persistent summary header at the TOP of the turn scope (before
@@ -303,6 +381,15 @@ function scopeFromHeader(header) {
 /** Persistent two-state toggle: click the header to expand / re-collapse.
  *  State rides on the header's dataset; the header text is never rewritten. */
 function bindHeaderToggle(header) {
+  if (header.closest('#chat')) {
+    header.querySelector('.nf-chevron')?.remove();
+    header.removeAttribute('role');
+    header.removeAttribute('tabindex');
+    header.removeAttribute('aria-expanded');
+    header.onclick = null;
+    header.onkeydown = null;
+    return;
+  }
   header.setAttribute('role', 'button');
   header.setAttribute('tabindex', '0');
   const toggle = () => {
@@ -320,6 +407,7 @@ function bindHeaderToggle(header) {
       tuckRows(tuckable);
       swapOutputFaces(scope, false);
     }
+    syncInjectionStack(header);
   };
   header.onclick = toggle;
   header.onkeydown = (e) => {
@@ -344,21 +432,30 @@ function bindHeaderToggle(header) {
  */
 const closedCursors = new WeakMap();
 
+// Presentation-only stack chrome is not a message and must never change the
+// closure cursor or split a turn when it is inserted, updated, or removed.
+function turnChildren(chat) {
+  return Array.from(chat.children).filter(el => !el.hasAttribute('data-nf-injection-stack'));
+}
+
 function markClosed(chat) {
-  closedCursors.set(chat, { len: chat.children.length, anchor: chat.lastElementChild });
+  const kids = turnChildren(chat);
+  closedCursors.set(chat, { len: kids.length, anchor: kids[kids.length - 1] || null });
 }
 
 function markClosedAt(chat, idx) {
-  closedCursors.set(chat, { len: idx, anchor: chat.children[idx - 1] || null });
+  const physical = Array.from(chat.children).slice(0, idx);
+  const kids = physical.filter(el => !el.hasAttribute('data-nf-injection-stack'));
+  closedCursors.set(chat, { len: kids.length, anchor: kids[kids.length - 1] || null });
 }
 
 function turnScope(chat) {
   const cur = closedCursors.get(chat);
+  const kids = turnChildren(chat);
   const valid = !!cur && (cur.len === 0 ||
-    (cur.anchor && cur.anchor.parentNode === chat && chat.children[cur.len - 1] === cur.anchor));
-  const fresh = valid && chat.children.length > cur.len;
+    (cur.anchor && cur.anchor.parentNode === chat && kids[cur.len - 1] === cur.anchor));
+  const fresh = valid && kids.length > cur.len;
   if (!fresh) dissolveTurnChrome(chat); // same-turn re-terminal heal / no valid cursor
-  const kids = Array.from(chat.children);
   let boundary = -1;
   kids.forEach((el, i) => {
     if (isNonInjectedUserRow(el)) boundary = i;
@@ -378,6 +475,8 @@ function dissolveTurnChrome(chat) {
     const el = kids[i];
     if (!el.classList) continue;
     if (el.classList.contains('turn-header')) { el.remove(); continue; }
+    if (el.hasAttribute('data-nf-injection-stack')) { el.remove(); continue; }
+    el.classList.remove('nf-injection-stack-hidden');
     if (el.classList.contains('nf-tucked')) {
       el.classList.remove('nf-tucked');
     }
@@ -408,6 +507,13 @@ export function collapseTurn(view, meta = {}) {
   const chat = view.dom.chat;
   const scope = turnScope(chat);
   const rows = scope.filter(el => el.classList && el.classList.contains('row'));
+  if (view.nfBareProcessRows || chat.id === 'chat') {
+    if (view.nfBareProcessRows) untuckRows(rows.filter(isTuckableRow));
+    else tuckRows(rows.filter(isTuckableRow));
+    removeWorkline(view);
+    markClosed(chat);
+    return null;
+  }
   // Ask ANSWER continuation (badge 并列复发修令, author 2026-10-07 09:25): a
   // terminal that lands while the turn's scope still holds an UNANSWERED ask
   // card is NOT a wheel-close. AskUserQuestion is non-blocking today (阻塞腿
@@ -475,6 +581,7 @@ export function collapseTurn(view, meta = {}) {
       bindHeaderToggle(header);
     }
     tuckRows(tuckable); // instant strip; pre-tucked rows are already hidden
+    syncInjectionStack(header);
     // keep the viewport pinned to the bottom when it was pinned (spec §4.2)
     // A-branch: shared NEAR_BOTTOM_PX unit (was a local 80).
     if (isNearBottom(chat)) {
@@ -533,6 +640,7 @@ export function expandGroupContaining(el) {
   header.setAttribute('aria-expanded', 'true');
   untuckRows(tuckable);
   swapOutputFaces(scope, true);
+  syncInjectionStack(header);
   return true;
 }
 
@@ -652,6 +760,7 @@ function summarizeUnconfirmed(chat, seg, meta) {
   header.setAttribute('aria-expanded', 'false');
   bindHeaderToggle(header);
   tuckRows(tuckable);
+  syncInjectionStack(header);
   return header;
 }
 
@@ -720,6 +829,11 @@ function markInferredMidTurnRows(chat) {
 }
 
 export function buildTurnSummariesForHistory(chat, opts = {}) {
+  if (chat.dataset.nfBareProcessRows === '1' || chat.id === 'chat' || opts.bareProcess || opts.mainChat) {
+    if (chat.id === 'chat' || opts.mainChat) tuckRows(Array.from(chat.children).filter(isTuckableRow));
+    markClosed(chat);
+    return;
+  }
   const { busyTail = false } = opts;
   // tool-card-leak-on-reload 批（2026-11-02）：段边界判据之前先把**旧存量转录**的
   // 回合内插话行补标（新转录由后端 midTurn 字段在行构建期直接落标）。
@@ -799,6 +913,7 @@ function summarizeSegment(chat, seg) {
   header.setAttribute('aria-expanded', 'false');
   bindHeaderToggle(header);
   tuckRows(tuckable); // history rebuild: static tuck
+  syncInjectionStack(header);
   return [header];
 }
 

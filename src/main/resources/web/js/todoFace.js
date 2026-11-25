@@ -42,7 +42,8 @@ import { isImeComposing } from './imeGuard.js';
 import { bindComposerKeys } from './input/composer.js';
 import { sessionShowsNodeEntries } from './taskList.js';
 import { todoStore, TAG_COLOR_PRESETS, PRIORITY_COLORS, PRIORITY_LABEL_KEYS } from './todoStore.js';
-import { isAskRow, buildAskCardForRow } from './askTodoQuestion.js';
+import { sendWs, onMessage } from './ws.js';
+import { isAskRow, buildAskCardForRow, buildDecisionOption, decisionOptionLabel } from './askTodoQuestion.js';
 // 时间滚轮选择器（time-wheel-picker 实施批 2026-11-03，作者令 22:16/22:20）：
 // 待办截止时刻从裸 `<input type="datetime-local">` 收编为同款点选面。交互单源
 // = ./timeWheel.js；隐藏输入 `.tfl-due-input` 保留为值域载体（saveEditing /
@@ -310,6 +311,16 @@ function dueText(ms) {
   return `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
 }
 
+function formatCreationZone(rule, nextDueAt) {
+  let text = `${rule.wallClock} · ${rule.zoneId}`;
+  const deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const instant = rule.type === 'once' ? rule.dueAt : nextDueAt;
+  if (deviceZone && deviceZone !== rule.zoneId && Number.isFinite(instant)) {
+    text += ` / ${new Intl.DateTimeFormat(undefined, { timeZone: deviceZone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(instant))} · ${deviceZone}`;
+  }
+  return text;
+}
+
 function dueInputValue(ms) {
   const d = new Date(ms);
   const p = (n) => String(n).padStart(2, '0');
@@ -403,6 +414,25 @@ class TodoFace {
     this.hitKey = null;
     this.hitFollow = null;
     this.hitNav = null;
+    this.unsubZoneError = onMessage('error', (msg) => {
+      if (msg.msgType !== 'updateScheduledTask' || msg.id !== this.pendingZoneId) return;
+      const status = this.root?.querySelector('.tfl-creation-zone-status');
+      if (status) status.textContent = msg.message || 'Zone correction failed';
+      this.pendingZoneId = null;
+    });
+    this.unsubZoneUpdated = onMessage('scheduledTaskUpdated', (msg) => {
+      if (msg.task?.id !== this.pendingZoneId) return;
+      this.pendingZoneId = null;
+      const info = this.root?.querySelector('.tfl-creation-zone-info');
+      const input = this.root?.querySelector('.tfl-creation-zone-input');
+      const status = this.root?.querySelector('.tfl-creation-zone-status');
+      const due = msg.task.due;
+      if (due && info && input) {
+        info.textContent = formatCreationZone(due, msg.task.nextDueAt);
+        input.value = due.zoneId;
+      }
+      if (status) status.textContent = 'Saved';
+    });
     this.unsub = todoStore.subscribe(() => this.onStoreChange());
     this.buildDom();
     if (this.expanded) this.panel.classList.add('tfl-panel-open');
@@ -473,7 +503,7 @@ class TodoFace {
     this.listInner = el('div', 'tfl-list-inner');
     this.listScroll.appendChild(this.listInner);
     this.listWrap.appendChild(this.listScroll);
-    this.buildFab();
+    // 2026-11-24: self-created reminder entrypoints are retired.
     this.buildUndoBar();
     this.footer = el('div', 'tfl-footer');
     if (this.filterWrap) this.panel.append(this.header, this.filterWrap, this.listWrap, this.footer);
@@ -489,7 +519,6 @@ class TodoFace {
     // 写口 / 动效单源零改动，`.mf-drawer` 一族回到与定时任务页逐字同形。
     // ⋯ 菜单（：同批产物）不动，仍随手机页面态建出。
     if (this.mobile) {
-      this.buildCreateSheet();
       // 顶部悬浮「⋯」+ 两级菜单（同一批）：手机页面态顶部唯一入口。
       this.buildTopMenu();
     }
@@ -594,17 +623,13 @@ class TodoFace {
 
   buildFooter() {
     this.footer.textContent = '';
-    if (todoStore.isAllView()) return; // 总条目禁止创建（复刻）
+    if (!this.creating || todoStore.isAllView()) return;
     const btn = el('button', 'tfl-add-btn');
     btn.type = 'button';
     if (this.creating) {
       btn.innerHTML = `<span class="tfl-add-ic tfl-add-ic-done">${CHECK_CIRCLE_SVG}</span>`;
       btn.appendChild(el('span', null, t('todoface.done')));
       btn.addEventListener('click', () => this.saveCreate());
-    } else {
-      btn.innerHTML = `<span class="tfl-add-ic">${PLUS_CIRCLE_SVG}</span>`;
-      btn.appendChild(el('span', null, t('todoface.add')));
-      btn.addEventListener('click', () => this.startCreate());
     }
     this.footer.appendChild(btn);
   }
@@ -824,10 +849,6 @@ class TodoFace {
     if (!panel) return;
     panel.textContent = '';
     const rows = [
-      this.menuRow({
-        icon: 'plus-circle', label: t('todoface.sheetTitle'),
-        onTap: () => { this.closeMenu(); this.startCreate(); },
-      }),
       this.menuRow({
         icon: 'tag', label: t('todoface.menuView'), sub: this.viewLabel(), chevron: true, sep: true,
         onTap: (row) => this.openMenuSub('tags', row),
@@ -1067,8 +1088,7 @@ class TodoFace {
     if (this.isScrollbarClick(e, host)) return;
     // ③ 滚动抑制：位移 > 8px = 拖动/滑屏，不是点击
     if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > BLANK_DRAG_PX) return;
-    // ④ 单一事件源（click）⇒ 触摸端不会双发；此处直接进创建。
-    if (!this.editingTagId && !this.creatingTag) this.startCreate();
+    // Blank clicks no longer start self-creation; edit dismissal above remains.
   }
 
   /** 滚动条命中：指针横/纵向落在宿主的内容盒之外（轨道区）。 */
@@ -1356,8 +1376,7 @@ class TodoFace {
       empty.classList.add('tfl-empty-all');
       empty.textContent = t('todoface.emptyAll');
     } else {
-      empty.textContent = t('todoface.emptyAdd');
-      empty.addEventListener('click', () => this.startCreate());
+      empty.textContent = t('todoface.emptyAll');
     }
     return empty;
   }
@@ -1369,6 +1388,7 @@ class TodoFace {
     // 同一张列表、同一套排序，但没有打卡 / 删除 / 编辑语义；行体点开 = 行内**问题卡**
     // （单点模板 askTodoQuestion.js；作答/取消走 askPending 同一收口）。
     if (isAskRow(item) && !editing) return this.buildAskRow(item);
+    if (item.decision && !editing) return this.buildDecisionRow(item);
     const row = el('div', 'tfl-row');
     row.dataset.id = item.id;
     row.setAttribute('role', 'option');
@@ -1422,6 +1442,9 @@ class TodoFace {
       });
       titleline.appendChild(foldBtn);
       main.appendChild(detail);
+    }
+    if (item.dueRule?.zoneId && item.dueRule?.wallClock && !editing) {
+      main.appendChild(el('span', 'tfl-row-creation-zone', formatCreationZone(item.dueRule, item.nextDueAt)));
     }
     if (item.due != null && !editing) {
       const due = el('span', 'tfl-row-due');
@@ -1495,15 +1518,84 @@ class TodoFace {
     return row;
   }
 
-  buildCompleteButton(item) {
+  buildDecisionRow(item) {
+    const row = el('div', 'tfl-row');
+    row.dataset.id = item.id;
+    const main = el('div', 'tfl-row-main');
+    const title = el('button', 'tfl-row-title', item.name);
+    title.type = 'button';
+    title.setAttribute('aria-expanded', 'false');
+    const detail = el('div', 'tfl-row-detail');
+    detail.hidden = true;
+    const dec = item.decision;
+    detail.appendChild(el('div', 'ta-qd-q', String(dec.question || '')));
+    const options = Array.isArray(dec.options) ? dec.options : [];
+    const hint = el('div', 'tfl-decision-hint', t('todoapple.answerFirst'));
+    hint.setAttribute('role', 'alert');
+    hint.hidden = true;
+    detail.appendChild(hint);
+    const picks = new Set();
+    const list = el('div', 'ta-qd-opts');
+    list.setAttribute('role', dec.multiSelect ? 'group' : 'radiogroup');
+    options.forEach((option) => {
+      if (!decisionOptionLabel(option)) return;
+      const optionRow = buildDecisionOption(item.id, option, !!dec.multiSelect, false, (checked) => {
+        if (!dec.multiSelect) picks.clear();
+        if (checked) picks.add(option.id); else picks.delete(option.id);
+        if (picks.size) { hint.hidden = true; list.classList.remove('tfl-decision-attention'); }
+      });
+      if (dec.answer || dec.secret) optionRow.querySelector('input').disabled = true;
+      list.appendChild(optionRow);
+    });
+    detail.appendChild(list);
+    const other = document.createElement('textarea');
+    other.className = 'ta-qd-answer-input';
+    other.placeholder = t('todoface.replyPh');
+    other.disabled = !!dec.answer || !!dec.secret;
+    if (dec.allowOther) detail.appendChild(other);
+    const error = el('div', 'ta-decision-error');
+    error.setAttribute('role', 'alert');
+    const submit = el('button', 'ta-decision-submit', t('todoapple.answerSubmit'));
+    submit.type = 'button';
+    submit.disabled = !!dec.answer || !!dec.secret;
+    if (dec.secret) error.textContent = t('todoapple.answerSecretBlocked');
+    submit.addEventListener('click', async () => {
+      const text = dec.allowOther ? other.value.trim() : '';
+      if ((!picks.size && !text) || submit.disabled) { error.textContent = t('todoapple.answerFirst'); return; }
+      submit.disabled = true;
+      const result = await todoStore.answerItem(item.id, { selectedOptionIds: [...picks], otherText: text || undefined, via: 'desktop' });
+      if (result.ok) todoStore.completeItem(item.id);
+      else { error.textContent = `${t('todoapple.answerRejected')}：${result.message || result.code || ''}`; submit.disabled = false; }
+    });
+    detail.append(error, submit);
+    title.addEventListener('click', () => {
+      detail.hidden = !detail.hidden;
+      title.setAttribute('aria-expanded', String(!detail.hidden));
+    });
+    main.append(title, detail);
+    row.append(main, this.buildCompleteButton(item, () => {
+      detail.hidden = false;
+      title.setAttribute('aria-expanded', 'true');
+      hint.hidden = false;
+      list.classList.add('tfl-decision-attention');
+    }));
+    return row;
+  }
+
+  buildCompleteButton(item, onUnanswered = null) {
     const btn = el('button', 'tfl-complete');
     btn.type = 'button';
-    btn.setAttribute('aria-label', t('todoface.complete'));
+    const gated = !!(item.decision && !item.decision.answer);
+    btn.title = t('todoface.complete');
+    btn.setAttribute('aria-label', btn.title);
     const ring = el('span', 'tfl-complete-ring');
     const fill = el('span', 'tfl-complete-fill');
     fill.innerHTML = CHECK_SVG;
     btn.append(ring, fill);
-    btn.addEventListener('click', () => this.performComplete(item.id, btn.closest('.tfl-row')));
+    btn.addEventListener('click', () => {
+      if (gated) { if (onUnanswered) onUnanswered(); return; }
+      this.performComplete(item.id, btn.closest('.tfl-row'));
+    });
     return btn;
   }
 
@@ -1932,6 +2024,25 @@ class TodoFace {
     });
     dueRow.append(dueLabel, toggle, dueHolder);
     panel.appendChild(dueRow);
+    if (item.dueRule?.zoneId && item.dueRule?.wallClock) {
+      const info = el('div', 'tfl-creation-zone-info', formatCreationZone(item.dueRule, item.nextDueAt));
+      const input = el('input', 'tfl-creation-zone-input');
+      input.value = item.dueRule.zoneId;
+      input.setAttribute('aria-label', 'Creation time zone (IANA)');
+      const button = el('button', 'tfl-creation-zone-submit', 'Correct zone');
+      button.type = 'button';
+      const status = el('div', 'tfl-creation-zone-status');
+      status.setAttribute('aria-live', 'polite');
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const zone = input.value.trim();
+        if (!zone || !item.sessionId) { status.textContent = 'Time zone and session required'; return; }
+        this.pendingZoneId = item.id;
+        const sent = sendWs({ type: 'updateScheduledTask', id: item.id, sessionId: item.sessionId, creationZone: zone });
+        status.textContent = sent ? 'Saving…' : 'Queued until connected';
+      });
+      panel.append(info, input, button, status);
+    }
     this.editDraft = { notesEl: detailEl, dueInput, get hasDue() { return hasDue; } };
     return panel;
   }
@@ -2158,7 +2269,6 @@ class TodoFace {
     if (inputBusy || creating) return; // 文本框消费键（复刻 listKeyboardActive）
     const ids = todoStore.visibleItems().map((it) => it.id);
     if (!ids.length) {
-      if (e.key === 'Enter' && !todoStore.isAllView()) { e.preventDefault(); this.startCreate(); }
       return;
     }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -2174,9 +2284,6 @@ class TodoFace {
     } else if (e.key === 'Enter') {
       e.preventDefault();
       if (!this.selectedId || !ids.includes(this.selectedId)) {
-        // Return 无选中 = 点击列表空白同入口（复刻 activateBlankArea）
-        if (!todoStore.isAllView()) this.startCreate();
-        else if (this.editingId) this.saveEditing();
         return;
       }
       this.startEditing(this.selectedId);
@@ -2891,6 +2998,8 @@ class TodoFace {
     clearTimeout(this.hitTimer);
     this.closeItemBox(true);
     this.unsub();
+    this.unsubZoneError();
+    this.unsubZoneUpdated();
     this.unbindOutsideClose();
     this.unbindTagPopoverDismiss();
     if (this.cancelMorph) this.cancelMorph();

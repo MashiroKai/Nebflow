@@ -1,7 +1,7 @@
 package nebflow.core.scheduler
 
-import cats.effect.IO
-import cats.effect.std.Mutex
+import cats.effect.{IO, Resource}
+import cats.effect.std.Semaphore
 import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
@@ -46,9 +46,49 @@ class ScheduledTaskStore(
    * 全库读写互斥：任何文件读/改/写都必须持有（见类注）。CE 3.5 的 Mutex 无
    * unsafe 直构 —— lazy + global runtime 物化一次（先例：DeviceProfile.scala）。
    */
-  private lazy val storeLock: Mutex[IO] =
-    import cats.effect.unsafe.implicits.global
-    Mutex[IO].unsafeRunSync()
+  private[scheduler] def tryStoreMutex: IO[Boolean] =
+    IO.blocking(baseDir.toNIO.toRealPath()).flatMap { canonical =>
+      val mutex = ScheduledTaskStore.mutexFor(canonical)
+      mutex.tryAcquire.flatMap(acquired => if acquired then mutex.release.as(true) else IO.pure(false))
+    }
+
+  private[scheduler] def withStoreLock[A](
+    action: IO[A],
+    onOsWait: IO[Unit] = IO.unit,
+    onMutexWait: IO[Unit] = IO.unit,
+    onMutexAcquired: IO[Unit] = IO.unit
+  ): IO[A] =
+    for
+      canonical <- IO.blocking {
+        java.nio.file.Files.createDirectories(baseDir.toNIO)
+        baseDir.toNIO.toRealPath()
+      }
+      result <- (onMutexWait *> ScheduledTaskStore.mutexFor(canonical).permit.surround {
+        onMutexAcquired *> {
+          val fileLock = Resource
+            .make {
+              IO.blocking(
+                java.nio.channels.FileChannel.open(
+                  canonical.resolve(".scheduled-tasks.lock"),
+                  java.nio.file.StandardOpenOption.CREATE,
+                  java.nio.file.StandardOpenOption.WRITE
+                )
+              )
+            }(channel => IO.blocking(channel.close()).handleError(_ => ()))
+            .flatMap { channel =>
+              def acquire: IO[java.nio.channels.FileLock] =
+                IO.blocking(Option(channel.tryLock())).flatMap {
+                  case Some(lock) => IO.pure(lock)
+                  case None => onOsWait *> IO.sleep(scala.concurrent.duration.DurationInt(25).millis) *> acquire
+                }
+              Resource.makeFull[IO, java.nio.channels.FileLock](poll => poll(acquire))(lock =>
+                IO.blocking(lock.release()).handleError(_ => ())
+              )
+            }
+          fileLock.use(_ => action)
+        }
+      })
+    yield result
 
   private def sessionFile(sessionId: String): os.Path =
     baseDir / s"$sessionId.json"
@@ -104,7 +144,11 @@ class ScheduledTaskStore(
    * loadUnlocked 的隔离/恢复腿负责，这里静默取空基线），与 new 列表做差量写穿。
    */
   private def saveUnlocked(sessionId: String, tasks: List[ScheduledTask]): IO[Unit] =
-    ensureBaseDir *> IO
+    IO.fromEither(
+      tasks.traverse_(t =>
+        t.due.traverse_(d => d.asJson.as[TodoDue].left.map(e => new IllegalArgumentException(e.getMessage)))
+      )
+    ) *> ensureBaseDir *> IO
       .blocking {
         val f = sessionFile(sessionId)
         val before =
@@ -157,7 +201,7 @@ class ScheduledTaskStore(
   }
 
   /** Transform the authoritative payload once, then retire stale copies only after it lands. */
-  private def updateByIdUnlocked(taskId: String)(f: ScheduledTask => ScheduledTask): IO[Option[ScheduledTask]] =
+  private def updateByIdUnlocked(taskId: String, allowOccurrenceReschedule: Boolean = false)(f: ScheduledTask => ScheduledTask): IO[Option[ScheduledTask]] =
     sessionIdsUnlocked.flatMap(_.traverse(sid => loadUnlocked(sid).map(sid -> _))).flatMap { sessions =>
       val copies = sessions.flatMap(_._2).filter(_.id == taskId)
       distinctById(copies).headOption match
@@ -165,12 +209,21 @@ class ScheduledTaskStore(
           IO.raiseError(new IllegalStateException(s"scheduled task $taskId has conflicting revisions; update refused"))
         case None => IO.pure(None)
         case Some(current) =>
-          val changed = f(current).copy(
+          val requested = f(current)
+          if !allowOccurrenceReschedule && requested.due != current.due && requested.occurrences != current.occurrences then
+            throw new IllegalStateException("rule change cannot rewrite occurrences")
+          val changed = requested.copy(
             id = current.id,
             sessionId = current.sessionId,
             createdAt = current.createdAt,
             source = current.source,
-            revision = current.revision
+            revision = current.revision,
+            dueRuleVersion =
+              if requested.due == current.due then current.dueRuleVersion
+              else Math.addExact(current.dueRuleVersion, 1L),
+            dueRuleHistory =
+              if requested.due == current.due then current.dueRuleHistory
+              else current.dueRuleHistory ++ current.due.toList.map(TodoRuleSnapshot(current.dueRuleVersion, _))
           )
           val updated =
             if changed == current then current
@@ -191,8 +244,8 @@ class ScheduledTaskStore(
     }
 
   private def addUnlocked(task: ScheduledTask): IO[Unit] =
-    loadUnlocked(task.sessionId).flatMap { existing =>
-      if existing.exists(_.id == task.id) then IO.raiseError(new IllegalArgumentException("duplicate task id"))
+    (loadUnlocked(task.sessionId), scanUnlocked(_.id == task.id, sort = false)).tupled.flatMap { (existing, copies) =>
+      if copies.nonEmpty then IO.raiseError(new IllegalArgumentException("duplicate task id"))
       else saveUnlocked(task.sessionId, existing :+ task)
     }
 
@@ -271,7 +324,7 @@ class ScheduledTaskStore(
   // ------------------------------------------------------------------
 
   def loadTasks(sessionId: String): IO[List[ScheduledTask]] =
-    storeLock.lock.surround {
+    withStoreLock {
       // Keep this read's quarantine/DB recovery, but do not expose a stale session copy.
       loadUnlocked(sessionId).flatMap { local =>
         scanUnlocked(_.sessionId != sessionId, sort = false)
@@ -280,10 +333,197 @@ class ScheduledTaskStore(
     }
 
   def saveTasks(sessionId: String, tasks: List[ScheduledTask]): IO[Unit] =
-    storeLock.lock.surround(saveUnlocked(sessionId, tasks))
+    withStoreLock {
+      (loadUnlocked(sessionId), scanUnlocked(_ => true, sort = false)).tupled.flatMap { (existing, all) =>
+        val byId = existing.map(t => t.id -> t).toMap
+        val stale = tasks.exists { t =>
+          val copies = all.filter(_.id == t.id)
+          val localStale = byId.get(t.id).exists(_.revision != t.revision)
+          val newer = copies.exists(_.revision > t.revision)
+          val equalConflict = copies.exists(c =>
+            c.revision == t.revision && c.copy(sessionId = "") != t.copy(sessionId = "") &&
+              !byId.get(t.id).contains(c)
+          )
+          val invalidRuleHistory = copies.exists(c =>
+            t.revision > c.revision &&
+              (t.dueRuleVersion < c.dueRuleVersion ||
+                c.dueRuleHistory.exists(snapshot => !t.dueRuleHistory.contains(snapshot)) ||
+                (t.due != c.due && c.occurrences.exists(o => !t.occurrences.contains(o))) ||
+                (t.dueRuleVersion == c.dueRuleVersion && t.due != c.due) ||
+                (t.dueRuleVersion > c.dueRuleVersion &&
+                  c.due.exists(rule => !t.dueRuleHistory.contains(TodoRuleSnapshot(c.dueRuleVersion, rule)))))
+          )
+          localStale || newer || equalConflict || invalidRuleHistory
+        }
+        val rewritesInstances = tasks.exists(t =>
+          byId.get(t.id).exists(old => old.due != t.due && old.occurrences != t.occurrences)
+        )
+        val deletesRows = existing.exists(old => !tasks.exists(_.id == old.id))
+        if tasks.map(_.id).distinct.size != tasks.size then
+          IO.raiseError(new IllegalArgumentException("duplicate task id"))
+        else if stale then IO.raiseError(new IllegalStateException("stale task revision"))
+        else if deletesRows then IO.raiseError(new IllegalStateException("direct save cannot delete tasks"))
+        else if rewritesInstances then IO.raiseError(new IllegalStateException("rule change cannot rewrite occurrences"))
+        else
+          val adjusted = tasks.map { task =>
+            byId.get(task.id) match
+              case Some(old) if old.due != task.due =>
+                task.copy(
+                  revision = Math.addExact(old.revision, 1L),
+                  dueRuleVersion = Math.addExact(old.dueRuleVersion, 1L),
+                  dueRuleHistory = old.dueRuleHistory ++ old.due.toList.map(TodoRuleSnapshot(old.dueRuleVersion, _))
+                )
+              case Some(old) =>
+                task.copy(
+                  revision = if task == old then old.revision else Math.addExact(old.revision, 1L),
+                  dueRuleVersion = old.dueRuleVersion,
+                  dueRuleHistory = old.dueRuleHistory
+                )
+              case None => task
+          }
+          saveUnlocked(sessionId, adjusted)
+      }
+    }
+
+  /** Commit occurrence and series cursor in the same atomic session-file replacement. */
+  private[scheduler] def recordOccurrence(
+    sessionId: String,
+    occurrence: TodoOccurrence,
+    nextDueAt: Option[Long],
+    beforeCommit: () => Unit = () => (),
+    afterCommit: () => Unit = () => ()
+  ): IO[Boolean] =
+    withStoreLock {
+      scanUnlocked(_.id == occurrence.todoId, sort = false).flatMap { copies =>
+        val authority = distinctById(copies).headOption
+        loadUnlocked(sessionId).flatMap { rows =>
+          rows.find(_.id == occurrence.todoId) match
+            case Some(task) if !authority.contains(task) =>
+              IO.raiseError(new IllegalStateException("stale or conflicting task revision"))
+            case None => IO.raiseError(new IllegalArgumentException("todo not found"))
+            case Some(task) if task.occurrences.exists(_.key == occurrence.key) => IO.pure(false)
+            case Some(task) if task.due.isDefined && task.dueRuleVersion != occurrence.ruleVersion =>
+              IO.raiseError(new IllegalStateException("stale reminder rule version"))
+            case Some(task) if !task.nextDueAt.contains(occurrence.scheduledAt) =>
+              IO.raiseError(new IllegalArgumentException("occurrence does not match next due time"))
+            case Some(task) =>
+              val updated = task.copy(
+                occurrences = task.occurrences :+ occurrence,
+                nextDueAt = nextDueAt,
+                revision = Math.addExact(task.revision, 1L)
+              )
+              IO(beforeCommit()) *> saveUnlocked(sessionId, rows.map(t => if t.id == task.id then updated else t)) *>
+                IO(afterCommit()).as(true)
+        }
+      }
+    }
+
+  private def resolveLocal(local: java.time.LocalDateTime, zone: java.time.ZoneId): Long =
+    val rules = zone.getRules
+    val offsets = rules.getValidOffsets(local)
+    val instant =
+      if offsets.isEmpty then rules.getTransition(local).getDateTimeAfter.atZone(zone).toInstant
+      else local.toInstant(offsets.get(0))
+    instant.toEpochMilli
+
+  private def nextDue(rule: TodoDue, scheduled: Long): Option[Long] = rule match
+    case _: TodoDue.Once => None
+    case weekly: TodoDue.Weekly =>
+      val zone = java.time.ZoneId.of(weekly.zoneId)
+      val date = java.time.Instant.ofEpochMilli(scheduled).atZone(zone).toLocalDate.plusWeeks(1)
+      Some(resolveLocal(date.atTime(java.time.LocalTime.parse(weekly.localTime)), zone))
+
+  /** Materialize all elapsed reminder instances; each replacement commits cursor and instance together. */
+  private[scheduler] def materializeDueOccurrences(now: Long): IO[Unit] =
+    def advance(sessionId: String, task: ScheduledTask): IO[Unit] =
+      (task.due, task.nextDueAt) match
+        case (Some(rule), Some(at)) if at <= now =>
+          val following = nextDue(rule, at)
+          val occurrence = TodoOccurrence.create(task.id, at, task.dueRuleVersion)
+          val updated = task.copy(
+            occurrences = task.occurrences :+ occurrence,
+            nextDueAt = following,
+            revision = Math.addExact(task.revision, 1L)
+          )
+          loadUnlocked(sessionId).flatMap { rows =>
+            if !rows.find(_.id == task.id).contains(task) then
+              IO.raiseError(new IllegalStateException("stale task revision or cursor"))
+            else saveUnlocked(sessionId, rows.map(t => if t.id == task.id then updated else t))
+          } *>
+            advance(sessionId, updated)
+        case _ => IO.unit
+    withStoreLock {
+      readUnlocked(t => t.isTodo && t.enabled && !t.isCompleted && t.nextDueAt.exists(_ <= now), sort = false)
+        .flatMap(_.traverse_(task => advance(task.sessionId, task)))
+    }
+
+  def changeCreationZone(taskId: String, zoneId: String, editNow: Long): IO[Unit] =
+    changeCreationZoneWithHook(taskId, zoneId, editNow, IO.unit)
+
+  private[scheduler] def changeCreationZoneWithHook(taskId: String, zoneId: String, editNow: Long, onLocked: IO[Unit], onWait: IO[Unit] = IO.unit): IO[Unit] =
+    withStoreLock(
+      onLocked *> updateByIdUnlocked(taskId, allowOccurrenceReschedule = true) { task =>
+        val newZone = java.time.ZoneId.of(zoneId)
+        require(java.time.ZoneId.getAvailableZoneIds.contains(zoneId), "zone must be an IANA region")
+        val oldRule = task.due.getOrElse(throw new IllegalArgumentException("task has no due rule"))
+        val oldZone = java.time.ZoneId.of(oldRule match
+          case once: TodoDue.Once => once.zoneId
+          case weekly: TodoDue.Weekly => weekly.zoneId)
+        def convertFrom(at: Long, zone: java.time.ZoneId): Long =
+          resolveLocal(java.time.Instant.ofEpochMilli(at).atZone(zone).toLocalDateTime, newZone)
+        def convert(at: Long): Long = convertFrom(at, oldZone)
+        val newRule = oldRule match
+          case once: TodoDue.Once => once.copy(dueAt = convert(once.dueAt), zoneId = zoneId, originalOffset = None)
+          case weekly: TodoDue.Weekly => weekly.copy(zoneId = zoneId)
+        if oldZone == newZone then task
+        else
+          val version = Math.addExact(task.dueRuleVersion, 1L)
+          val moved = task.occurrences.map { occurrence =>
+            if occurrence.settledAt.nonEmpty || occurrence.missedReason.nonEmpty then occurrence
+            else
+              val bound = task.ruleForOccurrence(occurrence).getOrElse(
+                throw new IllegalStateException("missing bound occurrence rule"))
+              val boundZone = java.time.ZoneId.of(bound match
+                case once: TodoDue.Once => once.zoneId
+                case weekly: TodoDue.Weekly => weekly.zoneId)
+              val at = convertFrom(occurrence.scheduledAt, boundZone)
+              occurrence.copy(scheduledAt = at, ruleVersion = version, stableId = Some(occurrence.key),
+                missedReason = Option.when(at <= editNow)("zone-correction"))
+          }
+          var cursor = task.nextDueAt.map(convert)
+          var occurrences = moved
+          while cursor.exists(_ <= editNow) do
+            val at = cursor.get
+            if !occurrences.exists(o => o.scheduledAt == at && o.settledAt.isEmpty) then
+              occurrences = occurrences :+ TodoOccurrence.create(task.id, at, version).copy(missedReason = Some("zone-correction"))
+            cursor = nextDue(newRule, at)
+          task.copy(due = Some(newRule), nextDueAt = cursor, occurrences = occurrences)
+      }.void,
+      onMutexWait = onWait
+    )
+
+  def claimOccurrence(taskId: String, occurrenceId: String, now: Long): IO[Boolean] =
+    claimOccurrenceWithHook(taskId, occurrenceId, now, IO.unit)
+
+  private[scheduler] def claimOccurrenceWithHook(taskId: String, occurrenceId: String, now: Long, onLocked: IO[Unit], onWait: IO[Unit] = IO.unit): IO[Boolean] =
+    withStoreLock(
+      onLocked *> scanUnlocked(_.id == taskId, sort = false).flatMap { copies =>
+        distinctById(copies).headOption match
+          case None if copies.nonEmpty => IO.raiseError(new IllegalStateException("conflicting task revisions"))
+          case None => IO.pure(false)
+          case Some(task) =>
+            val eligible = task.occurrences.exists(o => o.key == occurrenceId && o.settledAt.isEmpty &&
+              o.missedReason.isEmpty && o.scheduledAt <= now)
+            if !eligible then IO.pure(false)
+            else updateByIdUnlocked(taskId)(t => t.copy(occurrences = t.occurrences.map { o =>
+              if o.key == occurrenceId then o.copy(settledAt = Some(now)) else o
+            })).as(true)
+      },
+      onMutexWait = onWait
+    )
 
   def addTask(task: ScheduledTask): IO[Unit] =
-    storeLock.lock.surround(addUnlocked(task))
+    withStoreLock(addUnlocked(task))
 
   /**
    * Idempotent user-create retry, scoped to one session and exact requested fields.
@@ -293,17 +533,26 @@ class ScheduledTaskStore(
    * comparing those state fields would turn a legitimate retry into an identity conflict.
    * The created frame reports the durable row (`saved`) so the client sees the real state.
    */
-  def addUserTodoOnce(task: ScheduledTask): IO[ScheduledTask] =
-    storeLock.lock.surround {
+  def addUserTodoOnce(task: ScheduledTask, requireFutureDue: Boolean = false): IO[ScheduledTask] =
+    withStoreLock {
       loadUnlocked(task.sessionId).flatMap { existing =>
         existing.find(_.id == task.id) match
           case Some(old)
               if old.source.contains("user") && old.isTodo &&
                 old.content == task.content && old.name == task.name && old.detail == task.detail &&
-                old.project == task.project && old.priority == task.priority =>
-            IO.pure(old)
+                old.project == task.project && old.priority == task.priority && old.due == task.due =>
+            scanUnlocked(_.id == task.id, sort = false).flatMap { copies =>
+              if distinctById(copies).contains(old) then IO.pure(old)
+              else IO.raiseError(new IllegalStateException("stale or conflicting task revision"))
+            }
           case Some(_) => IO.raiseError(new IllegalArgumentException("create identity conflict"))
-          case None => saveUnlocked(task.sessionId, existing :+ task).as(task)
+          case None =>
+            scanUnlocked(_.id == task.id, sort = false).flatMap { copies =>
+              if copies.nonEmpty then IO.raiseError(new IllegalArgumentException("create identity conflict"))
+              else if requireFutureDue && task.nextDueAt.exists(_ <= System.currentTimeMillis()) then
+                IO.raiseError(new IllegalArgumentException("Please clarify a future reminder time"))
+              else saveUnlocked(task.sessionId, existing :+ task).as(task)
+            }
       }
     }
 
@@ -321,7 +570,7 @@ class ScheduledTaskStore(
    * callers can distinguish absence and notify every affected session without guessing.
    */
   def cancelTask(taskId: String): IO[List[ScheduledTask]] =
-    storeLock.lock.surround {
+    withStoreLock {
       sessionIdsUnlocked.flatMap(_.traverse(sid => loadUnlocked(sid).map(sid -> _))).flatMap { sessions =>
         val copies = sessions.flatMap(_._2).filter(_.id == taskId)
         // Remove stale rows first. A failed cleanup must not leave only an obsolete due row.
@@ -334,7 +583,7 @@ class ScheduledTaskStore(
     }
 
   def markTriggered(sessionId: String, taskId: String): IO[Unit] =
-    storeLock.lock.surround {
+    withStoreLock {
       updateByIdUnlocked(taskId)(_.copy(triggered = true, triggeredAt = Some(System.currentTimeMillis()))).void
     }
 
@@ -375,7 +624,7 @@ class ScheduledTaskStore(
    * 由 getAllDueTodos / ScheduledTaskService.surfaceTodos 的周期浮出面接管。
    */
   def getAllDueTasks: IO[List[ScheduledTask]] =
-    storeLock.lock.surround {
+    withStoreLock {
       val now = System.currentTimeMillis()
       readUnlocked(t => !t.triggered && t.triggerAt <= now && t.enabled && !t.isTodo, sort = true)
     }
@@ -388,10 +637,10 @@ class ScheduledTaskStore(
    * 行留在库里，但「下一次浮出」与 list 面都不许再看到它。
    */
   def getAllPendingTasks: IO[List[ScheduledTask]] =
-    storeLock.lock.surround(readUnlocked(t => !t.triggered && !t.isCompleted, sort = false))
+    withStoreLock(readUnlocked(t => !t.triggered && !t.isCompleted, sort = false))
 
   private def todosUnlocked(includeCompleted: Boolean): IO[List[ScheduledTask]] =
-    storeLock.lock.surround {
+    withStoreLock {
       readUnlocked(t => t.isTodo && !t.triggered && t.enabled && (includeCompleted || !t.isCompleted), sort = false)
         .map(_.sortBy(t => (t.triggerAt, t.createdAt)))
     }
@@ -421,7 +670,7 @@ class ScheduledTaskStore(
    * 顺延（spec 钉）。
    */
   def getAllDueTodos: IO[List[ScheduledTask]] =
-    storeLock.lock.surround {
+    withStoreLock {
       val now = System.currentTimeMillis()
       readUnlocked(t => t.isTodo && !t.triggered && t.enabled && !t.isCompleted && t.triggerAt <= now, sort = false)
         .map(_.sortBy(t => (t.triggerAt, t.createdAt)))
@@ -433,7 +682,7 @@ class ScheduledTaskStore(
 
   /** Toggle the enabled state of a task. Returns the updated enabled value. */
   def toggleTask(sessionId: String, taskId: String): IO[Boolean] =
-    storeLock.lock.surround {
+    withStoreLock {
       updateByIdUnlocked(taskId)(t => t.copy(enabled = !t.enabled)).map(_.map(_.enabled).getOrElse(true))
     }
 
@@ -446,8 +695,10 @@ class ScheduledTaskStore(
    * 第二份；只更新一份会让另一份继续浮出/触发）。id 全局唯一，`sessionId` 仅为
    * 兼容既有调用签名。
    */
+  // Time-zone edits must pass through a future explicit series-edit operation which resolves
+  // already-generated, not-yet-fired instances. Its policy awaits the author's decision.
   def updateTask(sessionId: String, taskId: String)(f: ScheduledTask => ScheduledTask): IO[Boolean] =
-    storeLock.lock.surround {
+    withStoreLock {
       updateByIdUnlocked(taskId)(f).map(_.isDefined)
     }
 
@@ -457,7 +708,7 @@ class ScheduledTaskStore(
    * re-arm 去重的目标正是它们）。
    */
   def findTaskById(taskId: String): IO[Option[ScheduledTask]] =
-    storeLock.lock.surround {
+    withStoreLock {
       readUnlocked(_.id == taskId, sort = false).map(_.headOption)
     }
 
@@ -473,7 +724,7 @@ class ScheduledTaskStore(
     kind: Option[String] = Some(ScheduledTask.KindTask),
     legacyOwner: ScheduledTask => Boolean = _ => false
   ): IO[List[ScheduledTask]] =
-    storeLock.lock.surround(removeByNameUnlocked(name, kind, Some("engine"), legacyOwner))
+    withStoreLock(removeByNameUnlocked(name, kind, Some("engine"), legacyOwner))
 
   /**
    * Upsert（2026-09-06 事故根因修复，2026-11-14 收尾：稳定身份 + 可恢复跨会话迁移）：
@@ -505,7 +756,7 @@ class ScheduledTaskStore(
     task.name match
       case None => addTask(task).as(Rearm(task, Nil))
       case Some(n) =>
-        storeLock.lock.surround {
+        withStoreLock {
           scanUnlocked(t => t.name.contains(n) && ScheduledTask.sameKind(t.kind, task.kind), sort = false).flatMap {
             candidates =>
               val owner = task.source
@@ -526,16 +777,14 @@ class ScheduledTaskStore(
                 )
               else
                 val canonical =
-                  owned
-                    .find(_.sessionId == task.sessionId)
-                    .orElse(owned.sortBy(t => (t.createdAt, t.id)).headOption)
+                  distinctById(owned).sortBy(t => (-t.revision, t.createdAt, t.id)).headOption
                 canonical match
+                  case _ if distinctById(owned).size != owned.map(_.id).distinct.size =>
+                    IO.raiseError(new IllegalStateException("conflicting task replicas; rearm refused"))
+                  case None if owned.nonEmpty =>
+                    IO.raiseError(new IllegalStateException("conflicting task replicas; rearm refused"))
                   case None =>
-                    loadUnlocked(task.sessionId).flatMap { existing =>
-                      if existing.exists(_.id == task.id) then
-                        IO.raiseError(new IllegalArgumentException("duplicate task id"))
-                      else saveUnlocked(task.sessionId, existing :+ task).as(Rearm(task, Nil))
-                    }
+                    addUnlocked(task).as(Rearm(task, Nil))
                   case Some(old) =>
                     // Stable identity: keep the id and creation time the record already has;
                     // the request only supplies the new fields and the destination session.
@@ -545,9 +794,18 @@ class ScheduledTaskStore(
                         sessionId = task.sessionId,
                         createdAt = old.createdAt,
                         source = owner,
-                        revision = Math.addExact(owned.map(_.revision).max, 1L)
+                        occurrences = old.occurrences,
+                        revision = Math.addExact(owned.map(_.revision).max, 1L),
+                        dueRuleVersion =
+                          if old.due == task.due then old.dueRuleVersion else Math.addExact(old.dueRuleVersion, 1L),
+                        dueRuleHistory =
+                          if old.due == task.due then old.dueRuleHistory
+                          else old.dueRuleHistory ++ old.due.toList.map(TodoRuleSnapshot(old.dueRuleVersion, _))
                       )
-                    loadUnlocked(task.sessionId).flatMap { targetRows =>
+                    (loadUnlocked(task.sessionId), scanUnlocked(_.id == old.id, sort = false)).tupled.flatMap {
+                      (targetRows, allCopies) =>
+                      if allCopies.exists(copy => !owned.contains(copy)) then
+                        throw new IllegalStateException("task identity belongs to another named record")
                       val sameSessionIds = owned.filter(_.sessionId == task.sessionId).map(_.id).toSet
                       val target =
                         targetRows.filterNot(t => t.id == persisted.id || sameSessionIds.contains(t.id)) :+ persisted
@@ -582,6 +840,12 @@ class ScheduledTaskStore(
 end ScheduledTaskStore
 
 object ScheduledTaskStore:
+  private val directoryLocks = new java.util.concurrent.ConcurrentHashMap[java.nio.file.Path, Semaphore[IO]]()
+
+  private def mutexFor(path: java.nio.file.Path): Semaphore[IO] =
+    import cats.effect.unsafe.implicits.global
+    directoryLocks.computeIfAbsent(path, _ => Semaphore[IO](1).unsafeRunSync())
+
   /**
    * Production default storage directory (SharedResources assembly point; the default-root
    *  discriminator baseline). `def` rather than `val`: PathUtil.dataRoot is the test root seam,

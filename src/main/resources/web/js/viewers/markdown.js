@@ -17,11 +17,18 @@ import { showDocumentTermCard } from '../documentTermCard.js';
 //  仅电子书格式生效（epub/mobi/azw3 等）」——md 退出统一阅读 chrome，正文
 //  滚回 .canvas-md-scroll 原生滚动面；阅读位记账（pane._mdScrollPos +
 //  canvas-tab-activated 恢复）是 pane 级机制、不依赖 chrome，逐字保留。）
-import { mintTickets, stripCredentialParams, decodePathParam, ticketRejects, reMint } from '../nfTicket.js';
+import { mintTickets, ticketRejects } from '../nfTicket.js';
 // 二次加载清剿批（2026-10-24 · #816 同法）：文档图片字节改经 **nfFileCache 账本
 // 单点**——`nfViewerUrl` 命中零抓取 / 未命中取数即入账；blob 解码失败自愈逐出
-// （`nfCacheDrop`，见下方 __nfMdImgFail）。
-import { nfViewerUrl, nfCacheDrop } from '../nfFileCache.js';
+// （`nfCacheDrop`，级联里的腿，见 mdImagePass.js）。
+import { nfViewerUrl } from '../nfFileCache.js';
+// 图片 pass 单源（ask-image-ticket 批 2026-11-24）：候选表 / 铸票判决 / 失败占位 /
+// onerror 级联自愈整族抽到 mdImagePass.js（Ask 回答正文那条 DOM 级腿共用同一实现，
+// 零第二套）。本文件此前自有的一份逐字搬走，行为零差异。
+import {
+  MD_IMG_EXT_RE, vaultRootOf, docDirOf, escapeAttr, decodeImgRef, imageCandidates,
+  reasonStatus, mdImageFailHtml, installMdImgFailGlobal,
+} from '../mdImagePass.js';
 import { noteAuthRejected } from '../sessionGate.js';
 import { t } from '../i18n.js';
 import { isMdHtmlFile } from '../mdHtmlGate.js';
@@ -188,7 +195,10 @@ function applyJumpAnchor(mdViewer, anchor, blockIds) {
   } else if (anchor.kind === 'line' && Number.isFinite(anchor.line)) {
     target = blockAtOrBefore(mdViewer, anchor.line);
   }
-  if (!target) return;
+  if (!target) {
+    window.__showToast?.('已打开来源文档，但未找到指定锚点。', 'info');
+    return;
+  }
   scrollHeadingToTop(mdViewer, target);
   // 落点时间戳：阅读位恢复（canvas-tab-activated 腿）在跳后 2s 窗口内让位——
   // 落点滚动是新真源，不被旧阅读位拽回。
@@ -484,11 +494,106 @@ function renderAutoTerms(mdViewer, data, projectName, absPath) {
       return;
     }
     a.dataset.wikiResolved = JSON.stringify(hit);
+    if (projectName) a.dataset.wikiProject = projectName;
     a.dataset.wikiTarget = String(a.dataset.term || '');   // 非空 ⇒ 点击腿走 resolved.absPath 深链（不是本文自锚）
     if (hit.anchor && hit.anchor.kind === 'block' && hit.anchor.id) a.dataset.wikiAnchor = '^' + hit.anchor.id;
     if (hit.term) attachTermFace(a, mdViewer, { term: hit.term });
   });
   return made;
+}
+
+// ── 文档名词条 → 文件浏览器定位（S2 · canvas-doc-terms 批 2026-11-24）─────
+// #2936 阶段二触发腿：S1 已把唯一文档名链成 a.nf-term（点击显释义气泡），
+// S2 在同一次点击上旁路触发文件浏览器定位（四态行为全在 explorer.js 的
+// reveal 族——根内逐级展开定位 / 根外提示+动作钮 / 不存在短提示 / 折叠先展）。
+// 仅 renderDocumentMentions 生产的链接带 data-wiki-mention 标记：裸词词条
+// （renderAutoTerms）与 wikilink 不触发定位。
+
+/** 词条点击腿的定位目标（resolved.absPath；相对形态按本文档目录归一成绝对——
+ *  与图片/链接路由同一个 baseDir，不同 pass 不会对「相对路径指哪」各说各话）。 */
+function mentionRevealTarget(a, baseDir) {
+  let raw = '';
+  try {
+    const resolved = a.dataset.wikiResolved ? JSON.parse(a.dataset.wikiResolved) : null;
+    if (resolved && typeof resolved.absPath === 'string') raw = resolved.absPath;
+  } catch (_) { return ''; }
+  if (!raw) return '';
+  const norm = raw.replace(/\\/g, '/').replace(/\/+$/, '');
+  if (norm.startsWith('/') || /^[A-Za-z]:\//.test(norm)) return norm;
+  const base = String(baseDir || '').replace(/\\/g, '/').replace(/\/+$/, '');
+  return base ? base + '/' + norm : norm;
+}
+
+/** 点击旁路腿：定位失败不得影响阅读主流程（explorer 侧已自吞一切异常）。 */
+function revealMentionInExplorer(a, baseDir) {
+  const target = mentionRevealTarget(a, baseDir);
+  if (!target) return;
+  import('../explorer.js').then(({ revealExplorerPath }) => revealExplorerPath(target)).catch(() => {});
+}
+
+// Document names are candidates only inside the current project, and only when
+// the exact name identifies one document. Never use wikilink's preference rules.
+export function renderDocumentMentions(host, data, projectName, absPath = '') {
+  if (!host || !projectName || !Array.isArray(data?.nodes)) return 0;
+  const project = (data.projects || []).find(p => p.name === projectName);
+  if (!project) return 0;
+  const candidates = new Map();
+  for (const node of data.nodes) {
+    if (!node || node.stub || node.project !== projectName || !node.rel) continue;
+    const names = new Set([String(node.title || '').trim(), String(node.rel).split('/').pop()].filter(Boolean));
+    for (const name of names) {
+      const key = name.toLowerCase();
+      if (!candidates.has(key)) candidates.set(key, []);
+      candidates.get(key).push({ node, name });
+    }
+  }
+  const unique = [...candidates.values()].filter(items => items.length === 1)
+    .map(([item]) => ({ name: item.name, node: item.node }))
+    .filter(item => {
+      const resolved = resolvedForNode(item.node, project);
+      return resolved && (!resolved.absPath || normVaultPath(resolved.absPath) !== normVaultPath(absPath));
+    });
+  const matcher = buildTermMatcher(unique);
+  if (!matcher.size) return 0;
+  const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const p = node.parentElement;
+      if (!p || p.closest('pre,code,a,button,script,style,.katex,.nf-term,h1,h2,h3,h4,h5,h6')) return NodeFilter.FILTER_REJECT;
+      return node.nodeValue?.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    },
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  let count = 0;
+  for (const node of nodes) {
+    const text = node.nodeValue || '';
+    const hits = matcher.find(text);
+    if (!hits.length) continue;
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    for (const hit of hits) {
+      const doc = hit.term.node;
+      const resolved = resolvedForNode(doc, project);
+      if (!resolved) continue;
+      resolved.term = { name: hit.text, definition: String(doc.summary || ''), rel: String(doc.rel), doc: String(doc.title || '') };
+      frag.appendChild(document.createTextNode(text.slice(last, hit.start)));
+      const link = document.createElement('a');
+      link.className = 'nf-term';
+      link.href = '#';
+      link.textContent = hit.text;
+      link.dataset.wikiResolved = JSON.stringify(resolved);
+      link.dataset.wikiProject = projectName;
+      link.dataset.wikiTarget = hit.text;
+      link.dataset.wikiMention = 'doc'; // S2 定位腿标记：仅文档名词条触发文件浏览器定位
+      attachTermFace(link, host, { term: resolved.term });
+      frag.appendChild(link);
+      last = hit.end;
+      count++;
+    }
+    frag.appendChild(document.createTextNode(text.slice(last)));
+    node.parentNode?.replaceChild(frag, node);
+  }
+  return count;
 }
 
 /**
@@ -504,13 +609,14 @@ function renderAutoTerms(mdViewer, data, projectName, absPath) {
  *
  * @param {HTMLElement} host 落面宿主
  * @param {string|null} [projectName] 作用域工程（缺省 = 合并视图，歧义不猜）
+ * @param {() => boolean} [isCurrent] 可选的异步宿主有效性检查
  * @returns {Promise<number>} 生成的词条链接数（0 = 无词条/无图谱/出错）
  */
-export async function termLinkify(host, projectName) {
+export async function termLinkify(host, projectName, isCurrent) {
   if (!host || typeof host.querySelectorAll !== 'function') return 0;
   let data = null;
   try { data = await wikiGraph(); } catch { data = null; }
-  if (!data) return 0;
+  if (!data || (isCurrent && !isCurrent())) return 0;
   try { return renderAutoTerms(host, data, projectName || null, ''); } catch { return 0; }
 }
 
@@ -586,6 +692,7 @@ async function renderWikilinks(mdViewer, baseDir, absPath) {
     : null;
   mdViewer.querySelectorAll('a.nf-wikilink').forEach((el) => {
     const a = /** @type {HTMLAnchorElement} */ (el);
+    if (currentProject) a.dataset.wikiProject = currentProject;
     const target = a.dataset.wikiTarget || '';
     if (!target) { a.classList.add('nf-wikilink-self'); return; }
     const anchorRaw = a.dataset.wikiAnchor || '';
@@ -609,7 +716,10 @@ async function renderWikilinks(mdViewer, baseDir, absPath) {
   // 正文裸词识别（B5-1）：显式 `[[词条]]` 全部就位后再跑（walker 已拒 A 子树，
   // 这里是顺序兜底：绝不把刚生成的 wikilink 文本再链一次）。无词条 ⇒ 零开销、
   // 输出与改造前逐字节相同。
-  if (data) renderAutoTerms(mdViewer, data, currentProject, absPath);
+  if (data) {
+    renderAutoTerms(mdViewer, data, currentProject, absPath);
+    renderDocumentMentions(mdViewer, data, currentProject, absPath);
+  }
   // 词条索引块（term-system-v2 词条视觉面批 2026-11-05）：渲染管线尾部自动生成，
   // 必须在两条词条腿（显式引用 + 正文裸词）都挂完面之后才扫得出引用集合。
   renderTermIndex(mdViewer);
@@ -842,6 +952,7 @@ async function onWikilinkClick(a, mdViewer, confirmed = false) {
   // 词条命中落点（F2）：作者未写锚时采用消解产物自带的块锚 —— 深链跳到词条
   // 定义段（applyJumpAnchor 滚动 + nf-jump-flash 高亮的既有通道，零新机制）。
   if (!anchor && resolved.anchor) anchor = resolved.anchor;
+  if (resolved.term && !anchor) window.__showToast?.('来源词条没有有效锚点，将打开来源文档。', 'info');
   // 来源页签 id（F5 返回原文档；v1 单层来源，每次跳转覆写）。
   const refSourceTab = refSourceTabId(mdViewer);
   // F5 阅读位保真：任何跳转派发前固化来源阅读位并冻结 scroll 记账。新开
@@ -925,32 +1036,6 @@ function dedupeTitleHeading(viewer, fileName) {
 //   ③ **失败不许静默**：路径解析不到 / 404 / 票据被拒 ⇒ 一块明确的失败占位
 //      （原因文案 + 原路径原文），绝不留白让人以为「图本来就没有」。
 
-/** 图片扩展名（决定 `![[…]]` 是「图片嵌入」还是「文档引用」）。 */
-const MD_IMG_EXT_RE = /\.(png|jpe?g|jfif|gif|webp|avif|bmp|svg|ico|tiff?)$/i;
-
-/** vault 根 = 文档库的注册根。wiki-docs 纪律的布局口径（SKILL.md「Vault layout」）：
- *  vault 根 = `<data_root>/projects/<project>/.stand/docs/`，附件按惯例放
- *  `<vault>/attachments/` 或 `<vault>/assets/`（`docs/attachments/…`）。
- *  `/…/.stand/docs/design/x.md` ⇒ `/…/.stand/docs`；
- *  不在 `docs/` 下但仍在 `.stand/` 里（少见）⇒ `/…/.stand`；
- *  两者都不在（repo reports/、/tmp 夹具）⇒ ''，候选表自然少几层，不猜。 */
-function vaultRootOf(absPath) {
-  if (!absPath) return '';
-  const norm = String(absPath).replace(/\\/g, '/');
-  const docsIdx = norm.lastIndexOf('/.stand/docs/');
-  if (docsIdx >= 0) return String(absPath).slice(0, docsIdx + '/.stand/docs'.length);
-  const standIdx = norm.lastIndexOf('/.stand/');
-  if (standIdx >= 0) return String(absPath).slice(0, standIdx + '/.stand'.length);
-  return '';
-}
-
-/** 属性值转义（候选路径/原路径要进 data-*，引号与尖括号必须先折叠）。 */
-function escapeAttr(s) {
-  return String(s == null ? '' : s)
-    .replace(/&/g, '&amp;').replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
 /** ```human 摘要围栏的**卡片体行号集合**（human-card-image-expand 批 2026-11-05）。
  *
  *  口径必须与 utils.js 的卡片 pass 逐字一致，否则会出现「展开进了一个不会
@@ -998,7 +1083,7 @@ function humanCardBodyLines(lines) {
  * @returns {string}
  */
 function expandImageEmbeds(md) {
-  if (!md || md.indexOf('![[', 1) < 0) return md;
+  if (!md || md.indexOf('![[') < 0) return md;
   const lines = md.split('\n');
   const cardLines = humanCardBodyLines(lines);
   let inFence = false;
@@ -1029,136 +1114,11 @@ function expandImageEmbeds(md) {
   return lines.join('\n');
 }
 
-/** 一张图 src 的**候选绝对路径**表（按作者令的优先级排，去重后交给级联）。
- *
- *  ①`文档自身所在目录 + ref`
- *  ②`vault 根 + ref`（vault 根 = `…/.stand/docs`）
- *  ③`<vault>/attachments/<ref>`、`<vault>/assets/<ref>` —— **vault 的附件惯例目录**。
- *    作者第二份复现样本就是这一条：正文写的是裸文件名 `![[x.png]]`，图却在
- *    `docs/attachments/x.png`（既不在文档同目录、也不在 vault 根），只按 ①② 解析
- *    必然 404 —— 这正是「截图在里面但不渲染」的那条离线路径。
- *  ④绝对路径 / `~`（`~` 由 /api/nf-file 端点展开成 user.home）= 单候选
- *  ⑤此表之外唯一的字节路由始终是 `/api/nf-file?path&ticket`（下方铸票），
- *    不新增端点、直连文件系统一律不经前端。
- *  @param {string} ref 文档里写的原始引用
- *  @param {string} docDir 文档自身目录（'' = 无路径上下文）
- *  @param {string} vaultRoot vault 根（'' = 不在 vault 里）
- *  @returns {string[]} 空数组 = 远端 / data: / 已代理 URL（原样留给浏览器） */
-function imageCandidates(ref, docDir, vaultRoot) {
-  const src = String(ref == null ? '' : ref).trim();
-  if (!src) return [];
-  if (/^(https?:|data:|blob:|\/api\/|javascript:|mailto:)/i.test(src)) return [];
-  // ④ 绝对路径 / `~` 家目录：单候选
-  if (src.startsWith('/') || src.startsWith('~') || /^[A-Za-z]:[\\/]/.test(src)) return [src];
-  const rel = src.replace(/^\.\//, '');
-  /** @type {string[]} */
-  const out = [];
-  const push = (p) => { if (p && !out.includes(p)) out.push(p); };
-  // ① 文档自身所在目录（`![](assets/x.png)` 的标准 markdown 语义）
-  if (docDir) push(docDir + '/' + rel);
-  // ② vault 根
-  if (vaultRoot) push(vaultRoot + '/' + rel);
-  // ③ vault 的附件惯例目录（裸文件名的 Obsidian 嵌入语义 + 本库布局）
-  if (vaultRoot) {
-    push(vaultRoot + '/attachments/' + rel);
-    push(vaultRoot + '/assets/' + rel);
-  }
-  // 文档在 vault 子目录里时，同级的 attachments/assets 也试一档（`docs/design/x.md`
-  // 引用 `docs/attachments/a.png` 的写法）
-  if (docDir && vaultRoot && docDir !== vaultRoot) {
-    push(docDir + '/attachments/' + rel);
-    push(docDir + '/assets/' + rel);
-  }
-  if (!out.length) push(rel);
-  return out;
-}
-
-/** 读 `data-nf-md-alt` 里剩下的候选 URL 表（encodeURIComponent(JSON) 载体）。 */
-function readAltUrls(ds) {
-  try {
-    const parsed = JSON.parse(decodeURIComponent(ds.nfMdAlt || ''));
-    return Array.isArray(parsed) ? parsed.filter((u) => typeof u === 'string' && u) : [];
-  } catch (e) { return []; }
-}
-
-/** 失败占位的**原因文案**：HTTP 状态码 → 作者能据以行动的一句话。
- *  @param {number} status @param {string} [detail] */
-function mdImageFailReason(status, detail) {
-  const s = Number(status) || 0;
-  if (s === 404 || s === 410) return t('canvas.imgFailMissing', { status: String(s) });
-  // 401 / 403 **分叉**（作者裁 2026-11-19「区分」）：401 = 请求根本没带票（真因 =
-  // 没有凭据：铸票面没给票 / 退避窗内无票 / URL 形状问题），403 = 带了票但票被判据
-  // 拒绝（`X-Nf-Reason`：invalid-ticket / expired / path-mismatch / credential-*）。
-  // 共用一句会把「没有票」误报成「票被拒」—— 服务端语义未动，只拆文案与分支。
-  if (s === 403) return t('canvas.imgFailDenied', { status: String(s) });
-  if (s === 401) return t('canvas.imgFailNoCredential', { status: String(s) });
-  if (s === 429 || s === 503) return t('canvas.imgFailBusy', { status: String(s) });
-  if (s === 400) return t('canvas.imgFailBadPath', { status: String(s) });
-  if (s === 415) return t('canvas.imgFailUnsupported', { status: String(s) });
-  if (s === 0) return t('canvas.imgFailUnreachable');
-  return t('canvas.imgFailUnknown', { status: String(s), detail: detail || '' });
-}
-
-/** 尽力探一次终局 URL 的 HTTP 状态（只为把「为什么失败」写准；失败面已经在）。 */
-async function probeMdImageUrl(url) {
-  if (!url) return 0;
-  try {
-    const res = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
-    return res.status;
-  } catch (e) { return 0; }
-}
-
-/** 失败占位的 **HTML 串**形态（**铸票面当场判决**用：全部候选都被端点拒绝
- *  ⇒ 连 <img> 都不发，直接落一块明确占位，原因来自服务端 `rejected` 判决）。
- *  与 showMdImageFailure 产物同构（同一组 class + 同一个 data 标记），样式与
- *  测试选择器两边共用一份。
- *  @param {string} ref 文档里写的原路径原文
- *  @param {number} status 由服务端 reason 映射来的状态码（404/403/415/0）
- *  @param {string} [detail] 服务端 reason 原文（诊断留痕）
- *  @returns {string} */
-function mdImageFailHtml(ref, status, detail) {
-  return '<div class="nf-md-img-fail" data-nf-md-img-fail="1"'
-    + ` data-nf-md-img-status="${escapeAttr(String(status || 0))}"`
-    + (detail ? ` data-nf-md-img-reason="${escapeAttr(detail)}"` : '')
-    + '>'
-    + `<div class="nf-md-img-fail-title">${escapeAttr(t('canvas.imgFailTitle'))}</div>`
-    + `<div class="nf-md-img-fail-reason">${escapeAttr(mdImageFailReason(status, detail))}</div>`
-    + `<code class="nf-md-img-fail-path">${escapeAttr(ref)}</code>`
-    + '</div>';
-}
-
-/** 终局失败面：把坏掉的 <img> 换成一块**明确**的占位（原因 + 原路径），
- *  绝不留白。视频/文档里作者能立刻读到「哪张图、哪条路径、为什么」。
- *  @param {HTMLImageElement} img */
-function showMdImageFailure(img) {
-  if (!img || !img.isConnected) return;
-  const ds = img.dataset || {};
-  const authored = ds.nfMdEmbed ? `![[${ds.nfMdEmbed}]]` : (ds.nfMdSrc || img.getAttribute('src') || '');
-  const box = document.createElement('div');
-  box.className = 'nf-md-img-fail';
-  box.setAttribute('data-nf-md-img-fail', '1');
-  if (ds.nfMdEmbed) box.setAttribute('data-nf-md-embed', ds.nfMdEmbed);
-  const head = document.createElement('div');
-  head.className = 'nf-md-img-fail-title';
-  head.textContent = t('canvas.imgFailTitle');
-  const reason = document.createElement('div');
-  reason.className = 'nf-md-img-fail-reason';
-  const known = Number(ds.nfMdErr || 0);
-  reason.textContent = mdImageFailReason(known, ds.nfMdErrText);
-  const pathEl = document.createElement('code');
-  pathEl.className = 'nf-md-img-fail-path';
-  pathEl.textContent = authored;
-  box.append(head, reason, pathEl);
-  img.replaceWith(box);
-  // 原因精修：渲染期没拿到状态码（直取票据 URL 失败）⇒ 探一次状态码写回。
-  if (!known) {
-    const probeUrl = ds.nfMdFb || img.getAttribute('src') || '';
-    probeMdImageUrl(probeUrl).then((status) => {
-      if (!box.isConnected) return;
-      box.setAttribute('data-nf-md-img-status', String(status));
-      reason.textContent = mdImageFailReason(status, '');
-    }).catch(() => { /* 占位已经在，探测器失败不改结论 */ });
-  }
+// Only a single parsed Mermaid block can give up the shared file title. Mixed
+// documents keep it: hiding their header would discard their document identity.
+function isSingleMermaidBlock(host) {
+  const blocks = [...host.childNodes].filter((node) => node.nodeType !== Node.TEXT_NODE || node.textContent.trim());
+  return blocks.length === 1 && blocks[0].nodeType === Node.ELEMENT_NODE && blocks[0].classList.contains('nf-mermaid');
 }
 
 async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnchor, readOnly }) {
@@ -1202,13 +1162,11 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
   // and the relative link hrefs in the click handler. Computed once, so the
   // image rewrite and the link routing cannot disagree about what a relative
   // path in this document means.
-  const baseDir = absPath
-    ? absPath.substring(0, absPath.lastIndexOf(absPath.includes('\\') ? '\\' : '/'))
-    : '';
+  const baseDir = docDirOf(absPath);
   // vault 根（`…/.stand/`）—— 路径解析优先级 ②。
   const vaultBase = vaultRootOf(absPath);
 
-  // 文档图片 pass（三种写法在此汇合；解析优先级见 imageCandidates 头注）：
+  // 文档图片 pass（三种写法在此汇合；解析优先级见 mdImagePass.imageCandidates 头注）：
   // ①收集候选 → ②一次批量铸票 → ③逐图写占位符 → ④账本单点解析终局 src →
   // ⑤onerror 级联（vault 根腿）→ ⑥终局 = 明确失败占位（绝不留白）。
   if (absPath) {
@@ -1218,13 +1176,9 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
     // ` alt="…" data-nf-md-embed="…">` 原样留在正文里当字面量（human-card-img-
     // expand 批 2026-11-05 截图实证：失败占位下面拖着一行 `alt="…"` 残渣）。
     const IMG_REWRITE_RE = /(<img\s+[^>]*src=")([^"]+)("[^>]*>)/g;
-    /** 原始 src → 已解码引用（marked 会 percent-encode：`assets/截屏 1.png` 与
-     *  `<assets/x 2.png>` 都到这里变成 `assets/%E6%88%AA…%201.png`。先解码，
-     *  否则下面再转义一次、端点去找一个字面 `%E6…` 的文件。非法转义（名字里
-     *  的真 `%`）原样用）。 */
-    const decodeRef = (raw) => {
-      try { return decodeURIComponent(raw); } catch (e) { return raw; }
-    };
+    // 原始 src → 已解码引用（marked 会 percent-encode；单源 = mdImagePass.decodeImgRef，
+    // 头注在那边）。
+    const decodeRef = decodeImgRef;
     // Pass 1 — collect every candidate, then mint ONE batched ticket set
     // (dozens of images in a document must not mean dozens of requests).
     // 2026-09-11 (C batch): the credential is now a per-path ticket; the
@@ -1240,14 +1194,6 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
     // 候选 = **确定读不到**（not-found / credential / extension），直接跳过，
     // 既不白发一次注定 401 的请求，也不让「文件不存在」被读成「票据被拒」。
     const rejects = ticketRejects();
-    /** 服务端 reason → 状态码（失败占位据此说人话）。 */
-    const reasonStatus = (reason) => {
-      const r = String(reason || '');
-      if (r === 'not-found' || r === 'missing') return 404;
-      if (r.startsWith('credential') || r === 'denied') return 403;
-      if (r === 'extension-not-allowed') return 415;
-      return 0;
-    };
     // Pass 2 — rewrite to SHORT-LIVED placeholders (index tokens), synchronously.
     // 二次加载清剿批（2026-10-24 · #816 同法）：出帧前每张图的最终 src 先经
     // **账本单点**解析（下方 hydration）——占位符阶段保证 innerHTML 落地时图已带
@@ -1325,85 +1271,12 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
     });
     // Broken-image → 级联 → 明确失败占位。
     // The shown URL must never carry a credential (T2 / Δ⑦): the ONE strip
-    // implementation lives in nfTicket.js — this module imports it directly.
-    // （`window.__nfMdImgFail` 仍在发布，因为 onerror 是内联属性、求值于全局
-    //   作用域——模块 import 不可见。）
-    // 顺序：①账本 blob 解码失败的自愈腿（既有语义逐字保留：逐出账本 + 回落票据
-    // URL 恰一次）→ ②候选级联（文档目录腿失败 ⇒ vault 根腿，一次一张、不成环）
-    // → ③终局失败占位（原因 + 原路径，绝不留白）。
-    /** @type {any} */ (window).__nfMdImgFail = (/** @type {HTMLImageElement} */ img) => {
-      if (!img || !img.dataset) return;
-      const ds = img.dataset;
-      const fallback = ds.nfMdFb || '';
-      // ① 账本 blob 解码失败：坏字节逐出账本，回落票据 URL 恰一次。
-      if (img.src && img.src.startsWith('blob:') && fallback && !ds.nfMdRetried) {
-        ds.nfMdRetried = '1';
-        const q = /[?&]path=([^&]*)/.exec(fallback);
-        const p = q ? decodePathParam(q[1]) : null;
-        if (p) void nfCacheDrop('nf:' + p).catch(() => {});
-        img.src = fallback;
-        return;
-      }
-      // ①′ 票据自愈（B1，票据自愈批 2026-11-19 · 作者令「文档里的图片，重启/票过期后
-      // 必须自愈恢复，不许长期停在错误态」）：<img>/<video> 元素腿此前只有「①账本坏字节
-      // 逐出 + 回落那枚**可能已过期**的候选 URL」与「②候选级联」两条腿 —— 网关重启
-      // 清空票仓、或票 TTL 过期后，回落的那枚旧票 URL 同样 401/403，于是（② 的候选全都
-      // 骑同一批失效票）直落 ③ 终局占位（作者实拍「无权读取，票据被拒（HTTP 401）」停住）。
-      // 这里补一条腿：**重铸新票**并重试。覆盖面 = 401 与 403 的**全部** reason
-      // （invalid-ticket / expired / path-mismatch / credential-* —— 只按**状态类**判，
-      // 不筛服务端 reason，因为元素腿拿不到 reason 时要照旧自愈）。
-      //   · 闸① **只对票的失败动手**：onerror 不带状态，所以用既有 `probeMdImageUrl`
-      //     探一次；探到 401/403 才重铸。404/400/415 等非票因 ⇒ 逐字交回既有 ② 候选
-      //     级联（否则会把「文件不存在」误当票据问题去重铸，并对不存在路径打转 ——
-      //     本轮自测抓到过该回归：vault 根候选 404 被重铸腿截住，② 的 attachments
-      //     候选永远轮不到）。
-      //   · 闸② **每次失败至多重铸 3 次**（nfMdRerolls 计数）：任何情形都不成环。
-      //   · 探到的状态回填 nfMdErr ⇒ ③ 不必再白探一次。
-      // 服务端票仓语义与校验强度**一个字不动**：这只是把客户端已有的「重铸 + 重试」
-      // 自愈腿补齐到元素腿。
-      const rerolls = Number(ds.nfMdRerolls || 0);
-      const carryingBlob = (img.getAttribute('src') || '').startsWith('blob:');
-      if (rerolls < 3 && !carryingBlob) {
-        const p = ds.nfMdPath || '';
-        const known = Number(ds.nfMdErr || 0);
-        if (p && (known === 0 || known === 401 || known === 403)) {
-          ds.nfMdRerolls = String(rerolls + 1);
-          const failing = img.getAttribute('src') || '';
-          const decide = known ? Promise.resolve(known) : probeMdImageUrl(failing).catch(() => 0);
-          decide.then((s) => {
-            if (!img.isConnected) return;
-            const st = Number(s) || 0;
-            if (st === 401 || st === 403) {
-              return reMint(p)
-                .then((url) => {
-                  if (!img.isConnected) return;
-                  const next = String(url || '');
-                  if (next && next !== img.getAttribute('src')) img.src = next; // 新票 ⇒ 再试
-                  else if (/** @type {any} */ (window).__nfMdImgFail) /** @type {any} */ (window).__nfMdImgFail(img); // 拿不到新票 ⇒ 走 ②/③
-                })
-                .catch(() => { if (/** @type {any} */ (window).__nfMdImgFail) /** @type {any} */ (window).__nfMdImgFail(img); });
-            }
-            if (st) ds.nfMdErr = String(st);            // 回填（③ 不再白探）
-            if (/** @type {any} */ (window).__nfMdImgFail) /** @type {any} */ (window).__nfMdImgFail(img); // 非票因 ⇒ 交回 ②/③
-          });
-          return;
-        }
-      }
-      // ② 候选级联：vault 根腿（或反过来的文档目录腿）再试恰一次/候选。
-      const alts = readAltUrls(ds);
-      if (alts.length) {
-        ds.nfMdAlt = encodeURIComponent(JSON.stringify(alts.slice(1)));
-        // 这个候选就是**真实生效**的路径了：看原图（lightbox）要拿它。
-        const q2 = /[?&]path=([^&]*)/.exec(alts[0]);
-        const np = q2 ? decodePathParam(q2[1]) : null;
-        if (np) ds.nfMdPath = np;
-        img.src = alts[0];
-        return;
-      }
-      // ③ 终局：明确失败占位。
-      img.title = t('canvas.imgFailed') + ': ' + stripCredentialParams(ds.nfMdSrc || img.src || '');
-      showMdImageFailure(img);
-    };
+    // implementation lives in nfTicket.js — mdImagePass.js imports it directly.
+    // 级联本体（①账本回落 / ①′ 票据重铸 / ②候选级联 / ③终局占位）已随
+    // ask-image-ticket 批抽到 mdImagePass.js（单源，Ask 的 DOM 级 pass 共用同一
+    // 实现）；这里只发布全局入口——onerror 是内联属性、求值于全局作用域，
+    // 模块 import 不可见。
+    installMdImgFailGlobal();
     html = html.replace(
       /<img\b/g,
       '<img onerror="window.__nfMdImgFail && window.__nfMdImgFail(this)"'
@@ -1440,13 +1313,10 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
   const mdHost = document.createElement('div');
   mdHost.className = 'canvas-md-viewer';
   mdHost.innerHTML = html;
-  // 段首空白归一（撤回批 2026-11-05 16:43 作者令「文档只缩进首行」）：文档首行缩进
-  // 有两个来源 —— ① 阅读面 CSS `.canvas-md-viewer > p { text-indent: 2em }`（split.css，
-  // 任何 md 都成立）；② 源文件以 `&emsp;&emsp;` 起行（文档写作纪律，作者 11:09 令：
-  // Markdown 无布局，实体是 Obsidian 与渲染器都认的写法）。两者叠加会让首行变成
-  // **四字**，与「只缩进首行（两字）」相悖。此处把段首的 em space / 全角空格剥掉，
-  // 让 CSS 的 2em 成为唯一来源 —— 源文件不动（Obsidian 侧仍由实体承载缩进），渲染面
-  // 恒为两字。只处理**直接子** p：列表 / 引用 / 表格 / 代码块内的段落本就不吃缩进。
+  if (isSingleMermaidBlock(mdHost)) pane.dataset.canvasKind = 'mermaid';
+  else delete pane.dataset.canvasKind;
+  // 作者 2026-11-24 令文档首行缩进「都去掉」。剥除直接子段落开头的 em space /
+  // 全角空格，避免源码中已有空格造成视觉缩进；不改变源文件或列表等结构内容。
   mdHost.querySelectorAll(':scope > p').forEach((p) => {
     const first = /** @type {Text} */ (p.firstChild);
     if (!first || first.nodeType !== 3) return;
@@ -1551,6 +1421,9 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
         if (termTapExpand(/** @type {HTMLAnchorElement} */ (wikilink), mdViewer)) {
           e.preventDefault();
           e.stopPropagation();
+          // S2 定位腿（#2936）：文档名词条点击旁路定位文件浏览器里的目标文件
+          //（与释义气泡同一次点击，两动作互不阻塞——定位是纯旁路）。
+          if (wikilink.dataset.wikiMention) revealMentionInExplorer(/** @type {HTMLAnchorElement} */ (wikilink), baseDir);
           return;
         }
         e.preventDefault();

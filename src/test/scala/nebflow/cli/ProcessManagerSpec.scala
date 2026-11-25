@@ -120,6 +120,8 @@ class ProcessManagerSpec extends FunSuite:
           assert(reason.contains("4242"), reason)
           assert(reason.contains("still running"), reason)
         case other => fail(s"expected Failed with residue pid, got $other")
+      assert(os.exists(PathUtil.dataRoot / ".pid"), "residue must preserve the pid file")
+      assert(os.exists(PathUtil.dataRoot / ".pid.meta"), "residue must preserve pid metadata")
     }
   }
 
@@ -211,13 +213,20 @@ class ProcessManagerSpec extends FunSuite:
   test("dev-host target on 8080 (GatewayMain cmdline) ⇒ Refused, --force does not bypass, zero destroy") {
     withTempRoot {
       ProcessManager.writePid(selfPid())
-      val (deps, rec) = stubDeps(readCmd = _ => Some(SbtDevCmd), portsOf = _ => List(8080))
+      var sweeps = 0
+      val (deps, rec) = stubDeps(
+        readCmd = _ => Some(SbtDevCmd),
+        portsOf = _ => List(8080),
+        homeSweep = () => { sweeps += 1; Nil }
+      )
       runStop(ProcessManager.StopOptions(force = true), deps) match
         case ProcessManager.StopOutcome.Refused(reason) =>
           assert(reason.contains("8080"), reason)
           assert(reason.contains("not bypassable"), reason)
         case other => fail(s"expected Refused, got $other")
       assert(rec.destroyed.isEmpty)
+      assertEquals(sweeps, 0, "hard gate must skip the post-stop sweep")
+      assert(os.exists(PathUtil.dataRoot / ".pid"), "hard gate must retain the pid file")
     }
   }
 
@@ -344,12 +353,21 @@ class ProcessManagerSpec extends FunSuite:
       val pid = selfPid()
       ProcessManager.writePid(pid)
       PidMeta.writeFreshFor(PidMeta.StartedByLauncher, PidMeta.ModeDaemon, pid)
-      val (deps, rec) = stubDeps(isAliveOverride = Some(_ => true))
+      var portReads = 0
+      var sweeps = 0
+      val (deps, rec) = stubDeps(
+        isAliveOverride = Some(_ => true),
+        portsOf = _ => { portReads += 1; Nil },
+        homeSweep = () => { sweeps += 1; Nil }
+      )
       runStop(ProcessManager.StopOptions(), deps) match
         case ProcessManager.StopOutcome.Failed(reason) => assert(reason.contains("did not exit"), reason)
         case other => fail(s"expected Failed, got $other")
-      assert(rec.destroyed.contains(pid)) // graceful leg attempted
-      assert(rec.destroyed.contains(pid)) // graceful leg requested; no force-kill dependency exists
+      assertEquals(rec.destroyed.toList, List(pid))
+      assertEquals(portReads, 1, "failed stop must skip post-stop port confirmation")
+      assertEquals(sweeps, 0, "failed stop must skip residue sweep")
+      assert(os.exists(PathUtil.dataRoot / ".pid"))
+      assert(os.exists(PathUtil.dataRoot / ".pid.meta"))
     }
   }
 
@@ -374,13 +392,18 @@ class ProcessManagerSpec extends FunSuite:
       val pid = selfPid()
       ProcessManager.writePid(pid)
       PidMeta.writeFreshFor(PidMeta.StartedByLauncher, PidMeta.ModeDaemon, pid)
+      var sweeps = 0
       val (deps, rec) = stubDeps(
         portsOf = _ => List(8110),
-        listenerAliveResult = true // never releases
+        listenerAliveResult = true, // never releases
+        homeSweep = () => { sweeps += 1; Nil }
       )
-      val out = runStop(ProcessManager.StopOptions(), deps)
+      val out = runStop(ProcessManager.StopOptions(), deps.copy(drainTimeoutMs = 0L))
       assert(out.isInstanceOf[ProcessManager.StopOutcome.Failed], out.toString)
       assert(rec.probedPorts.contains(8110))
+      assertEquals(sweeps, 0, "busy port must skip residue sweep")
+      assert(os.exists(PathUtil.dataRoot / ".pid"))
+      assert(os.exists(PathUtil.dataRoot / ".pid.meta"))
     }
   }
 

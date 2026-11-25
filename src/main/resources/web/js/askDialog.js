@@ -29,6 +29,7 @@
 // 落盘 / 拖拽改尺寸状态机 / 画布专属帧（askNote*/askEdit*/askHandoffAck）。
 
 import { h } from './dom.js';
+import { startWorklineDots, thinkingWorklineItem, startWorklineItem, worklineToolDetail, doneWorklineItem, failWorklineItem, removeWorkline } from './workline.js';
 import { askBubbleClass, chatComposerClass } from './chatUi.js';
 import { renderMarkdownWithMath, createIconsIn } from './utils.js';
 // 图片附件（ask 附图批）：压缩管线 = 主会话同款（input/attachments.js 单点导出），
@@ -48,6 +49,12 @@ import { createScrollPill, bottomDistance, AT_BOTTOM_PX } from './scrollPill.js'
 // 都不计未读）。抽取批后本内核是 canvas 档唯一的落列/计数写点，故该腿落在这里（作者线
 // 该腿写在旧 askDock.js 的 settleCol，那一段已被抽取批搬空 ⇒ 按其语义在本处重建）。
 import { countUnread } from './unreadCount.js';
+// 回答正文相对路径图片（ask-image-ticket 批 2026-11-24 · 作者报「Ask 回答正文
+// 相对路径图片看不了」）：DOM 级图片 pass 单源在 mdImagePass.js（候选表/铸票/账本/
+// 失败占位/级联自愈与文档查看器共用同一实现）。本内核只补三样：cfg.docPath 缝
+//（所问文档的绝对路径，消费者注入）、每渲染轮的 epoch 竞争闸、setMarkdownHtml
+// 落地后的挂点。通用 markdown 渲染本身零改动——其余调用方零影响。
+import { resolveRelativeImages, neutralizePendingImages } from './mdImagePass.js';
 import { timeDividerIndices, timeDividerLabel, msgTs, carryTs } from './askTimeDivider.js';
 import { formatHm } from './timeFormat.js';
 // card-tool-revive 批（2026-11-18 作者裁定②）：ask 会话里 Card 工具返回的 HTML 卡
@@ -97,6 +104,12 @@ function setMarkdownHtml(node, text, streaming) {
     ? renderMarkdownWithMath(text, true, { cache: false })
     : renderMarkdownWithMath(text);
   const parsed = new DOMParser().parseFromString(String(html || ''), 'text/html');
+  // 落 DOM 前先摘「会被页面相对解析」的 img src（ask-image-ticket 批）：importNode
+  // /replaceChildren 一步就会让浏览器对相对路径发一轮注定 404 的请求（WebKit
+  // clone 拍即取数；Chromium 任务拍判，但无文档分支 replaceWith 不摘 src ⇒ 照样
+  // 发）——双核红实证。摘掉后终局 src 由 renderImages 的 DOM 级 pass 就地换上；
+  // 远端 / data: / blob: / 已代理 URL 原样（通用渲染语义不动）。
+  neutralizePendingImages(parsed.body);
   node.replaceChildren(...Array.from(parsed.body.childNodes, (n) => document.importNode(n, true)));
 }
 
@@ -114,17 +127,25 @@ function setMarkdownHtml(node, text, streaming) {
  * @property {boolean} [busy]
  * @property {number} [lastFrameAt]
  * @property {string} [mailAddress]
+ * @property {string} [replyState]
+ * @property {any} [askWorklineView]
+ * @property {string} [askThinking]
+ * @property {string} [askTool]
+ * @property {string} [askToolDetail]
+ * @property {string} [askLastKind]
+ * @property {string} [askBufferedText] Canvas text awaiting a message boundary
  */
 
 /**
  * @typedef {Object} AskDialogCfg
  * @property {(zh: string, en: string) => string} tt 双语
  * @property {string} placeholder 输入条 placeholder
+ * @property {boolean} [workline] Canvas workline opt-in
  * @property {() => AskSession|null} activeSession 当前会话
  * @property {(s: AskSession) => boolean} canSubmit 发送前硬闸
  * @property {() => Promise<AskSession|null>} ensureSession 取/建会话
  * @property {(s: AskSession) => void} ensureBound 发送前绑定帧
- * @property {(s: AskSession, text: string) => any} send 发送腿（返回值原样经 onQueued 回传）
+ * @property {(s: AskSession, text: string, attachments: Array<{name: string, mimeType: string, data: string, size: number}>) => any} send 发送腿（返回值原样经 onQueued 回传）
  * @property {(msg: any) => ('state'|'delta'|'done'|'interrupted'|'error'|'user'|null)} frameKind 帧名→动作
  * @property {(s: AskSession) => void} [onUnread] 未读点等消费者副作用
  * @property {(s: AskSession) => void} [onPersist] 落盘
@@ -139,6 +160,10 @@ function setMarkdownHtml(node, text, streaming) {
  * @property {(node: HTMLElement, msg: any) => void} [termLinks] 回答词条化钩子（多选
  *   合并 Ask 批 2026-11-23，设计正本 §5 G4）：消费方在**终态落列**的 ai 气泡体上挂
  *   词条链接腿；本内核不认识词表（缺省 = 零动作，canvas 档逐字现状）。
+ * @property {() => string} [docPath] 所问文档的绝对路径钩子（ask-image-ticket 批
+ *   2026-11-24）：回答正文相对路径图片以**该文档所在目录**为基准解析（候选 → 铸票
+ *   → 账本 → 失败占位，单源 mdImagePass）。缺省/空 = 无文档上下文 ⇒ 相对引用落
+ *   明确占位、零网络（选区档现状即此形态，不再是注定 404 的页面相对请求）。
  * @property {string} [panelClass] 面板类（缺省 'ask-dock'）
  */
 
@@ -318,6 +343,28 @@ export function createAskDialog(cfg) {
   let colSnapped = true;
   let colUnseen = 0;
 
+  // ── 回答正文相对路径图片（ask-image-ticket 批 2026-11-24）──────────────────
+  // 竞争闸：Ask 的正文会**多次重渲**（流式 done / askState 回放 / 切文档都重建
+  // 气泡）。每渲染轮持一个 epoch；铸票/取数是异步的，迟到的旧轮结果一律弃写
+  // ——不回填已被新轮替换的节点，也不对已弃图再发字节请求。同轮的多个气泡
+  // 共用一个 epoch（一轮 render 只递增一次，不能逐气泡递增——否则同轮前排
+  // 气泡会被后排气泡「挤死」）。
+  let mdImgEpoch = 0;
+  const nextMdEpoch = () => ++mdImgEpoch;
+  /**
+   * 气泡体落地后的图片 pass 挂点：docPath 由消费者注入（canvas 档 = 所问文档
+   * 绝对路径；选区档缺省 = 无文档上下文），账本 blob 归属面 = 气泡体自身。
+   * @param {HTMLElement} node 气泡体
+   * @param {number} epoch 本渲染轮令牌
+   */
+  function renderImages(node, epoch) {
+    resolveRelativeImages(node, {
+      docPath: cfg.docPath ? cfg.docPath() : '',
+      pane: node,
+      alive: () => epoch === mdImgEpoch,
+    }).catch(() => { /* 铸票/取数失败 ⇒ mdImagePass 落失败占位；这里不再加面 */ });
+  }
+
   const dlg = {
     panel, handle, colwrap, col, inputRow, input, send, stop,
 
@@ -413,6 +460,8 @@ export function createAskDialog(cfg) {
     // （原释放契约不放松：泄漏面仍是每张 2–10MB 的独立上下文）。
     render() {
       const s = cfg.activeSession();
+      // 本渲染轮的图片 pass 令牌（见上方 mdImgEpoch 头注）：本轮内所有 ai 气泡共用。
+      const mdEpoch = nextMdEpoch();
       // v2.1 显示面减法：只出 user/ai 两族——sys（回执/状态噪声类）转录仍存但永不呈现。
       const vis = s ? s.msgs.filter((m) => m.role !== 'sys') : [];
       const rowsDesired = vis.map((m) => (m.role === 'card'
@@ -449,7 +498,7 @@ export function createAskDialog(cfg) {
       const existing = Array.from(col.children);
       for (const node of existing) {
         if (!node.classList || !node.classList.contains('ask-card-row')) continue;
-        const k = node.dataset ? node.dataset.nfCardKey || '' : '';
+        const k = node.getAttribute('data-nf-card-key') || '';
         if (!pool.has(k)) pool.set(k, []);
         /** @type {HTMLElement[]} */ (pool.get(k)).push(/** @type {HTMLElement} */ (node));
       }
@@ -526,10 +575,23 @@ export function createAskDialog(cfg) {
             // 族，消费者经 cfg 注入。只在**终态落列**（render）走一次，流式增量
             // （updateStreaming）不扫，避免每帧一次图谱遍历。
             if (m.role === 'ai') cfg.termLinks?.(b, m);
+            // 相对路径图片 pass（ask-image-ticket 批）：ai 正文里的 <img> 以所问文档
+            // 目录为基准铸票换 src（与词条化同一挂点、同轮 epoch；用户泡是纯文本面，
+            // 不进 pass）。
+            if (m.role === 'ai') renderImages(b, mdEpoch);
           }
           node = b;
         }
         col.insertBefore(node, ref);
+      }
+      if (cfg.workline && s && s.busy) {
+        dlg.appendTyping();
+        const view = s.askWorklineView;
+        if (s.askLastKind === 'thinking' && s.askThinking) thinkingWorklineItem(view, s.askThinking);
+        if (s.askLastKind === 'tool' && s.askTool) {
+          startWorklineItem(view, s.askTool);
+          if (s.askToolDetail) worklineToolDetail(view, s.askToolDetail);
+        }
       }
       // 落列后的跟随/计数由调用点经 settleCol/snapCol 单点决定（本函数只建 DOM）。
     },
@@ -540,8 +602,11 @@ export function createAskDialog(cfg) {
       const last = s.msgs[s.msgs.length - 1];
       const node = col.lastElementChild;
       if (!node || !node.classList.contains('ai')) { dlg.render(); return; }
-      if (last) setMarkdownHtml(node, last.text, true);
-      else node.replaceChildren();
+      if (last) {
+        setMarkdownHtml(node, last.text, true);
+        // 流式轮自成一轮 epoch（同 render：新轮结果落地前，旧轮的图片 pass 弃写）。
+        renderImages(/** @type {HTMLElement} */ (node), nextMdEpoch());
+      } else node.replaceChildren();
       col.scrollTop = col.scrollHeight;
     },
 
@@ -576,6 +641,18 @@ export function createAskDialog(cfg) {
 
     // ── 思考指示 / typing ─────────────────────────────────────────────────
     appendTyping() {
+      if (cfg.workline) {
+        dlg.removeTyping();
+        const host = h('div', { class: 'ask-workline-host' });
+        col.appendChild(host);
+        typingNode = host;
+        const s = cfg.activeSession();
+        if (s) {
+          s.askWorklineView = { dom: { chat: host }, motionEnabled: () => true };
+          startWorklineDots(s.askWorklineView);
+        }
+        return;
+      }
       dlg.removeTyping();
       const tp = h('div', {
         class: 'ask-stream-line',
@@ -594,13 +671,62 @@ export function createAskDialog(cfg) {
       if (dlg.colFollows()) col.scrollTop = col.scrollHeight;
       typingNode = tp;
     },
+    // Canvas buffers text outside the transcript until the same boundaries used by
+    // the main session. A subsequent delta always starts a fresh message.
+    flushBufferedText(s) {
+      const text = s.askBufferedText || '';
+      s.askBufferedText = '';
+      if (!text.trim()) return null;
+      const row = { role: 'ai', text, ts: Date.now() };
+      s.msgs.push(row);
+      cfg.onPersist?.(s);
+      if (s === cfg.activeSession() && dlg.isOpen()) {
+        dlg.render();
+        dlg.settleCol([row]);
+      }
+      return row;
+    },
+    processWorkline(s, msg) {
+      if (!cfg.workline || !s || !s.busy) return;
+      if (msg.type === 'toolStart' || msg.type === 'roundComplete') dlg.flushBufferedText(s);
+      s.lastFrameAt = Date.now();
+      if (msg.type === 'thinkingDelta') {
+        if (s.askLastKind !== 'thinking') s.askThinking = '';
+        s.askLastKind = 'thinking';
+        s.askThinking = (s.askThinking || '') + (msg.delta || '');
+      }
+      if (msg.type === 'toolCallDetected' || msg.type === 'toolStart') {
+        s.askLastKind = 'tool';
+        s.askTool = msg.label || msg.toolName || msg.name || 'Tool';
+        s.askToolDetail = '';
+      }
+      if (msg.type === 'toolArgDelta') {
+        s.askToolDetail = (s.askToolDetail || '') + (msg.delta || '');
+      }
+      if (s !== cfg.activeSession() || !dlg.isOpen()) return;
+      if (!typingNode || !typingNode.isConnected) dlg.appendTyping();
+      const view = s.askWorklineView;
+      if (!view) return;
+      if (msg.type === 'thinkingDelta') {
+        thinkingWorklineItem(view, s.askThinking);
+      }
+      if (msg.type === 'toolCallDetected' || msg.type === 'toolStart') startWorklineItem(view, s.askTool);
+      if (msg.type === 'toolArgDelta') worklineToolDetail(view, s.askToolDetail);
+      if (msg.type === 'toolEnd' && s.askTool) {
+        const finish = msg.isError ? failWorklineItem : doneWorklineItem;
+        finish(view, s.askTool, msg.summary || msg.label || s.askTool);
+      }
+    },
     updateTypingText(text) {
+      if (cfg.workline) { dlg.removeTyping(); dlg.updateStreaming(cfg.activeSession()); return; }
       if (!typingNode || !typingNode.isConnected || typeof text !== 'string') return;
       if (!text) return; // 思考期保持 spinner：首个非空 token 才换相
       typingNode.textContent = text;
       typingNode.scrollLeft = typingNode.scrollWidth;
     },
     removeTyping() {
+      const s = cfg.activeSession();
+      if (cfg.workline && s && s.askWorklineView) removeWorkline(s.askWorklineView);
       if (typingNode && typingNode.isConnected) typingNode.remove();
       typingNode = null;
     },
@@ -626,6 +752,7 @@ export function createAskDialog(cfg) {
       input.value = '';
       input.style.height = 'auto';
       // ④ 双泡修复批 2026-10-31：发问时**不再预压空 ai 泡**——等待期只有 typing。
+      if (cfg.workline) { s.askThinking = ''; s.askTool = ''; s.askToolDetail = ''; s.askLastKind = ''; s.askBufferedText = ''; }
       const userRow = { role: 'user', text: v, ts: Date.now() };
       if (picked.length) userRow.images = picked.map((p) => ({ name: p.name, url: p.url }));
       s.msgs.push(userRow);
@@ -652,6 +779,7 @@ export function createAskDialog(cfg) {
     /** 收：终态（busy 清 + 中断钮让位；幂等）。 */
     settleTurn(s, outcome = 'replied') {
       if (!s) return;
+      if (cfg.workline) dlg.flushBufferedText(s);
       s.busy = false;
       // 只从「处理中」落到终态；已落终态（如先点停、后到的服务端 done）不被覆盖。
       if (s.replyState === 'working') s.replyState = outcome;
@@ -756,6 +884,10 @@ export function createAskDialog(cfg) {
         case 'delta': {
           if (!(entry === cfg.activeSession() && dlg.isOpen())) entry.unread = true;
           dlg.armTurn(entry);
+          if (cfg.workline) {
+            entry.askBufferedText = (entry.askBufferedText || '') + (msg.delta || '');
+            return consumed();
+          }
           const last = entry.msgs[entry.msgs.length - 1];
           if (!last || last.role !== 'ai') entry.msgs.push({ role: 'ai', text: '', ts: Date.now() });
           const ai = entry.msgs[entry.msgs.length - 1];

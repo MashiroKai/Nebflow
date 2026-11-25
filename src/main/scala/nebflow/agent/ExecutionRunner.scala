@@ -1,8 +1,8 @@
 package nebflow.agent
 
-import cats.effect.{Deferred, Fiber, IO, Ref, Resource}
 import cats.effect.kernel.Outcome
 import cats.effect.std.Semaphore
+import cats.effect.{Deferred, Fiber, IO, Ref, Resource}
 import cats.syntax.all.*
 
 import scala.concurrent.duration.FiniteDuration

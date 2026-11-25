@@ -18,6 +18,7 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
+import { mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { openHubPage } from './_mobile-dock-nav.mjs';
 
@@ -130,6 +131,61 @@ test.beforeEach(async ({ page }) => {
 /** @type {{sendTasks: (list: any[]) => void}|null} */
 let harness = null;
 
+test('mobile reminder audit: containment, header, floating control and long text', async ({ page }) => {
+  const tasks = taskFixture();
+  tasks[0].content = '长提醒内容用于测试文字是否截断或完整显示'.repeat(12);
+  for (let i=0;i<30;i++) tasks.push({id:`audit-${i}`,content:`巡检提醒 ${i}`,triggerAt:T0+7200000+i*1000,enabled:true,triggered:false});
+  await openPanel(page);
+  harness.sendTasks(tasks);
+  await expect(page.locator('#reminder-panel .reminder-row')).toHaveCount(tasks.length);
+  const row = page.locator('#reminder-panel .reminder-row').first();
+  await expect(row).toBeVisible();
+  const result = await page.evaluate(() => {
+    const panel = document.querySelector('#reminder-panel');
+    const body = panel.querySelector('.reminder-panel-body');
+    const row = panel.querySelector('.reminder-row');
+    const text = row.querySelector('.reminder-row-text');
+    const header = panel.querySelector('.reminder-panel-header');
+    const fab = panel.querySelector('.reminder-fab-add');
+    body.style.scrollBehavior = 'auto';
+    body.scrollTop = 0;
+    const r = row.getBoundingClientRect(), h = header.getBoundingClientRect();
+    const cs = getComputedStyle(text);
+    const long = text.scrollWidth > text.clientWidth;
+    const clipped = long && cs.whiteSpace === 'nowrap' && cs.textOverflow === 'ellipsis' && cs.overflowX === 'hidden';
+    body.scrollTop = body.scrollHeight;
+    const f = fab.getBoundingClientRect();
+    const rows = [...panel.querySelectorAll('.reminder-row')];
+    const b=rows[rows.length-1].getBoundingClientRect();
+    const overlap = b.left < f.right && b.right > f.left && b.top < f.bottom && b.bottom > f.top;
+    return { left: r.left, right: r.right, rowTop: r.top, headerBottom: h.bottom, overlap, long, clipped, lastBottom:b.bottom, fabTop:f.top };
+  });
+  expect(result.left).toBeGreaterThanOrEqual(0);
+  expect(result.right).toBeLessThanOrEqual(375);
+  expect(result.rowTop).toBeGreaterThanOrEqual(result.headerBottom - 1);
+  expect(result.overlap).toBe(false);
+  expect(result.lastBottom).toBeLessThanOrEqual(result.fabTop);
+  expect(result.long && result.clipped).toBe(true);
+  const scroll = page.locator('#reminder-panel .reminder-panel-body');
+  for (const f of [0, 0.5, 1]) {
+    const geo = await scroll.evaluate((el, fraction) => {
+      el.scrollTop = (el.scrollHeight - el.clientHeight) * fraction;
+      const b=el.getBoundingClientRect(), h=document.querySelector('#reminder-panel .reminder-panel-header').getBoundingClientRect();
+      const items=[...el.querySelectorAll('.reminder-row')].map(n=>n.getBoundingClientRect()).filter(r=>r.bottom>b.top && r.top<b.bottom).map(r=>({left:r.left,right:r.right,top:r.top}));
+      return {left:b.left,right:b.right,top:b.top,headerBottom:h.bottom,scroll:el.scrollTop,max:el.scrollHeight-el.clientHeight,items};
+    }, f);
+    expect(geo.left).toBeGreaterThanOrEqual(0); expect(geo.right).toBeLessThanOrEqual(375);
+    expect(geo.top).toBeGreaterThanOrEqual(geo.headerBottom - 1);
+    expect(geo.max).toBeGreaterThan(0); expect(Math.abs(geo.scroll-geo.max*f)).toBeLessThan(2);
+    const hit=await page.locator('#reminder-panel .reminder-fab-add').evaluate(el=>{const b=el.getBoundingClientRect(),n=document.elementFromPoint(b.left+b.width/2,b.top+b.height/2);return n===el||el.contains(n)}); expect(hit).toBe(true);
+    expect(geo.items.length).toBeGreaterThan(0); for(const item of geo.items) {expect(item.left).toBeGreaterThanOrEqual(0); expect(item.right).toBeLessThanOrEqual(375); if(item.top>=geo.top) expect(item.top).toBeGreaterThanOrEqual(geo.headerBottom-1);}
+  }
+  const allRows=page.locator('#reminder-panel .reminder-row');
+  for(let i=0;i<await allRows.count();i++) {const item=allRows.nth(i); await item.evaluate(el=>el.scrollIntoView({block:'center',behavior:'instant'})); const b=await item.boundingBox(),h=await page.locator('#reminder-panel .reminder-panel-header').boundingBox(),d=await page.locator('#mobile-dock').boundingBox(); expect(b.y).toBeGreaterThanOrEqual(h.y+h.height-1); expect(b.y+b.height).toBeLessThanOrEqual(d.y);}
+  const out = process.env.MOBILE_AUDIT_EVIDENCE;
+  if (out) { mkdirSync(out, { recursive: true }); await page.screenshot({ path: join(out, '提醒.png'), animations: 'disabled' }); }
+});
+
 test('T1 page geometry: adopted full-bleed in reminder page, radius 0 (dock 批换代判据)', async ({ page }) => {
   const errors = watchErrors(page);
   await openPanel(page);
@@ -195,10 +251,11 @@ test('T4 next-trigger main line + last-triggered sub line (open point ①)', asy
   const body = page.locator('#reminder-panel .reminder-panel-body');
   const row = body.locator('.reminder-row', { hasText: '每小时巡检构建' });
   await expect(row.locator('.reminder-row-time')).toContainText('今天');
-  await expect(row.locator('.reminder-row-last')).toContainText('上次触发');
-  // 无 lastTriggered 的行不出现副行节点。
+  await row.locator('.reminder-expand-btn').click();
+  await expect(row.locator('.reminder-row-fact').filter({ hasText: '上次触发' })).toBeVisible();
+  // 无 lastTriggered 的行不出现对应详情。
   const daily = body.locator('.reminder-row', { hasText: '每天晨报摘要' });
-  await expect(daily.locator('.reminder-row-last')).toHaveCount(0);
+  await expect(daily.locator('.reminder-row-fact').filter({ hasText: '上次触发' })).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 

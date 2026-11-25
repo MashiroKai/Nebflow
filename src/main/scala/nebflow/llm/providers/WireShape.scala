@@ -128,7 +128,7 @@ object WireShape:
   private def blockTag(b: ContentBlock): String = b match
     case ContentBlock.Text(_) => "t"
     case ContentBlock.Image(_, _) => "i"
-    case ContentBlock.ToolUse(_, _, _) => "u"
+    case ContentBlock.ToolUse(_, _, _, _) => "u"
     case ContentBlock.ToolResult(_, _, _) => "r"
     case ContentBlock.Thinking(_, _) => "k"
 

@@ -3,12 +3,11 @@ package nebflow.core.tools
 import cats.effect.std.Semaphore
 import cats.effect.{IO, Ref}
 import io.circe.{Json, JsonObject}
-import nebflow.actor.*
+import nebflow.actor.{RootAgentIdentity, *}
 import nebflow.core.hooks.*
 import nebflow.core.task.TaskStore
 import nebflow.core.{AgentLibraryView, AgentRuntimePort, FileChangeLedger, FileChangeTracker}
 import nebflow.shared.*
-import nebflow.actor.RootAgentIdentity
 
 /** Runtime-only identity minted by AgentSessionExecution; not representable in tool input. */
 final class ToolExecutionIdentity private[tools] (val agentName: String, val role: String, private val seal: AnyRef)
@@ -27,6 +26,9 @@ object ToolExecutionIdentity:
 // 字段类型窄化,agent 定位器类型退出 core
 case class ToolContext(
   projectRoot: String,
+  deviceZone: Option[String] = None,
+  recentDeviceZone: Option[nebflow.core.scheduler.DeviceZoneReport] = None,
+  deviceZoneFallbackAllowed: Boolean = false,
   llm: Option[LlmHandle[IO]] = None,
   sessionStore: Option[nebflow.core.SessionStorePort] = None,
   agentActorRef: Option[ActorRef[AgentCommand]] = None,

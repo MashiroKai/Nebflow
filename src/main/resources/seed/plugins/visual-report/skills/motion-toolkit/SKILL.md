@@ -106,7 +106,7 @@ cd C:/Users/name/.nebflow/skills/visual-report-suite/motion-toolkit/scripts
 | three.js | 自包含交互 HTML（拖拽 3D、离线双击可开、前端白名单目录可服务） | 嵌入 Pop（core §3：Pop 只挂 SVG/PNG 静态图源）；视频文件 | **可用**（冒烟通过）——同日通路验证已复核（§5.1） |
 | 备选栈 | MP4 / GIF 数据动画；与插件 matplotlib 出图同源同字体 | 交互；3D 复杂场景表现力弱 | **可用**（冒烟通过）——同日通路验证已复核（§5.1） |
 
-交付形式注意：视频/交互 HTML 是**文件交付**（正文写 `~/...` 绝对路径，走 core §2 白名单，默认 `~/.nebflow/plots/`）； Pop 悬浮预览只挂静态图源（core §3）。GIF/PNG 可被正文 `![...]()` 直接嵌入；MP4/HTML 写路径交付。
+交付形式注意：视频/交互 HTML 是**文件交付**（正文写 `~/...` 绝对路径，走 core §2 白名单，默认 `~/.nebflow/plots/`）； Pop 悬浮预览只挂静态图源（core §3）。PNG 可被正文 `![...]()` 直接嵌入，GIF 作为文件交付；MP4/HTML 写路径交付。
 
 ### 5.1 通路验证结论（教育三形态 demo，2026-10-04 实测；场景侧判定见 education SKILL「展示通路」）
 

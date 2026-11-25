@@ -107,6 +107,9 @@
      （meta↔micro、hint↔label、body↔body、title↔sub、display↔title），故只补
      草案里原先空缺的两档；档数增不改五档语义，消费点零改动。 */
   --ds-fs-lead: 17px;      /* Apple body 17（M5：手机档已落地 --mfs-body 17，桌面正文仍 13px 密度档） */
+  --ds-fs-page-back: 30px; /* 收藏页等文本箭头的既有字号 */
+  --ds-page-back-size: 36px; /* 顶栏文本返回按钮的既有尺寸 */
+  --ds-fav-star: currentColor; /* 保持收藏星标原有的继承色 */
   --ds-fs-title-lg: 28px;  /* 大标题档（与手机层 --mfs-title 28 同值对齐） */
 
   /* ── ③ 行高与字距（SKILL.md §3 + 值重定批 §3.3 H/L 组）── */
@@ -181,15 +184,11 @@
      收敛 4px 会让密集控件贴死，收敛 8px 会让每行膨胀，故以具名半步档收编，
      **限定小件内缝**（行/卡的块距仍走栅格 8/12/16）。值 = 现盘 6px 逐字搬迁。 */
   --ds-space-1h: 6px;
-  /* 文档排版缩进组（撤回批 2026-11-05 16:43 作者令：①「你发的消息不加缩进功能」
-     ②「文档只缩进首行」）：以 em 表达（跟字号走，亮暗双档同值，拖动字号不脱节）。
-       · 首行缩进 = 2em（中文排版两字）——**只**用于文档阅读面（css/split.css
-         .canvas-md-viewer 的直接子 p）；气泡面（css/chat.css）零缩进，不再引用它。
+  /* 列表结构缩进以 em 表达；作者 2026-11-24 令文档首行缩进「都去掉」。
        · 列表每级缩进 = 1.6em（> 一档字号 ⇒ 二三级可辨层级；嵌套按级累加）；
        · 窄屏（≤390px）收一档 1.15em：手机上 2em 级联三级会吃掉可用宽度。
      消费面（禁裸 margin 拼缩进）：css/split.css md 阅读面（chat.css 气泡族已于
      撤回批退出本组）。 */
-  --ds-text-indent: 2em;
   --ds-list-indent: 1.6em;
   --ds-list-indent-narrow: 1.15em;
   --ds-density-row-compact: 36px; /* 紧凑行档（= --cv-head-h 胶囊行带值 36px） */
@@ -209,6 +208,7 @@
      值重定批 §3.3 R 组吸收：既有 badge/chip/input/button/shell/pill 六槽与草案
      xs/sm/md/lg/window/pill 逐档同值（4/6/8/10/20/999，Apple rounded.sm 8px 与
      NVIDIA --radius-lg 8px 三源互证），故只补草案里原先无归属的两档。 */
+  --ds-radius-none: 0px;     /* 结构性直角 */
   --ds-radius-badge: 4px;    /* 徽标 pill、行内 code；NVIDIA --radius-md 4px 同值互证 */
   --ds-radius-chip: 6px;     /* 28px 图标钮、chip */
   --ds-radius-input: 8px;    /* 输入/下拉/面板档按钮 */
@@ -240,6 +240,7 @@
   /* 阴影吸收（值重定批 §3.3 D 组）：两档都是**既有单源的别名**，不复制值——
      Apple「唯一投影」纪律（M7）不采，理由：玻璃浮件靠浮影分层，投影是功能
      不是装饰。文字位禁 box-shadow 判据另记（非 token）。 */
+  --ds-shadow-favorites-path: 0 4px 20px #0006;
   --ds-shadow-float: var(--cv-shadow);            /* 浮件三档栈（悬浮控件单源，亮暗已在 sapphire.css） */
   --ds-shadow-press: var(--ig-shadow-press);      /* 墨玻璃按压影单源（glass.css） */
   /* 按钮面统一阴影 = canvas 基准配方（作者令 2026-11-22 22:54「以 canvas 为准统一」）。
@@ -353,6 +354,10 @@
   --ds-capsule-pad: 6px 8px 6px 14px;        /* 胶囊内距（手机/基线档） */
   --ds-capsule-pad-desk: 4px 7px 4px 12px;   /* 桌面腿 36px 固定高胶囊内距 */
   --ds-capsule-gap: 6px;                     /* 胶囊内件缝（图标/标题/pop 钮） */
+  --ds-capsule-end-inset: 4px;              /* 对称端部控制的外缘内缩 */
+  --ds-capsule-end-size: 26px;              /* 36px 外壳减描边和双侧内缩 */
+  --ds-capsule-end-icon: 13px;              /* 两端图标相同光学盒 */
+  --ds-capsule-end-radius: calc(var(--capsule-h) / 2 - var(--ds-capsule-end-inset) - var(--ds-border-width));
   --ds-tab-track: rgb(128 128 128 / 0.08);   /* 看板页签轨底（灰通道洗选） */
   --ds-tab-hover: rgb(128 128 128 / 0.15);   /* 页签悬停洗选 */
   --ds-tab-divider: rgb(128 128 128 / 0.25); /* 未选中页签分隔线（暗档同值） */
@@ -1041,6 +1046,19 @@
 }
 .ds-tool-card:hover,
 .ds-tool-card--pending { background: var(--ds-control-bg-hover); }
+/* Shared page-header text back control; geometry preserves the existing favorites page. */
+.page-back {
+  width: var(--ds-page-back-size);
+  height: var(--ds-page-back-size);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--ds-fs-page-back);
+  line-height: 1;
+  cursor: pointer;
+}
+
 .ds-tool-card .icon { flex-shrink: 0; margin-top: var(--ds-space-hair); }
 .ds-tool-card .icon.ok { color: var(--ds-success-icon); }
 .ds-tool-card .icon.err { color: var(--ds-danger-icon); }

@@ -127,12 +127,12 @@ object CompactUtils:
         msg.content match
           case Right(blocks) =>
             val filtered = blocks.filter {
-              case ContentBlock.ToolUse(id, _, _) => !removedToolUseIds.contains(id)
+              case ContentBlock.ToolUse(id, _, _, _) => !removedToolUseIds.contains(id)
               case _ => true
             }
             // If the assistant message only had ToolUse blocks and all were removed, drop it entirely
             val hasContent = filtered.exists {
-              case ContentBlock.ToolUse(_, _, _) => false
+              case ContentBlock.ToolUse(_, _, _, _) => false
               case ContentBlock.Text(t) if t.trim.isEmpty => false
               case ContentBlock.Thinking(t, _) if t.trim.isEmpty => false
               case _ => true
@@ -180,7 +180,7 @@ object CompactUtils:
           blocks.map {
             case ContentBlock.Text(t) => t.length
             case ContentBlock.ToolResult(_, content, _) => content.length
-            case ContentBlock.ToolUse(_, _, input) => input.asJson.noSpaces.length
+            case ContentBlock.ToolUse(_, _, input, _) => input.asJson.noSpaces.length
             case ContentBlock.Thinking(t, _) => t.length
             case ContentBlock.Image(_, _) => 100 // rough
           }.sum

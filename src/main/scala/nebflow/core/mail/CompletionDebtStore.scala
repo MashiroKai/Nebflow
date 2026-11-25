@@ -4,11 +4,10 @@ import cats.effect.IO
 import io.circe.*
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.core.AtomicJson
-import nebflow.shared.{Message, PathUtil}
 import nebflow.actor.AgentCommand
+import nebflow.core.AtomicJson
 import nebflow.shared.given
-import nebflow.shared.NebflowLogger
+import nebflow.shared.{Message, NebflowLogger, PathUtil}
 
 /** Durable, identity-keyed completion debt for a session's current supervisor. */
 object CompletionDebtStore:

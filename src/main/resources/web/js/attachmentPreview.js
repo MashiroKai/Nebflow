@@ -494,5 +494,10 @@ export async function previewWithProgress({ id, title, fileName, itemType, load,
   const entry = openTab(id, title || id, { type: typeGuess || 'generic', absPath, pinned: !!pinned });
   if (!entry) return 'failed';
   entry.paneEl.dataset.attachmentPreview = '1';
-  return runProgressAttempt(entry.paneEl, { id, title, fileName, itemType: typeGuess, load, cacheKey, timeoutMs, allowExcluded });
+  // absPath 必须随取数腿一起进渲染上下文（ask-image-ticket 批 2026-11-24，S1 红
+  // 实证）：只给了 openTab（页签账面）而没传 runProgressAttempt ⇒ 渲染腿的
+  // renderBase 落空 ⇒ markdown viewer 的「文档图片 pass」被 `if (absPath)` 闸
+  // 挡住 ⇒ Pop 文档卡正文图片按页面相对 URL 解析 404。openPopArtifact 声明的
+  // absPath（乐观打开腿解析相对引用的唯一基准）从这里起逐层透传到 viewMarkdown。
+  return runProgressAttempt(entry.paneEl, { id, title, fileName, itemType: typeGuess, load, cacheKey, timeoutMs, allowExcluded, absPath });
 }

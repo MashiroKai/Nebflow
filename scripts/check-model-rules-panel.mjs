@@ -14,6 +14,7 @@ const rd = (rel) => {
 
 const panel = rd('src/main/resources/web/js/sidebar/modelRulesPanel.js');
 const sidebar = rd('src/main/resources/web/js/sidebar.js');
+const modelPanel = rd('src/main/resources/web/js/modelPanel.js');
 const zh = rd('src/main/resources/web/js/locales/zh-CN.js');
 const en = rd('src/main/resources/web/js/locales/en.js');
 const routes = rd('src/main/scala/nebflow/gateway/ConfigRoutes.scala');
@@ -24,7 +25,7 @@ const checks = [
   ['保存期 422 行号错误回显', /status === 422/.test(panel) && /data-err-line/.test(panel)],
   ['框图节点滚行钩子（data-src-line + scrollTop）', /data-src-line/.test(panel) && /scrollTop/.test(panel)],
   ['三态常量 follow/slots/rules', /MODES\s*=\s*\['follow',\s*'slots',\s*'rules'\]/.test(panel)],
-  ['设置页挂载节 model-rules-section', sidebar.includes("id: 'model-rules-section'") && sidebar.includes('mountModelRulesSection(')],
+  ['设置页规则态唯一挂载', !sidebar.includes("id: 'model-rules-section'") && modelPanel.includes("ruleMode === 'rules'") && modelPanel.includes('mountModelRulesSection(') && !panel.includes('data-mode-set="${m}"')],
   ['zh-CN 三态键', ['modelRules.mode.follow', 'modelRules.mode.slots', 'modelRules.mode.rules'].every((k) => zh.includes(`'${k}'`))],
   ['en 三态键', ['modelRules.mode.follow', 'modelRules.mode.slots', 'modelRules.mode.rules'].every((k) => en.includes(`'${k}'`))],
   ['后端 GET/PUT model-rules 与 mode 路由', routes.includes('"model-rules"') && routes.includes('"model-rules" / "mode"')],

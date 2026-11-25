@@ -3,8 +3,8 @@ package nebflow.agent
 
 import cats.effect.IO
 import cats.syntax.all.*
-import io.circe.syntax.*
 import io.circe.Json
+import io.circe.syntax.*
 import nebflow.actor.*
 import nebflow.core.*
 import nebflow.core.ask.AskService
@@ -397,7 +397,8 @@ private[agent] object AgentFrozen:
             intake,
             fromUser,
             project,
-            queuedAtMs
+            queuedAtMs,
+            deviceZone
           ) =>
         if fromUser || (clientMessageId.isDefined && !nebflow.core.mail.ProducerInput
             .isProducerIdentity(clientMessageId))
@@ -422,6 +423,7 @@ private[agent] object AgentFrozen:
               if chatWidth > 0 then dedupedState.copy(session = dedupedState.session.copy(chatWidth = chatWidth))
               else dedupedState
             val wakeState = stateWithWidth
+              .copy(execution = stateWithWidth.execution.copy(deviceZone = deviceZone))
               .withMessages(stateWithWidth.messages :+ userMsg)
               .withEmptyResponseRetries(0)
               .withMailUsedThisTurn(false)
@@ -491,7 +493,8 @@ private[agent] object AgentFrozen:
                 intake,
                 fromUser,
                 project,
-                queuedAtMs
+                queuedAtMs,
+                deviceZone
               )
             )
           )

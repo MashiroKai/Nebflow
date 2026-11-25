@@ -640,7 +640,7 @@ body.mobile-layer .mobile-page {
 }
 /* ① 底右悬浮钮页：浮钮出现即自动加一层钮带（项名 = 页内真实的浮钮类，
    不枚举页 id —— 新页接同族钮类即自动纳入）。 */
-body.mobile-layer .mobile-page:has(:is(.ta-fab, .tfl-fab-add, .reminder-fab-add, .proj-create-fab, [data-plugins-add])) {
+body.mobile-layer .mobile-page:has(:is(.ta-fab, .ta-quick-fab, .tfl-fab-add, .reminder-fab-add, .proj-create-fab, [data-plugins-add])) {
   --mobile-fab-layer: var(--mpage-fab-clearance);
 }
 /* ② 会话页：输入条浮在 dock 之上（另一件浮件，另占一条带）⇒ 末端净空再叠
@@ -2182,6 +2182,9 @@ body.mobile-layer .mf-strip-chip.on {
    `compare/noborder-*`（无面）两组，闸侧由 canvas-tab-reference 的 R12 兜底（钮的可见面
    零边框，含伪元素）。 */
 body.mobile-layer .mf-strip-quote {
+  border: 0;
+  background: transparent;
+  color: inherit;
   display: none;
   /* ① 命中层修复（本批）：定位 + z-index 1 ⇒ 居于签 ::before（z-index:auto）之上。 */
   position: relative;
@@ -2251,6 +2254,7 @@ body.mobile-layer .mf-strip-chip.is-expanded .mf-strip-label {
    （展开 ~220 ≫ 常态 112，label 拿到的份额仍大于常态档）。
    2600ms 自动收，换签即收 —— JS 侧定时。 */
 body.mobile-layer .mf-strip-chip.is-expanded {
+  padding-inline: 12px;
   z-index: 3;
   max-width: min(calc((100vw - 2 * var(--mchrome-inset)) / var(--rsc, 1)), 260px);
   opacity: 1;
@@ -2756,6 +2760,11 @@ body.mobile-layer .mf-cv-host {
   flex-direction: column;
   overflow: hidden;
   touch-action: pan-y;
+}
+/* Pointer Events intersects touch-action from the hit target to the nearest
+   ancestor implementing the default pan; highlight.js scrolls its code element. */
+body.mobile-layer .mf-cv-host .canvas-md-viewer pre > code.hljs {
+  touch-action: pan-x pan-y;
 }
 body.mobile-layer .mf-cv-host[hidden] { display: none; }
 body.mobile-layer .mf-cv-host .canvas-tab-pane {

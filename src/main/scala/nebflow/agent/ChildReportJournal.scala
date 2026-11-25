@@ -1,9 +1,10 @@
 package nebflow.agent
 
-import java.nio.file.{Files, Path}
 import io.circe.parser
 import io.circe.syntax.*
 import nebflow.core.AtomicJson
+
+import java.nio.file.{Files, Path}
 
 /** Durable per-session report identity reservation. Callers must provide a stable logical slot. */
 private[agent] final class ChildReportJournal private (root: Path, session: String):

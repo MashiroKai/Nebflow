@@ -1,14 +1,14 @@
 package nebflow.gateway.ws
 
-import nebflow.gateway.*
-
-import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
+import cats.effect.{IO, Ref}
 import io.circe.Json
+import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.{SharedResources, SpecResources, StubLlm}
 import nebflow.core.scheduler.{DoneRecord, ScheduledTask, ScheduledTaskStore}
+import nebflow.gateway.*
 import nebflow.service.ConfigService
 import nebflow.shared.{NebflowLogger, PathUtil}
 
@@ -152,6 +152,191 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
   // ① createScheduledTask 收 priority（钳位落库）
   // ==================================================================
 
+  test("creation-zone correction rejects an invalid region without changing the rule") {
+    withRig { (c, res) =>
+      val at = java.time.Instant.parse("2035-01-01T09:00:00Z").toEpochMilli
+      val task = todo("invalid-zone").copy(
+        due = Some(nebflow.core.scheduler.TodoDue.Once(at, "Europe/London", "2035-01-01T09:00", None)),
+        nextDueAt = Some(at))
+      for
+        _ <- res.scheduledTaskStore.addTask(task)
+        frames <- send(c, "updateScheduledTask", """{"type":"updateScheduledTask","id":"invalid-zone","creationZone":"+09:00"}""")
+        saved <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assert(types(frames).contains("error"))
+        assertEquals(saved.head.due, task.due)
+    }
+  }
+
+  test("creation-zone correction refuses todo entries without a due rule") {
+    withRig { (c, res) =>
+      val task = todo("no-zone-rule")
+      for
+        _ <- res.scheduledTaskStore.addTask(task)
+        frames <- send(c, "updateScheduledTask", """{"type":"updateScheduledTask","id":"no-zone-rule","creationZone":"Asia/Tokyo"}""")
+        saved <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assert(types(frames).contains("error"))
+        assertEquals(saved.head.due, None)
+    }
+  }
+
+  test("creation-zone correction rejects a mixed content edit without partial persistence") {
+    withRig { (c, res) =>
+      val at = java.time.Instant.parse("2035-01-01T09:00:00Z").toEpochMilli
+      val task = todo("mixed-zone").copy(
+        due = Some(nebflow.core.scheduler.TodoDue.Once(at, "Europe/London", "2035-01-01T09:00", None)),
+        nextDueAt = Some(at))
+      for
+        _ <- res.scheduledTaskStore.addTask(task)
+        frames <- send(c, "updateScheduledTask", """{"type":"updateScheduledTask","id":"mixed-zone","creationZone":"Asia/Tokyo","content":"changed"}""")
+        saved <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assert(types(frames).contains("error"))
+        assertEquals(saved.head.due, task.due)
+        assertEquals(saved.head.content, task.content)
+    }
+  }
+
+  test("explicit creation-zone correction reschedules the stored todo and returns its new rule") {
+    withRig { (c, res) =>
+      val at = java.time.Instant.parse("2035-01-01T09:00:00Z").toEpochMilli
+      val moved = java.time.Instant.parse("2035-01-01T00:00:00Z").toEpochMilli
+      val occurrence = nebflow.core.scheduler.TodoOccurrence.create("zone-edit", at, 0L)
+      val task = todo("zone-edit").copy(
+        due = Some(nebflow.core.scheduler.TodoDue.Once(at, "Europe/London", "2035-01-01T09:00", None)),
+        nextDueAt = Some(at), occurrences = List(occurrence))
+      for
+        _ <- res.scheduledTaskStore.addTask(task)
+        frames <- send(c, "updateScheduledTask", """{"type":"updateScheduledTask","id":"zone-edit","sessionId":"s1","creationZone":"Asia/Tokyo"}""")
+        saved <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assert(types(frames).contains("scheduledTaskUpdated"), s"frames: $frames")
+        assertEquals(saved.head.occurrences.head.scheduledAt, moved)
+        assertEquals(rowOf(frames).hcursor.downField("due").get[String]("zoneId").toOption, Some("Asia/Tokyo"))
+    }
+  }
+
+  test("retry of an already persisted past deadline returns the durable row") {
+    withRig { (c, res) =>
+      val id = "a2b4c6d8-1234-4abc-8def-123456789abc"
+      val at = now - 60000L
+      val wall = java.time.Instant.ofEpochMilli(at).atZone(java.time.ZoneId.of("Asia/Tokyo")).toLocalDateTime.toString
+      val row = todo(id, sessionId = "s1").copy(content = "remind me", source = Some("user"),
+        due = Some(nebflow.core.scheduler.TodoDue.Once(at, "Asia/Tokyo", wall, None)), nextDueAt = Some(at))
+      val frame = s"""{"type":"createScheduledTask","sessionId":"s1","requestId":"$id","kind":"todo","content":"remind me","triggerAt":$at,"device":{"timeZone":"Asia/Tokyo"}}"""
+      for
+        _ <- res.scheduledTaskStore.addTask(row)
+        frames <- send(c, "createScheduledTask", frame)
+        saved <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assertEquals(types(frames), List("scheduledTaskCreated"))
+        assertEquals(saved.size, 1)
+    }
+  }
+
+  test("user deadline rejects a past instant instead of creating an overdue reminder") {
+    withRig { (c, res) =>
+      val frame = s"""{"type":"createScheduledTask","sessionId":"s1","kind":"todo","content":"remind me","triggerAt":${now - 3600000L},"device":{"timeZone":"Asia/Tokyo"}}"""
+      for
+        frames <- send(c, "createScheduledTask", frame)
+        saved <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assertEquals(types(frames), List("error"))
+        assertEquals(saved, Nil)
+    }
+  }
+
+  test("user deadline rejects unsupported repeat instead of silently creating once") {
+    withRig { (c, res) =>
+      val frame = s"""{"type":"createScheduledTask","sessionId":"s1","kind":"todo","content":"remind me","triggerAt":${now + 3600000L},"repeat":"daily","device":{"timeZone":"Asia/Tokyo"}}"""
+      for
+        frames <- send(c, "createScheduledTask", frame)
+        saved <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assertEquals(types(frames), List("error"))
+        assertEquals(saved, Nil)
+    }
+  }
+
+  test("weekly user deadline rejects non-minute instant with a named error") {
+    withRig { (c, res) =>
+      val at = (now / 60000L + 60L) * 60000L + 1L
+      val frame = s"""{"type":"createScheduledTask","sessionId":"s1","kind":"todo","content":"remind me","triggerAt":$at,"repeat":"weekly","device":{"timeZone":"Asia/Tokyo"}}"""
+      for
+        frames <- send(c, "createScheduledTask", frame)
+        saved <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assertEquals(types(frames), List("error"))
+        assertEquals(frames.head.hcursor.get[String]("code").toOption, Some("weekly-requires-whole-minute"))
+        assert(frames.head.hcursor.get[String]("message").toOption.exists(_.contains(at.toString)))
+        assertEquals(saved, Nil)
+    }
+  }
+
+  test("sourced user weekly deadline persists a weekly rule") {
+    withRig { (c, res) =>
+      val at = (now / 60000L + 60L) * 60000L
+      val frame = s"""{"type":"createScheduledTask","sessionId":"s1","kind":"todo","content":"remind me","triggerAt":$at,"repeat":"weekly","device":{"timeZone":"Asia/Tokyo"}}"""
+      for
+        frames <- send(c, "createScheduledTask", frame)
+        saved <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assertEquals(types(frames), List("scheduledTaskCreated"))
+        val due = saved.head.due.get.asJson.hcursor
+        assertEquals(due.get[String]("type").toOption, Some("weekly"))
+        assertEquals(due.get[String]("zoneId").toOption, Some("Asia/Tokyo"))
+        assertEquals(saved.head.nextDueAt, Some(at))
+    }
+  }
+
+  test("user create retry rejects a changed reminder deadline") {
+    withRig { (c, res) =>
+      val id = "a2b4c6d8-1234-4abc-8def-123456789abc"
+      def frame(at: Long) = s"""{"type":"createScheduledTask","sessionId":"s1","requestId":"$id","kind":"todo","content":"remind me","triggerAt":$at,"device":{"timeZone":"Asia/Tokyo"}}"""
+      for
+        first <- send(c, "createScheduledTask", frame(now + 3600000L))
+        retry <- send(c, "createScheduledTask", frame(now + 7200000L))
+        saved <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assertEquals(types(first), List("scheduledTaskCreated"))
+        assertEquals(types(retry), List("error"))
+        assertEquals(saved.size, 1)
+        assertEquals(saved.head.nextDueAt, Some(now + 3600000L))
+    }
+  }
+
+  test("sourced todo due persists its instant and device region without an invented offset") {
+    withRig { (c, res) =>
+      val at = now + 3600000L
+      val frame = s"""{"type":"createScheduledTask","sessionId":"s1","kind":"todo","content":"remind me","triggerAt":$at,"device":{"timeZone":"Asia/Tokyo"}}"""
+      for
+        frames <- send(c, "createScheduledTask", frame)
+        saved <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assertEquals(types(frames), List("scheduledTaskCreated"))
+        assertEquals(saved.size, 1)
+        val due = saved.head.asJson.hcursor.downField("due")
+        assertEquals(due.get[Long]("dueAt").toOption, Some(at))
+        assertEquals(due.get[String]("zoneId").toOption, Some("Asia/Tokyo"))
+        assert(due.downField("originalOffset").focus.forall(_.isNull))
+        assertEquals(saved.head.nextDueAt, Some(at))
+    }
+  }
+
+  test("todo due creation without device provenance requests clarification") {
+    withRig { (c, res) =>
+      val frame = s"""{"type":"createScheduledTask","sessionId":"s1","kind":"todo","content":"remind me","triggerAt":${now + 3600000L}}"""
+      for
+        frames <- send(c, "createScheduledTask", frame)
+        saved <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assertEquals(types(frames), List("error"))
+        assert(frames.head.hcursor.get[String]("message").toOption.exists(_.toLowerCase.contains("clarif")))
+        assertEquals(saved, Nil)
+    }
+  }
+
   test("① createScheduledTask(kind=todo, priority=7) ⇒ 落库 3（钳位）+ created 帧带三键") {
     withRig { (c, res) =>
       for
@@ -164,6 +349,7 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
       yield
         assertEquals(types(frames), List("scheduledTaskCreated"))
         assertEquals(onDisk.length, 1)
+        assertEquals(onDisk.head.due, None)
         assertEquals(onDisk.head.priority, 3, "越界 priority 钳位到 3 后落库")
         val task = rowOf(frames)
         assertEquals(task.hcursor.get[Int]("priority").toOption, Some(3), "created 帧回带 priority")
@@ -236,6 +422,32 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
         assertEquals(task.hcursor.get[Long]("completedAt").toOption, Some(1234L))
         assertEquals(rows.head.completedAt, Some(1234L), "the durable row is unchanged by the retry")
       end for
+    }
+  }
+
+  test("recurring task fires and list serializes its real last-fired timestamp") {
+    withRig { (c, res) =>
+      val task = ScheduledTask.create("s1", "recurring", System.currentTimeMillis() - 60000L, None, Some("daily"), None)
+      val service = new nebflow.core.scheduler.ScheduledTaskService(
+        dispatcher = null,
+        taskStore = res.scheduledTaskStore,
+        routeToAgent = (_, _) => IO.unit,
+        broadcast = _ => IO.unit,
+        sessionStore = res.sessionStore
+      )
+      for
+        _ <- res.scheduledTaskStore.addTask(task)
+        fiber <- service.start().start
+        _ <- fiber.joinWithNever.timeout(scala.concurrent.duration.DurationInt(2).seconds).attempt
+        _ <- fiber.cancel
+        rows <- res.scheduledTaskStore.loadTasks("s1")
+        frames <- send(c, "listScheduledTasks", """{"type":"listScheduledTasks","sessionId":"s1"}""")
+      yield
+        val fired = rows.find(_.id == task.id).flatMap(_.lastFiredAt)
+        assert(fired.isDefined, "scheduler must fire and persist the recurring task")
+        val listed = frames.head.hcursor.downField("tasks").as[List[Json]].toOption.get
+        val row = listed.find(_.hcursor.get[String]("id").toOption.contains(task.id)).get
+        assertEquals(row.hcursor.get[Long]("lastTriggered").toOption, fired)
     }
   }
 

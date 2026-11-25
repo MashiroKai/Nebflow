@@ -1,8 +1,10 @@
 package nebflow.core.plugin
 
 import cats.effect.IO
+
 import java.net.{URI, URLDecoder}
 import java.nio.charset.StandardCharsets.UTF_8
+
 import scala.util.control.NonFatal
 
 /** An install link is discovery only; it cannot confer trust. */
