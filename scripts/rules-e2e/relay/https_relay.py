@@ -127,7 +127,9 @@ class Relay:
     if os.fstat(ledger.fileno()).st_ino != os.stat(self.args.ledger).st_ino:
      return self.sidecar(obj)
     try:
-     ledger.write(json.dumps(obj,separators=(',',':'))+'\n'); ledger.flush(); os.fsync(ledger.fileno()); return True
+     data=json.dumps(obj,separators=(',',':'))+'\n'
+     if ledger.write(data)!=len(data): raise OSError('short ledger write')
+     ledger.flush(); os.fsync(ledger.fileno()); return True
     except OSError:
      return self.sidecar(obj)
    finally: fcntl.flock(ledger.fileno(),fcntl.LOCK_UN)
