@@ -1082,6 +1082,7 @@ class WebSocketRoutes(
               for
                 outbound <- Queue.bounded[IO, WebSocketFrame](16)
                 state <- Ref.of[IO, Option[(String, String, nebflow.core.browser.BrowserScreencast, () => Unit)]](None)
+                started <- Ref.of[IO, Boolean](false)
                 send = (j: Json) => outbound.offer(WebSocketFrame.Text(j.noSpaces))
                 cleanup = state.getAndSet(None).flatMap(_.traverse_ { case (id, _, stream, unsubscribe) =>
                   IO(unsubscribe()) *> IO.blocking(stream.close()).attempt.void *> IO(nebflow.core.browser.BrowserSessions.takeoverRegistry.finish(id))
@@ -1093,10 +1094,11 @@ class WebSocketRoutes(
                       case "start" =>
                         val ticket = message.hcursor.get[String]("ticket").getOrElse("")
                         val binding = browserTakeoverTickets.inspect(ticket)
-                        binding match
-                          case None => send(Json.obj("type" -> "status".asJson, "error" -> "接管票无效或已过期".asJson))
-                          case Some(b) =>
-                            AskHostLedger.requestState(b.request).flatMap {
+                        started.get.flatMap { already =>
+                          if already then send(Json.obj("type" -> "status".asJson, "error" -> "此连接已启动接管".asJson))
+                          else binding match
+                            case None => send(Json.obj("type" -> "status".asJson, "error" -> "接管票无效或已过期".asJson))
+                            case Some(b) => AskHostLedger.requestState(b.request).flatMap {
                               case None => send(Json.obj("type" -> "status".asJson, "error" -> "请求不存在".asJson))
                               case Some(snapshot) =>
                                 AskHostLedger.admitTakeoverCurrent(b.request, snapshot.pending.rootSession, b.session, nebflow.core.browser.BrowserSessions.takeoverRegistry).flatMap {
@@ -1108,22 +1110,26 @@ class WebSocketRoutes(
                                     IO.blocking {
                                       val page = nebflow.core.browser.BrowserSessions.takeoverPage(b.session)
                                       val stream = new nebflow.core.browser.BrowserScreencast((method, params) => { page.send(method, params); () })
+                                      val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
                                       val unsubscribe = page.subscribe("Page.screencastFrame") { params =>
-                                        java.util.concurrent.CompletableFuture.runAsync(() => stream.frame(params))
-                                        ()
+                                        try executor.execute(() => stream.frame(params))
+                                        catch case _: java.util.concurrent.RejectedExecutionException => ()
                                       }
                                       try stream.start()
                                       catch
                                         case e: Throwable =>
                                           unsubscribe()
+                                          executor.shutdownNow()
                                           throw e
-                                      (b.request, b.session, stream, unsubscribe)
+                                      val dispose = () => { unsubscribe(); executor.shutdown(); () }
+                                      (b.request, b.session, stream, dispose)
                                     }.attempt.flatMap {
                                       case Left(_) => IO(nebflow.core.browser.BrowserSessions.takeoverRegistry.finish(b.request)) *> send(Json.obj("type" -> "status".asJson, "error" -> "画面流启动失败；可在运行 stand 的机器前操作真实浏览器窗口".asJson))
-                                      case Right(active) => state.set(Some(active)) *> send(Json.obj("type" -> "status".asJson, "ready" -> true.asJson, "timedOut" -> snapshot.terminal.isDefined.asJson))
+                                      case Right(active) => state.set(Some(active)) *> started.set(true) *> send(Json.obj("type" -> "status".asJson, "ready" -> true.asJson, "timedOut" -> snapshot.terminal.isDefined.asJson))
                                     }
                                 }
                             }
+                        }
                       case "input" => state.get.flatMap(_.traverse_ { case (_, _, stream, _) =>
                         message.hcursor.downField("event").focus.traverse_(event => IO.blocking(stream.input(event)).attempt.void)
                       })
@@ -1145,7 +1151,7 @@ class WebSocketRoutes(
                       case _ => IO.unit
                   case _ => IO.unit
                 }.onFinalize(cleanup)
-                frames = Stream.awakeEvery[IO](200.millis).evalMap(_ => state.get.flatMap(_.traverse { case (_, _, stream, _) => IO(stream.take()) })).collect { case Some(Some(data)) => WebSocketFrame.Text(Json.obj("type" -> "frame".asJson, "data" -> data.asJson).noSpaces) }
+                frames = Stream.awakeEvery[IO](200.millis).evalMap(_ => state.get.flatMap(_.traverse { case (_, _, stream, _) => IO(stream.take()) })).collect { case Some(Some(data)) => WebSocketFrame.Text(Json.obj("type" -> "frame".asJson, "frame" -> io.circe.parser.parse(data).getOrElse(Json.obj())).noSpaces) }
                 response <- wsb.build(Stream.fromQueueUnterminated(outbound).merge(frames), receive)
               yield response
           }
@@ -1389,7 +1395,7 @@ class WebSocketRoutes(
                                       .flatMap(s => AskHostTool.takeoverSession(s.question).map(session => (s, session)))
                                       .filter { case (s, session) => nebflow.core.browser.BrowserSessions.takeoverRegistry.ownedBy(session, s.pending.workerSession) }
                                     if !owner || !allowedOrigin || eligible.isEmpty then
-                                      perConnJsonSend(Json.obj("type" -> "browserTakeoverTicketResult".asJson, "error" -> "接管请求未授权或不可用".asJson))
+                                      perConnJsonSend(Json.obj("type" -> "browserTakeoverTicketResult".asJson, "correlationId" -> requestId.asJson, "error" -> "接管请求未授权或不可用".asJson))
                                     else
                                       val (s, session) = eligible.get
                                       val ticket = browserTakeoverTickets.issue(s.pending.correlationId, s.pending.workerSession, session)

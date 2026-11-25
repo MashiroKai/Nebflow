@@ -28,7 +28,9 @@ private[nebflow] final class BrowserScreencast(send: (String, Json) => Unit):
     for
       id <- c.get[Int]("sessionId").toOption
       data <- c.get[String]("data").toOption
-    do frames.receive(id, data)
+    do
+      val metadata = c.downField("metadata").focus.getOrElse(Json.obj())
+      frames.receive(id, Json.obj("data" -> data.asJson, "metadata" -> metadata).noSpaces)
 
   def take(): Option[String] = frames.take()
 

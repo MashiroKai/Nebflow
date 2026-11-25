@@ -4,6 +4,9 @@ import io.circe.Json
 
 /** No arbitrary CDP commands; never log these parameters. */
 private[nebflow] object BrowserTakeoverInput:
+  def viewportPoint(x: Double, y: Double, width: Double, height: Double, viewportWidth: Double, viewportHeight: Double): (Double, Double) =
+    (x * viewportWidth / width, y * viewportHeight / height)
+
   def valid(input: Json): Boolean =
     val c = input.hcursor
     val kind = c.get[String]("type").getOrElse("")
