@@ -261,6 +261,23 @@ class TodoTaxonomySpec extends CatsEffectSuite:
   private def callTool(input: Json): Either[ToolError, String] =
     ScheduleTool.call(input.asObject.get, mkCtx()).unsafeRunSync()
 
+  test("tool todo offset fixes instant but cannot substitute for a device region"):
+    val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
+    val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision, "triggerAt" -> "2035-01-01T09:00:00+08:00".asJson)
+    for
+      _ <- reset()
+      missing <- ScheduleTool.call(input.asObject.get, mkCtx())
+      result <- ScheduleTool.call(input.asObject.get, mkCtx().copy(deviceZone = Some("Asia/Tokyo")))
+      stored <- taskStore.getAllTodos
+    yield
+      assert(missing.isLeft, "an offset alone is not a creation region")
+      assert(result.isRight, s"offset and device region should succeed: $result")
+      assertEquals(stored.size, 1)
+      val due = stored.head.due.get.asJson.hcursor
+      assertEquals(due.get[String]("zoneId").toOption, Some("Asia/Tokyo"))
+      assertEquals(due.get[String]("originalOffset").toOption, Some("+08:00"))
+      assertEquals(due.get[Long]("dueAt").toOption, Some(java.time.Instant.parse("2035-01-01T01:00:00Z").toEpochMilli))
+
   test("tool todo explicit IANA zone overrides device region"):
     val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
     val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision, "triggerAt" -> "2035-01-01T09:00:00+01:00[Europe/Paris]".asJson)
