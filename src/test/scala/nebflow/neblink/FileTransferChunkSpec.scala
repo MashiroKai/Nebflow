@@ -52,6 +52,71 @@ class FileTransferChunkSpec extends CatsEffectSuite:
 
   private def plan(totalBytes: Long): List[AttachContract.ChunkPlan] = AttachContract.plan(totalBytes, Chunk)
 
+  private def faultCase(stage: String): Unit =
+    val dir = os.temp.dir(prefix = "chunk-fault-")
+    val tid = "fault-token"
+    val p = dir / s"file.dropbox-${tid.take(8)}"
+    val original = "partial".getBytes("UTF-8")
+    val payload = "0123456789abcdef".getBytes("UTF-8")
+    os.write(p, original)
+    var releases = 0
+    val ops = new FileTransferAction.ChunkPutOps:
+      override def ensureParent(path: os.Path): Either[String, Unit] =
+        if stage == "mkdir" && path == p then Left("injected mkdir") else super.ensureParent(path)
+      override def append(path: os.Path, bytes: Array[Byte]): Unit =
+        if stage == "append" && path == p then
+          os.write.append(path, bytes.take(2))
+          throw new java.io.IOException("injected append")
+        else super.append(path, bytes)
+      override def hash(path: os.Path): String =
+        if stage == "hash" && path == p then throw new java.io.IOException("injected hash")
+        else super.hash(path)
+      override def remove(path: os.Path): Unit =
+        if stage == "remove" && path == p then throw new java.io.IOException("injected remove")
+        else super.remove(path)
+      override def release(path: os.Path): Unit =
+        if path == p then releases += 1
+        super.release(path)
+    val params = putParams(p.toString, payload, 0, 16L, if stage == "remove" then "bad" else ChunkedTransfer.sha256Hex(payload))
+      .add("transferId", tid.asJson)
+    try
+      val result = scala.util.Try(FileTransferAction.chunkedPut(params, p, b64(payload), true, ops))
+      assert(result.isFailure || result.toOption.exists(_.isLeft), s"expected failure: $result")
+      assertEquals(os.read.bytes(p).toList, original.toList, s"$stage must restore original bytes")
+      assertEquals(releases, 1, s"$stage must release claim exactly once")
+    finally os.remove.all(dir)
+
+  test("fault mkdir rolls back and releases claim") { faultCase("mkdir") }
+  test("fault append rolls back and releases claim") { faultCase("append") }
+  test("fault hash rolls back and releases claim") { faultCase("hash") }
+  test("fault remove rolls back and releases claim") { faultCase("remove") }
+
+  test("rollback failure preserves original exception and settles claim once") {
+    val dir = os.temp.dir(prefix = "chunk-cleanup-fault-")
+    val p = dir / "file.dropbox-fault-to"
+    val payload = "0123456789abcdef".getBytes("UTF-8")
+    os.write(p, "partial")
+    var releases = 0
+    val ops = new FileTransferAction.ChunkPutOps:
+      override def hash(path: os.Path): String = throw new java.io.IOException("primary hash")
+      override def restore(path: os.Path, backup: java.nio.file.Path): Unit =
+        throw new java.io.IOException("restore failure")
+      override def release(path: os.Path): Unit =
+        releases += 1
+        super.release(path)
+        throw new java.io.IOException("release failure")
+    val params = putParams(p.toString, payload, 0, 16L, "bad").add("transferId", "fault-token".asJson)
+    try
+      val error = intercept[java.io.IOException] {
+        FileTransferAction.chunkedPut(params, p, b64(payload), true, ops)
+      }
+      assertEquals(error.getMessage, "primary hash")
+      assertEquals(releases, 1)
+      assert(error.getSuppressed.exists(_.getMessage == "restore failure"), "restore failure must be preserved")
+      assert(error.getSuppressed.exists(_.getSuppressed.exists(_.getMessage == "release failure")), "release failure must be preserved")
+    finally os.remove.all(dir)
+  }
+
   // ===== legacy 整件路径零回归（先跑这一组，证明「保留全量默认语义」）=====
 
   test("零回归：legacy put（无分块键）行为逐字节不变 —— 写入 + 返回 size") {
