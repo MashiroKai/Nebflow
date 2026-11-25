@@ -69,6 +69,15 @@ class BrowserVerbsSpec extends CatsEffectSuite:
     assertEquals(stream.take(), Some("frame"))
   }
 
+  test("takeover input translates only validated actions to CDP methods") {
+    val calls = scala.collection.mutable.ListBuffer.empty[String]
+    val stream = new BrowserScreencast((method, _) => { calls += method; () })
+    stream.input(Json.obj("type" -> "insertText".asJson, "text" -> "a".asJson))
+    stream.input(Json.obj("type" -> "keyDown".asJson, "key" -> "Enter".asJson))
+    intercept[IllegalArgumentException](stream.input(Json.obj("type" -> "Runtime.evaluate".asJson)))
+    assertEquals(calls.toList, List("Input.insertText", "Input.dispatchKeyEvent"))
+  }
+
   test("takeover input protocol admits only bounded mouse keyboard and wheel events") {
     assert(BrowserTakeoverInput.valid(Json.obj("type" -> "mouseMoved".asJson, "x" -> 12.asJson, "y" -> 20.asJson)))
     assert(!BrowserTakeoverInput.valid(Json.obj("type" -> "Runtime.evaluate".asJson)))
