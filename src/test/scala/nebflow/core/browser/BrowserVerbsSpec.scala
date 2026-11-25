@@ -91,6 +91,16 @@ class BrowserVerbsSpec extends CatsEffectSuite:
     assert(!BrowserTakeoverInput.valid(Json.obj("type" -> "insertText".asJson, "text" -> ("x" * 4097).asJson)))
   }
 
+  test("failure notification is retained when wakeup is unavailable") {
+    val signal = new BrowserFailureSignal
+    assert(!signal.failed)
+    assert(signal.fail())
+    assert(signal.failed)
+    assert(!signal.fail())
+    assert(signal.claim())
+    assert(!signal.claim())
+  }
+
   test("failure before registration is observed at registration and cleanup runs once") {
     val lifecycle = new BrowserFailureLatch
     var cleanups = 0
