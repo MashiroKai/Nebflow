@@ -22,8 +22,8 @@ import nebflow.social.outbound.{AskPromptCodec, PromptView}
  *     tolerance + out-of-range refusals);
  *   - the intake splitter: the ask legs sit BETWEEN the allowlist gate and
  *     the injection arms; non-ask text falls through byte-identically;
- *   - B-3: a new ask retires the previous OPEN one by precise CloseRequest
- *     and takes the slot; askUserClosed clears it; an answered tombstone
+ *   - B-3: a new ask takes the channel slot without closing the previous
+ *     hub request; askUserClosed clears it; an answered tombstone
  *     refuses a repeat read of the numbers (never a second injection);
  *   - B-4 案甲: a >4000-char reply degrades to 摘要+拉取指令 with the full
  *     text on a 「全文」 pull, segmented within the first tier;
@@ -471,13 +471,14 @@ class WeixinAskLegSpec extends CatsEffectSuite:
       (p, ctx) <- started(out, List(meta("wx_a")))
       _ <- p.onAgentEvent("s1", askFrame("rid-1", "s1", simpleItems))
       _ <- p.onAgentEvent("s1", askFrame("rid-2", "s1", simpleItems))
+      _ <- p.onAgentEvent("s1", askFrame("rid-3", "s1", simpleItems))
       closed <- ctx.closed.get
       v <- p.intake(ctx, WeixinIlinkBridgePlugin.Inbound(Some("wx_a"), Some("1"), Some("m1")))
       fw <- ctx.forwarded.get
     yield
-      assertEquals(closed, List.empty) // other channels retain the previous request
-      assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Answered("rid-2")) // the NEW ask answers
-      assertEquals(fw.map(_._1), List("rid-2"))
+      assertEquals(closed, List.empty) // other channels retain both previous requests
+      assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Answered("rid-3")) // only the latest is addressed
+      assertEquals(fw.map(_._1), List("rid-3"))
     end for
   }
 
