@@ -62,6 +62,21 @@ async function probe(page, label, selector, expected, combo) {
   }
   if (!visible) errors.push(`${combo} ${label}: no visible ${selector}`);
 }
+async function clickCheck(page, selector, kind, combo) {
+  const target = page.locator(`.mobile-page.live ${selector}`).first();
+  const rect = await target.boundingBox();
+  assert.ok(rect);
+  const snapshot = () => page.evaluate(() => ({ live: document.querySelector('.mobile-page.live')?.dataset.page, chips: [...document.querySelectorAll('.mobile-page.live .ta-qd-flt-chip')].map(n => n.getAttribute('aria-pressed')), filter: document.querySelector('.mobile-page.live .ta-qd-filter-btn')?.outerHTML ?? null }));
+  const before = await snapshot();
+  await page.mouse.click(rect.x + 1, rect.y + 1);
+  const corner = await snapshot();
+  console.log('CORNER',JSON.stringify({combo, kind, before, corner}));
+  assert.deepEqual(corner,before,`${combo} ${kind} 角点引起状态变化`);
+  await page.mouse.click(rect.x + rect.width / 2, rect.y + rect.height / 2);
+  const center = await snapshot();
+  console.log('CENTER',JSON.stringify({combo,kind,center}));
+  assert.notDeepEqual(center,before,`${combo} ${kind} 中心未触发`);
+}
 async function mobile(width, theme) {
   const combo = `${width}-${theme}`;
   const baseMode = process.env.RADIUS_BASE === '1';
@@ -110,11 +125,11 @@ async function mobile(width, theme) {
   s = await session(width, theme, baseMode);
   try {
     await home(s);
-    await s.page.locator('.mobile-page.live .ta-quick-fab').click();
+    await clickCheck(s.page,'.ta-quick-fab','quick-fab',combo);
     await s.page.locator('.mobile-page.live .ta-qd-filter-btn').click();
     await probe(s.page,'filters','.ta-qd-filters','18px',combo);
     await probe(s.page,'filter-chip','.ta-qd-flt-chip','999px',combo);
-    await s.page.locator('.mobile-page.live .ta-qd-flt-chip').nth(1).click();
+    await clickCheck(s.page,'.ta-qd-flt-chip:not(.is-on)','filter-chip',combo);
     await probe(s.page,'filter-selected','.ta-qd-filter-btn.on','999px',combo);
   } finally { await s.context.close(); }
 }
