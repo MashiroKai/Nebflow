@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Proposed implementation pending author confirmation. Covers the current batch only; earlier branch slices have no retrospective change record. A reminder due is independent of the existing daily todo surface. Device zones are per-message, not persisted as message metadata. Merged inputs retain a zone only if every source has the same valid region; mail has no source. Ambiguity persists through the turn and is recalculated on the next turn.
+Proposed implementation. Covers the current batch only; earlier branch slices have no retrospective change record. A reminder due is independent of the existing daily todo surface. Message zones remain per-message; merged inputs retain a zone only if every source has the same valid region. Author subsequently chose the most recently reported device as the fallback when the initiating message has no device zone. A separate persistent per-device latest-report record and creation-source audit are therefore required.
 
 ## Requirements and acceptance scenarios
 
@@ -15,9 +15,20 @@ Proposed implementation pending author confirmation. Covers the current batch on
 - Given a once input with an explicit offset, the instant is computed from that offset and the offset is stored as Some; given no input offset it is None. The existing model has `final case class Once(dueAt: Long, zoneId: String, wallClock: String, originalOffset: String)` and its decoder reads `zoneId` and `originalOffset` as strings and validates the latter with `ZoneOffset.of`. Optional representation must decode old string values as Some and missing or null as None, validating present values. An older binary may reject new records: author must decide migration or dual-write before merge. The persisted zoneId stays a required valid IANA string: a stored record missing zoneId fails decoding; only pre-write parsing may represent a missing region.
 - Given a weekly due, persist the weekday, local minute and creation region and compute its first occurrence without a fixed-duration week. A WS weekly triggerAt not on a whole minute is rejected with `weekly-requires-whole-minute`, naming triggerAt and its received value; it is never rounded. Whether sub-minute weekly reminders or rounding should be supported remains for author confirmation. Invalid or incomplete rules and invalid regions are rejected. Both write ports have once and weekly acceptance coverage where their supported inputs permit it.
 
+### Latest device fallback
+
+- On an authenticated device identification report with a valid IANA zone, persist one latest observation per device identity: zone, server receipt timestamp and frame source. Invalid or absent zones do not overwrite a valid observation. Browser client identity and registered peer identity must not be conflated. Device records may be offline and remain eligible; select the greatest receipt timestamp, then deterministic lexicographic identity for ties. No reports means clarification.
+- Given no initiating device zone, the Schedule write uses the latest observation and persists audit provenance including its device identity and timestamp. Explicit region and initiating device take precedence. Given no observation, creation requests clarification. Older records decode without new optional audit fields.
+
+### Rule change and occurrence settlement
+
+- Author chose rescheduling already generated, not-yet-triggered occurrences after explicit creation-zone correction. The prior no-rescheduling/no-new-instance-state exclusion is superseded. For this change, untriggered means a scheduled instant later than the edit's serialized commit time; already due occurrences remain on their old rule. Under one storage lock, edits recalculate future occurrences and bind the new rule version. A recalculated instant at or before edit time is marked missed with reason, never delivered as catch-up; this missed policy is a conservative default pending author confirmation.
+- The occurrence's identity remains stable across rescheduling; persist any required stable ID and settlement state compatibly with old records. Engine consumption into the delivery path constitutes triggering and settles at most once even when external delivery fails. Concurrent edit and trigger serialize by persisted order. Tests must discriminate rescheduled trigger, preserved triggered history, past recalculation marked missed, and edit/trigger race; removal of rescheduling must make the appropriate assertions red.
+- New persisted device observations and occurrence/source-audit fields may not be understood by older builds; migration or dual-write needs author decision before merge. These features are not evidence of external exactly-once notification.
+
 ### Explicit correction and display
 
-- Given a created reminder, its receipt and card show creation region and wall clock. When the device region differs, show the converted local time and its region as well. Explicit correction changes the rule without rewriting already generated occurrences; no automatic travel-based zone change occurs. Test both real write ports and frontend rendering.
+- Given a created reminder, its receipt and card show creation region and wall clock. When the device region differs, show the converted local time and its region as well. Explicit correction reschedules future untriggered occurrences under the rule above; no automatic travel-based zone change occurs. Test both real write ports and frontend rendering.
 
 ### Calendar ambiguity
 
@@ -27,5 +38,5 @@ Proposed implementation pending author confirmation. Covers the current batch on
 ### Evidence and exclusions
 
 - Exercise old records, both write ports, valid and invalid regions, offset and offset-free input, cross-midnight, DST gaps and overlaps, different device regions, occurrence deduplication, crash retry and expiry with individually discriminating red/green tests.
-- Instance interpretation uses its bound rule version; tick, rearm and direct new-rule saves use the current rule. No new instance-consumption path, instance state or reconciliation protocol is introduced; generated instances are not rescheduled here. Notification exactly-once and real network delivery are not claimed.
+- Instance interpretation uses its bound rule version; tick, rearm and direct new-rule saves use the current rule. A minimal occurrence-consumption and settlement path is required for the author's rescheduling decision; no external notification exactly-once guarantee follows. Notification exactly-once and real network delivery are not claimed.
 - Q3–Q6 and these input and compatibility decisions are Spider rulings pending author confirmation. Q7 thresholds remain open; automatic catch-up is outside this batch. Before merge, author review must decide whether earlier slices need their own OpenSpec change records.
