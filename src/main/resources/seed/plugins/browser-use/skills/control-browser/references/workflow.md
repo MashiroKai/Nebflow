@@ -16,7 +16,7 @@ ls ~/Library/Caches/ms-playwright 2>/dev/null
 被测面是本地页面时，用**自有端口 + 自有目录**：
 
 ```bash
-<进程组包装器> roster --node <nodeId> --tag httpd -- \
+STAND_PROCESS_ROSTER="$HOME/.stand/browser-use/roster.json" node <包根>/skills/control-browser/scripts/process-roster.mjs start --node <nodeId> --tag httpd -- \
   python3 -m http.server <自有端口> --directory <静态根>
 ```
 
