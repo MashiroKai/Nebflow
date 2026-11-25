@@ -190,6 +190,24 @@ test.describe('injected turn opens its OWN badge group (16:54 追加令)', () =>
     await context.close();
   });
 
+  test('ownership: multiple pre-badge opening injections and later injection belong to one turn', async ({ browser }) => {
+    const { context, page } = await newPage(browser);
+    await page.evaluate(() => window.__tdInject('开轮一', 'nodeMessage'));
+    await page.evaluate(() => window.__tdInject('开轮二', 'nodeMessage'));
+    await page.evaluate(() => window.__tdCallStart('Read'));
+    await page.evaluate(() => window.__tdInject('轮中三', 'nodeMessage'));
+    await page.evaluate(() => window.__tdDone('Read', 'ok', 'x', false, '{}'));
+    await page.evaluate(() => window.__tdFinishTurn());
+    const order = await page.evaluate(() => [...document.querySelector('#chat').children].map(el => ({html: el.outerHTML.slice(0, 180), text: el.textContent.trim().slice(0, 40)})));
+    console.log('OPENING_DOM ' + JSON.stringify(order));
+    const header = page.locator('.turn-header');
+    const injections = page.locator('#chat > .row:has(.bubble.injected)');
+    expect(await header.evaluate(el => [...el.parentNode.children].indexOf(el))).toBeGreaterThan(await injections.nth(1).evaluate(el => [...el.parentNode.children].indexOf(el)));
+    await expect(page.locator('[data-nf-injection-stack] button')).toContainText('3');
+    for (const row of await injections.all()) await expect(row).toBeHidden();
+    await context.close();
+  });
+
   test('closed group membership remains unchanged across new injections and stack toggles', async ({ browser }) => {
     const { context, page } = await newPage(browser);
     await page.evaluate(() => window.__tdUser('第一轮'));

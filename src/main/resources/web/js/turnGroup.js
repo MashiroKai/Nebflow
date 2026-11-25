@@ -273,8 +273,11 @@ function untuckRows(rows) {
 // that original row in place while treating it as part of this badge's stack.
 function injectionRowsForHeader(header) {
   const rows = scopeFromHeader(header).filter(isInjectedRow);
-  const opener = header.previousElementSibling;
-  if (opener && isInjectedRow(opener)) rows.unshift(opener);
+  let opener = header.previousElementSibling;
+  while (opener && isInjectedRow(opener)) {
+    rows.unshift(opener);
+    opener = opener.previousElementSibling;
+  }
   return rows;
 }
 

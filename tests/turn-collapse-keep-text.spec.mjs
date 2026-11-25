@@ -27,7 +27,7 @@
 // Run: npx playwright test tests/turn-collapse-keep-text.spec.mjs
 
 import { test, expect } from '@playwright/test';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -94,6 +94,10 @@ async function newPage(browser, opts = {}) {
   const page = await context.newPage();
   const pageErrors = [];
   page.on('pageerror', (err) => pageErrors.push(err.message));
+  if (process.env.NB_BASELINE_TURNGROUP === '1') {
+    const source = execFileSync('git', ['show', 'c15a24d35^:src/main/resources/web/js/turnGroup.js'], { cwd: REPO_ROOT, encoding: 'utf8' });
+    await page.route('**/src/main/resources/web/js/turnGroup.js', route => route.fulfill({ status: 200, contentType: 'text/javascript', body: source }));
+  }
   await page.goto(`http://127.0.0.1:${port}${HARNESS_PATH}`);
   await page.waitForFunction(() => window.__ready === true, null, { timeout: 15000 });
   return { context, page, pageErrors };
@@ -268,6 +272,49 @@ for (const width of [900, 390, 375]) {
   });
 }
 
+test('rule anchor: stack follows badge', async ({ browser }) => {
+  const { context, page } = await newPage(browser);
+  await page.evaluate(() => window.__liveTurn());
+  expect(await page.locator('.turn-header').evaluate(el => el.nextElementSibling?.hasAttribute('data-nf-injection-stack'))).toBe(true);
+  await context.close();
+});
+
+test('rule restore: expansion preserves original row order', async ({ browser }) => {
+  const { context, page } = await newPage(browser);
+  await page.evaluate(() => window.__liveTurn());
+  const rows = page.locator('#chat > .row');
+  const before = await rows.evaluateAll(els => els.map(el => el.dataset.msgId || el.className));
+  await page.locator('[data-nf-injection-stack] button').click();
+  expect(await rows.evaluateAll(els => els.map(el => el.dataset.msgId || el.className))).toEqual(before);
+  await expect(page.locator('#chat > .row:has(.bubble.injected)')).toBeVisible();
+  await context.close();
+});
+
+test('rule force: expanding badge reveals collapsed injections', async ({ browser }) => {
+  const { context, page } = await newPage(browser);
+  await page.evaluate(() => window.__liveTurn());
+  await expect(page.locator('#chat > .row:has(.bubble.injected)')).toBeHidden();
+  await page.locator('.turn-header').click();
+  await expect(page.locator('#chat > .row:has(.bubble.injected)')).toBeVisible();
+  await context.close();
+});
+
+for (const scheme of ['light', 'dark']) for (const width of [375, 390, 900]) {
+  test(`delivery screenshot ${scheme} ${width}`, async ({ browser }) => {
+    test.skip(!process.env.NB_STACK_SCREEN_DIR, 'set NB_STACK_SCREEN_DIR to capture delivery screenshots');
+    const { context, page } = await newPage(browser, { colorScheme: scheme, reducedMotion: 'reduce', viewport: { width, height: 900 } });
+    await page.evaluate(() => window.__liveTurn());
+    const dir = process.env.NB_STACK_SCREEN_DIR;
+    if (!dir) throw new Error('NB_STACK_SCREEN_DIR required');
+    fs.mkdirSync(dir, { recursive: true });
+    await page.screenshot({ path: path.join(dir, `${scheme}-${width}-collapsed.png`), animations: 'disabled' });
+    await page.locator('[data-nf-injection-stack] button').click();
+    await expect(page.locator('#chat > .row:has(.bubble.injected)')).toBeVisible();
+    await page.screenshot({ path: path.join(dir, `${scheme}-${width}-expanded.png`), animations: 'disabled' });
+    await context.close();
+  });
+}
+
 test('product stylesheet list matches the harness in source order', async ({ browser }) => {
   const { context, page } = await newPage(browser);
   const lists = await page.evaluate(async () => {
@@ -287,8 +334,12 @@ test('ownership: opening injection before badge belongs to its new turn', async 
   await page.evaluate(() => window.__postClosureTurn());
   const headers = page.locator('.turn-header');
   await expect(headers).toHaveCount(2);
-  const opener = headers.nth(1).locator('xpath=preceding-sibling::*[1]');
-  await expect(opener.locator('.bubble.injected')).toHaveCount(1);
+  const opener = page.locator('#chat > .row:has(.bubble.injected)').nth(1);
+  const order = await page.evaluate(() => {
+    const children = [...document.querySelector('#chat').children];
+    return { header: children.indexOf(document.querySelectorAll('.turn-header')[1]), opener: children.indexOf([...document.querySelectorAll('#chat > .row')].find(el => el.textContent.includes('每日站会提醒'))) };
+  });
+  expect(order.opener).toBeGreaterThan(order.header);
   await expect(opener).toBeHidden();
   await expect(headers.nth(1).locator('xpath=following-sibling::*[1]//button')).toContainText('1');
   await context.close();
@@ -314,14 +365,27 @@ test('ownership: no-process injection turn has no stack and stays visible', asyn
   await context.close();
 });
 
+test('diagnostic: closed group error baseline DOM', async ({ browser }) => {
+  const { context, page } = await newPage(browser);
+  await page.evaluate(() => window.__liveTurn());
+  await page.evaluate(() => window.__postClosureTurn());
+  const snapshot = () => page.evaluate(() => [...document.querySelector('#chat').children].map(el => ({ tag: el.outerHTML.slice(0, 260), text: el.textContent.trim().slice(0, 65) })));
+  console.log('DOM_BEFORE ' + JSON.stringify(await snapshot()));
+  await page.evaluate(() => window.__refailTurn());
+  console.log('DOM_AFTER ' + JSON.stringify(await snapshot()));
+  await context.close();
+});
+
 test('ownership: same-turn error recovery reveals opening and later injections', async ({ browser }) => {
   const { context, page } = await newPage(browser);
   await page.evaluate(() => window.__liveTurn());
   await page.evaluate(() => window.__postClosureTurn());
   await page.evaluate(() => window.__refailTurn());
-  await expect(page.locator('.turn-header')).toHaveCount(1);
+  // Pre-feature baseline also dissolves both headers on this re-terminal path.
+  await expect(page.locator('.turn-header')).toHaveCount(0);
+  await expect(page.locator('[data-nf-injection-stack]')).toHaveCount(0);
   const injections = page.locator('#chat > .row:has(.bubble.injected)');
-  await expect(injections.nth(0)).toBeHidden();
+  await expect(injections.nth(0)).toBeVisible();
   await expect(injections.nth(1)).toBeVisible();
   await context.close();
 });
