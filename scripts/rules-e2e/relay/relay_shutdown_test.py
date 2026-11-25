@@ -455,6 +455,52 @@ server.serve_forever()'''
     self.assertEqual(summary['recorded_lower_bound']+summary['unrecorded_upper_bound'],summary['reserved_snapshot'])
     previous=summary['recorded_lower_bound']
    finally: release.set(); t.join(1)
+ def matrix_slow_upload(self,trigger,lock_available):
+  from relay_concurrency_test import H
+  entered=threading.Event(); release=threading.Event(); uploading=threading.Event(); body_release=threading.Event(); exited=threading.Event(); codes=[]
+  self.addCleanup(release.set); self.addCleanup(body_release.set)
+  a=args(self.path,1 if trigger=='limit' else 5); a.seconds=.05
+  def dial(*a): entered.set(); release.wait(3); raise OSError('test stop')
+  relay=m.Relay(a,dialer=dial,grace=.3,abort_timeout=.1,exit_fn=lambda code:(codes.append(code),exited.set()))
+  self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
+  class Handler(H):
+   def send_error(self,code,*args): self.error=code
+  class SlowBody:
+   def read1(self,n): uploading.set(); body_release.wait(3); return b'{}'
+  slow=Handler('slow'); slow.rfile=SlowBody()
+  slow_thread=threading.Thread(target=relay.handle,args=(slow,),daemon=True); slow_thread.start(); self.assertTrue(uploading.wait(1))
+  first=Handler('first'); start=time.monotonic(); first_thread=threading.Thread(target=relay.handle,args=(first,),daemon=True); first_thread.start(); self.assertTrue(entered.wait(1))
+  self.assertEqual(relay.count,1); self.assertEqual(relay.inflight,1)
+  timer=None
+  if trigger=='deadline':
+   timer=threading.Timer(a.seconds,relay.deadline); timer.start()
+   with relay.condition: self.assertTrue(relay.condition.wait_for(lambda:relay.stopping,timeout=2))
+  reject=Handler('reject'); relay.handle(reject); self.assertEqual(reject.error,429); self.assertFalse(exited.is_set())
+  held=threading.Event(); unlock=threading.Event(); self.addCleanup(unlock.set); holder=None
+  if not lock_available:
+   def hold():
+    with relay.append_lock: held.set(); unlock.wait(3)
+   holder=threading.Thread(target=hold,daemon=True); holder.start(); self.assertTrue(held.wait(1))
+  try:
+   with patch('sys.stderr',new_callable=io.StringIO) as out:
+    self.assertTrue(exited.wait(2)); lines=[json.loads(x) for x in out.getvalue().splitlines()]
+   self.assertGreaterEqual(time.monotonic()-start,relay.grace); self.assertEqual(codes,[2]); summary=lines[-1]; self.assertEqual(summary['sealed'],lock_available)
+   self.assertEqual(sum(json.loads(line)['status']=='reserved' for line in self.path.read_text().splitlines()),1)
+   if not lock_available:
+    self.assertEqual(summary['recorded_lower_bound']+summary['unrecorded_upper_bound'],summary['reserved_snapshot'])
+    self.assertIsNone(summary['inflight']); self.assertTrue(summary['possible_extra_record_after_exit'])
+  finally:
+   unlock.set(); release.set(); body_release.set()
+   if holder: holder.join(2)
+   first_thread.join(2); slow_thread.join(2)
+   if timer: timer.join(2)
+ def test_matrix_slow_upload(self):
+  for trigger in ('limit','deadline'):
+   for available in (True,False):
+    with self.subTest(trigger=trigger,available=available),tempfile.TemporaryDirectory(dir=os.environ['RELAY_EVIDENCE_DIR']) as tmp:
+     old=self.path; self.path=pathlib.Path(tmp)/'ledger'
+     try: self.matrix_slow_upload(trigger,available)
+     finally: self.path=old
  def test_watchdog_only_starts_once(self):
   relay=m.Relay(args(self.path),grace=1,exit_fn=lambda code:None)
   self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
