@@ -502,16 +502,19 @@ server.serve_forever()'''
      try: self.matrix_slow_upload(trigger,available)
      finally: self.path=old
  def test_process_limit_slow_order(self):
-  self.process_limit_slow_order(False)
+  self.process_fault_matrix('limit','slow',False)
  def test_process_double_trigger_once(self):
-  self.process_limit_slow_order(True)
+  self.process_fault_matrix('double','slow',False)
  def test_process_admission_lock_held(self):
-  self.process_limit_slow_order(False,True)
+  self.process_fault_matrix('limit','slow',True)
  def test_process_deadline_slow_free(self):
-  self.process_limit_slow_order(False,False,True)
+  self.process_fault_matrix('deadline','slow',False)
  def test_process_deadline_slow_locked(self):
-  self.process_limit_slow_order(False,True,True)
- def process_limit_slow_order(self,double_trigger,lock_held=False,deadline_first=False):
+  self.process_fault_matrix('deadline','slow',True)
+ def process_fault_matrix(self,trigger,fault,lock_held):
+  if fault!='slow': raise ValueError('fault driver not implemented')
+  if trigger not in ('limit','deadline','double'): raise ValueError('invalid trigger')
+  double_trigger=trigger=='double'; deadline_first=trigger=='deadline'
   # Slow upload remains in body reading, before reservation; another complete
   # request consumes the limit and remains in flight against the loopback peer.
   # Accounting is reconciled via reservation + 429 + abort, not the
