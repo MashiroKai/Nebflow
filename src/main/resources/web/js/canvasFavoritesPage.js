@@ -194,6 +194,11 @@ function buildPage(onClose, onOpened) {
       src.className = 'cfp-row-src';
       src.textContent = entry.path;
       src.title = entry.path;
+      src.addEventListener('click', (event) => {
+        if (!matchMedia('(hover: none)').matches) return;
+        event.stopPropagation();
+        src.classList.toggle('is-expanded');
+      });
       const date = document.createElement('span');
       date.className = 'cfp-row-date';
       date.textContent = formatDate(entry.savedAt);

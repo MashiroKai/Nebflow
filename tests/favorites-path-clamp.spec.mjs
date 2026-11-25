@@ -89,7 +89,17 @@ try {
           assert.notEqual(await row.getAttribute('aria-disabled'),'true');
           await s.page.screenshot({path:join(shots,`touch-390-${theme}-before.png`),animations:'disabled'});
           const count=requests.filter(p=>p===path).length;
-          await row.tap(); await s.page.waitForFunction(()=>!document.querySelector('#canvas-fav-page'),null,{timeout:10000});
+          const source=row.locator('.cfp-row-src');
+          const collapsed=await source.evaluate(el=>({height:el.clientHeight,scroll:el.scrollHeight}));
+          assert(collapsed.scroll>collapsed.height,'mobile path must initially be clamped');
+          await source.tap();
+          const expanded=await source.evaluate(el=>({height:el.clientHeight,scroll:el.scrollHeight,text:el.textContent,expanded:el.classList.contains('is-expanded')}));
+          assert(expanded.expanded && expanded.height>collapsed.height && expanded.scroll<=expanded.height+1,'tap must reveal the full path');
+          assert.equal(expanded.text,path);
+          assert.equal(requests.filter(p=>p===path).length,count,'path tap must not open the document');
+          await source.tap();
+          assert(!(await source.evaluate(el=>el.classList.contains('is-expanded'))),'second tap collapses the path');
+          await row.locator('.cfp-row-title').tap(); await s.page.waitForFunction(()=>!document.querySelector('#canvas-fav-page'),null,{timeout:10000});
           assert(requests.filter(p=>p===path).length>count,'tap must request selected path');
           assert.equal(await s.page.locator('.cfp-path-tooltip:visible').count(),0,'touch must not show hover tooltip');
           await s.page.screenshot({path:join(shots,`touch-390-${theme}-after.png`),animations:'disabled'});

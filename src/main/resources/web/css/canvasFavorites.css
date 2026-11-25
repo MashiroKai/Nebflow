@@ -176,6 +176,7 @@ body.mobile-layer .mf-strip-chip .mf-cv-star svg { width: 18px; height: 18px; }
 .cfp-row-title { color: var(--color-text); font-size: var(--ds-fs-title); font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; white-space: normal; }
 .cfp-row-meta { display: flex; gap: var(--ds-space-2); font-size: var(--ds-fs-hint); color: var(--color-text-muted); line-height: 1.4; }
 .cfp-row-src { min-width: 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.cfp-row-src.is-expanded { display: block; overflow: visible; }
 .cfp-path-tooltip {
   position: fixed;
   z-index: 10000;
