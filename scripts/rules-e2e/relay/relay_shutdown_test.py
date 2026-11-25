@@ -132,6 +132,20 @@ server.serve_forever()'''
    start=time.monotonic(); relay.handle(h); relay.shutdown_summary(); self.assertLess(time.monotonic()-start,.5)
    self.assertIn('unrecorded rejection',errors.getvalue()); self.assertIn('"unrecorded_rejections": 1',errors.getvalue())
   self.assertEqual(responses,[429]); self.assertEqual(relay.unrecorded_rejections,1)
+ def test_late_rejection_write_counterexample(self):
+  # Characterize the unresolved race: timeout classification is not a durable snapshot.
+  relay=m.Relay(args(self.path),lock_timeout=.05,abort_timeout=.05); self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
+  relay.stopping=True; entered=threading.Event(); release=threading.Event(); written=threading.Event(); original=relay.event
+  def delayed(obj):
+   entered.set(); release.wait(2); original(obj); written.set()
+  relay.event=delayed
+  from relay_concurrency_test import H
+  h=H('late'); h.send_error=lambda *a:None
+  with patch('sys.stderr',new_callable=io.StringIO): relay.handle(h)
+  self.assertTrue(entered.is_set()); self.assertEqual(relay.unrecorded_rejections,1)
+  release.set(); self.assertTrue(written.wait(2))
+  self.assertEqual(sum(json.loads(x)['status']=='rejected-limit' for x in self.path.read_text().splitlines()),1)
+  self.assertEqual(relay.unrecorded_rejections,1)
  def test_watchdog_only_starts_once(self):
   relay=m.Relay(args(self.path),grace=1,exit_fn=lambda code:None)
   self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
