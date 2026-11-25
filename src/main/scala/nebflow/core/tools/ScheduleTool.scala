@@ -807,7 +807,7 @@ Your context does NOT show the current date/time — never invent an absolute da
         for
           region <- TodoDue.requireCreationZone(explicit, ctx.deviceZone)
           _ <- Either.cond(input("repeat").flatMap(_.asString).forall(r => r == "once" || r.isBlank), (), "Repeating todo deadlines are not yet supported")
-          _ <- Either.cond(zoned.isDefined || raw.asString.exists(s => scala.util.Try(LocalDateTime.parse(s)).isSuccess), (), "Please clarify an explicit local date and time")
+          _ <- Either.cond(zoned.isDefined || raw.asString.exists(s => scala.util.Try(LocalDateTime.parse(s)).isSuccess || s.trim.toLowerCase.startsWith("tomorrow")), (), "Please clarify an explicit local date and time")
           at <- zoned.map(z => Right(z.toInstant.toEpochMilli)).getOrElse(parseTriggerAt(Some(raw), now, ZoneId.of(region)))
           _ <- Either.cond(at > now, (), "Please clarify a future reminder time")
         yield

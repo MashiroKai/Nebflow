@@ -261,6 +261,21 @@ class TodoTaxonomySpec extends CatsEffectSuite:
   private def callTool(input: Json): Either[ToolError, String] =
     ScheduleTool.call(input.asObject.get, mkCtx()).unsafeRunSync()
 
+  test("tool todo relative tomorrow resolves using its device region"):
+    val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
+    val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision, "triggerAt" -> "tomorrow at 09:00".asJson)
+    val zone = java.time.ZoneId.of("Asia/Tokyo")
+    val expectedDate = java.time.LocalDate.now(zone).plusDays(1)
+    for
+      _ <- reset()
+      result <- ScheduleTool.call(input.asObject.get, mkCtx().copy(deviceZone = Some("Asia/Tokyo")))
+      stored <- taskStore.getAllTodos
+    yield
+      assert(result.isRight, s"tomorrow should resolve in device region: $result")
+      assertEquals(stored.size, 1)
+      val due = stored.head.due.get.asJson.hcursor
+      assertEquals(due.get[Long]("dueAt").toOption, Some(expectedDate.atTime(9, 0).atZone(zone).toInstant.toEpochMilli))
+
   test("tool todo offset fixes instant but cannot substitute for a device region"):
     val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
     val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision, "triggerAt" -> "2035-01-01T09:00:00+08:00".asJson)
