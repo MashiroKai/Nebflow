@@ -512,6 +512,16 @@ server.serve_forever()'''
    except OSError: pass
   threading.Thread(target=provider,daemon=True).start()
   code='''import sys,importlib.util,http.client,time,json,itertools\ns=importlib.util.spec_from_file_location("relay",sys.argv.pop(1)); m=importlib.util.module_from_spec(s); s.loader.exec_module(m)\nport=int(sys.argv.pop(1)); old=m.Relay.__init__; event=m.Relay.event; send=m.BaseHTTPRequestHandler.send_error; order=itertools.count()\ndef log(label): print(json.dumps({"observation":label,"seq":next(order),"monotonic":time.monotonic()}),file=sys.stderr,flush=True)\ndef init(self,args,**kw): old(self,args,dialer=lambda h,p,t:http.client.HTTPConnection("127.0.0.1",port,timeout=t),grace=1,abort_timeout=.1)\ndef observed(self,obj):\n result=event(self,obj)\n if obj.get("status")=="rejected-limit" and result is True: log("ledger-fsynced")\n return result\ndef sent(self,status,*a,**kw):\n result=send(self,status,*a,**kw)\n if status==429: log("response-written")\n return result\nm.Relay.__init__=init; m.Relay.event=observed; m.BaseHTTPRequestHandler.send_error=sent; m.main()'''
+  code=code.replace('m.Relay.__init__=init; m.Relay.event=observed;', '''force=m.Relay.force_after_grace
+original_init=init
+def init(self,args,**kw):
+ original_init(self,args,**kw)
+ old_exit=self.exit_fn
+ def exit_observed(code): log("exit-call"); old_exit(code)
+ self.exit_fn=exit_observed
+def force_observed(self): log("force-entry"); return force(self)
+m.Relay.force_after_grace=force_observed
+m.Relay.__init__=init; m.Relay.event=observed;''')
   ev=pathlib.Path(os.environ['RELAY_EVIDENCE_DIR']); prefix=ev/'round7-process-limit-slow'; ledger=self.path
   with open(str(prefix)+'-stderr.log','w') as err:
    p=subprocess.Popen([sys.executable,'-B','-c',code,str(pathlib.Path(m.__file__)),str(up.getsockname()[1]),'--route','one,example.com,/v1,FAKE_KEY','--allow-host','example.com','--port','0','--ledger',str(ledger),'--limit','1','--seconds','30','--timeout','5'],stdout=subprocess.PIPE,stderr=err,text=True,env={'PATH':'/usr/bin:/bin','FAKE_KEY':'fake-only'})
@@ -532,7 +542,7 @@ server.serve_forever()'''
     if p.poll() is None: p.terminate(); p.wait(timeout=3)
     p.stdout.close()
   lines=[json.loads(x) for x in pathlib.Path(str(prefix)+'-stderr.log').read_text().splitlines()]; obs=[x for x in lines if 'observation' in x]
-  self.assertEqual([x['observation'] for x in obs],['ledger-fsynced','response-written']); self.assertLess(obs[0]['seq'],obs[1]['seq']); self.assertLessEqual(obs[0]['monotonic'],obs[1]['monotonic']); self.assertTrue(lines[-1]['sealed'])
+  names=[x['observation'] for x in obs]; self.assertCountEqual(names,['ledger-fsynced','response-written','force-entry','exit-call']); self.assertLess(names.index('ledger-fsynced'),names.index('response-written')); self.assertLess(names.index('force-entry'),names.index('exit-call')); self.assertEqual([x['seq'] for x in obs],list(range(4))); self.assertEqual([x['monotonic'] for x in obs],sorted(x['monotonic'] for x in obs)); self.assertTrue(lines[-2]['sealed'])
  def test_watchdog_only_starts_once(self):
   relay=m.Relay(args(self.path),grace=1,exit_fn=lambda code:None)
   self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
