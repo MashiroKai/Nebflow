@@ -475,6 +475,7 @@ body.mobile-layer .note-dock .ds-resize-handle {
   align-items: baseline;
   min-width: 0;
 }
+.ask-workline-host { align-self: stretch; min-width: 0; width: 100%; }
 .ask-handoff[hidden] { display: none; }
 .ask-handoff-tag { color: var(--color-primary); white-space: nowrap; }
 .ask-handoff.failed .ask-handoff-tag { color: var(--cv-hint-color-dim); }
