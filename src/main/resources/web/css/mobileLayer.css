@@ -2254,6 +2254,7 @@ body.mobile-layer .mf-strip-chip.is-expanded .mf-strip-label {
    （展开 ~220 ≫ 常态 112，label 拿到的份额仍大于常态档）。
    2600ms 自动收，换签即收 —— JS 侧定时。 */
 body.mobile-layer .mf-strip-chip.is-expanded {
+  padding-inline: 12px;
   z-index: 3;
   max-width: min(calc((100vw - 2 * var(--mchrome-inset)) / var(--rsc, 1)), 260px);
   opacity: 1;
