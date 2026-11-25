@@ -108,6 +108,47 @@ export function syncFavoritesFromEngine() {
 
 /** 按 path 切换收藏（桌面钮与列表共用的唯一写入口）。
  *  @param {{ path: string, title?: string }} item @returns {boolean} 切换后是否为已收藏 */
+const pendingPageRemovals = new Set();
+let pageRemovalQueue = Promise.resolve();
+export async function removeFavoriteFromPage(entry) {
+  if (pendingPageRemovals.has(entry.path)) return false;
+  pendingPageRemovals.add(entry.path);
+  const previous = pageRemovalQueue;
+  let release;
+  pageRemovalQueue = new Promise((resolve) => { release = resolve; });
+  await previous;
+  const before = loadFavorites().slice();
+  if (!isFavorited(before, entry.path)) { pendingPageRemovals.delete(entry.path); release(); return true; }
+  const next = before.filter((item) => item.path !== entry.path);
+  const updateView = (list) => {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)); } catch (_) { /* cache still works */ }
+    remember(list);
+    window.dispatchEvent(new CustomEvent(FAVORITES_CHANGE_EVENT));
+  };
+  updateView(next);
+  try {
+    const response = await fetch('/api/canvas-favorites', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...favoritesAuthHeaders() },
+      body: JSON.stringify({ list: next }),
+    });
+    if (!response.ok) throw new Error('Favorites save failed');
+    return true;
+  } catch (_) {
+    const current = loadFavorites();
+    if (!isFavorited(current, entry.path)) {
+      const restored = current.slice();
+      restored.splice(Math.min(before.findIndex((item) => item.path === entry.path), restored.length), 0, entry);
+      updateView(restored);
+    }
+    window.__showToast?.(t('canvas.fav.saveFailed'), 'error');
+    return false;
+  } finally {
+    pendingPageRemovals.delete(entry.path);
+    release();
+  }
+}
+
 export function toggleFavoritePath(item) {
   const { list, favorited } = toggleFavorite(loadFavorites(), item, Date.now());
   saveFavorites(list);
