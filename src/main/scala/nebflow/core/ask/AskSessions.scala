@@ -206,8 +206,8 @@ object AskSessions:
     GitVizPrefix + fileHash("gitviz:" + project)
 
   /**
-   * gitviz 分支管理问答的工具面 —— **比文件 ask 更窄**（作者硬约束「这个 agent
-   * 没有任何 git 写能力」）：
+   * 历史工具面：原作者硬约束「这个 agent 没有任何 git 写能力」被 2026-11-25
+   * 22:47 作者裁定「放开」取代。下列旧实现待移除，不代表当前意图：
    *   · 没有 `Bash`（文件 ask 有；Bash 是 git 写的唯一入口，这里整条拿掉）；
    *   · 没有 `ask_edit` / `ask_write`（零落盘）；
    *   · 没有 `send_message_to_main_chat`（交办只走 `askHandoff` 的结构化帧）；

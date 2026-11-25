@@ -32,36 +32,25 @@ class DualModeToolFaceSpec extends FunSuite:
     def gitvizAndAskFace(defn: AgentDef): Set[String] =
       buildAllowedToolSet(defn, 1, askGitViz = true, askSession = true, delegateSession = true)
 
-  test("GitViz face wins when both Ask flags are set") {
+  test("GitViz retains the ordinary declared tool face plus its scoped tools") {
     val definition = AgentDef(name = "subagent", description = "", tools = List("*"))
-    assertEquals(CoreProbe.gitvizAndAskFace(definition), nebflow.core.ask.AskSessions.GitVizAllowedTools)
+    val ordinary = CoreProbe.allowedWithDelegateMode(definition, delegateSession = true, delegateMode = None)
+    val gitviz = CoreProbe.gitvizAndAskFace(definition)
+    assertEquals(gitviz, ordinary ++ Set("gitviz_graph", "gitviz_handoff"))
+    assert(gitviz.contains("Bash"))
+    assert(gitviz.contains("Write"))
+    assert(gitviz.contains("Edit"))
   }
 
-  test("Ask effective face stays independent of dispatcher and declared tools") {
+  test("File Ask retains the ordinary declared tool face plus its scoped tools") {
     val definition = AgentDef(name = "subagent", description = "", tools = List("*"))
+    val ordinary = CoreProbe.allowedWithDelegateMode(definition, delegateSession = true, delegateMode = Some("dispatcher"))
     val face = CoreProbe.askFace(definition)
-    assertEquals(
-      face,
-      Set(
-        "message_record_search",
-        "send_message_to_main_chat",
-        "ask_edit",
-        "ask_write",
-        "PdfPage",
-        "Card",
-        "Read",
-        "Glob",
-        "Grep",
-        "WebSearch",
-        "WebFetch",
-        "Bash",
-        // gitviz 只读件（分支管理问答批 2026-11-19 第二轮：ask-gv-* 会话专属，
-        // 工具内自带 GITVIZ_FORBIDDEN 作用域闸，故属 Ask 面）
-        "gitviz_graph",
-        "gitviz_handoff"
-      )
-    )
-    assert(!face.contains("GitQuery"))
+    assert(ordinary.subsetOf(face), s"missing ordinary tools: ${ordinary -- face}")
+    assert(face.contains("Write"))
+    assert(face.contains("Edit"))
+    assert(face.contains("Bash"))
+    assert(face.contains("PdfPage"))
   }
 
   test("non-Ask roles retain Bash without gaining Ask-exclusive tools") {
