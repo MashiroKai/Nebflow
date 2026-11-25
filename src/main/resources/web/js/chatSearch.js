@@ -1297,7 +1297,7 @@ async function fetchHistory(sessionId, signal, cursor = {}) {
   //   · 其余非 2xx ⇒ 抛（fetchSessionList 同律）⇒ runSearch/
   //     runStream 既有 catch ⇒ showError 渲染「加载失败: … + 重试」钮；
   //   · 2xx 但体损坏（messages 缺失/非数组 = 截断体）⇒ 同样抛。
-  if (resp.status === 404) return [];
+  if (resp.status === 404) return cursor.latest ? { messages: [], total: 0, latestApplied: true } : [];
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const data = await resp.json().catch((e) => {
     if (e && e.name === 'AbortError') throw e;
@@ -2228,7 +2228,7 @@ async function runSearch() {
     // 索引里；跳过 = 直接走全量拉取路径（fetchConvHistory），scope 零泄漏。
     if (SEARCH_API_ENABLED && kw && !convScope) {
       const handled = await runSearchIndex(kw, scope, agentSel, ac, mySeq, statusEl, resultsEl);
-      if (handled) return;
+      if (handled || mySeq !== searchSeq || ac.signal.aborted) return;
     }
 
     let sessions;
