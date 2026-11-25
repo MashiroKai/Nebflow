@@ -30,6 +30,21 @@ class BrowserVerbsSpec extends CatsEffectSuite:
 
   private val nineNames = BrowserVerbNames.All.toSet
 
+  test("new screenshot file is owner read-write only on POSIX") {
+    val dir = Files.createTempDirectory("bu-private-shot")
+    val file = dir.resolve("shot.png")
+    try
+      if Files.getFileStore(dir).supportsFileAttributeView("posix") then
+        BrowserSessions.writePrivateScreenshot(file, Array[Byte](1, 2, 3))
+        import scala.jdk.CollectionConverters.*
+        import java.nio.file.attribute.PosixFilePermission.*
+        assertEquals(Files.getPosixFilePermissions(file).asScala.toSet, Set(OWNER_READ, OWNER_WRITE))
+        assertEquals(Files.readAllBytes(file).toList, List[Byte](1, 2, 3))
+    finally
+      Files.deleteIfExists(file)
+      Files.deleteIfExists(dir)
+  }
+
   // ══════════ 1. 纯策略 ══════════
 
   test("会话名：小写字母数字连字符下划线，1–40 位，禁路径字符") {

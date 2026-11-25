@@ -12,6 +12,12 @@ import nebflow.shared.{PathUtil, ThinkingConfig}
 
 class AskHostToolsSpec extends CatsEffectSuite:
 
+  test("BU takeover marker is recognized only as the exact leading line") {
+    assert(AskHostTool.isBrowserTakeover("[BU-TAKEOVER]\nsession: work\nscreenshot: /tmp/a.png"))
+    assert(!AskHostTool.isBrowserTakeover("ordinary [BU-TAKEOVER]"))
+    assert(!AskHostTool.isBrowserTakeover("[BU-TAKEOVER] suffix"))
+  }
+
   test("AskHost ledger persists pending source/question and accepts one correlated decision") {
     val tmp = os.temp.dir()
     val previous = PathUtil.dataRoot
