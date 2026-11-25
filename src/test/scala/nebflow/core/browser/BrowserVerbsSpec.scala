@@ -57,6 +57,18 @@ class BrowserVerbsSpec extends CatsEffectSuite:
     assert(tickets.consume(c, t => t.agent == "different-owner").isEmpty)
   }
 
+  test("screencast lifecycle sends start, acknowledges frames asynchronously and stops once") {
+    val calls = scala.collection.mutable.ListBuffer.empty[(String, Json)]
+    val stream = new BrowserScreencast((method, params) => calls.synchronized { calls += ((method, params)); () })
+    stream.start()
+    stream.frame(Json.obj("sessionId" -> 7.asJson, "data" -> "frame".asJson))
+    stream.close()
+    stream.close()
+    assertEquals(calls.toList.map(_._1), List("Page.startScreencast", "Page.screencastFrameAck", "Page.stopScreencast"))
+    assertEquals(calls(1)._2.hcursor.get[Int]("sessionId").toOption, Some(7))
+    assertEquals(stream.take(), Some("frame"))
+  }
+
   test("takeover input protocol admits only bounded mouse keyboard and wheel events") {
     assert(BrowserTakeoverInput.valid(Json.obj("type" -> "mouseMoved".asJson, "x" -> 12.asJson, "y" -> 20.asJson)))
     assert(!BrowserTakeoverInput.valid(Json.obj("type" -> "Runtime.evaluate".asJson)))
