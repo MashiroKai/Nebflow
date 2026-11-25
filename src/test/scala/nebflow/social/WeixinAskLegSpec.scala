@@ -79,6 +79,7 @@ class WeixinAskLegSpec extends CatsEffectSuite:
 
     override def forwardInteractionAnswer(requestId: String, rootSessionId: String, payload: Json): IO[Unit] =
       forwarded.update(_ :+ ((requestId, rootSessionId, payload)))
+
     override def closeInteractionRequest(requestId: String): IO[Unit] =
       closed.update(_ :+ requestId) *> onClose.get.flatMap(_(requestId))
     def interruptAgent(sessionId: String): IO[Unit] = IO.unit
@@ -500,39 +501,50 @@ class WeixinAskLegSpec extends CatsEffectSuite:
     def sink(i: Int): nebflow.actor.ActorRef[List[String]] = new nebflow.actor.ActorRef[List[String]]:
       def path: nebflow.actor.ActorPath = nebflow.actor.ActorPath("weixin-three-pending", List(s"sink-$i"))
       def !(value: List[String]): IO[Unit] = answers(i).complete(value).void
-      def ?[R](makeMsg: nebflow.actor.ActorRef[R] => List[String], timeout: Option[scala.concurrent.duration.FiniteDuration]): IO[R] =
+      def ?[R](
+        makeMsg: nebflow.actor.ActorRef[R] => List[String],
+        timeout: Option[scala.concurrent.duration.FiniteDuration]
+      ): IO[R] =
         IO.raiseError(new UnsupportedOperationException("tell-only"))
     val test = for
       hub <- system.spawn(nebflow.agent.InteractionHub(), "hub")
       _ <- ctx.onClose.set(rid => (hub ! nebflow.actor.InteractionHubCommand.CloseRequest(rid)).void)
       _ <- p.start(ctx)
-      _ <- hub ! nebflow.actor.InteractionHubCommand.RegisterRoot("s1", (frame: Json) =>
-        if frame.hcursor.get[String]("type").toOption.contains("askUser") then
-          p.onAgentEvent("s1", frame) *> frame.hcursor.get[String]("requestId").toOption.fold(IO.unit) { rid =>
-            seen(rid.stripPrefix("three-").toInt).complete(()).void
-          }
-        else IO.unit
+      _ <- hub ! nebflow.actor.InteractionHubCommand.RegisterRoot(
+        "s1",
+        (frame: Json) =>
+          if frame.hcursor.get[String]("type").toOption.contains("askUser") then
+            p.onAgentEvent("s1", frame) *> frame.hcursor.get[String]("requestId").toOption.fold(IO.unit) { rid =>
+              seen(rid.stripPrefix("three-").toInt).complete(()).void
+            }
+          else IO.unit
       )
       _ <- List(0, 1, 2).traverse_ { i =>
         val rid = s"three-$i"
-        (hub ! nebflow.actor.InteractionHubCommand.Request(nebflow.actor.InteractionRequest(
-          requestId = rid,
-          kind = nebflow.actor.InteractionKind.AskUser,
-          payload = Json.obj("items" -> Json.fromValues(simpleItems)),
-          reply = nebflow.actor.InteractionReply.AskUserReply(Some(sink(i))),
-          rootSessionId = "s1",
-          sourceAgent = "probe",
-          sourceSession = "s1"
-        ))) *> seen(i).get.timeout(scala.concurrent.duration.DurationInt(10).seconds)
+        (hub ! nebflow.actor.InteractionHubCommand.Request(
+          nebflow.actor.InteractionRequest(
+            requestId = rid,
+            kind = nebflow.actor.InteractionKind.AskUser,
+            payload = Json.obj("items" -> Json.fromValues(simpleItems)),
+            reply = nebflow.actor.InteractionReply.AskUserReply(Some(sink(i))),
+            rootSessionId = "s1",
+            sourceAgent = "probe",
+            sourceSession = "s1"
+          )
+        )) *> seen(i).get.timeout(scala.concurrent.duration.DurationInt(10).seconds)
       }
       closed <- ctx.closed.get
       pending <- hub.?[List[Json]](reply => nebflow.actor.InteractionHubCommand.ListPendingAsks("s1", reply))
       _ = assertEquals(closed, List.empty)
       _ = assertEquals(pending.size, 3)
       _ <- List(1, 0, 2).traverse_ { i =>
-        hub ! nebflow.actor.InteractionHubCommand.Answered(nebflow.actor.InteractionAnswered(
-          s"three-$i", "s1", Json.obj("answers" -> Json.arr(Json.fromString(s"answer-$i")))
-        ))
+        hub ! nebflow.actor.InteractionHubCommand.Answered(
+          nebflow.actor.InteractionAnswered(
+            s"three-$i",
+            "s1",
+            Json.obj("answers" -> Json.arr(Json.fromString(s"answer-$i")))
+          )
+        )
       }
       received <- answers.traverse(_.get.timeout(scala.concurrent.duration.DurationInt(10).seconds))
     yield assertEquals(received, List(List("answer-0"), List("answer-1"), List("answer-2")))
