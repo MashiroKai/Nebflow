@@ -21,6 +21,7 @@ async function boot(page, history = []) {
   });
   await page.goto('http://127.0.0.1:8188/');
   await page.waitForFunction(async sid => { const s = (await import('/js/state.js')).default; return s.activeSessionId === sid && s.ws?.readyState === 1; }, sid);
+  await page.waitForFunction(() => !document.documentElement.classList.contains('nf-boot-gate'), null, { timeout: 25000 });
   await page.evaluate(async sid => { const s = (await import('/js/state.js')).default; s.turnExpecting[sid] = true; s.busySessionIds.add(sid); }, sid);
 }
 async function frame(page, obj) { await page.evaluate(async o => { const s = (await import('/js/state.js')).default; s.ws.onmessage({ data:JSON.stringify(o) }); }, { sessionId:sid, ...obj }); }
@@ -63,13 +64,16 @@ for (const width of [390, 1280]) for (const theme of ['light', 'dark']) {
   test(`截图 ${width} ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 850 });
     await boot(page);
-    await page.evaluate(t => { document.documentElement.dataset.theme = t; document.documentElement.setAttribute('data-theme', t); }, theme);
+    await page.evaluate(async t => { document.documentElement.setAttribute('data-theme', t); const chat = await import('/js/chat.js'); chat.renderUserBubble('请整理结果', [], Date.now()); }, theme);
+    await expect(page.locator('#chat .row.user')).toBeVisible();
     await frame(page,{type:'thinkingDelta', delta:'正在整理相关文件'});
     await frame(page,{type:'textDelta', isRoot:true, delta:'<report>这是一条完整的回复，结束后一次显示。</report>'});
     await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
     const dir = process.env.BUFFER_SHOTS;
     if (dir) await page.screenshot({ path:`${dir}/${process.env.BUFFER_BASE === '1' ? 'base' : 'after'}-${width}-${theme}-running.png` });
     await frame(page,{type:'done'});
+    await expect(page.locator('#chat .bubble.ai').last()).toBeVisible();
+    await page.locator('#chat .bubble.ai').last().evaluate(el => Promise.all(el.getAnimations().map(a => a.finished.catch(() => {}))));
     if (dir) await page.screenshot({ path:`${dir}/${process.env.BUFFER_BASE === '1' ? 'base' : 'after'}-${width}-${theme}-done.png` });
   });
 }
