@@ -665,7 +665,11 @@ m.Relay.deadline=deadline_observed''')
   else: self.assertEqual(lines[-2]['still_inflight_at_exit'],0)
   if double_trigger:
    stamps={x['observation']:x['monotonic'] for x in obs}; delta=stamps['watch-deadline']-stamps['watch-handle']; self.assertGreater(delta,0); self.assertLess(delta,1)
- def test_lf_step1_step2_fsync_probe(self):
+ def test_lf_step1_step2_fsync_probe(self): self.lf_fsync_probe(False)
+ def test_lf_fsync_unsealed_probe(self): self.lf_fsync_probe(True)
+ def test_lf_fsync_deadline_free(self): self.lf_fsync_probe(False,True)
+ def test_lf_fsync_deadline_locked(self): self.lf_fsync_probe(True,True)
+ def lf_fsync_probe(self,locked,deadline=False):
   # Isolated process, normal A completes before the one-shot B fsync hook.
   import select
   up=socket.socket(); up.bind(('127.0.0.1',0)); up.listen(); up.settimeout(4); self.addCleanup(up.close)
@@ -682,6 +686,12 @@ m.Relay.deadline=deadline_observed''')
   code='''import sys,os,threading,importlib.util,http.client,json,time,uuid
 s=importlib.util.spec_from_file_location("relay",sys.argv.pop(1)); m=importlib.util.module_from_spec(s); s.loader.exec_module(m)
 port=int(sys.argv.pop(1)); old_init=m.Relay.__init__; original_append=m.Relay.append_record; original_fsync=m.os.fsync
+original_print=print
+def observed_print(*args,**kwargs):
+ original_print(*args,**kwargs)
+ if args and args[0]=='{"sealed": true}': signal({"event":"sealed","time":time.monotonic()})
+ if args and isinstance(args[0],str) and args[0].startswith('{"sealed": false,'): signal({"event":"unsealed","time":time.monotonic()})
+m.print=observed_print
 signal_fd=int(os.environ["SIGNAL_FD"]); command_fd=int(os.environ["COMMAND_FD"])
 def signal(obj): os.write(signal_fd,(json.dumps(obj)+"\\n").encode())
 def append(self,obj,sidecar=False):
@@ -693,6 +703,9 @@ def append(self,obj,sidecar=False):
  return result
 def init(self,args,**kw):
  old_init(self,args,dialer=lambda h,p,t:http.client.HTTPConnection("127.0.0.1",port,timeout=t),grace=3,abort_timeout=.1,lock_timeout=10)
+ old_exit=self.exit_fn
+ def exit_observed(code): signal({"event":"exit-call","code":code,"time":time.monotonic()}); old_exit(code)
+ self.exit_fn=exit_observed
  def arm():
   os.read(command_fd,1)
   first=[True]
@@ -701,11 +714,15 @@ def init(self,args,**kw):
     first[0]=False; signal({"event":"fsync-enter","time":time.monotonic()}); threading.Event().wait(10)
    return original_fsync(fd)
   m.os.fsync=fsync; signal({"event":"fsync-armed","time":time.monotonic()})
+  command=os.read(command_fd,1)
+  if command==b"L":
+   with self.append_lock:
+    signal({"event":"append-lock-held","time":time.monotonic()}); threading.Event().wait(10)
  threading.Thread(target=arm,daemon=True).start()
 m.Relay.__init__=init; m.Relay.append_record=append; m.main()'''
   ev=pathlib.Path(os.environ['RELAY_EVIDENCE_DIR']); prefix=ev/'step1-step2-fsync-probe'
   with open(str(prefix)+'-stderr.log','w') as err:
-   p=subprocess.Popen([sys.executable,'-B','-c',code,str(pathlib.Path(m.__file__)),str(up.getsockname()[1]),'--route','one,example.com,/v1,FAKE_KEY','--allow-host','example.com','--port','0','--ledger',str(self.path),'--limit','2','--seconds','30','--timeout','10'],stdout=subprocess.PIPE,stderr=err,text=True,pass_fds=(signal_w,command_r),env={'PATH':'/usr/bin:/bin','FAKE_KEY':'fake-only','SIGNAL_FD':str(signal_w),'COMMAND_FD':str(command_r)})
+   p=subprocess.Popen([sys.executable,'-B','-c',code,str(pathlib.Path(m.__file__)),str(up.getsockname()[1]),'--route','one,example.com,/v1,FAKE_KEY','--allow-host','example.com','--port','0','--ledger',str(self.path),'--limit','3' if deadline else '2','--seconds','1' if deadline else '30','--timeout','10'],stdout=subprocess.PIPE,stderr=err,text=True,pass_fds=(signal_w,command_r),env={'PATH':'/usr/bin:/bin','FAKE_KEY':'fake-only','SIGNAL_FD':str(signal_w),'COMMAND_FD':str(command_r)})
    clients=[]
    try:
     port=json.loads(p.stdout.readline())['port']; self.assertNotEqual(port,6138)
@@ -714,7 +731,7 @@ m.Relay.__init__=init; m.Relay.append_record=append; m.main()'''
      c.sendall(('POST /one/chat HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Length: 2\r\nX-Stand-Trace-Id: %s\r\n\r\n{}'%(port,trace)).encode()); return c
     stream=os.fdopen(os.dup(signal_r),'rb',buffering=0); self.addCleanup(stream.close)
     def event():
-     self.assertTrue(select.select([stream],[],[],4)[0], 'signal timeout'); return json.loads(stream.readline())
+     self.assertTrue(select.select([stream],[],[],7)[0], 'signal timeout'); return json.loads(stream.readline())
     a=request('A'); booked=event(); self.assertEqual((booked['event'],booked['trace'],booked['status']),('booked','A','reserved'))
     self.assertFalse(booked['inflight'])
     response=a.recv(4096); self.assertIn(b' 200 ',response)
@@ -725,7 +742,33 @@ m.Relay.__init__=init; m.Relay.append_record=append; m.main()'''
     (ev/'step1-normal-a.json').write_text(json.dumps({'booked':booked,'record_id':record['record_id'],'response':response.decode('latin1'),'ledger_line':json.dumps(record)},indent=2)+'\n')
     os.write(command_w,b'A'); armed=event(); self.assertEqual(armed['event'],'fsync-armed')
     b=request('B'); entered=event(); self.assertEqual(entered['event'],'fsync-enter')
-    (ev/'step2-b-enter.json').write_text(json.dumps({'armed':armed,'entered':entered,'B_response_ready':bool(select.select([b],[],[],0)[0])},indent=2)+'\n')
+    (ev/('step2-b-enter-'+('locked' if locked else 'free')+'.json')).write_text(json.dumps({'armed':armed,'entered':entered,'B_response_ready':bool(select.select([b],[],[],0)[0])},indent=2)+'\n')
+    if locked:
+     os.write(command_w,b'L'); self.assertEqual(event()['event'],'append-lock-held')
+    sealed_event=event(); self.assertEqual(sealed_event['event'],'unsealed' if locked else 'sealed')
+    try:
+     c=request('C'); c_result=c.recv(4096).decode('latin1')
+    except (OSError,ConnectionError): c_result='disconnected'
+    self.assertTrue(not c_result or c_result=='disconnected' or ' 429 ' in c_result)
+    (ev/('step3-f-c-in-window-'+('deadline' if deadline else 'limit')+'-'+('locked' if locked else 'free')+'.json')).write_text(json.dumps({'C':c_result,'timing':'after sealed signal' if not locked else 'after B entered; unsealed exit not delayed'},indent=2)+'\n')
+    exit_event=event(); self.assertEqual((exit_event['event'],exit_event['code']),('exit-call',2))
+    exit_code=p.wait(timeout=6)
+    self.assertFalse(select.select([stream],[],[],0)[0], 'extra exit or booking signal')
+    try:
+     c=request('C'); c_result=c.recv(4096).decode('latin1')
+    except (OSError,ConnectionError): c_result='disconnected'
+    raw=self.path.read_bytes(); self.assertTrue(raw.endswith(b'\n'))
+    records=[json.loads(line) for line in raw.splitlines()]
+    self.assertEqual({r['trace_id'] for r in records if r.get('status')=='reserved'},{'A','B'})
+    self.assertFalse(any(r.get('trace_id')=='C' for r in records))
+    (ev/('step3-f-c-ledger-exit-'+('deadline' if deadline else 'limit')+'-'+('locked' if locked else 'free')+'.json')).write_text(json.dumps({'C':c_result,'exit_event':exit_event,'ledger':records},indent=2)+'\n')
+    lines=[json.loads(line) for line in pathlib.Path(str(prefix)+'-stderr.log').read_text().splitlines() if line.startswith('{')]
+    summary=next(x for x in reversed(lines) if 'recorded_lower_bound' in x or 'still_inflight_at_exit' in x)
+    (ev/('step3-fsync-'+('deadline' if deadline else 'limit')+'-'+('locked' if locked else 'free')+'.json')).write_text(json.dumps({'exit':exit_code,'summary':summary,'lock_method':'append_lock held by wrapper thread after fsync-enter' if locked else 'no injected append_lock holder','basis':'https_relay.py:274-286'},indent=2)+'\n')
+    self.assertEqual(exit_code,2)
+    if locked: self.assertEqual((summary['recorded_lower_bound'],summary['reserved_snapshot'],summary['unrecorded_upper_bound']),(1,2,1))
+    else:
+     self.assertTrue(summary['sealed']); self.assertEqual(summary['still_inflight_at_exit'],1); self.assertEqual((summary['abort_write_confirmed'],summary['abort_write_unconfirmed']),(0,0))
    finally:
     for c in clients: c.close()
     if p.poll() is None: p.terminate(); p.wait(timeout=3)
