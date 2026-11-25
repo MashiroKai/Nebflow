@@ -57,6 +57,13 @@ class PngLatexDisciplineTests(unittest.TestCase):
         text = '[下载](attachments/a.pdf)\n![图](attachments/a.svg)\n![图](attachments/a.png)\n375×812，cm²，m/s²，≤12\n~~~\n∑x\n~~~\n`x = a + b`\n> x = a + b\n$x = a + b$'
         self.assertEqual(MOD.collect_png_latex_issues(text), [])
 
+    def test_precision_exclusions_and_forms(self):
+        scan = MOD.collect_png_latex_issues
+        for line in ('date: 2026-11-03', '# x + y = z', 'A / B / C', 'cm² m/s² keV/µm', '375×812', '[x+y=z](https://x/a)', 'attachments/a+b=c.png'):
+            self.assertEqual(scan(line), [], line)
+        for line in ('10⁻³', '∑ x = y', 'x + y = z', '(a + b)/(c - d)'):
+            self.assertEqual([x['rule'] for x in scan(line)], ['latex-math'], line)
+
     def test_new_and_legacy_scope_and_switch(self):
         with tempfile.TemporaryDirectory() as root:
             write(root, 'old__20261125_000000.md', doc('![图](attachments/a.pdf)\n\nx = a + b'))
@@ -64,7 +71,7 @@ class PngLatexDisciplineTests(unittest.TestCase):
             notices = []
             violations = validate(Path(root), strict=True, advisories=notices)
             self.assertTrue(any(x['rule'] == 'png-primary' and x['file'].startswith('new') for x in violations))
-            self.assertTrue(any(x['rule'] == 'latex-math' and x['file'].startswith('new') for x in violations))
+            self.assertTrue(any(x['rule'] == 'latex-math' and x['file'].startswith('new') for x in notices))
             self.assertFalse(any(x['rule'] in ('png-primary', 'latex-math') and x['file'].startswith('old') for x in violations))
             self.assertTrue(any(x['rule'] == 'latex-math' and x['file'].startswith('old') for x in notices))
 

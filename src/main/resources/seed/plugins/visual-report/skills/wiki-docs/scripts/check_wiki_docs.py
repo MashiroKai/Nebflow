@@ -2447,8 +2447,8 @@ def check(root, docs, resolve, glossary_rel, exclude_glossary_check, terms_by_re
 
             for issue in collect_png_latex_issues('\n'.join(doc.raw_lines)):
                 hard = style_scoped_v2(rel, doc, '20261126_000500', False)
-                if issue['rule'] == 'latex-math' and style_opts.get('math_strict'):
-                    hard = True
+                if issue['rule'] == 'latex-math':
+                    hard = bool(style_opts.get('math_strict'))
                 if hard:
                     add(issue['rule'], rel, issue['line'], issue['detail'])
                 elif advisories is not None:
@@ -2862,11 +2862,27 @@ def collect_png_latex_issues(text):
     for match in re.finditer(pdf_pattern, visible, re.I):
         issues.append({'rule': 'png-primary', 'line': visible.count('\n', 0, match.start()) + 1, 'detail': '正文不得内嵌 PDF 图件；改用 PNG，PDF 可提供下载'})
     without_math = re.sub(r'(?s)(?<!\\)\$\$.*?(?<!\\)\$\$|(?<!\\)\$(?!\$)[^\n]*?(?<!\\)\$', lambda m: re.sub(r'[^\n]', ' ', m.group()), visible)
+    operand = r'(?:[A-Za-zα-ωΑ-Ω](?:_[A-Za-z0-9]|[₀-₉])?|\d+(?:\.\d+)?)'
+    binary = rf'{operand}\s*[\^*+·×/-]\s*{operand}'
+    frontmatter = False
     for number, line in enumerate(without_math.splitlines(), 1):
-        expr_equal = re.search(r'(?<![\w/])(?:[A-Za-zα-ωΑ-Ω][\w₀-₉⁰-⁹]*|\d+)\s*=\s*(?:[A-Za-zα-ωΑ-Ω][\w₀-₉⁰-⁹]*|\d+)\s*[+*/^×÷−-]\s*(?:[A-Za-zα-ωΑ-Ω]|\d)', line)
-        line = re.sub(r'\b\d+(?:\.\d+)?\s*×\s*\d+(?:\.\d+)?\b', '', line)
-        expr_chain = re.search(r'(?<![\w/.-])[A-Za-zα-ωΑ-Ω0-9⁰-⁹₀-₉]+\s*[+×÷±*/^−]\s*[A-Za-zα-ωΑ-Ω0-9⁰-⁹₀-₉]+\s*[+×÷±*/^−]\s*[A-Za-zα-ωΑ-Ω0-9⁰-⁹₀-₉]+(?![\w/.-])', line)
-        if expr_equal or expr_chain or re.search(r'[∫∑√]', line):
+        if number == 1 and line.strip() == '---':
+            frontmatter = True
+            continue
+        if frontmatter:
+            if line.strip() in ('---', '...'):
+                frontmatter = False
+            continue
+        if re.match(r'^\s*(?:#{1,6}\s|[\w-]+\s*:|\|?\s*:?-{3,})', line):
+            continue
+        line = re.sub(r'!?\[[^\]]*\]\([^)]*\)|!?\[\[[^]]*\]\]|https?://\S+', ' ', line)
+        line = re.sub(r'\S*(?:\./|~/|\.stand/|attachments/|\.[A-Za-z]{2,5}\b)\S*', ' ', line)
+        line = re.sub(r'\b\d+(?:\.\d+)?\s*×\s*\d+(?:\.\d+)?\b', ' ', line)
+        has_power = re.search(r'(?<!\d)10⁻?[⁰¹²³⁴⁵⁶⁷⁸⁹]+', line)
+        special = '=' in line and re.search(r'[∑∫√∏∂∇]', line)
+        equation = re.search(rf'(?<![\w/])(?:{binary}\s*=\s*{operand}|{operand}\s*=\s*{binary})(?![\w/])', line)
+        fraction = re.search(rf'\(\s*{binary}\s*\)\s*/\s*\(\s*{binary}\s*\)', line)
+        if has_power or special or equation or fraction:
             issues.append({'rule': 'latex-math', 'line': number, 'detail': '疑似公式须写在 LaTeX 定界符内'})
     return sorted(issues, key=lambda i: i['line'])
 
@@ -2956,7 +2972,7 @@ def main():
                     help="命令行追加禁用词（可多次；逗号/空白分隔）")
     ap.add_argument("--fold-threshold", type=int, default=DETAIL_FOLD_THRESHOLD,
                     help=f"R16 细节折叠的敞开正文阈值（可视字符；缺省 {DETAIL_FOLD_THRESHOLD}）")
-    ap.add_argument('--math-strict', action='store_true', help='公式检查全库硬查；缺省新文档硬查、存量告警')
+    ap.add_argument('--math-strict', action='store_true', help='公式检查全库硬查；缺省仅告警')
     args = ap.parse_args()
 
     if args.fold_run and args.fold_run > 0:
