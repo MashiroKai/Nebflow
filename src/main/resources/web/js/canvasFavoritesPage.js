@@ -289,6 +289,14 @@ export function mountFavoritesSidebar() {
   if (!panel || panel.firstElementChild) return;
   const built = buildPage(() => {});
   built.el.querySelector('.cfp-back')?.remove();
+  const bar = built.el.querySelector('.cfp-bar');
+  const title = built.el.querySelector('.cfp-title');
+  const label = document.createElement('span');
+  label.className = 'cfp-title panel-title';
+  label.textContent = title.textContent;
+  title.replaceWith(label);
+  bar.classList.add('panel-header');
+  built.el.querySelector('.cfp-search').classList.add('panel-top-search');
   built.el.id = 'canvas-fav-sidebar-page';
   built.el.classList.add('cfp-sidebar', 'is-open');
   built.el.removeAttribute('role');

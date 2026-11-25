@@ -68,6 +68,7 @@ export const CHECKS = [
   // 全面板圆角令牌覆盖（2026-11-23 作者第三次点名「按钮是方的」）：全局扫描，任何未接令牌的
   // 方角 / 字面量圆角命中即红，除非登记放行理由（ALLOW 表）。
   nodeCheck('radius-tokens', 'check-radius-tokens'),
+  nodeCheck('sidebar-top', 'check-sidebar-top'),
   nodeCheck('page-back-tokens', 'check-page-back-tokens'),
   // 文档收藏纯逻辑闸（2026-11-23 前端功能批）：收藏切换 / 同文档去重=置顶 / 归一化 / 上限。
   // 主会话多选合并 Ask 现场探针（loopback mock LLM + 隔离网关；CI 安全）。

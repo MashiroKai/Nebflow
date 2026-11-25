@@ -226,8 +226,16 @@ body.mobile-layer .mf-strip-chip .mf-cv-star svg { width: 18px; height: 18px; }
   border-radius: inherit;
   transform: none;
 }
-#panel-favorites .cfp-sidebar .cfp-bar { padding-left: 14px; }
-#panel-favorites .cfp-sidebar .cfp-title { text-align: left; }
+#panel-favorites .cfp-sidebar { color: var(--color-frame-text); background: transparent; }
+#panel-favorites .cfp-sidebar .cfp-bar {
+  min-height: 0;
+  padding: var(--ds-space-3) var(--ds-space-4);
+}
+#panel-favorites .cfp-sidebar .cfp-title {
+  text-align: left;
+  font-size: var(--ds-fs-body);
+  font-weight: var(--ds-fw-btn);
+}
 #panel-favorites .cfp-sidebar .cfp-bar,
 #panel-favorites .cfp-sidebar .cfp-search,
 #panel-favorites .cfp-sidebar .cfp-tabs,
