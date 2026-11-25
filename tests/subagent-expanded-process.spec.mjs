@@ -10,7 +10,7 @@ const history = [{type:'user', text:'请检查'}, {type:'ai', thinking, text:''}
 async function boot(page, replay) {
   await page.addInitScript(() => { localStorage.setItem('nebflow_token','e2e-token'); localStorage.setItem('nebflow_locale','zh-CN'); });
   await page.route('**/*', route => { const u = new URL(route.request().url()); let p = decodeURIComponent(u.pathname); if (p === '/') p = '/index.html'; if (p.startsWith('/api/')) return route.fulfill({status:200, contentType:'application/json', body:'{}'}); const f = normalize(join(web,p)); if (!f.startsWith(web)) return route.fulfill({status:403}); try { return route.fulfill({status:200, contentType:mime[extname(f)] || 'application/octet-stream', body:process.env.RULE_MUTANT === '6' && p === '/js/utils.js' ? readFileSync(f,'utf8').replace("if (bareProcess || card.closest('[data-nf-bare-process-rows=\"1\"]')) {", 'if (false) {') : readFileSync(f)}); } catch { return route.fulfill({status:404}); } });
-  await page.routeWebSocket(/\/ws/, ws => { const config = () => ws.send(JSON.stringify({type:'configData',config:'{}',configured:true,onboarding:'done'})); const sessions = () => ws.send(JSON.stringify({type:'sessionList',sessions:[{id:root,name:'root',agentName:'Nebula'}],folders:[],activeId:root})); config(); sessions(); ws.onMessage(raw => {const m = JSON.parse(raw); if (m.type === 'getConfig') config(); if (m.type === 'getSessions' || m.type === 'listSessions') sessions(); if (m.type === 'getHistory') ws.send(JSON.stringify({type:'historyPage',sessionId:m.sessionId,messages:replay && m.sessionId === sid ? history : [],hasMore:false,offset:0,total:replay && m.sessionId === sid ? history.length : 0}));}); });
+  await page.routeWebSocket(/\/ws/, ws => { const config = () => ws.send(JSON.stringify({type:'configData',config:'{}',configured:true,onboarding:'done'})); const sessions = () => ws.send(JSON.stringify({type:'sessionList',sessions:[{id:root,name:'root',agentName:'Nebula'}],folders:[],activeId:root})); config(); sessions(); ws.onMessage(raw => {const m = JSON.parse(raw); if (m.type === 'getConfig') config(); if (m.type === 'getSessions' || m.type === 'listSessions') sessions(); if (m.type === 'getHistory') ws.send(JSON.stringify({type:'historyPage',sessionId:m.sessionId,messages:replay && m.sessionId === sid ? history : (replay && m.sessionId === root ? [{type:'user',text:'主会话请求'},{type:'tool',label:'Read',content:'主会话工具'},{type:'ai',isRoot:true,text:'<report>主会话结果</report>',terminal:true}] : []),hasMore:false,offset:0,total:replay && m.sessionId === sid ? history.length : 0}));}); });
   await page.goto('http://localhost:1/');
   await page.waitForFunction(async id => { const s = (await import('/js/state.js')).default; return s.activeSessionId === id && s.ws?.readyState === 1; }, root);
   await page.waitForFunction(() => !document.documentElement.classList.contains('nf-boot-gate'), null, {timeout:25000});
@@ -39,6 +39,15 @@ async function verify(page) {
   await expect(card).not.toHaveAttribute('aria-expanded');
   expect(await thinkingEl.evaluate(el => el.scrollHeight <= el.clientHeight + 1)).toBe(true);
 }
+test('断线重连后主会话和子 agent 回放不折叠', async ({page}) => {
+  await boot(page, true);
+  await verify(page);
+  await page.evaluate(async () => { const s = (await import('/js/state.js')).default; window.__oldSocket = s.ws; s.ws.close(); });
+  await page.waitForFunction(async () => { const s = (await import('/js/state.js')).default; return s.ws && s.ws !== window.__oldSocket && s.ws.readyState === 1; }, null, {timeout:20000});
+  await verify(page);
+  await expect(page.locator('#chat')).toContainText('主会话结果');
+  await expect(page.locator('#chat .turn-header, #chat [data-nf-injection-stack], #chat .nf-chevron')).toHaveCount(0);
+});
 test('子 agent 分页工具正文始终展开', async ({page}) => {
   await boot(page, false);
   await page.evaluate(async sid => {
