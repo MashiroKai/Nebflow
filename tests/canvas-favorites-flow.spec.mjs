@@ -205,13 +205,13 @@ async function desktopCase(browser, failures) {
   await settle(page, 150);
   check('desktop: 清空搜索恢复全部', (await rowPaths(page)).length === 4);
 
-  // 点条目 → canvas 打开，收藏页关闭（桌面不切页）。
+  // 桌面收藏是持久侧栏；打开条目后仍保留侧栏，移动端才关闭页面。
   await page.fill(`${PAGE} .cfp-search-input`, '论文');
   await settle(page, 150);
   await page.click(`${PAGE} .cfp-row[data-fav-path="/w/docs/t.pdf"]`);
-  const closed = await page.waitForSelector('#panel-favorites.active', { state: 'detached', timeout: 15000 }).then(() => true, () => false);
-  check('desktop: 点 PDF 条目后收藏页关闭', closed);
   await settle(page, 300);
+  check('desktop: 点 PDF 条目后收藏侧栏保持打开', await page.locator('#panel-favorites.active').count() === 1);
+  await closePage(page);
 
   await starRoundTrip(page, 'desktop', openPage);
   await openPage();
