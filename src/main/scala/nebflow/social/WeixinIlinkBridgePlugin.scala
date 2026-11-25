@@ -270,8 +270,8 @@ final class WeixinIlinkBridgePlugin(
    * judgement (a reply's numbers mean the ACTIVE set). A successfully
    * answered entry stays as an ANSWERED tombstone so a late repeat read of
    * the same numbers is refused (「该问题已作答」, never a second injection);
-   * askUserClosed removes the entry; a new ask displaces the old one
-   * (CloseRequest — B-3 新问顶旧问). Cleared on stop: a torn ask is never
+   * askUserClosed removes the entry; a new ask replaces only the Weixin
+   * address, leaving the old hub request open for other channels. Cleared on stop: a torn ask is never
    * answered across a restart.
    */
   private[social] val askLedgerRef =
@@ -754,9 +754,8 @@ final class WeixinIlinkBridgePlugin(
   // ─────────── askuser-remote P1: the outbound ask card + 案甲 legs ───────────
 
   /**
-   * The `askUser` frame leg (L0): flatten (D-1) → B-3 新问顶旧问 (the previous
-   * OPEN ask on this sender is retired by precise requestId, never the
-   * session-wide sweep) → ledger slot → attachments ride the MEDIA seam FIRST
+   * The `askUser` frame leg (L0): flatten (D-1) → replace the channel-local
+   * address without closing the previous hub request → ledger slot → attachments ride the MEDIA seam FIRST
    * (askuser-media-split batch: 媒体先单独发出，文本随后) → numbered text card
    * through the SAME deliver/dedup path as a chat reply, carrying path lines
    * ONLY for attachments the media leg did NOT deliver. A session with no
@@ -766,7 +765,7 @@ final class WeixinIlinkBridgePlugin(
   private def onAskUserFrame(sessionId: String, c: io.circe.HCursor): IO[Unit] =
     ctxRef.get.flatMap {
       case None => IO.unit // never started — nothing to close, nowhere to send
-      case Some(ctx) =>
+      case Some(_) =>
         routesRef.get.flatMap { routes =>
           routes.collectFirst { case (sender, sid) if sid == sessionId => sender } match
             case None => IO.unit // not a weixin-bound session — pass through
@@ -799,23 +798,15 @@ final class WeixinIlinkBridgePlugin(
                   val flat = AskPromptCodec.flatten(all)
                   askLedgerRef.get.flatMap { ledger =>
                     val previous = ledger.get(sender)
-                    // B-3 拍板 (无超时·新问顶旧问): the previous OPEN ask retires the
-                    // moment the new one takes the slot — precise CloseRequest, the
-                    // InteractionHub CloseRequest 先例 (single-slot, never the
-                    // session-wide sweep). An answered tombstone is already consumed
-                    // at the hub; nothing to close.
-                    val closeOld = previous
+                    // Only the channel address is displaced; the hub request remains
+                    // available to the web console and its other subscribers.
+                    val noteOld = previous
                       .filter(p => p.requestId != rid && p.answered.isEmpty)
-                      .map(p =>
-                        ctx.closeInteractionRequest(p.requestId) *>
-                          // answer-landing 批：旧问退役 ⇒ 其在飞答案的回执通道随撤。
-                          AskAnswerReceipt.drop(p.requestId) *>
-                          logger.info(
-                            s"weixin-ilink bridge: new ask displaces requestId=${p.requestId} for sender $sender (B-3 top-old)"
-                          )
-                      )
+                      .map(p => logger.info(
+                        s"weixin-ilink bridge: new ask replaces channel address requestId=${p.requestId} for sender $sender"
+                      ))
                       .getOrElse(IO.unit)
-                    closeOld *>
+                    noteOld *>
                       askLedgerRef.update(
                         _ + (sender -> AskEntry(
                           requestId = rid,
