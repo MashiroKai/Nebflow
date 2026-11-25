@@ -21,13 +21,13 @@
 
 三形态共用电路锚点（schemdraw 0.23 真实渲染，亮色内嵌 + `@media` 暗色块；视频内嵌其暗色 PNG 版）：
 
-![RC 充电电路原理图](~/.nebflow/plots/education-motion/20261004_edu_rc_charge_schematic.svg)
+![RC 充电电路原理图](assets/20261004_edu_rc_charge_schematic.png)
 
 ## 形态①：静态分步图（既有 matplotlib 能力）
 
 渲染栈：viz-venv **matplotlib 3.11.2**（YaHei 中文、SVG 注入暗色 `@media` 块）。一张六面板图，t = 0/τ/2τ/3τ/4τ/5τ 逐步充电，完整响应为浅灰底稿、已充段强调色、当前步大圆标、历史步空心点；面板标题即 ①–⑥ 编号：
 
-![RC 充电静态分步图](~/.nebflow/plots/education-motion/20261004_edu_rc_charge_steps_static.svg)
+![RC 充电静态分步图](assets/20261004_edu_rc_charge_steps_static.png)
 
 分步说明（与图中编号一一对应）：
 
