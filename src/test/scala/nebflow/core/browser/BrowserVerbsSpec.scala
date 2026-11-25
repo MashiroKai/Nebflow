@@ -59,9 +59,11 @@ class BrowserVerbsSpec extends CatsEffectSuite:
 
   test("screencast lifecycle sends start, acknowledges frames asynchronously and stops once") {
     val calls = scala.collection.mutable.ListBuffer.empty[(String, Json)]
-    val stream = new BrowserScreencast((method, params) => calls.synchronized { calls += ((method, params)); () })
+    val ack = new java.util.concurrent.CountDownLatch(1)
+    val stream = new BrowserScreencast((method, params) => calls.synchronized { calls += ((method, params)); if method == "Page.screencastFrameAck" then ack.countDown(); () })
     stream.start()
     stream.frame(Json.obj("sessionId" -> 7.asJson, "data" -> "frame".asJson))
+    assert(ack.await(2, java.util.concurrent.TimeUnit.SECONDS))
     stream.close()
     stream.close()
     assertEquals(calls.toList.map(_._1), List("Page.startScreencast", "Page.screencastFrameAck", "Page.stopScreencast"))
@@ -87,6 +89,16 @@ class BrowserVerbsSpec extends CatsEffectSuite:
     assert(!BrowserTakeoverInput.valid(Json.obj("type" -> "Runtime.evaluate".asJson)))
     assert(!BrowserTakeoverInput.valid(Json.obj("type" -> "mouseMoved".asJson, "x" -> (-1).asJson, "y" -> 1.asJson)))
     assert(!BrowserTakeoverInput.valid(Json.obj("type" -> "insertText".asJson, "text" -> ("x" * 4097).asJson)))
+  }
+
+  test("screencast acknowledgements are bounded while retaining the newest image") {
+    val queue = new BrowserFramePump
+    assert(queue.offer(1, "first"))
+    assert(!queue.offer(2, "second"))
+    assertEquals(queue.nextAck(), Some(1))
+    assertEquals(queue.takeFrame(), Some("second"))
+    assertEquals(queue.nextAck(), Some(2))
+    assertEquals(queue.nextAck(), None)
   }
 
   test("screencast frames acknowledge every received frame and retain only the newest") {
