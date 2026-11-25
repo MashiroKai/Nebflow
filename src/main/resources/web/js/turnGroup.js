@@ -75,6 +75,7 @@
 // data-nf-turn-terminal read here, so the last bare tool card folds too.
 
 import { t } from './i18n.js';
+import { EVENTS } from './events.js';
 import { chevronSvg } from './chat.js';
 import { isNearBottom } from './utils.js';
 // stream-ux redesign (2026-10-03 author demo): the running turn's line and the
@@ -334,12 +335,14 @@ function syncInjectionStack(header) {
 // settled header is deliberately not selected: post-closure mail starts a
 // new turn, never changes a previous badge's count.
 if (typeof document !== 'undefined') {
-  document.addEventListener('nf-injection-appended', event => {
+  document.addEventListener(EVENTS.NF_INJECTION_APPENDED, event => {
     const chat = event.target;
+    if (!(chat instanceof Element)) return;
     const line = Array.from(chat.children).find(el => el.classList.contains('nf-workline'));
     if (line) syncInjectionStack(line);
   });
-  document.addEventListener('nf-workline-created', event => {
+  document.addEventListener(EVENTS.NF_WORKLINE_CREATED, event => {
+    if (!(event instanceof CustomEvent) || !(event.detail?.row instanceof Element)) return;
     syncInjectionStack(event.detail.row);
   });
 }
