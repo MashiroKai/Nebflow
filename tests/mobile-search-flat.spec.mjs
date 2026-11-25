@@ -690,6 +690,36 @@ test('default search controls geometry readings', async ({ page }) => {
   }
 });
 
+for (const colorScheme of ['light', 'dark']) {
+  for (const deviceScaleFactor of [1, 2]) {
+    test.describe(`search morph contract ${colorScheme} dpr${deviceScaleFactor}`, () => {
+      test.use({ colorScheme, deviceScaleFactor });
+      test('both pages preserve expanded field and collapsed FAB geometry', async ({ page }) => {
+        await bootApp(page);
+        for (const pageId of ['messages', 'contacts']) {
+          await dockTo(page, pageId);
+          const bar = page.locator(`.mobile-page[data-page="${pageId}"] .mh-search-bar`);
+          await expect(bar).toBeVisible();
+          await expect.poll(() => bar.evaluate(el => getComputedStyle(el).borderRadius)).toBe('12px');
+          const scroller = pageId === 'messages' ? '#fm-conversations' : '#fm-contacts-body';
+          await page.locator(`.mobile-page[data-page="${pageId}"] ${scroller}`).evaluate(el => {
+            el.scrollTop = 224;
+            el.dispatchEvent(new Event('scroll'));
+          });
+          await expect(bar).toHaveClass(/g2-fab/);
+          await expect.poll(() => bar.evaluate(el => getComputedStyle(el).borderRadius)).toBe('50%');
+          const box = await bar.boundingBox();
+          expect({ width: Math.round(box.width), height: Math.round(box.height) }).toEqual({ width: 48, height: 48 });
+          if (EVID) {
+            mkdirSync(EVID, { recursive: true });
+            await page.screenshot({ path: join(EVID, `contract-${pageId}-${colorScheme}-dpr${deviceScaleFactor}.png`) });
+          }
+        }
+      });
+    });
+  }
+}
+
 test('mobile-search-flat: messages + contacts（九组判据，双页同源）', async ({ page }) => {
   await bootApp(page);
   const errors = watchErrors(page);
