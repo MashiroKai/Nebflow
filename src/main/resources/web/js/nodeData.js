@@ -170,10 +170,13 @@ export const FLOW_MAP_TIMEOUT_MS = Number(globalThis.__nfFlowMapTimeoutMs) > 0
   ? Number(globalThis.__nfFlowMapTimeoutMs)
   : 12000;
 
-export async function fetchFlowMap(projectName, timeoutMs = FLOW_MAP_TIMEOUT_MS) {
+async function isRegisteredProject(projectName) {
   const { projects, unmounted } = await fetchProjectsRaw();
-  const blocked = new Set(unmounted.map(p => p.name));
-  if (blocked.has(projectName) || !projects.some(p => p.name === projectName && !p.unmounted && !p.archived && p.mounted !== false)) {
+  return !unmounted.some(p => p.name === projectName) && projects.some(p => p.name === projectName && !p.unmounted && !p.archived && p.mounted !== false);
+}
+
+export async function fetchFlowMap(projectName, timeoutMs = FLOW_MAP_TIMEOUT_MS) {
+  if (!await isRegisteredProject(projectName)) {
     return { nodes: [], worktrees: [], meta: { project: projectName, updatedAt: Date.now() }, notMounted: true };
   }
   const ctrl = typeof AbortController === 'function' && timeoutMs > 0 ? new AbortController() : null;
@@ -261,6 +264,7 @@ export async function fetchNodeResultDetail(projectName, nodeId, timeoutMs = NOD
  *  静默保留既有派生数据，下触发重试）。 */
 export async function fetchFlowMapArchive(projectName) {
   try {
+    if (!await isRegisteredProject(projectName)) return null;
     const r = await fetch(API.flowMapArchive(projectName), { headers: authHeaders() });
     if (!r.ok) return null;
     const data = await r.json();

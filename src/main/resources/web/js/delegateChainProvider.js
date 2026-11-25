@@ -404,7 +404,7 @@ async function refreshChain(key) {
 
 /**
  * 批量摘要（一次请求）：返回**内容变了的键集**。摘要面不可用（旧引擎 404 / 429 /
- * 坏形）⇒ 空集 = 只按「缺/活跃到期」两条判据取详情（旧行为的安全子集）。
+ * 坏形）⇒ 保留最后一次有效摘要；尚无有效摘要时不猜测链是否存在。
  */
 async function refreshDigests() {
   const body = await fetchJson(CHAINS_API.digests(digestsFingerprint));
@@ -671,7 +671,6 @@ async function refresh() {
   for (const k of Array.from(mirror.chains.keys())) {
     if (!keys.has(k)) {
       mirror.chains.delete(k);
-      chainDigests.delete(k);
       chainFetchedAt.delete(k);
     }
   }
