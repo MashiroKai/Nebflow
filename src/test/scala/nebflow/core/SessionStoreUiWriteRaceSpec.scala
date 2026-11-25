@@ -28,6 +28,42 @@ class SessionStoreUiWriteRaceSpec extends CatsEffectSuite:
       _ = assertEquals(rows.collect { case u: UiMessage.User => u.text }.toSet, Set("one", "two"))
     yield ()
 
+  private def writerWaitsForFlush(name: String)(writer: (SessionStore, String) => IO[Unit]): IO[Unit] =
+    val root = os.Path(Files.createTempDirectory("ui-writer-race"))
+    val store = SessionStore(root / "sessions", root / "tasks")
+    val sid = name
+    for
+      entered <- Deferred[IO, Unit]
+      gate <- Deferred[IO, Unit]
+      done <- Ref.of[IO, Boolean](false)
+      first <- Ref.of[IO, Boolean](true)
+      _ = store.beforeUiFlushWrite = _ => first.getAndSet(false).flatMap(isFirst =>
+        if isFirst then entered.complete(()).void *> IO.uncancelable(_ => gate.get) else IO.unit)
+      _ <- store.appendUiMessages(sid, List(UiMessage.User("one")))
+      flush <- store.flushPendingUiWrites.start
+      _ <- entered.get.timeout(5.seconds)
+      operation <- (writer(store, sid) *> done.set(true)).start
+      _ <- IO.sleep(200.millis)
+      premature <- done.get
+      _ <- gate.complete(())
+      _ <- flush.joinWithNever *> operation.joinWithNever
+      cached <- store.getUiMessages(sid, 0, 100).map(_._1)
+      cold = SessionStore(root / "sessions", root / "tasks")
+      disk <- cold.getUiMessages(sid, 0, 100).map(_._1)
+      _ = assert(!premature, s"$name completed while flush held the lock")
+      _ = assertEquals(disk, cached)
+    yield ()
+
+  test("save waits for in-flight flush"):
+    writerWaitsForFlush("save")((store, sid) => store.setSessionFromCloud(sid, Nil, List(UiMessage.User("replacement"))))
+
+  test("delete waits for in-flight flush"):
+    writerWaitsForFlush("delete")((store, sid) => store.deleteUiMessages(sid))
+
+  test("cloud merge waits for in-flight flush"):
+    writerWaitsForFlush("merge")((store, sid) =>
+      store.mergeSessionFromCloud(sid, Nil, List(UiMessage.User("one"), UiMessage.User("two"))).void)
+
   test("delayed old flush cannot overwrite a newer flush; disk equals cache"):
     val root = os.Path(Files.createTempDirectory("ui-flush-race"))
     val store = SessionStore(root / "sessions", root / "tasks")

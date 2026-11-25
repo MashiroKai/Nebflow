@@ -1528,9 +1528,7 @@ class SessionStore(
             // 此处删除面一次收净）。
             val mt = sessionsDir / id / "msg-tokens.jsonl"
             if os.exists(mt) then os.remove(mt)
-          } *> deleteUiMessages(id) *> appendSemaphores.update(
-            _ - id
-          ) *> (if wasActive && newActiveId.nonEmpty then
+          } *> deleteUiMessages(id) *> (if wasActive && newActiveId.nonEmpty then
                   loadSessionMessages(newActiveId).flatMap(msgs => activeMessagesRef.set(msgs))
                 else IO.unit) *> TurnStateStore.clear(id) *> saveIndex
       }
@@ -1829,15 +1827,20 @@ class SessionStore(
   ): IO[MergeResult] =
     for
       localMsgs <- loadSessionMessages(sessionId)
-      localUi <- loadUiMessages(sessionId)
       mergedMsgs = mergeMessages(localMsgs, cloudMessages)
-      mergedUi = mergeUiMessages(localUi, cloudUiMessages)
-      changed = mergedMsgs.length != localMsgs.length || mergedUi.length != localUi.length
+      uiResult <- getAppendSemaphore(sessionId).flatMap(_.permit.use { _ =>
+        loadUiMessages(sessionId).flatMap { localUi =>
+          val mergedUi = mergeUiMessages(localUi, cloudUiMessages)
+          val uiChanged = mergedUi.length != localUi.length
+          (if uiChanged then saveUiMessagesUnlocked(sessionId, mergedUi) else IO.unit).as((mergedUi, uiChanged))
+        }
+      })
+      (mergedUi, uiChanged) = uiResult
+      changed = mergedMsgs.length != localMsgs.length || uiChanged
       _ <-
         if changed then
           for
             _ <- saveSessionMessages(sessionId, mergedMsgs)
-            _ <- saveUiMessages(sessionId, mergedUi)
             _ <- indexRef.update { case (activeId, sessions, folders) =>
               val now = System.currentTimeMillis()
               val updated = sessions.map(s => if s.id == sessionId then s.copy(updatedAt = now) else s)
@@ -1926,8 +1929,12 @@ class SessionStore(
    * write durable right away (fork, cloud sync, startup migration). The
    * debounced append path uses `updateUiCache` + `scheduleFlush` instead.
    */
+  private def saveUiMessagesUnlocked(id: String, msgs: List[UiMessage]): IO[Unit] =
+    (writeUiMessagesToDisk(id, msgs) *> updateUiCache(id, msgs, dirty = false) *>
+      uiCacheState.update(_.clearDirty(id))).uncancelable
+
   private def saveUiMessages(id: String, msgs: List[UiMessage]): IO[Unit] =
-    writeUiMessagesToDisk(id, msgs) *> updateUiCache(id, msgs, dirty = false)
+    getAppendSemaphore(id).flatMap(_.permit.use(_ => saveUiMessagesUnlocked(id, msgs)))
 
   // Per-session semaphore to serialize appendUiMessages (prevents TOCTOU race)
   private val appendSemaphores: Ref[IO, Map[String, Semaphore[IO]]] =
@@ -2296,10 +2303,12 @@ class SessionStore(
 
   /** Delete UI messages file when session is deleted. Already called from deleteSession. */
   def deleteUiMessages(sessionId: String): IO[Unit] =
-    IO.blocking {
-      val f = uiFile(sessionId)
-      if os.exists(f) then os.remove(f)
-    } *> uiCacheState.modify(st => (st.removeAll(sessionId), ()))
+    getAppendSemaphore(sessionId).flatMap(_.permit.use { _ =>
+      (IO.blocking {
+        val f = uiFile(sessionId)
+        if os.exists(f) then os.remove(f)
+      } *> uiCacheState.modify(st => (st.removeAll(sessionId), ()))).uncancelable
+    })
 
   /**
    * Remove the last user message from UI history.
