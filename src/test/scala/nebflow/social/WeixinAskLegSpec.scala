@@ -465,7 +465,7 @@ class WeixinAskLegSpec extends CatsEffectSuite:
     end for
   }
 
-  test("WI-B1 B-3 top-old: a new ask retires the previous OPEN one by precise CloseRequest") {
+  test("WI-B1 new ask changes only the Weixin address, without closing the previous hub request") {
     val out = Out()
     for
       (p, ctx) <- started(out, List(meta("wx_a")))
@@ -475,7 +475,7 @@ class WeixinAskLegSpec extends CatsEffectSuite:
       v <- p.intake(ctx, WeixinIlinkBridgePlugin.Inbound(Some("wx_a"), Some("1"), Some("m1")))
       fw <- ctx.forwarded.get
     yield
-      assertEquals(closed, List("rid-1")) // precise, never the session-wide sweep
+      assertEquals(closed, List.empty) // other channels retain the previous request
       assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Answered("rid-2")) // the NEW ask answers
       assertEquals(fw.map(_._1), List("rid-2"))
     end for
