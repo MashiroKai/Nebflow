@@ -27,6 +27,22 @@ class AskHostToolsSpec extends CatsEffectSuite:
     assertEquals(AskHostTool.admitBrowserTakeover(true, "root", Some(marked), "work", registry), Right(()))
   }
 
+  test("timeout closes input gate for an active takeover before releasing the worker") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    val registry = nebflow.core.browser.BrowserSessions.takeoverRegistry
+    val session = "timeout-test-" + java.util.UUID.randomUUID().toString.take(8)
+    registry.created(session, "worker")
+    (for
+      (request, _) <- AskHostLedger.beginForCall("worker", "root", "agent", s"[BU-TAKEOVER]\nsession: $session", "timeout-gate-call")
+      _ <- AskHostLedger.admitTakeoverCurrent(request.correlationId, "root", session, registry)
+      _ = assertEquals(registry.withInput(session, request.correlationId)("sent"), Right("sent"))
+      _ <- AskHostLedger.releaseOnTimeout(request.correlationId, "timeout")
+      _ = assert(registry.withInput(session, request.correlationId)("sent").isLeft)
+    yield ()).guarantee(IO { registry.remove(session); PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
   test("takeover finish answers pending once and releases lease") {
     val tmp = os.temp.dir()
     val previous = PathUtil.dataRoot
@@ -56,6 +72,7 @@ class AskHostToolsSpec extends CatsEffectSuite:
       (request, _) <- AskHostLedger.beginForCall("worker", "root", "agent", "[BU-TAKEOVER]\nsession: work", "late-finish-call")
       _ <- AskHostLedger.releaseOnTimeout(request.correlationId, "timeout")
       _ <- AskHostLedger.admitTakeoverCurrent(request.correlationId, "root", "work", registry)
+      _ = assert(registry.withInput("work", request.correlationId)("event").isLeft)
       first <- AskHostLedger.finishTakeover(request.correlationId, "work", registry)
       second <- AskHostLedger.finishTakeover(request.correlationId, "work", registry)
       _ = assertEquals(first, AskHostLedger.TakeoverFinish.LateClaimed)

@@ -91,6 +91,15 @@ class BrowserVerbsSpec extends CatsEffectSuite:
     assert(!BrowserTakeoverInput.valid(Json.obj("type" -> "insertText".asJson, "text" -> ("x" * 4097).asJson)))
   }
 
+  test("frame pump bounded under sustained overload and retains newest frame") {
+    val queue = new BrowserFramePump
+    (1 to 8).foreach(i => queue.offer(i, i.toString))
+    assert(queue.pendingCount <= 8)
+    assertEquals(queue.takeFrame(), Some("8"))
+    assertEquals((1 to 8).flatMap(_ => queue.nextAck()), 1 to 8)
+    intercept[IllegalStateException] { (1 to 9).foreach(i => queue.offer(i, i.toString)) }
+  }
+
   test("screencast acknowledgements are bounded while retaining the newest image") {
     val queue = new BrowserFramePump
     assert(queue.offer(1, "first"))
@@ -127,6 +136,19 @@ class BrowserVerbsSpec extends CatsEffectSuite:
       val registry = new BrowserTakeoverRegistry
       assertEquals(registry.begin(scenario, "agent-a", "req"), Left("该浏览器会话没有归属记录"))
       assertEquals(registry.withVerb(scenario)("normal verb ran"), "normal verb ran")
+  }
+
+  test("input gate accepts only active request and rejects it after finish") {
+    val registry = new BrowserTakeoverRegistry
+    registry.created("work", "agent")
+    assert(registry.withInput("work", "req")("event").isLeft)
+    assertEquals(registry.begin("work", "agent", "req"), Right(()))
+    assertEquals(registry.withInput("work", "req")("event"), Right("event"))
+    assert(registry.withInput("work", "other")("event").isLeft)
+    registry.disableInput("req")
+    assert(registry.withInput("work", "req")("event").isLeft)
+    registry.finish("req")
+    assert(registry.withInput("work", "req")("event").isLeft)
   }
 
   test("takeover blocks normal browser verbs until completion") {
