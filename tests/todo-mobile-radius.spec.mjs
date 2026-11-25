@@ -61,7 +61,14 @@ async function mobile(width, theme) {
     await home(s);
     for (const [label, sel, value] of [ ['cards','.ta-card','18px'], ['listcard','.ta-listcard','18px'], ['dots','.ta-dot','999px'], ['pill-home','.ta-pill-btn','999px'], ['quick-fab','.ta-quick-fab','999px'] ]) await probe(s.page,label,sel,value,combo);
     await s.page.locator('.mobile-page.live .ta-pill-btn').nth(0).click();
-    await probe(s.page,'search','.ta-search-input','12px',combo);
+    const fieldRadius = await s.page.evaluate(() => {
+      const root = getComputedStyle(document.documentElement);
+      const token = root.getPropertyValue('--nf-field-radius').trim();
+      const match = /^var\((--[a-z0-9-]+)\)$/.exec(token);
+      return match ? root.getPropertyValue(match[1]).trim() : token;
+    });
+    assert.ok(fieldRadius, '输入面圆角令牌必须存在');
+    await probe(s.page,'search','.ta-search-input',fieldRadius,combo);
     await probe(s.page,'pill-selected','.ta-pill-btn.on','999px',combo);
     await s.page.locator('.mobile-page.live .ta-pill-btn').nth(0).click();
     await s.page.locator('.mobile-page.live .ta-pill-btn').nth(1).click();
@@ -117,6 +124,7 @@ async function desktop(baseline) {
   } finally { await s.context.close(); }
 }
 try {
+  execFileSync(process.execPath, ['scripts/check-input-surface.mjs'], { stdio: 'inherit' });
   for (const width of [390,320]) for (const theme of ['light','dark']) {
     try { await mobile(width,theme); } catch (e) { errors.push(`${width}-${theme}: ${e.stack}`); }
   }
