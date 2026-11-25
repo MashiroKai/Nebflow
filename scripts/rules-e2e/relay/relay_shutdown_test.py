@@ -518,7 +518,16 @@ server.serve_forever()'''
    except OSError: pass
   threading.Thread(target=provider,daemon=True).start()
   code='''import sys,importlib.util,http.client,time,json,itertools\ns=importlib.util.spec_from_file_location("relay",sys.argv.pop(1)); m=importlib.util.module_from_spec(s); s.loader.exec_module(m)\nport=int(sys.argv.pop(1)); old=m.Relay.__init__; event=m.Relay.event; send=m.BaseHTTPRequestHandler.send_error; order=itertools.count()\ndef log(label): print(json.dumps({"observation":label,"seq":next(order),"monotonic":time.monotonic()}),file=sys.stderr,flush=True)\ndef init(self,args,**kw): old(self,args,dialer=lambda h,p,t:http.client.HTTPConnection("127.0.0.1",port,timeout=t),grace=1,abort_timeout=.1)\ndef observed(self,obj):\n result=event(self,obj)\n if obj.get("status")=="rejected-limit" and result is True: log("ledger-fsynced")\n return result\ndef sent(self,status,*a,**kw):\n result=send(self,status,*a,**kw)\n if status==429: log("response-written")\n return result\nm.Relay.__init__=init; m.Relay.event=observed; m.BaseHTTPRequestHandler.send_error=sent; m.main()'''
-  code=code.replace('m.Relay.__init__=init; m.Relay.event=observed;', '''force=m.Relay.force_after_grace
+  code=code.replace('m.Relay.__init__=init; m.Relay.event=observed;', '''import threading
+slow_active=threading.Event()
+original_handle=m.Relay.handle
+def handle_observed(self,h):
+ if h.headers.get("X-Stand-Trace-Id")!="slow": return original_handle(self,h)
+ slow_active.set(); log("slow-enter")
+ try: return original_handle(self,h)
+ finally: slow_active.clear(); log("slow-leave")
+m.Relay.handle=handle_observed
+force=m.Relay.force_after_grace
 watchdog=m.Relay.start_watchdog
 def watch_observed(self):
  import inspect
@@ -531,7 +540,7 @@ def init(self,args,**kw):
  old_exit=self.exit_fn
  def exit_observed(code): log("exit-call"); old_exit(code)
  self.exit_fn=exit_observed
-def force_observed(self): log("force-entry"); return force(self)
+def force_observed(self): log("force-entry-slow-active" if slow_active.is_set() else "force-entry-slow-missing"); return force(self)
 m.Relay.force_after_grace=force_observed
 m.Relay.__init__=init; m.Relay.event=observed;''')
   if lock_held:
@@ -554,7 +563,11 @@ m.Relay.__init__=init; m.Relay.event=observed;''')
     response=reject.recv(4096); stamp=time.monotonic(); reject.close(); self.assertIn(b' 429 ',response); code_exit=p.wait(timeout=4); elapsed=time.monotonic()-stamp
     pathlib.Path(str(prefix)+'-response.bin').write_bytes(response); pathlib.Path(str(prefix)+'-exit.log').write_text(str(code_exit)+'\n'); pathlib.Path(str(prefix)+'-clock.log').write_text('rejection_to_exit_seconds=%s grace_seconds=1\n'%elapsed); pathlib.Path(str(prefix)+'-ledger.log').write_text(ledger.read_text())
     side=pathlib.Path(str(ledger)+'.abort'); pathlib.Path(str(prefix)+'-sidecar.log').write_text(side.read_text() if side.exists() else '')
-    self.assertEqual(code_exit,2); self.assertGreater(elapsed,.8)
+    self.assertEqual(code_exit,2); self.assertGreater(elapsed,.8); self.assertLess(elapsed,1.8)
+    try: closed=slow.recv(1)
+    except ConnectionResetError: closed=b''
+    self.assertEqual(closed,b''); pathlib.Path(str(prefix)+'-slow-closed.log').write_text('EOF or reset after process exit\n')
+    records=ledger.read_text()+(side.read_text() if side.exists() else ''); self.assertNotIn('"trace_id":"slow"',records)
    finally:
     release.set()
     if slow: slow.close()
@@ -562,7 +575,7 @@ m.Relay.__init__=init; m.Relay.event=observed;''')
     if p.poll() is None: p.terminate(); p.wait(timeout=3)
     p.stdout.close()
   lines=[json.loads(x) for x in pathlib.Path(str(prefix)+'-stderr.log').read_text().splitlines()]; obs=[x for x in lines if 'observation' in x]
-  names=[x['observation'] for x in obs]; expected=['ledger-fsynced','response-written','force-entry','exit-call','watch-handle']+(['watch-deadline'] if double_trigger else [])+(['lock-held'] if lock_held else []); self.assertCountEqual(names,expected); self.assertLess(names.index('ledger-fsynced'),names.index('response-written')); self.assertLess(names.index('force-entry'),names.index('exit-call')); self.assertEqual([x['seq'] for x in obs],list(range(len(obs)))); self.assertEqual([x['monotonic'] for x in obs],sorted(x['monotonic'] for x in obs)); self.assertEqual(lines[-2]['sealed'],not lock_held)
+  names=[x['observation'] for x in obs]; expected=['ledger-fsynced','response-written','slow-enter','force-entry-slow-active','exit-call','watch-handle']+(['watch-deadline'] if double_trigger else [])+(['lock-held'] if lock_held else []); self.assertCountEqual(names,expected); self.assertLess(names.index('ledger-fsynced'),names.index('response-written')); self.assertLess(names.index('force-entry-slow-active'),names.index('exit-call')); self.assertEqual([x['seq'] for x in obs],list(range(len(obs)))); self.assertEqual([x['monotonic'] for x in obs],sorted(x['monotonic'] for x in obs)); self.assertEqual(lines[-2]['sealed'],not lock_held)
   if lock_held:
    summary=lines[-2]; self.assertEqual(summary['recorded_lower_bound']+summary['unrecorded_upper_bound'],summary['reserved_snapshot']); self.assertIsNone(summary['inflight']); self.assertTrue(summary['possible_extra_record_after_exit']); self.assertLess(names.index('lock-held'),names.index('exit-call'))
   if double_trigger:
