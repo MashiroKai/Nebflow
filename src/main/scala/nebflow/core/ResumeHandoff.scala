@@ -154,7 +154,7 @@ object ResumeHandoff:
   private def danglingOf(msg: Message, answered: Set[String]): List[(ContentBlock.ToolUse, String)] =
     msg match
       case Message(MessageRole.Assistant, Right(blocks), _, _, _, _) =>
-        blocks.collect { case u @ ContentBlock.ToolUse(id, name, _) if !answered.contains(id) => (u, name) }
+        blocks.collect { case u @ ContentBlock.ToolUse(id, name, _, _) if !answered.contains(id) => (u, name) }
       case _ => Nil
 
   /**

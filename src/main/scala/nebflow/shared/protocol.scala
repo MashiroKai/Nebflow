@@ -16,7 +16,7 @@ object ContentBlock:
   case class Image(data: String, mediaType: String) extends ContentBlock:
     val `type` = "image"
 
-  case class ToolUse(id: String, name: String, input: JsonObject) extends ContentBlock:
+  case class ToolUse(id: String, name: String, input: JsonObject, delegatedTo: Option[Json] = None) extends ContentBlock:
     val `type` = "tool_use"
 
   case class ToolResult(toolUseId: String, content: String, isError: Option[Boolean] = None) extends ContentBlock:
@@ -228,13 +228,14 @@ given Encoder[ContentBlock] = Encoder.instance {
   case ContentBlock.Text(text) => Json.obj("type" -> "text".asJson, "text" -> text.asJson)
   case ContentBlock.Image(data, mediaType) =>
     Json.obj("type" -> "image".asJson, "data" -> data.asJson, "mediaType" -> mediaType.asJson)
-  case ContentBlock.ToolUse(id, name, input) =>
-    Json.obj(
+  case ContentBlock.ToolUse(id, name, input, delegatedTo) =>
+    val base = Json.obj(
       "type" -> "tool_use".asJson,
       "id" -> id.asJson,
       "name" -> name.asJson,
       "input" -> Json.fromJsonObject(input)
     )
+    delegatedTo.fold(base)(d => base.deepMerge(Json.obj("delegatedTo" -> d)))
   case ContentBlock.ToolResult(toolUseId, content, isError) =>
     val base = Json.obj("type" -> "tool_result".asJson, "toolUseId" -> toolUseId.asJson, "content" -> content.asJson)
     isError.fold(base)(e => base.deepMerge(Json.obj("isError" -> e.asJson)))
@@ -253,7 +254,8 @@ given Decoder[ContentBlock] = Decoder.instance { cursor =>
       for
         id <- cursor.downField("id").as[String]; name <- cursor.downField("name").as[String];
         input <- cursor.downField("input").as[JsonObject]
-      yield ContentBlock.ToolUse(id, name, input)
+        delegatedTo <- cursor.downField("delegatedTo").as[Option[Json]]
+      yield ContentBlock.ToolUse(id, name, input, delegatedTo)
     case "tool_result" =>
       for
         id <- cursor.downField("toolUseId").as[String]; content <- cursor.downField("content").as[String];

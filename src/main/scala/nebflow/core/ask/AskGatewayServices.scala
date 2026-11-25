@@ -33,8 +33,7 @@ final case class AskServices(
 ):
 
   /**
-   * spawn 面：ask 会话的运行时 AgentDef（name/category 仅为身份占位——工具面
-   * 由 buildAllowedToolSet 的 askSession 早退集机制固定，不读声明）。
+   * spawn 面：Ask 的 standalone AgentDef；普通工具走普通授权链，专属能力追加。
    *
    * md/html 硬约束闸·深防（调研稿 §7-A3）：spawn 前复问 `isAskable`——
    * `<dataRoot>/ask/index.json` 旧绑定与直发 WS 帧绕不开本层（askOpen 是前
@@ -48,8 +47,7 @@ final case class AskServices(
       case Some(binding) if binding.isGitViz =>
         // 分支管理问答批（2026-11-19 第二轮）：作用域 = 项目仓库，不是文件 ⇒ 文件类型
         // 白名单（isAskable）不适用；改由「仓库根目录真实存在」把关（fail-closed）。
-        // 提示词 = 只问答 + 交办口径单源（AskGitVizPrompt）；工具面由
-        // buildAllowedToolSet 的 askGitViz 早退集固定（GitVizAllowedTools）。
+        // 提示词保留项目上下文；普通工具经会话授权链装配。
         if !new java.io.File(binding.file).isDirectory then
           IO.raiseError(
             new RuntimeException(s"ask session $sessionId: gitviz scope is not a directory: ${binding.file}")

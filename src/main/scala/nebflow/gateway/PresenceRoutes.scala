@@ -856,6 +856,7 @@ private[gateway] object PresenceRoutes:
                       "revision" -> state.ref.revision.asJson,
                       "recordHash" -> state.ref.recordHash.asJson,
                       "phase" -> state.phase.asJson,
+                      "suspensionReason" -> state.suspensionReason.asJson,
                       "runnerStopped" -> state.runnerStopped.asJson
                     )
                   )

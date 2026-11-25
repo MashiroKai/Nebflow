@@ -147,6 +147,7 @@ class ProtectedRecoveryRoutesSpec extends CatsEffectSuite:
                   presence,
                   authenticated(Request[IO](Method.GET, Uri.unsafeFromString(s"/delegates/$Session/recovery")))
                 )
+                recoveryJson <- recovery.as[Json]
                 stale <- runRoute(
                   presence,
                   authenticated(
@@ -184,6 +185,7 @@ class ProtectedRecoveryRoutesSpec extends CatsEffectSuite:
                 assertEquals(lan.status, Status.Forbidden)
                 assertEquals(missingNetwork.status, Status.Forbidden)
                 assertEquals(recovery.status, Status.Ok)
+                assertEquals(recoveryJson.hcursor.get[String]("suspensionReason").toOption, Some("route-fixture"))
                 assertEquals(stale.status, Status.PreconditionFailed)
                 assertEquals(afterStale.asInstanceOf[ExecutionChainObservation.Verified].state.attemptId, "attempt")
                 assertEquals(accepted.status, Status.Ok, acceptedJson.noSpaces)

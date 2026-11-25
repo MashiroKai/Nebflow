@@ -733,7 +733,7 @@ object LlmLogWriter:
   private def blockToJson(b: ContentBlock): Json = b match
     case ContentBlock.Text(text) =>
       Json.obj("type" -> "text".asJson, "text" -> text.asJson)
-    case ContentBlock.ToolUse(id, name, input) =>
+    case ContentBlock.ToolUse(id, name, input, _) =>
       Json.obj(
         "type" -> "tool_use".asJson,
         "id" -> id.asJson,

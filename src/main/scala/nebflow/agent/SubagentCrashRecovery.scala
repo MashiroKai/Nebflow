@@ -71,7 +71,7 @@ object SubagentCrashRecovery:
       msg match
         case Message(MessageRole.Assistant, Right(blocks), _, _, _, _) =>
           val dangling = blocks.collect {
-            case u @ ContentBlock.ToolUse(id, name, _) if !answered.contains(id) => (u, name)
+            case u @ ContentBlock.ToolUse(id, name, _, _) if !answered.contains(id) => (u, name)
           }
           if dangling.nonEmpty then
             dangling.foreach { case (u, name) => terminated += ((name, u.id)) }
