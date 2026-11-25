@@ -502,6 +502,10 @@ server.serve_forever()'''
      try: self.matrix_slow_upload(trigger,available)
      finally: self.path=old
  def test_process_limit_slow_order(self):
+  self.process_limit_slow_order(False)
+ def test_process_double_trigger_once(self):
+  self.process_limit_slow_order(True)
+ def process_limit_slow_order(self,double_trigger):
   # Slow upload remains in body reading, before reservation; another complete
   # request consumes the limit and remains in flight against the loopback peer.
   up=socket.socket(); up.bind(('127.0.0.1',0)); up.listen(); up.settimeout(3); self.addCleanup(up.close)
@@ -522,9 +526,9 @@ def init(self,args,**kw):
 def force_observed(self): log("force-entry"); return force(self)
 m.Relay.force_after_grace=force_observed
 m.Relay.__init__=init; m.Relay.event=observed;''')
-  ev=pathlib.Path(os.environ['RELAY_EVIDENCE_DIR']); prefix=ev/'round7-process-limit-slow'; ledger=self.path
+  ev=pathlib.Path(os.environ['RELAY_EVIDENCE_DIR']); prefix=ev/('round13-double-trigger' if double_trigger else 'round7-process-limit-slow'); ledger=self.path
   with open(str(prefix)+'-stderr.log','w') as err:
-   p=subprocess.Popen([sys.executable,'-B','-c',code,str(pathlib.Path(m.__file__)),str(up.getsockname()[1]),'--route','one,example.com,/v1,FAKE_KEY','--allow-host','example.com','--port','0','--ledger',str(ledger),'--limit','1','--seconds','30','--timeout','5'],stdout=subprocess.PIPE,stderr=err,text=True,env={'PATH':'/usr/bin:/bin','FAKE_KEY':'fake-only'})
+   p=subprocess.Popen([sys.executable,'-B','-c',code,str(pathlib.Path(m.__file__)),str(up.getsockname()[1]),'--route','one,example.com,/v1,FAKE_KEY','--allow-host','example.com','--port','0','--ledger',str(ledger),'--limit','1','--seconds','0.5' if double_trigger else '30','--timeout','5'],stdout=subprocess.PIPE,stderr=err,text=True,env={'PATH':'/usr/bin:/bin','FAKE_KEY':'fake-only'})
    slow=first=None
    try:
     port=json.loads(p.stdout.readline())['port']; self.assertNotEqual(port,6138)
