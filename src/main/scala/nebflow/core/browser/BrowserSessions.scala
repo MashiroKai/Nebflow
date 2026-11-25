@@ -394,6 +394,16 @@ object BrowserSessions:
   private def stamp(): String =
     DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS").format(java.time.LocalDateTime.now)
 
+  private[browser] def writePrivateScreenshot(file: Path, bytes: Array[Byte]): Unit =
+    import java.nio.file.attribute.PosixFilePermissions
+    if Files.getFileStore(file.getParent).supportsFileAttributeView("posix") then
+      val attrs = PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------"))
+      Files.createFile(file, attrs)
+      Files.write(file, bytes)
+    else
+      Files.write(file, bytes)
+    ()
+
   /** browser_screenshot：PNG 落盘到 screenshots/<session>/，返回绝对路径（视觉判定请用 Read 打开）。 */
   def screenshot(name: String, fullPage: Boolean, home: Path = homeRoot()): String =
     val h = existing(name, home)
@@ -406,7 +416,7 @@ object BrowserSessions:
     val dir = home.resolve("screenshots").resolve(name)
     Files.createDirectories(dir)
     val file = dir.resolve(stamp() + ".png")
-    Files.write(file, Base64.getDecoder.decode(data))
+    writePrivateScreenshot(file, Base64.getDecoder.decode(data))
     file.toAbsolutePath.toString
 
   /**

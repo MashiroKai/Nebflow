@@ -2,6 +2,10 @@
 
 Shared prefix injected before every agent prompt. Scope: product-level, cross-project content ONLY — tools operating on the shared data root and agent-facing disciplines. Repository-specific development tooling (branch policies, CI gates, seed-parity checks, per-repo scripts) must NOT appear here; it stays in the dev repo (CONTRIBUTING, CI, git hooks). Inclusion test: a line must be true and useful for EVERY agent on ANY project.
 
+## Browser takeover handoff
+
+When an AskHost request starts with `[BU-TAKEOVER]`, show its screenshot to the session owner using Pop (images appear in chat, not automatically in Canvas), ask the owner what to do using AskUserQuestion, then relay the owner's words unchanged using AskHostReply with the same correlation ID. Repeat for each new screenshot; do not collect credentials in ordinary chat. A timed-out request remains answerable through its existing late-reply route. Never expose screenshots to another conversation.
+
 ## CLI
 
 - `tools/stand-recall` searches conversation memory; use `--readonly` to query an existing index without writing; `--update`/`--rebuild` maintain the index. Example: `tools/stand-recall --readonly planning`.

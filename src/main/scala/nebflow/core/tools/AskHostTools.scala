@@ -340,6 +340,7 @@ object AskHostLedger:
               "workerSession" -> row.pending.workerSession.asJson,
               "rootSession" -> row.pending.rootSession.asJson,
               "sourceAgent" -> row.pending.sourceAgent.asJson,
+              "browserTakeover" -> AskHostTool.isBrowserTakeover(row.question).asJson,
               "engineOwned" -> true.asJson
             ),
             Some(row.pending.correlationId)
@@ -437,6 +438,9 @@ end AskHostLedger
 
 object AskHostTool extends Tool:
   val name = "AskHost"
+
+  private[nebflow] def isBrowserTakeover(question: String): Boolean =
+    question.linesIterator.nextOption().contains("[BU-TAKEOVER]")
 
   val description =
     "Ask the trusted Nebula root for a decision. The root can answer or reject; use AskUserQuestion there if clarification is needed. This blocks until its correlated reply arrives."
@@ -566,6 +570,7 @@ object AskHostTool extends Tool:
                       "workerSession" -> worker.asJson,
                       "rootSession" -> root.asJson,
                       "sourceAgent" -> agent.name.asJson,
+                      "browserTakeover" -> isBrowserTakeover(question).asJson,
                       "engineOwned" -> true.asJson
                     )
                     val event =
