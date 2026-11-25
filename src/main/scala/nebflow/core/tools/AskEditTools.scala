@@ -162,13 +162,6 @@ object AskEditTool extends Tool:
                 )
               )
             )
-          case Some(binding) if !nebflow.core.ask.AskPathBoundary.isBoundDocument(binding.file, path) =>
-            EditTool.call(JsonObject(
-              "file_path" -> path.asJson,
-              "old_string" -> oldStr.asJson,
-              "new_string" -> newStr.asJson,
-              "replace_all" -> replaceAll.asJson
-            ), ctx)
           case Some(binding) =>
             def transform(snapshot: String): Either[String, String] =
               val count = occurrences(snapshot, oldStr)
@@ -255,8 +248,6 @@ object AskWriteTool extends Tool:
                 )
               )
             )
-          case Some(binding) if !nebflow.core.ask.AskPathBoundary.isBoundDocument(binding.file, path) =>
-            WriteTool.call(JsonObject("file_path" -> path.asJson, "content" -> content.asJson), ctx)
           case Some(binding) =>
             AskEditReviews.applyChange(sid, binding, path, "ask_write", _ => Right(content)).flatMap {
               case Left(why) => IO.pure(Left(ToolError(why)))

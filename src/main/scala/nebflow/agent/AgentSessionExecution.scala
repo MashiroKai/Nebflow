@@ -1474,12 +1474,34 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             )
           }
         else IO.unit
+      normalizedCalls <- result.toolCalls.traverse { call =>
+        val sid = state.sessionId.getOrElse("")
+        val isAskEdit = nebflow.core.ask.AskSessions.isAskSession(sid) &&
+          (call.name == "ask_edit" || call.name == "ask_write") && allowedTools.contains(call.name)
+        if !isAskEdit || sessionIdOpt.exists(resources.protectedExecutions.contains) then IO.pure(call)
+        else
+          nebflow.core.ask.AskGatewayServices.instance match
+            case None => IO.pure(call)
+            case Some(services) => services.registry.byId(sid).map {
+              case Some(binding) if !nebflow.core.ask.AskPathBoundary.isBoundDocument(
+                    binding.file, call.input("path").flatMap(_.asString).getOrElse("")
+                  ) =>
+                val rename = if call.name == "ask_edit" then
+                  List("path" -> "file_path", "old_str" -> "old_string", "new_str" -> "new_string")
+                else List("path" -> "file_path")
+                val mapped = rename.foldLeft(call.input) { case (input, (from, to)) =>
+                  input(from).fold(input)(value => input.remove(from).add(to, value))
+                }
+                call.copy(name = if call.name == "ask_edit" then "Edit" else "Write", input = mapped, rawArguments = None)
+              case _ => call
+            }
+      }
       (filteredCalls, droppedCalls) =
         // WebSearch P0: kimi's native $web_search tool call bypasses the
         // agent-tool whitelist — it is provider-injected (not an agent tool)
         // and MUST pass through; filtering it here would re-create the
         // "Tool not available" retry storm (2026-08-20 qwen incident shape).
-        val (kept, dropped) = result.toolCalls.partition(tc =>
+        val (kept, dropped) = normalizedCalls.partition(tc =>
           allowedTools.contains(tc.name) || tc.name == nebflow.llm.SearchProviderResolver.KimiWebSearchToolName
         )
         // warnSync: this is a synchronous code path — the plain IO-returning

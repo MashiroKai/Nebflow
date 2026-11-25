@@ -82,6 +82,15 @@ final class AskToolFaceSpec extends munit.FunSuite:
     }
   }
 
+  test("F5 historical single-file restriction and mandatory handoff are absent") {
+    val prompt = AskContextAssembler.promptFor("notes.md", "/vault/notes.md", "context")
+    assert(prompt.contains("/vault/notes.md"))
+    assert(!prompt.contains("本会话只能编辑它对应的那份文档"))
+    assert(!prompt.contains("QUERY-ONLY, fail-closed"))
+    assert(prompt.contains("转交是可选的"))
+  }
+
+  /* Superseded historical prompt assertions retained for provenance:
   test("F5 Ask prompt derives the tool list from the registry and states both hard constraints") {
     val prompt = AskContextAssembler.promptFor("notes.md", "/vault/notes.md", "context")
     // ask-scope 批（2026-11-18）：清单**派生**（注册表 = 唯一来源），逐条落 `- <name>:` 行。
@@ -131,4 +140,5 @@ final class AskToolFaceSpec extends munit.FunSuite:
     assert(prompt.contains("当场明确要求"), "the author's on-the-spot explicit request is the allowed exception")
     assert(prompt.contains("建议转交主会话"), "the exception still carries the complex⇒handoff hint")
   }
+  */
 end AskToolFaceSpec

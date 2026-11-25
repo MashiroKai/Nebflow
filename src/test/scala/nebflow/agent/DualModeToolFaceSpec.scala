@@ -33,7 +33,7 @@ class DualModeToolFaceSpec extends FunSuite:
       buildAllowedToolSet(defn, 1, askGitViz = true, askSession = true, delegateSession = true)
 
   test("GitViz retains the ordinary declared tool face plus its scoped tools") {
-    val definition = AgentDef(name = "subagent", description = "", tools = List("*"))
+    val definition = AgentDef(name = "ask-parity-probe", description = "", tools = List("*"))
     val ordinary = CoreProbe.allowedWithDelegateMode(definition, delegateSession = true, delegateMode = None)
     val gitviz = CoreProbe.gitvizAndAskFace(definition)
     assertEquals(gitviz, ordinary ++ Set("gitviz_graph", "gitviz_handoff"))
@@ -43,7 +43,7 @@ class DualModeToolFaceSpec extends FunSuite:
   }
 
   test("File Ask retains the ordinary declared tool face plus its scoped tools") {
-    val definition = AgentDef(name = "subagent", description = "", tools = List("*"))
+    val definition = AgentDef(name = "ask-parity-probe", description = "", tools = List("*"))
     val ordinary = CoreProbe.allowedWithDelegateMode(definition, delegateSession = true, delegateMode = Some("dispatcher"))
     val face = CoreProbe.askFace(definition)
     assert(ordinary.subsetOf(face), s"missing ordinary tools: ${ordinary -- face}")
