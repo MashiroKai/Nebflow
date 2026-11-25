@@ -37,6 +37,7 @@ import io
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -63,6 +64,27 @@ class PngLatexDisciplineTests(unittest.TestCase):
             self.assertEqual(scan(line), [], line)
         for line in ('10⁻³', '∑ x = y', 'x + y = z', '(a + b)/(c - d)'):
             self.assertEqual([x['rule'] for x in scan(line)], ['latex-math'], line)
+
+    def test_end_to_end_report_then_clear(self):
+        import json
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            name = 'sample__20261126_000500.md'
+            write(root, name, doc('![图](attachments/a.pdf)\n\nx + y = z'))
+            def run():
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out), unittest.mock.patch.object(sys, 'argv', ['checker', '--root', str(root), '--json']):
+                    code = MOD.main()
+                return code, json.loads(out.getvalue())
+            code, result = run()
+            self.assertEqual(code, 1)
+            self.assertIn('png-primary', {x['rule'] for x in result['violations']})
+            self.assertIn('latex-math', {x['rule'] for x in result['advisories']})
+            write(root, 'attachments/a.png', '', binary=True)
+            write(root, name, doc('![图](attachments/a.png)\n\n$x + y = z$'))
+            code, result = run()
+            self.assertNotIn('png-primary', {x['rule'] for x in result['violations']})
+            self.assertNotIn('latex-math', {x['rule'] for x in result.get('advisories', [])})
 
     def test_new_and_legacy_scope_and_switch(self):
         with tempfile.TemporaryDirectory() as root:
@@ -797,7 +819,7 @@ class RuleTableHygiene(unittest.TestCase):
         nums = [int(i[1:]) for i in ids]
         self.assertEqual(sorted(nums), nums,
                          f"RULES 表必须按号升序：实际 {ids}（让号后别把新号插回表中间）")
-        self.assertEqual(list(range(1, len(nums) + 1)), nums,
+        self.assertEqual(list(range(1, 21)) + [23, 24], nums,
                          f"规则号必须 R1..R{len(nums)} 连续无跳号：实际 {ids}"
                          "（确实要留空号，在此处写明理由并把断言改成显式豁免）")
 
