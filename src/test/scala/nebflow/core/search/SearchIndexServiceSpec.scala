@@ -40,6 +40,36 @@ class SearchIndexServiceSpec extends CatsEffectSuite:
       source.close()
   }
 
+  test("migration builds a non-done index and leaves caller connections open") {
+    val destination = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
+    val source = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
+    try
+      val setup = source.createStatement()
+      try
+        setup.execute("CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT)")
+        setup.execute("CREATE TABLE docs(sid TEXT,kind TEXT,ts INTEGER,text TEXT,extra TEXT,ord INTEGER)")
+        setup.execute("INSERT INTO docs VALUES('s1','message',42,'hello','',0)")
+      finally setup.close()
+      SearchIndexMigration.migrate(destination, source)
+      assert(!destination.isClosed)
+      assert(!source.isClosed)
+      val query = destination.createStatement()
+      try
+        val phase = query.executeQuery("SELECT value FROM search_index_meta WHERE key='phase'")
+        assert(phase.next())
+        assertEquals(phase.getString(1), "done")
+        phase.close()
+        val hits = query.executeQuery("SELECT session_id,text FROM search_hits")
+        assert(hits.next())
+        assertEquals(hits.getString(1), "s1")
+        assertEquals(hits.getString(2), "hello")
+        assert(!hits.next())
+      finally query.close()
+    finally
+      destination.close()
+      source.close()
+  }
+
   test("snapshot main dispatch writes an empty snapshot database") {
     val tmpRoot = java.nio.file.Paths.get("/tmp").toRealPath()
     val dir = java.nio.file.Files.createTempDirectory(tmpRoot, "snapshot-dispatch-")
@@ -50,6 +80,36 @@ class SearchIndexServiceSpec extends CatsEffectSuite:
       assert(java.nio.file.Files.exists(output), "snapshot dispatch must create its output")
     finally
       os.remove.all(os.Path(dir))
+  }
+
+  test("migration main dispatches ordinary source and destination") {
+    val dir = java.nio.file.Files.createTempDirectory(java.nio.file.Paths.get("/tmp").toRealPath(), "migration-dispatch-")
+    val sourcePath = dir.resolve("source.sqlite")
+    val output = dir.resolve("output.sqlite")
+    try
+      val initial = java.sql.DriverManager.getConnection(s"jdbc:sqlite:$output")
+      try
+        val setup = initial.createStatement()
+        try
+          setup.execute("CREATE TABLE search_index_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)")
+          setup.execute("INSERT INTO search_index_meta VALUES('phase','done')")
+        finally setup.close()
+      finally initial.close()
+      java.nio.file.Files.createFile(sourcePath)
+      SearchIndexMigration.main(Array(output.toString, sourcePath.toString))
+      val result = java.sql.DriverManager.getConnection(s"jdbc:sqlite:$output")
+      try
+        val query = result.createStatement()
+        try
+          val tables = query.executeQuery("SELECT name FROM sqlite_master WHERE type='table' AND name='search_hits'")
+          assert(tables.next(), "ordinary dispatch must initialize the search index")
+          tables.close()
+          val rows = query.executeQuery("SELECT count(*) FROM search_hits")
+          assert(rows.next())
+          assertEquals(rows.getInt(1), 0)
+        finally query.close()
+      finally result.close()
+    finally os.remove.all(os.Path(dir))
   }
 
   test("migration main rejects invalid argument shapes") {
