@@ -1528,9 +1528,7 @@ class SessionStore(
             // 此处删除面一次收净）。
             val mt = sessionsDir / id / "msg-tokens.jsonl"
             if os.exists(mt) then os.remove(mt)
-          } *> deleteUiMessages(id) *> appendSemaphores.update(
-            _ - id
-          ) *> (if wasActive && newActiveId.nonEmpty then
+          } *> deleteUiMessages(id) *> (if wasActive && newActiveId.nonEmpty then
                   loadSessionMessages(newActiveId).flatMap(msgs => activeMessagesRef.set(msgs))
                 else IO.unit) *> TurnStateStore.clear(id) *> saveIndex
       }
@@ -1829,15 +1827,20 @@ class SessionStore(
   ): IO[MergeResult] =
     for
       localMsgs <- loadSessionMessages(sessionId)
-      localUi <- loadUiMessages(sessionId)
       mergedMsgs = mergeMessages(localMsgs, cloudMessages)
-      mergedUi = mergeUiMessages(localUi, cloudUiMessages)
-      changed = mergedMsgs.length != localMsgs.length || mergedUi.length != localUi.length
+      uiResult <- getAppendSemaphore(sessionId).flatMap(_.permit.use { _ =>
+        loadUiMessages(sessionId).flatMap { localUi =>
+          val mergedUi = mergeUiMessages(localUi, cloudUiMessages)
+          val uiChanged = mergedUi.length != localUi.length
+          (if uiChanged then saveUiMessagesUnlocked(sessionId, mergedUi) else IO.unit).as((mergedUi, uiChanged))
+        }
+      })
+      (mergedUi, uiChanged) = uiResult
+      changed = mergedMsgs.length != localMsgs.length || uiChanged
       _ <-
         if changed then
           for
             _ <- saveSessionMessages(sessionId, mergedMsgs)
-            _ <- saveUiMessages(sessionId, mergedUi)
             _ <- indexRef.update { case (activeId, sessions, folders) =>
               val now = System.currentTimeMillis()
               val updated = sessions.map(s => if s.id == sessionId then s.copy(updatedAt = now) else s)
@@ -1926,17 +1929,29 @@ class SessionStore(
    * write durable right away (fork, cloud sync, startup migration). The
    * debounced append path uses `updateUiCache` + `scheduleFlush` instead.
    */
+  private def saveUiMessagesUnlocked(id: String, msgs: List[UiMessage]): IO[Unit] =
+    (writeUiMessagesToDisk(id, msgs) *> updateUiCache(id, msgs, dirty = false) *>
+      uiCacheState.update(_.clearDirty(id))).uncancelable
+
   private def saveUiMessages(id: String, msgs: List[UiMessage]): IO[Unit] =
-    writeUiMessagesToDisk(id, msgs) *> updateUiCache(id, msgs, dirty = false)
+    getAppendSemaphore(id).flatMap(_.permit.use(_ => saveUiMessagesUnlocked(id, msgs)))
 
   // Per-session semaphore to serialize appendUiMessages (prevents TOCTOU race)
   private val appendSemaphores: Ref[IO, Map[String, Semaphore[IO]]] =
     Ref.unsafe[IO, Map[String, Semaphore[IO]]](Map.empty)
 
+  private[core] var beforeUiLockInstall: String => IO[Unit] = _ => IO.unit
+  private[core] var beforeUiFlushWrite: String => IO[Unit] = _ => IO.unit
   private def getAppendSemaphore(sessionId: String): IO[Semaphore[IO]] =
     appendSemaphores.get.flatMap(_.get(sessionId) match
       case Some(sem) => IO.pure(sem)
-      case None => Semaphore[IO](1).flatTap(sem => appendSemaphores.update(_.updated(sessionId, sem))))
+      case None => Semaphore[IO](1).flatMap { fresh =>
+        beforeUiLockInstall(sessionId) *> appendSemaphores.modify { all =>
+          all.get(sessionId) match
+            case Some(existing) => (all, existing)
+            case None => (all.updated(sessionId, fresh), fresh)
+        }
+      })
 
   /**
    * Cap oversized tool `content` before persisting to `.ui.json`.
@@ -1996,10 +2011,10 @@ class SessionStore(
             // dirty in the SAME atomic modify — that flag is also the eviction
             // pin, so the unflushed value can't be dropped before it lands on
             // disk. Then arm the debounced flush.
-            updateUiCache(sessionId, combined, dirty = true) *> scheduleFlush
+            updateUiCache(sessionId, combined, dirty = true)
           }
         }
-      }
+      } *> scheduleFlush
 
   /**
    * Backfill `durationMs`, `model`, and `timestamp` onto the last saved Ai message.
@@ -2040,11 +2055,11 @@ class SessionStore(
                     terminal = if markTerminal then Some(true) else ai.terminal
                   )
                   val updated = before ++ (updatedAi :: rest.tail)
-                  updateUiCache(sessionId, updated, dirty = true) *> scheduleFlush
+                  updateUiCache(sessionId, updated, dirty = true)
                 case _ => IO.unit
         }
       }
-    }
+    } *> scheduleFlush
 
   /**
    * 轮终态落点·段感知版（卫生批 2026-10-28，回放批 §5 残余①根治）：在「done/agentDone
@@ -2093,10 +2108,10 @@ class SessionStore(
                 case t: UiMessage.Tool => t.copy(terminal = Some(true))
                 case other => other
             )
-            updateUiCache(sessionId, updated, dirty = true) *> scheduleFlush
+            updateUiCache(sessionId, updated, dirty = true)
         }
       }
-    }
+    } *> scheduleFlush
 
   /**
    * Keep only the newest `MaxStoredUiMessages`. The LLM's full history is
@@ -2139,25 +2154,20 @@ class SessionStore(
    * sessionId flushed (or empty if none).
    */
   private def flushOneDirty: IO[Option[String]] =
-    uiCacheState
-      .modify { st =>
-        st.dirty.headOption match
-          case Some(sid) => (st.clearDirty(sid), Some(sid -> st.get(sid)))
-          case None => (st, None)
-      }
-      .flatMap {
-        case Some((sid, msgsOpt)) =>
-          msgsOpt match
+    uiCacheState.get.flatMap(_.dirty.headOption match
+      case None => IO.pure(None)
+      case Some(sid) =>
+        getAppendSemaphore(sid).flatMap(_.permit.use { _ =>
+          uiCacheState.modify { st =>
+            if st.dirty.contains(sid) then (st, st.get(sid)) else (st, None)
+          }.flatMap {
             case Some(msgs) =>
-              writeUiMessagesToDisk(sid, msgs)
-                // Re-pin on failure: the value is still in the cache, so keep it
-                // non-evictable (and re-schedulable) exactly like the pre-LRU
-                // behavior where the cache held it until the next flush.
-                .handleErrorWith(e => uiCacheState.modify(st => (st.markDirty(sid), ())) *> IO.raiseError(e))
-                .as(Some(sid))
-            case None => IO.pure(Some(sid)) // nothing cached, nothing to write
-        case None => IO.pure(None)
-      }
+              (beforeUiFlushWrite(sid) *> writeUiMessagesToDisk(sid, msgs)).uncancelable *>
+                uiCacheState.update(_.clearDirty(sid))
+            case None => IO.unit
+          }
+        }).as(Some(sid))
+    )
 
   /**
    * Recursively drain every dirty session to disk. Errors are logged and the
@@ -2293,10 +2303,12 @@ class SessionStore(
 
   /** Delete UI messages file when session is deleted. Already called from deleteSession. */
   def deleteUiMessages(sessionId: String): IO[Unit] =
-    IO.blocking {
-      val f = uiFile(sessionId)
-      if os.exists(f) then os.remove(f)
-    } *> uiCacheState.modify(st => (st.removeAll(sessionId), ()))
+    getAppendSemaphore(sessionId).flatMap(_.permit.use { _ =>
+      (IO.blocking {
+        val f = uiFile(sessionId)
+        if os.exists(f) then os.remove(f)
+      } *> uiCacheState.modify(st => (st.removeAll(sessionId), ()))).uncancelable
+    })
 
   /**
    * Remove the last user message from UI history.
@@ -2332,10 +2344,10 @@ class SessionStore(
               if hasAiAfter then IO.pure(false)
               else
                 val trimmed = msgs.take(lastUserIdx) ++ msgs.drop(lastUserIdx + 1)
-                updateUiCache(sessionId, trimmed, dirty = true) *> scheduleFlush.as(true)
+                updateUiCache(sessionId, trimmed, dirty = true).as(true)
             end if
         }
       }
-    }
+    }.flatTap(changed => if changed then scheduleFlush else IO.unit)
 
 end SessionStore

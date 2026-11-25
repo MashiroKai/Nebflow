@@ -53,6 +53,24 @@ class UiMessageToolTerminalSpec extends CatsEffectSuite:
     val keys = encoded.asObject.map(_.keys.toList).getOrElse(Nil)
     assert(!keys.contains("terminal"), s"缺席标记绝不落键，got keys=$keys")
 
+  test("旧版读含假设字段的 UI 存档并写回时保留已知字段而丢弃未知字段"):
+    val plain = Json.obj("type" -> "user".asJson, "text" -> "fixture".asJson)
+    val withFuture = plain.deepMerge(Json.obj(
+      "askTurn" -> Json.obj("turnId" -> "t1".asJson, "status" -> "running".asJson)
+    ))
+    val input = tmp / "compat-input.ui.json"
+    val output = tmp / "compat-output.ui.json"
+    os.write.over(input, Json.arr(withFuture).noSpaces, createFolders = true)
+    val decoded = io.circe.parser.decode[List[UiMessage]](os.read(input)).fold(throw _, identity)
+    val baseline = plain.as[UiMessage].fold(throw _, identity)
+    assertEquals(decoded, List(baseline))
+    os.write.over(output, decoded.asJson.noSpaces, createFolders = true)
+    val saved = io.circe.parser.parse(os.read(output)).fold(throw _, identity)
+    val row = saved.asArray.get.head
+    assertEquals(row.hcursor.get[String]("type"), Right("user"))
+    assertEquals(row.hcursor.get[String]("text"), Right("fixture"))
+    assert(!row.asObject.exists(_.contains("askTurn")))
+
   test("② 带 terminal 的 Tool 行 round-trip encode → decode"):
     val row = UiMessage.Tool("Bash", "deploy.sh", "ok", isError = false, "{}", terminal = Some(true))
     val decoded = (row: UiMessage).asJson.as[UiMessage].toOption.get
