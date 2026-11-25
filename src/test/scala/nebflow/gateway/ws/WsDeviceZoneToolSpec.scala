@@ -48,6 +48,7 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
         schedule <- Ref.of[IO, FreezeScheduleConfig](FreezeScheduleConfig(enabled = false))
         calls <- Ref.of[IO, Int](0)
         recoveryRequests <- Queue.unbounded[IO, LlmRequest]
+        recoveryWriteResults <- Queue.unbounded[IO, Either[ToolError, String]]
         llm = new LlmHandle[IO]:
           def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new Exception("unexpected send"))
           def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] =
@@ -67,7 +68,13 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
           def summarizeResult(input: JsonObject, result: String) = result
           def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
             captured.offer(ctx.deviceZone) *> blockTool.getAndSet(false).flatMap { block =>
-              (if block then toolEntered.offer(()) *> toolRelease.take else IO.unit).as(Right("ok"))
+              val runWrite = if ctx.sessionId.contains("zone-recovery") && !block then
+                val input = Json.obj("kind" -> "todo".asJson, "content" -> "recover reminder".asJson,
+                  "triggerAt" -> "2035-01-01T09:00".asJson,
+                  "decision" -> Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson))))
+                nebflow.core.tools.ScheduleTool.call(input.asObject.get, ctx).flatMap(recoveryWriteResults.offer)
+              else IO.unit
+              (if block then toolEntered.offer(()) *> toolRelease.take else runWrite).as(Right("ok"))
             }
         _ <- IO(ToolRegistry.registerTool(probe))
         rate <- RateLimiter.create()
@@ -223,7 +230,9 @@ class WsDeviceZoneToolSpec extends CatsEffectSuite:
           replayed <- captured.take.timeout(30.seconds)
           _ = assertEquals(replayed, None)
           // Probe calls the helper directly; real creation write ports remain unwired.
-          _ = assert(nebflow.core.scheduler.TodoDue.requireCreationZone(None, replayed).isLeft)
+          writeResult <- recoveryWriteResults.take.timeout(30.seconds)
+          _ = assert(writeResult.isLeft, s"replayed input must trigger real write-port clarification: $writeResult")
+          _ = assert(writeResult.swap.toOption.get.message.toLowerCase.contains("clarif"))
           _ <- overrideCall.set(Some(false))
         yield ())
         _ <- store.flushPendingUiWrites
