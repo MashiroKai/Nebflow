@@ -187,7 +187,7 @@ body.mobile-layer .mf-strip-chip .mf-cv-star svg { width: 18px; height: 18px; }
   border-radius: var(--ds-radius-input);
   background: var(--color-surface);
   color: var(--color-text);
-  box-shadow: 0 4px 20px #0006;
+  box-shadow: var(--ds-shadow-favorites-path);
   overflow-wrap: anywhere;
   white-space: normal;
   pointer-events: none;
