@@ -289,8 +289,8 @@ function sourceLegs() {
     scHasLucideNames: /SEND_ICON\s*=\s*'send'/.test(scCode) && /STOP_ICON\s*=\s*'square'/.test(scCode),
     scImportsIcons: /import\s*\{[^}]*createIconsIn[^}]*\}\s*from\s*'\.\.\/utils\.js'/.test(scCode),
     // C3 输入条圆钮手机档 = 一条声明两个宿主
-    mlSharedHosts: /body\.mobile-layer\s+#input-bar\s*>\s*\.ds-turn-btn\s*,\s*body\.mobile-layer\s+\.ask-dock\s+\.ds-turn-btn\s*\{/.test(strip(ml)),
-    mlSharedHit: /body\.mobile-layer\s+#input-bar\s*>\s*\.ds-turn-btn::after\s*,\s*body\.mobile-layer\s+\.ask-dock\s+\.ds-turn-btn::after\s*\{/.test(strip(ml)),
+    mlSharedHosts: /body\.mobile-layer\s+#input-bar\s*>\s*\.ds-turn-btn\s*,\s*body\.mobile-layer\s+\.ask-dock\s+\.ds-turn-btn\s*(?:,[^{}]+)?\{/.test(strip(ml)),
+    mlSharedHit: /body\.mobile-layer\s+#input-bar\s*>\s*\.ds-turn-btn::after\s*,\s*body\.mobile-layer\s+\.ask-dock\s+\.ds-turn-btn::after\s*(?:,[^{}]+)?\{/.test(strip(ml)),
     // 反证：主会话组件类仍在 index.html 静态标记上（本批没动主会话）
     indexTurnBtns: /id="send-btn"[^>]*class="ds-turn-btn ds-turn-btn--send"/.test(read('index.html')) || /id="send-btn" class="ds-turn-btn ds-turn-btn--send"/.test(read('js/chatUi.js')),
   };
