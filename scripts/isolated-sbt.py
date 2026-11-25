@@ -84,8 +84,10 @@ PS_TIMEOUT = 10
 # calibrate against measured unified-log latency after the first real run.
 EXIT_OK, EXIT_TASK, EXIT_USAGE, EXIT_LOCK, EXIT_PRECHECK, EXIT_GUARD, EXIT_INTERNAL = range(7)
 
+PASSTHROUGH_ENV_KEYS = ('CUBU_BASELINE', 'PLAYWRIGHT_BROWSERS_PATH')
 ENV_WHITELIST_KEYS = ('PATH', 'HOME', 'JAVA_HOME', 'LANG', 'TMPDIR', 'STAND_HOME',
-                      'NEBFLOW_HOME', 'COURSIER_CACHE', 'SBT_GATE', 'STAND_SBT_ISOLATED')
+                      'NEBFLOW_HOME', 'COURSIER_CACHE', 'SBT_GATE', 'STAND_SBT_ISOLATED',
+                      *PASSTHROUGH_ENV_KEYS)
 
 
 def now_iso():
@@ -224,7 +226,8 @@ def build_env(home):
         'SBT_GATE': 'off',
         'STAND_SBT_ISOLATED': '1',
     }
-    assert set(env) == set(ENV_WHITELIST_KEYS)
+    env.update({key: os.environ[key] for key in PASSTHROUGH_ENV_KEYS if key in os.environ})
+    assert set(env) <= set(ENV_WHITELIST_KEYS)
     return env
 
 
@@ -531,7 +534,7 @@ def main(argv=None):
         'run_id': run_id,
         'command': sys.argv,
         'cwd': os.getcwd(),
-        'env_whitelist': {k: env[k] for k in ENV_WHITELIST_KEYS},
+        'env_whitelist': {k: env[k] for k in ENV_WHITELIST_KEYS if k in env},
         'tasks': tasks,
         'max_seconds': max_seconds,
         'sbt_heap': sbt_heap,
