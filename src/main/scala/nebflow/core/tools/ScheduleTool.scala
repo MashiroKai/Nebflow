@@ -9,6 +9,7 @@ import nebflow.core.scheduler.{
   ScheduledTask,
   ScheduledTaskService,
   ScheduledTaskStore,
+  TodoDue,
   TodoDecision,
   TodoTaxonomy
 }
@@ -805,6 +806,11 @@ Your context does NOT show the current date/time — never invent an absolute da
           )
         )
       )
+    else if input("triggerAt").exists(j => !j.isNull && !j.asNumber.flatMap(_.toLong).contains(0L)) &&
+      TodoDue.requireCreationZone(None, ctx.deviceZone).isLeft then
+      IO.pure(Left(ToolError("Please clarify the creation time zone")))
+    else if input("triggerAt").exists(j => !j.isNull && !j.asNumber.flatMap(_.toLong).contains(0L)) then
+      IO.pure(Left(ToolError("Todo due creation is not yet supported")))
     else
       // triggerAt 不属于待办面（无固定触发时间）——首次浮出固定为下一次 09:00。
       val surfaceAt = ScheduledTask.nextTodoSurfaceAt(now, ZoneId.systemDefault())

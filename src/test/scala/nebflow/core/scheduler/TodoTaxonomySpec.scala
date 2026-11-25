@@ -261,6 +261,18 @@ class TodoTaxonomySpec extends CatsEffectSuite:
   private def callTool(input: Json): Either[ToolError, String] =
     ScheduleTool.call(input.asObject.get, mkCtx()).unsafeRunSync()
 
+  test("tool todo due without a region requests clarification"):
+    val decision = Json.obj("options" -> Json.arr(Json.obj("id" -> "a".asJson, "title" -> "yes".asJson)))
+    val input = Json.obj("kind" -> "todo".asJson, "content" -> "remind".asJson, "decision" -> decision, "triggerAt" -> "2035-01-01T09:00".asJson)
+    for
+      _ <- reset()
+      result <- IO(callTool(input))
+      stored <- taskStore.getAllTodos
+    yield
+      assert(result.isLeft, "a missing source must be clarified")
+      assert(result.swap.toOption.get.message.toLowerCase.contains("clarif"))
+      assertEquals(stored, Nil)
+
   test("② [端到端] 工具面 kind=todo 无选项 ⇒ 拒绝且零落库"):
     (for
       _ <- reset()
