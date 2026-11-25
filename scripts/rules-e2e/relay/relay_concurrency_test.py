@@ -51,6 +51,15 @@ class Tests(unittest.TestCase):
   env={'PATH':'/usr/bin:/bin','FAKE_KEY':'fake-only'}
   p=subprocess.run([sys.executable,'-B','-c',code,str(ROOT/'https_relay.py'),str(self.path)],env=env,capture_output=True,text=True,timeout=3)
   self.assertEqual(p.stdout.strip(),'LOCKED'); self.assertEqual(p.returncode,2,p.stderr)
+ def test_admission_lock_contention_exits_without_waiting(self):
+  relay=m.Relay(args(self.path),grace=0,abort_timeout=2,exit_fn=lambda code:exited.set()); self.addCleanup(relay.ledger.close); self.addCleanup(relay.owner.close)
+  held=threading.Event(); release=threading.Event(); exited=threading.Event(); self.addCleanup(release.set)
+  def holder():
+   with relay.append_lock: held.set(); release.wait(3)
+  worker=threading.Thread(target=holder,daemon=True); worker.start(); self.assertTrue(held.wait(1))
+  stopper=threading.Thread(target=relay.force_after_grace,daemon=True); stopper.start()
+  try: self.assertTrue(exited.wait(.5),'hard stop waited for admission lock')
+  finally: release.set(); worker.join(2); stopper.join(2)
  def test_lifetime_lock_and_restart(self):
   first=m.Relay(args(self.path)); self.addCleanup(first.ledger.close); self.addCleanup(first.owner.close)
   with self.assertRaisesRegex(ValueError,'ledger already locked'): m.Relay(args(self.path))

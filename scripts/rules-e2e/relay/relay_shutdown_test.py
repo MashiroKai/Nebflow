@@ -196,7 +196,7 @@ server.serve_forever()'''
   with patch('sys.stderr',new_callable=io.StringIO) as out:
    relay.force_after_grace(); summaries=[json.loads(x) for x in out.getvalue().splitlines()]
   self.assertEqual(codes,[2]); self.assertTrue(summaries[0]['sealed']); self.assertEqual(summaries[1]['abort_write_confirmed'],1); self.assertEqual(summaries[1]['abort_write_unconfirmed'],0)
-  self.assertEqual(set(summaries[1]),{'sealed','recorded_this_run','unrecorded_this_run','still_inflight_at_exit','abort_write_confirmed','abort_write_unconfirmed','inflight_upper_bound','unrecorded_rejections'})
+  self.assertTrue({'sealed','recorded_this_run','unrecorded_this_run','still_inflight_at_exit','abort_write_confirmed','abort_write_unconfirmed','inflight_upper_bound','unrecorded_rejections'}.issubset(summaries[1]))
   self.assertEqual(json.loads(pathlib.Path(str(self.path)+'.abort').read_text())['original_record_id'],'pending')
   release.set(); t.join(2)
  def test_pending_writer_finishes_during_shutdown_wait(self):
@@ -306,6 +306,45 @@ server.serve_forever()'''
    release.set(); worker.join(2); stopper.join(2)
    self.assertFalse(worker.is_alive()); self.assertFalse(stopper.is_alive()); lines=[json.loads(x) for x in out.getvalue().splitlines()]
   self.assertEqual(codes,[2]); self.assertTrue(lines[0]['sealed']); self.assertEqual(lines[1]['still_inflight_at_exit'],0)
+ def test_unsealed_summary_bounds_without_io(self):
+  codes=[]; relay=m.Relay(args(self.path,5),grace=0,exit_fn=codes.append); self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
+  from relay_concurrency_test import H
+  class Conn:
+   sock=None
+   def request(self,*a): pass
+   def getresponse(self): return types.SimpleNamespace(status=200,getheader=lambda *a:'text/plain',read1=lambda n:b'')
+   def close(self): pass
+  relay.dialer=lambda *a:Conn(); relay.handle(H('ok'))
+  with relay.lock: relay.count+=1
+  held=threading.Event(); release=threading.Event(); self.addCleanup(release.set)
+  def holder():
+   with relay.append_lock: held.set(); release.wait(3)
+  worker=threading.Thread(target=holder,daemon=True); worker.start(); self.assertTrue(held.wait(1))
+  try:
+   with patch.object(relay,'_ledger_record_ids',side_effect=AssertionError('must not read')),patch('sys.stderr',new_callable=io.StringIO) as out:
+    start=time.monotonic(); relay.force_after_grace(); elapsed=time.monotonic()-start; raw=out.getvalue()
+   summary=json.loads(raw); self.assertLess(elapsed,.5); self.assertEqual(codes,[2]); self.assertFalse(summary['sealed'])
+   self.assertEqual((summary['recorded_lower_bound'],summary['unrecorded_upper_bound']),(1,1))
+   self.assertEqual(summary['recorded_lower_bound']+summary['unrecorded_upper_bound'],relay.count)
+   self.assertIsNone(summary['inflight']); self.assertTrue(summary['possible_extra_record_after_exit']); self.assertNotIn('流水完整',raw); self.assertNotIn('已封口',raw)
+  finally: release.set(); worker.join(2)
+ def test_sealed_summary_delivery_reconciliation(self):
+  relay=m.Relay(args(self.path),grace=0,exit_fn=lambda code:None); self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
+  relay.stopping=True
+  from relay_concurrency_test import H
+  for trace,delivered in [('delivered',True),('disconnected',False)]:
+   h=H(trace)
+   def send(code,*a):
+    if not delivered: raise BrokenPipeError()
+   h.send_error=send
+   try: relay.handle(h)
+   except BrokenPipeError: pass
+  relay.event=lambda obj:False
+  h=H('unrecorded'); h.send_error=lambda *a:None; relay.handle(h)
+  with patch('sys.stderr',new_callable=io.StringIO) as out: relay.force_after_grace(); summary=json.loads(out.getvalue().splitlines()[-1])
+  records=[json.loads(line) for line in self.path.read_text().splitlines()]
+  self.assertTrue(summary['sealed']); self.assertEqual(len([x for x in records if x['status']=='rejected-limit']),2)
+  self.assertEqual((summary['rejection_recorded_delivered'],summary['rejection_recorded_undelivered'],summary['rejection_unrecorded']),(1,1,1))
  def test_watchdog_only_starts_once(self):
   relay=m.Relay(args(self.path),grace=1,exit_fn=lambda code:None)
   self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)

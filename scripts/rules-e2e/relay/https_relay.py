@@ -11,7 +11,7 @@ class RecoveryAborted(RuntimeError): pass
 
 class Relay:
  def __init__(self, args, dialer=None, grace=60, exit_fn=os._exit, lock_timeout=5, abort_timeout=5, append_override=None):
-  self.args=args; self.condition=threading.Condition(); self.lock=self.condition; self.count=0; self.seq=0
+  self.args=args; self.condition=threading.Condition(); self.lock=self.condition; self.count=0; self.seq=0; self.confirmed_reservations=0; self.rejection_delivery={}
   self.grace=grace; self.exit_fn=exit_fn; self.stop_fired=False; self.finished=threading.Event(); self.watchdog_lock=threading.Lock(); self.watchdog_started=False
   self.lock_timeout=lock_timeout; self.abort_timeout=abort_timeout; self.append_override=append_override
   self.rejection_lock=threading.Condition(); self.unrecorded_rejections=0; self.rejections={}
@@ -45,6 +45,7 @@ class Relay:
      if identity is not None: seen.add(identity)
      self.count+=1
   if self.count>=args.limit: raise ValueError('ledger exhausted')
+  self.confirmed_reservations=self.count; self.rejection_delivery={}
   self.stopping=False; self.inflight=0; self.active={}; self.drained=threading.Event(); self.drained.set(); self.stop_callback=None
  def repair_ledger(self):
   leave=self._admit('repair-ledger')
@@ -146,8 +147,9 @@ class Relay:
   leave=self._admit('append',obj['record_id'],obj.get('seq'))
   if leave is None: return False
   try:
-   if sidecar: return self._sidecar_unlocked(obj)
-   return self._event_unlocked(obj)
+   result=self._sidecar_unlocked(obj) if sidecar else self._event_unlocked(obj)
+   if result is True and obj.get('status')=='reserved': self.confirmed_reservations+=1
+   return result
   finally: leave()
  def _event_unlocked(self,obj):
   obj=dict(obj); obj.setdefault('record_id',uuid.uuid4().hex)
@@ -176,7 +178,7 @@ class Relay:
  def rejection_event(self,obj):
   obj=dict(obj); obj.setdefault('record_id',uuid.uuid4().hex); identity=obj['record_id']
   done=threading.Event()
-  with self.rejection_lock: self.rejections[identity]='inflight'
+  with self.rejection_lock: self.rejections[identity]='inflight'; self.rejection_delivery[identity]=None
   def finalize():
    try:
     try: recorded=self.event(obj) is True
@@ -190,6 +192,14 @@ class Relay:
   threading.Thread(target=finalize,daemon=True).start()
   if not done.wait(self.lock_timeout+self.abort_timeout): return False
   with self.rejection_lock: return self.rejections[identity]=='recorded'
+ def rejection_response(self,h,obj):
+  identity=uuid.uuid4().hex; obj['record_id']=identity
+  self.rejection_event(obj)
+  delivered=False
+  try:
+   h.send_error(429); delivered=True
+  finally:
+   with self.rejection_lock: self.rejection_delivery[identity]=delivered
  def exit_abort(self,obj):
   with self.append_lock:
    if not self.sealed: raise RuntimeError('abort before sealing')
@@ -230,9 +240,13 @@ class Relay:
   for t in attempted: t.join(max(0,deadline-time.monotonic()))
   final=self._ledger_record_ids()
   with self.append_lock: run_keys=set(self._run_keys)
-  with self.rejection_lock: unrecorded=self.unrecorded_rejections
+  with self.rejection_lock:
+   unrecorded=self.unrecorded_rejections
+   delivered=sum(state=='recorded' and self.rejection_delivery.get(key) is True for key,state in self.rejections.items())
+   undelivered=sum(state=='recorded' and self.rejection_delivery.get(key) is False for key,state in self.rejections.items())
+   unknown=sum(state=='inflight' or (state=='recorded' and self.rejection_delivery.get(key) is None) for key,state in self.rejections.items())
   with results_lock: confirmed=sum(results)
-  summary={'sealed':sealed,'recorded_this_run':len(run_keys & final),'unrecorded_this_run':len(run_keys-final),'still_inflight_at_exit':len(still) if sealed else None,'abort_write_confirmed':confirmed,'abort_write_unconfirmed':len(attempted)-confirmed,'inflight_upper_bound':None if sealed else len(self.active),'unrecorded_rejections':unrecorded}
+  summary={'sealed':sealed,'recorded_this_run':len(run_keys & final),'unrecorded_this_run':len(run_keys-final),'still_inflight_at_exit':len(still) if sealed else None,'abort_write_confirmed':confirmed,'abort_write_unconfirmed':len(attempted)-confirmed,'inflight_upper_bound':None if sealed else len(self.active),'unrecorded_rejections':unrecorded,'rejection_recorded_delivered':delivered,'rejection_recorded_undelivered':undelivered,'rejection_unrecorded':unrecorded,'rejection_unknown':unknown}
   print(json.dumps(summary),file=sys.stderr,flush=True)
  def maybe_stop(self):
   # Called with condition held; dispatching the callback is done by the caller.
@@ -261,7 +275,8 @@ class Relay:
    finally: self.append_lock.release()
    print(json.dumps({'sealed':True}),file=sys.stderr,flush=True)
   else:
-   print(json.dumps({'sealed':False,'recorded_lower_bound':0,'unrecorded_upper_bound':None,'inflight':None,'possible_extra_record_after_exit':True}),file=sys.stderr,flush=True)
+   lower=self.confirmed_reservations; reserved=self.count
+   print(json.dumps({'sealed':False,'recorded_lower_bound':lower,'unrecorded_upper_bound':max(0,reserved-lower),'inflight':None,'possible_extra_record_after_exit':True}),file=sys.stderr,flush=True)
    self.exit_fn(2); return
   self.shutdown_summary(pending,deadline); self.exit_fn(2)
  def handle(self,h):
@@ -305,8 +320,7 @@ class Relay:
     if final: self.stopping=True
   if final: self.start_watchdog()
   if rejected:
-   self.rejection_event({'seq':seq,'status':'rejected-limit','method':'POST','host':host,'path':path,'dial':False,'time':time.time(),'rule_id':None,'trace_id':trace[0]})
-   h.send_error(429); return
+   self.rejection_response(h,{'seq':seq,'status':'rejected-limit','method':'POST','host':host,'path':path,'dial':False,'time':time.time(),'rule_id':None,'trace_id':trace[0]}); return
   try:
    self.event({'seq':seq,'status':'reserved','method':'POST','host':host,'path':path,'dial':False,'time':time.time(),'rule_id':None,'trace_id':trace[0]})
   except OSError:
