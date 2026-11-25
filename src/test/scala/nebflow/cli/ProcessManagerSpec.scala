@@ -120,6 +120,8 @@ class ProcessManagerSpec extends FunSuite:
           assert(reason.contains("4242"), reason)
           assert(reason.contains("still running"), reason)
         case other => fail(s"expected Failed with residue pid, got $other")
+      assert(os.exists(PathUtil.dataRoot / ".pid"), "residue must preserve the pid file")
+      assert(os.exists(PathUtil.dataRoot / ".pid.meta"), "residue must preserve pid metadata")
     }
   }
 
