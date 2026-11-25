@@ -832,6 +832,7 @@
   min-width: 0;
   font: 500 var(--ds-fs-hint)/1.35 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text, #000);
+  background: transparent;
   white-space: pre-line;
   overflow-wrap: anywhere;
 }
