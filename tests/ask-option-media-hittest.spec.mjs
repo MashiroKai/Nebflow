@@ -16,6 +16,22 @@ async function setup(page, multiple) {
   return card;
 }
 
+async function clickVisibleBlank(card) {
+  const point = await card.evaluate(el => {
+    const r = el.getBoundingClientRect();
+    const occupied = [...el.querySelectorAll('.option-text, .option-check, .pop-stack-view, .pill')].map(e => e.getBoundingClientRect());
+    for (let y = 2; y < r.height - 2; y += 2) for (let x = 2; x < r.width - 2; x += 2) {
+      const px = r.left + x, py = r.top + y;
+      if (document.elementFromPoint(px, py) !== el) continue;
+      if (occupied.some(b => px >= b.left && px <= b.right && py >= b.top && py <= b.bottom)) continue;
+      return { x, y };
+    }
+    throw new Error('未找到形状内的空白点击点');
+  });
+  console.log('visible blank', JSON.stringify(point));
+  await card.click({ position: point });
+}
+
 for (const multiple of [false, true]) {
   for (const action of ['image', 'text', 'blank', 'control', 'swipe', 'touch', 'expand', 'keyboard', 'geometry']) {
     test(`${multiple ? 'multi' : 'single'} ${action}`, async ({ page }, info) => {
@@ -35,11 +51,11 @@ for (const multiple of [false, true]) {
         await expect(card).toHaveClass(/picked/);
         await expect(page.locator('.nf-lightbox')).toHaveCount(0);
       } else if (action === 'blank') {
-        await card.click({ position: { x: 5, y: 5 } });
+        await clickVisibleBlank(card);
         await expect(card).toHaveClass(/picked/);
       } else if (action === 'control') {
         if (multiple) await card.locator('.option-check').click();
-        else await card.click({ position: { x: 5, y: 5 } });
+        else await clickVisibleBlank(card);
         await expect(card).toHaveClass(/picked/);
       } else if (action === 'swipe') {
         const front = view.locator('.media-layer.layer-front');
