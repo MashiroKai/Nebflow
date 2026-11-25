@@ -515,8 +515,12 @@ server.serve_forever()'''
  def test_process_dns_limit_locked(self): self.process_fault_matrix('limit','dns',True)
  def test_process_dns_deadline_free(self): self.process_fault_matrix('deadline','dns',False)
  def test_process_dns_deadline_locked(self): self.process_fault_matrix('deadline','dns',True)
+ def test_process_halfopen_limit_free(self): self.process_fault_matrix('limit','halfopen',False)
+ def test_process_halfopen_limit_locked(self): self.process_fault_matrix('limit','halfopen',True)
+ def test_process_halfopen_deadline_free(self): self.process_fault_matrix('deadline','halfopen',False)
+ def test_process_halfopen_deadline_locked(self): self.process_fault_matrix('deadline','halfopen',True)
  def process_fault_matrix(self,trigger,fault,lock_held):
-  if fault not in ('slow','dns'): raise ValueError('fault driver not implemented')
+  if fault not in ('slow','dns','halfopen'): raise ValueError('fault driver not implemented')
   if trigger not in ('limit','deadline','double'): raise ValueError('invalid trigger')
   double_trigger=trigger=='double'; deadline_first=trigger=='deadline'
   # Slow upload remains in body reading, before reservation; another complete
@@ -525,10 +529,36 @@ server.serve_forever()'''
   # append-inflight field; unsealed hard stop cannot guarantee an abort.
   up=socket.socket(); up.bind(('127.0.0.1',0)); up.listen(); up.settimeout(3); self.addCleanup(up.close)
   self.assertNotEqual(up.getsockname()[1],6138); accepted=threading.Event(); release=threading.Event(); self.addCleanup(release.set)
+  def provider_response(conn):
+   conn.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n')
+  original_provider_response=provider_response
+  if fault=='halfopen':
+   def provider_response(conn):
+    accepted.set()
+    if not release.wait(5): raise TimeoutError('halfopen release timed out')
+    return original_provider_response(conn)
   def provider():
+   nonlocal provider_response
    try:
-    conn,_=up.accept(); accepted.set(); release.wait(5); conn.close()
+    conn,_=up.accept()
+    if fault=='halfopen':
+     conn.settimeout(3); data=b''
+     while b'\r\n\r\n' not in data:
+      chunk=conn.recv(4096)
+      if not chunk: raise EOFError('upstream request headers truncated')
+      data+=chunk
+     headers,body=data.split(b'\r\n\r\n',1)
+     lengths=[int(line.split(b':',1)[1]) for line in headers.split(b'\r\n')[1:] if line.lower().startswith(b'content-length:')]
+     if len(lengths)!=1: raise ValueError('expected upstream content length')
+     while len(body)<lengths[0]:
+      chunk=conn.recv(4096)
+      if not chunk: raise EOFError('upstream request body truncated')
+      body+=chunk
+    if fault=='halfopen': provider_response(conn)
+    else: accepted.set(); release.wait(5)
+    conn.close()
    except OSError: pass
+   finally: provider_response=original_provider_response
   threading.Thread(target=provider,daemon=True).start()
   code='''import sys,importlib.util,http.client,time,json,itertools\ns=importlib.util.spec_from_file_location("relay",sys.argv.pop(1)); m=importlib.util.module_from_spec(s); s.loader.exec_module(m)\nport=int(sys.argv.pop(1)); old=m.Relay.__init__; event=m.Relay.event; send=m.BaseHTTPRequestHandler.send_error; order=itertools.count()\ndef log(label): print(json.dumps({"observation":label,"seq":next(order),"monotonic":time.monotonic()}),file=sys.stderr,flush=True)\ndef init(self,args,**kw): old(self,args,dialer=lambda h,p,t:http.client.HTTPConnection("127.0.0.1",port,timeout=t),grace=1,abort_timeout=.1)\ndef observed(self,obj):\n result=event(self,obj)\n if obj.get("status")=="rejected-limit" and result is True: log("ledger-fsynced")\n return result\ndef sent(self,status,*a,**kw):\n result=send(self,status,*a,**kw)\n if status==429: log("response-written")\n return result\nm.Relay.__init__=init; m.Relay.event=observed; m.BaseHTTPRequestHandler.send_error=sent; m.main()'''
   code=code.replace('m.Relay.__init__=init; m.Relay.event=observed;', '''import threading
@@ -594,7 +624,7 @@ old_deadline=m.Relay.deadline
 def deadline_observed(self):
  old_deadline(self); log("deadline-complete"); os.write(int(os.environ["SIGNAL_FD"]),b"D")
 m.Relay.deadline=deadline_observed''')
-  ev=pathlib.Path(os.environ['RELAY_EVIDENCE_DIR']); prefix=ev/('round21-dns-'+trigger+('-locked' if lock_held else '-free')) if fault=='dns' else ev/('round17-deadline-locked' if lock_held else 'round17-deadline-free') if deadline_first else ev/('round14-lock-held' if lock_held else 'round13-double-trigger' if double_trigger else 'round7-process-limit-slow'); ledger=self.path
+  ev=pathlib.Path(os.environ['RELAY_EVIDENCE_DIR']); prefix=ev/('round25-halfopen-'+trigger+('-locked' if lock_held else '-free')) if fault=='halfopen' else ev/('round21-dns-'+trigger+('-locked' if lock_held else '-free')) if fault=='dns' else ev/('round17-deadline-locked' if lock_held else 'round17-deadline-free') if deadline_first else ev/('round14-lock-held' if lock_held else 'round13-double-trigger' if double_trigger else 'round7-process-limit-slow'); ledger=self.path
   with open(str(prefix)+'-stderr.log','w') as err:
    p=subprocess.Popen([sys.executable,'-B','-c',code,str(pathlib.Path(m.__file__)),str(up.getsockname()[1]),'--route','one,example.com,/v1,FAKE_KEY','--allow-host','example.com','--port','0','--ledger',str(ledger),'--limit','2' if deadline_first else '1','--seconds','0.5' if double_trigger or deadline_first else '30','--timeout','5'],stdout=subprocess.PIPE,stderr=err,text=True,pass_fds=(write_fd,dns_write,release_read),env={'PATH':'/usr/bin:/bin','FAKE_KEY':'fake-only','SIGNAL_FD':str(write_fd),'DNS_FD':str(dns_write),'RELEASE_FD':str(release_read)})
    slow=first=None
@@ -603,7 +633,7 @@ m.Relay.deadline=deadline_observed''')
     def connect(trace,length,body):
      c=socket.create_connection(('127.0.0.1',port),timeout=2); c.settimeout(2); c.sendall(('POST /one/chat HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Length: %d\r\nX-Stand-Trace-Id: %s\r\n\r\n'%(port,length,trace)).encode()+body); return c
     slow=connect('slow',100,b'x'); first=connect('reserve',2,b'{}')
-    if fault=='slow': self.assertTrue(accepted.wait(3))
+    if fault in ('slow','halfopen'): self.assertTrue(accepted.wait(3))
     else:
      import select
      self.assertTrue(select.select([dns_read],[],[],3)[0]); self.assertEqual(os.read(dns_read,1),b'D')
