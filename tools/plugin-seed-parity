@@ -548,6 +548,21 @@ def parity_one(plugin: str, inst: Path, seed: Path, ledger: dict, strict: bool) 
     return 1 if red else 0
 
 
+def browser_use_boundary_check(seed: Path) -> int:
+    root = seed / "browser-use" / "skills" / "control-browser"
+    skill = (root / "SKILL.md").read_text(encoding="utf-8")
+    deferred = (root / "references" / "deferred-capabilities.md").read_text(encoding="utf-8")
+    section = skill.split("## 八、", 1)[1].split("## 九、", 1)[0]
+    d2 = deferred.split("## D-2 ", 1)[1].split("## D-3 ", 1)[0]
+    checks = {
+        "外域交互载体": "外域交互可用" in section and "专用" in section and "CDP" in section,
+        "D-2 非前置": "不是外域交互的前置条件" in d2,
+    }
+    for name, ok in checks.items():
+        print(f"  {'PASS' if ok else 'FAIL'} browser-use: {name}")
+    return int(not all(checks.values()))
+
+
 # ── CLI ─────────────────────────────────────────────────────────────────
 
 def main(argv: list[str]) -> int:
@@ -579,6 +594,7 @@ def main(argv: list[str]) -> int:
     rc = 0
     if run_a:
         rc |= self_check(plugins, seed, inst)
+        rc |= browser_use_boundary_check(seed)
     if run_b:
         if inst is None:
             print("\n── 腿 B · 漂移比对 ──\n  SKIPPED：实例根不存在"
