@@ -3952,7 +3952,7 @@ body:not(.mobile-layer) .option-preview-media {
    off, so the on-demand expand still paints the full content. */
 .nf-injection-stack { display: flex; justify-content: flex-end; align-items: center; gap: var(--ds-space-4); }
 .nf-injection-stack[hidden], .nf-injection-stack-face[hidden], .row.nf-injection-stack-hidden { display: none !important; }
-.nf-injection-stack-face { max-width: min(260px, 65%); padding: 10px 14px; }
+.nf-injection-stack-face { max-width: min(260px, 65%); padding: 10px 14px; visibility: hidden; pointer-events: none; }
 
 .nf-injection-stack button { display: flex; align-items: center; min-height: 25px; }
 .nf-injection-stack-count { display: inline-flex; align-items: center; justify-content: center; min-width: 3ch; min-height: 19px; text-align: center; font-variant-numeric: tabular-nums; }

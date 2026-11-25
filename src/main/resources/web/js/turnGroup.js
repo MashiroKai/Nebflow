@@ -302,8 +302,10 @@ function syncInjectionStack(header) {
     const count = document.createElement('span');
     count.className = 'nf-injection-stack-count';
     button.append(label, count);
+    // Keep the old face's layout footprint so the count pill does not move.
     const face = document.createElement('div');
     face.className = 'bubble injected nf-injection-stack-face';
+    face.setAttribute('aria-hidden', 'true');
     stack.append(button, face);
     header.after(stack); // single anchoring decision
     button.onclick = () => {
