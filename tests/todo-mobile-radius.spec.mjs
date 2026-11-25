@@ -48,6 +48,15 @@ async function probe(page, label, selector, expected, combo) {
     if (!(await item.isVisible())) continue;
     visible++;
     const corners = await item.evaluate(el => { const s = getComputedStyle(el); return [s.borderTopLeftRadius, s.borderTopRightRadius, s.borderBottomRightRadius, s.borderBottomLeftRadius]; });
+    if (label === 'quick-fab' || label === 'filter-chip') {
+      const hit = await item.evaluate(el => {
+        const r = el.getBoundingClientRect();
+        const at = (x, y) => { const n = document.elementFromPoint(x, y); return { tag: n?.tagName, className: typeof n?.className === 'string' ? n.className : '', inside: !!n && (n === el || el.contains(n)), button: n?.closest('button')?.className || null }; };
+        return { width:r.width, height:r.height, center:at(Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)), corner:at(r.x+1,r.y+1) };
+      });
+      console.log('HIT', JSON.stringify({combo,label,hit}));
+      if (!hit.center.inside) errors.push(`${combo} ${label}: center hit outside target`);
+    }
     results.push({ combo, label, selector, corners });
     if (!process.env.RADIUS_MEASURE && !corners.every(x => x === expected)) errors.push(`${combo} ${label} ${selector}: ${corners.join(',')} != ${expected}`);
   }
