@@ -17,8 +17,14 @@ async function boot(page, replay) {
   await page.evaluate(async id => (await import('/js/bgAgentPopup.js')).openStepPopup(id,'Coder','检查任务'), sid);
   await expect(page.locator('.flow-agent-chat:visible')).toBeVisible();
 }
+async function frame(page, type, extra = {}) {
+  await page.evaluate(async frame => { const s = (await import('/js/state.js')).default; s.ws.onmessage({data:JSON.stringify(frame)}); }, {type,agentId:sid,nodeSessionId:sid,rootSessionId:root,sessionId:sid,name:'Coder',...extra});
+}
 async function renderLive(page) {
-  await page.evaluate(async ({sid,thinking}) => { const {chatViews,setActiveView,activeView} = await import('/js/chatView.js'); const chat = await import('/js/chat.js'); const view = chatViews['bgagent-' + sid]; const saved = activeView; setActiveView(view); try { chat.appendThinkingDelta(thinking); chat.finishThinking(); chat.renderTool('Read','完成','工具结果完整内容',false,{file_path:'/demo'}); } finally {setActiveView(saved);} }, {sid,thinking});
+  await frame(page,'agentStart',{taskDescription:'检查任务'});
+  await frame(page,'agentThinking',{delta:thinking});
+  await frame(page,'agentToolStart',{label:'Read'});
+  await frame(page,'agentToolEnd',{label:'Read',summary:'完成',content:'工具结果完整内容',isError:false});
 }
 async function verify(page) {
   const panel = page.locator('.flow-agent-chat:visible');
@@ -37,10 +43,16 @@ for (const width of [390,1280]) for (const theme of ['light','dark']) for (const
   test(`${width} ${theme} ${state}`, async ({page}) => {
     await page.setViewportSize({width,height:850});
     await boot(page,state === 'replay');
+    if (state === 'replay') {
+      await page.reload();
+      await page.waitForFunction(async id => { const s = (await import('/js/state.js')).default; return s.activeSessionId === id && s.ws?.readyState === 1; }, root);
+      await page.waitForFunction(() => !document.documentElement.classList.contains('nf-boot-gate'), null, {timeout:25000});
+      await page.evaluate(async id => (await import('/js/bgAgentPopup.js')).openStepPopup(id,'Coder','检查任务'), sid);
+    }
     await page.evaluate(t => document.documentElement.setAttribute('data-theme',t), theme);
     if (state !== 'replay') {
       await renderLive(page);
-      if (state === 'done') await page.evaluate(async sid => { const {chatViews} = await import('/js/chatView.js'); (await import('/js/turnGroup.js')).collapseTurn(chatViews['bgagent-' + sid]); }, sid);
+      if (state === 'done') await frame(page,'agentDone', {result:'已完成'});
     }
     await verify(page);
     await page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.playState === 'running' && a.effect?.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => {}))));
