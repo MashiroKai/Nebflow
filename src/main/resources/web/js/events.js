@@ -16,6 +16,7 @@
 export const EVENTS = Object.freeze({
   // workspace 面：工作区条目打开（树/搜索/最近三腿共用一个事件）
   WORKSPACE_OPEN_ITEM: 'workspace-open-item',
+  BROWSER_TAKEOVER_FINISHED: 'browser-takeover-finished',
   // 资源管理器面：发 readFile 前把「该路径已固定 / 这次是后台重读」投给 explorer.js
   // 的 pendingPinned / pendingRefresh（canvas.js 多条重读腿共用此通道；
   // explorer.js 的监听端按既有树逐字听 'explorer-preload-pinned'）。

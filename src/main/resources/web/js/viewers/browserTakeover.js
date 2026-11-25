@@ -1,5 +1,6 @@
 // Ephemeral takeover viewer: no frame, key, or ticket persistence.
 import { onMessage, sendWsIfOpen } from '../ws.js';
+import { EVENTS } from '../events.js';
 
 let awaiting = false;
 export function requestBrowserTakeover(correlationId) {
@@ -40,7 +41,7 @@ export function mountBrowserTakeover(pane, ticket, correlationId) {
       image.src = `data:image/jpeg;base64,${msg.frame.data}`;
     }
     if (msg.type === 'status') status.textContent = msg.error || (msg.timedOut ? '该请求已超时，agent 已恢复运行' : '正在接管');
-    if (msg.type === 'finish') window.dispatchEvent(new CustomEvent('browser-takeover-finished', { detail: { correlationId } }));
+    if (msg.type === 'finish') window.dispatchEvent(new CustomEvent(EVENTS.BROWSER_TAKEOVER_FINISHED, { detail: { correlationId } }));
   };
   socket.onerror = () => { status.textContent = '画面流启动失败；可在运行 stand 的机器前操作真实浏览器窗口'; };
   const coords = event => {
