@@ -1081,16 +1081,25 @@ class WebSocketRoutes(
             else
               for
                 outbound <- Queue.bounded[IO, WebSocketFrame](16)
-                state <- Ref.of[IO, Option[(String, String, nebflow.core.browser.BrowserScreencast, () => Unit)]](None)
                 started <- Ref.of[IO, Boolean](false)
-                failed = new java.util.concurrent.atomic.AtomicBoolean(false)
-                failureWake <- Deferred[IO, Unit]
                 send = (j: Json) => outbound.offer(WebSocketFrame.Text(j.noSpaces))
-                cleanup = state.getAndSet(None).flatMap(_.traverse_ { case (id, _, stream, unsubscribe) =>
-                  IO(unsubscribe()).attempt.void *> IO.blocking(stream.close()).attempt.void *> IO(nebflow.core.browser.BrowserSessions.takeoverRegistry.finish(id)).attempt.void *>
-                    (if failed.get() then AskHostLedger.recordTakeoverStreamFailure(id) *> outbound.tryOffer(WebSocketFrame.Text(Json.obj("type" -> "status".asJson, "error" -> "画面流故障，接管已停止".asJson).noSpaces)).void else IO.unit)
-                })
-                receive: Pipe[IO, WebSocketFrame, Unit] = incoming => Stream.resource(Dispatcher.parallel[IO]).flatMap { failureDispatcher => incoming.evalMap {
+                settler = new TakeoverSettler.Settler[IO](
+                  { case (_, _, stream, unsubscribe) => IO(unsubscribe()).attempt.void *> IO.blocking(stream.close()).attempt.void },
+                  id => IO(nebflow.core.browser.BrowserSessions.takeoverRegistry.finish(id)).void,
+                  id => AskHostLedger.recordTakeoverStreamFailure(id),
+                  (id, session) => AskHostLedger.requestState(id).flatMap { current =>
+                    AskHostLedger.finishTakeover(id, session, nebflow.core.browser.BrowserSessions.takeoverRegistry).flatMap { result =>
+                      if result == AskHostLedger.TakeoverFinish.LateClaimed then
+                        current.traverse_ { s =>
+                          val ctx = ToolContext(projectRoot = os.pwd.toString, sharedResources = Some(sharedResources))
+                          AskHostReplyTool.deliverLateReply(sharedResources, ctx, s.pending, id, AskHostLedger.TimeoutOutcome, AskHostLedger.TakeoverDecision).void
+                        }
+                      else IO.unit
+                    }
+                  },
+                  send, 5.seconds, (msg, error) => logger.warn(s"$msg: ${error.getMessage}")
+                )
+                receive: Pipe[IO, WebSocketFrame, Unit] = incoming => incoming.evalMap {
                   case WebSocketFrame.Text(text, _) if text.length <= 16384 =>
                     val message = parsedJson(text)
                     message.hcursor.get[String]("type").getOrElse("") match
@@ -1112,11 +1121,7 @@ class WebSocketRoutes(
                                   case Right(_) =>
                                     IO.uncancelable { _ => IO.blocking {
                                       val page = nebflow.core.browser.BrowserSessions.takeoverPage(b.session)
-                                      val stream = new nebflow.core.browser.BrowserScreencast((method, params) => { page.send(method, params); () }, () => {
-                                        failed.set(true)
-                                        try failureDispatcher.unsafeRunAndForget(failureWake.complete(()).void)
-                                        catch case _: IllegalStateException => ()
-                                      })
+                                      lazy val stream: nebflow.core.browser.BrowserScreencast = new nebflow.core.browser.BrowserScreencast((method, params) => { page.send(method, params); () }, () => settler.markFailed(stream))
                                       val unsubscribe = page.subscribe("Page.screencastFrame")(stream.frame)
                                       try stream.start()
                                       catch
@@ -1127,13 +1132,16 @@ class WebSocketRoutes(
                                       (b.request, b.session, stream, unsubscribe)
                                     }.attempt.flatMap {
                                       case Left(_) => IO(nebflow.core.browser.BrowserSessions.takeoverRegistry.finish(b.request)) *> send(Json.obj("type" -> "status".asJson, "error" -> "画面流启动失败；可在运行 stand 的机器前操作真实浏览器窗口".asJson))
-                                      case Right(active) => state.set(Some(active)) *> started.set(true) *>
-                                        (if failed.get() then cleanup else send(Json.obj("type" -> "status".asJson, "ready" -> true.asJson, "timedOut" -> snapshot.terminal.isDefined.asJson)))
+                                      case Right(active) => settler.register(active) *> started.set(true) *>
+                                        settler.current.flatMap {
+                                          case Some(_) => send(Json.obj("type" -> "status".asJson, "ready" -> true.asJson, "timedOut" -> snapshot.terminal.isDefined.asJson))
+                                          case None => IO.unit
+                                        }
                                     } }
                                 }
                             }
                         }
-                      case "input" => state.get.flatMap(_.traverse_ { case (id, session, stream, _) =>
+                      case "input" => settler.current.flatMap(_.traverse_ { case (id, session, stream, _) =>
                         (OwnerIdentity.localAnchor, tokenRef.get.flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))).tupled.flatMap { (currentOwner, currentCred) =>
                           val currentSubject = currentCred.collect { case Credential.ViaSession(record) => record.accountSub }
                           if BrowserTakeoverAuth.allowed(currentSubject, currentOwner.map(_.sub)) &&
@@ -1147,27 +1155,17 @@ class WebSocketRoutes(
                           else send(Json.obj("type" -> "status".asJson, "error" -> "接管输入未授权".asJson))
                         }
                       })
-                      case "finish" => state.getAndSet(None).flatMap {
-                        case None => send(Json.obj("type" -> "status".asJson, "error" -> "接管租约不存在".asJson))
-                        case Some((id, session, stream, unsubscribe)) =>
-                          AskHostLedger.requestState(id).flatMap { current =>
-                            AskHostLedger.finishTakeover(id, session, nebflow.core.browser.BrowserSessions.takeoverRegistry).flatMap { result =>
-                              IO(unsubscribe()) *> IO.blocking(stream.close()).attempt.void *>
-                                (if result == AskHostLedger.TakeoverFinish.LateClaimed then
-                                  current.traverse_ { s =>
-                                    val ctx = ToolContext(projectRoot = os.pwd.toString, sharedResources = Some(sharedResources))
-                                    AskHostReplyTool.deliverLateReply(sharedResources, ctx, s.pending, id, AskHostLedger.TimeoutOutcome, AskHostLedger.TakeoverDecision).void
-                                  }
-                                else IO.unit) *> send(Json.obj("type" -> "finish".asJson))
-                            }
-                          }
+                      case "finish" => settler.finish.flatMap {
+                        case TakeoverSettler.Outcome.NothingToSettle => send(Json.obj("type" -> "status".asJson, "error" -> "接管租约不存在".asJson))
+                        case TakeoverSettler.Outcome.SettledAsFailure => IO.unit
+                        case TakeoverSettler.Outcome.SettledNormally => send(Json.obj("type" -> "finish".asJson))
                       }
                       case _ => IO.unit
                   case _ => IO.unit
-                }.onFinalize(cleanup) }
+                }.onFinalize(settler.finalizer)
                 frames = Stream.awakeEvery[IO](200.millis).evalMap(_ =>
-                  state.get.flatMap(_.traverse { case (_, _, stream, _) => IO(stream.take()) })
-                ).concurrently(Stream.eval(failureWake.get *> cleanup)).collect { case Some(Some(data)) => WebSocketFrame.Text(Json.obj("type" -> "frame".asJson, "frame" -> io.circe.parser.parse(data).getOrElse(Json.obj())).noSpaces) }
+                  settler.tick *> settler.current.flatMap(_.traverse { case (_, _, stream, _) => IO(stream.take()) })
+                ).collect { case Some(Some(data)) => WebSocketFrame.Text(Json.obj("type" -> "frame".asJson, "frame" -> io.circe.parser.parse(data).getOrElse(Json.obj())).noSpaces) }
                 response <- wsb.build(Stream.fromQueueUnterminated(outbound).merge(frames), receive)
               yield response
           }
