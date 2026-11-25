@@ -416,15 +416,6 @@ private[gateway] object WsTasksWorkspaceHandlers:
           "message" -> "Please clarify the creation time zone".asJson
         )
       )
-    else if crKindTodo && crTriggerAt != 0L && crTriggerAt <= System.currentTimeMillis() then
-      wsSend(
-        io.circe.Json.obj(
-          "type" -> "error".asJson,
-          "msgType" -> "createScheduledTask".asJson,
-          "requestId" -> createRequestId.asJson,
-          "message" -> "Please clarify a future reminder time".asJson
-        )
-      )
     else if crKindTodo && crTriggerAt != 0L && crRepeat.exists(r => r != "once" && r != "weekly") then
       wsSend(
         io.circe.Json.obj(
@@ -479,8 +470,11 @@ private[gateway] object WsTasksWorkspaceHandlers:
       )
       (for
         saved <- createRequestId match
-          case Some(_) => sharedResources.scheduledTaskStore.addUserTodoOnce(userTodo)
-          case None => sharedResources.scheduledTaskStore.addTask(userTodo).as(userTodo)
+          case Some(_) => sharedResources.scheduledTaskStore.addUserTodoOnce(userTodo, requireFutureDue = true)
+          case None =>
+            if crTriggerAt != 0L && crTriggerAt <= System.currentTimeMillis() then
+              IO.raiseError(new IllegalArgumentException("Please clarify a future reminder time"))
+            else sharedResources.scheduledTaskStore.addTask(userTodo).as(userTodo)
         removed = List.empty[nebflow.core.scheduler.ScheduledTask]
         _ <- sharedResources.scheduledTaskService.traverse_(_.notifyTaskChange())
         _ <- removed.traverse_(old =>

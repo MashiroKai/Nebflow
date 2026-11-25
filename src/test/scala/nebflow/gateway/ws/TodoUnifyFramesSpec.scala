@@ -152,6 +152,24 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
   // ① createScheduledTask 收 priority（钳位落库）
   // ==================================================================
 
+  test("retry of an already persisted past deadline returns the durable row") {
+    withRig { (c, res) =>
+      val id = "a2b4c6d8-1234-4abc-8def-123456789abc"
+      val at = now - 60000L
+      val wall = java.time.Instant.ofEpochMilli(at).atZone(java.time.ZoneId.of("Asia/Tokyo")).toLocalDateTime.toString
+      val row = todo(id, sessionId = "s1").copy(content = "remind me", source = Some("user"),
+        due = Some(nebflow.core.scheduler.TodoDue.Once(at, "Asia/Tokyo", wall, None)), nextDueAt = Some(at))
+      val frame = s"""{"type":"createScheduledTask","sessionId":"s1","requestId":"$id","kind":"todo","content":"remind me","triggerAt":$at,"device":{"timeZone":"Asia/Tokyo"}}"""
+      for
+        _ <- res.scheduledTaskStore.addTask(row)
+        frames <- send(c, "createScheduledTask", frame)
+        saved <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assertEquals(types(frames), List("scheduledTaskCreated"))
+        assertEquals(saved.size, 1)
+    }
+  }
+
   test("user deadline rejects a past instant instead of creating an overdue reminder") {
     withRig { (c, res) =>
       val frame = s"""{"type":"createScheduledTask","sessionId":"s1","kind":"todo","content":"remind me","triggerAt":${now - 3600000L},"device":{"timeZone":"Asia/Tokyo"}}"""

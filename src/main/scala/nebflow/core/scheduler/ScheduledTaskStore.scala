@@ -465,7 +465,7 @@ class ScheduledTaskStore(
    * comparing those state fields would turn a legitimate retry into an identity conflict.
    * The created frame reports the durable row (`saved`) so the client sees the real state.
    */
-  def addUserTodoOnce(task: ScheduledTask): IO[ScheduledTask] =
+  def addUserTodoOnce(task: ScheduledTask, requireFutureDue: Boolean = false): IO[ScheduledTask] =
     withStoreLock {
       loadUnlocked(task.sessionId).flatMap { existing =>
         existing.find(_.id == task.id) match
@@ -481,6 +481,8 @@ class ScheduledTaskStore(
           case None =>
             scanUnlocked(_.id == task.id, sort = false).flatMap { copies =>
               if copies.nonEmpty then IO.raiseError(new IllegalArgumentException("create identity conflict"))
+              else if requireFutureDue && task.nextDueAt.exists(_ <= System.currentTimeMillis()) then
+                IO.raiseError(new IllegalArgumentException("Please clarify a future reminder time"))
               else saveUnlocked(task.sessionId, existing :+ task).as(task)
             }
       }
