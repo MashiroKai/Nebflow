@@ -1068,6 +1068,11 @@ function chipInnerWidth(chip) {
       inner -= quote.getBoundingClientRect().width / rsc;
     }
   }
+  const star = chip.querySelector('.mf-cv-star');
+  if (star && getComputedStyle(star).display !== 'none') {
+    const rsc = parseFloat((/** @type {HTMLElement} */ (chip)).style.getPropertyValue('--rsc')) || 1;
+    inner -= star.getBoundingClientRect().width / rsc;
+  }
   return inner;
 }
 
