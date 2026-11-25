@@ -98,7 +98,7 @@ status: active
 
 ## 七、开工前自检（先证明载体真的在）
 
-长跑/起进程一律经**进程组包装器**启动并落花名册（macOS 无 `setsid`；包装器由运行环境提供）：
+长跑/起进程使用包内进程组工具并落花名册，使用与清理纪律见 `references/process-roster.md`；脱离进程组的持久 Chrome 必须单独按 PID 核验：
 
 ```bash
 # 1. Playwright 与浏览器是否在位（缺失 ⇒ 停手报确切错误，不要降级）
@@ -106,7 +106,7 @@ node -e "console.log('playwright', require('playwright/package.json').version)"
 ls ~/Library/Caches/ms-playwright 2>/dev/null
 
 # 2. 起一个**自有端口 + 自有目录**的被测服务（禁碰宿主的 :6138 网关端口），经包装器起
-<进程组包装器> roster --node <nodeId> --tag httpd -- \
+STAND_PROCESS_ROSTER="$HOME/.stand/browser-use/roster.json" node <包根>/skills/control-browser/scripts/process-roster.mjs start --node <nodeId> --tag httpd -- \
   python3 -m http.server <自有端口> --directory <静态根>
 
 # 3. 驱动脚本：前台 + 显式超时 + 每步落盘（本机无 BSD timeout ⇒ 用 perl alarm 包装）
