@@ -723,7 +723,7 @@ export function restoreFromStorage(opts = {}) {
         const tBubble = document.createElement('div');
         tBubble.className = 'bubble ai thinking-bubble thinking-done';
         const tLabel = document.createElement('div');
-        tLabel.className = 'thinking-label collapsible';
+        tLabel.className = chat.dataset.nfBareProcessRows === '1' ? 'thinking-label' : 'thinking-label collapsible';
         tLabel.textContent = t('chat.thinkingLabel'); // pre-#345 label restored (2026-08-24 ruling)
         const tContent = document.createElement('div');
         tContent.className = 'thinking-content';
@@ -735,14 +735,14 @@ export function restoreFromStorage(opts = {}) {
         // 旧的「无 text 保持展开」例外与重放契约冲突 —— 每次重连重放都把
         // thinking-only 行的全文抖开（症状①「thinking 突然完整显示」）。
         // 折叠态跨重放持久；读全文 = 点 label 展开（collapsible 面不变）。
-        tContent.style.display = 'none';
+        tContent.style.display = (activeView && activeView.nfBareProcessRows) ? '' : 'none';
         tBubble.appendChild(tLabel);
         tBubble.appendChild(tContent);
         tRow.appendChild(tBubble);
         // 2026-09-06 二次裁定: thinking rows carry NO footer (intermediate
         // process, not message-class). Corrects f8ea9385's classification.
         chat.appendChild(tRow);
-        bindCollapsibleToggle(tLabel, () => tContent);
+        if (!(activeView && activeView.nfBareProcessRows)) bindCollapsibleToggle(tLabel, () => tContent);
       }
       // replay-terminal 批（2026-10-28，案一「A 根治」实施）两处渲染面变化：
       //  ① 徽章渲染从 if (m.text) 提出 —— 「有 durationMs 但 text 为空」的纯工具
@@ -1212,7 +1212,7 @@ function buildHistoryRow(m, i, ctx) {
         const tBubble = document.createElement('div');
         tBubble.className = 'bubble ai thinking-bubble thinking-done';
         const tLabel = document.createElement('div');
-        tLabel.className = 'thinking-label collapsible';
+        tLabel.className = chatEl.dataset.nfBareProcessRows === '1' ? 'thinking-label' : 'thinking-label collapsible';
         tLabel.textContent = t('chat.thinkingLabel'); // pre-#345 label restored (2026-08-24 ruling)
         const tContent = document.createElement('div');
         tContent.className = 'thinking-content';
@@ -1224,14 +1224,14 @@ function buildHistoryRow(m, i, ctx) {
         // 旧的「无 text 保持展开」例外与重放契约冲突 —— 每次重连重放都把
         // thinking-only 行的全文抖开（症状①「thinking 突然完整显示」）。
         // 折叠态跨重放持久；读全文 = 点 label 展开（collapsible 面不变）。
-        tContent.style.display = 'none';
+        tContent.style.display = (activeView && activeView.nfBareProcessRows) ? '' : 'none';
         tBubble.appendChild(tLabel);
         tBubble.appendChild(tContent);
         tRow.appendChild(tBubble);
         // 2026-09-06 二次裁定: thinking rows carry NO footer (intermediate
         // process, not message-class). Corrects f8ea9385's classification.
         fragment.appendChild(tRow);
-        bindCollapsibleToggle(tLabel, () => tContent);
+        if (!(activeView && activeView.nfBareProcessRows)) bindCollapsibleToggle(tLabel, () => tContent);
       }
       // replay-terminal 批（2026-10-28，案一「A 根治」实施）——与 restoreFromStorage
       // ai 分支同款两处渲染面变化（①徽章出 if (m.text)：凡 durationMs>0 一律渲染，
