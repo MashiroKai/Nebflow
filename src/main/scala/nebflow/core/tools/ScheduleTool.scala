@@ -802,15 +802,17 @@ Your context does NOT show the current date/time — never invent an absolute da
     val dueResult: Either[String, Option[TodoDue.Once]] = dueInput match
       case None => Right(None)
       case Some(raw) =>
+        val zoned = raw.asString.flatMap(s => scala.util.Try(ZonedDateTime.parse(s)).toOption)
+        val explicit = zoned.map(_.getZone.getId).filter(ZoneId.getAvailableZoneIds.contains)
         for
-          region <- TodoDue.requireCreationZone(None, ctx.deviceZone)
+          region <- TodoDue.requireCreationZone(explicit, ctx.deviceZone)
           _ <- Either.cond(input("repeat").flatMap(_.asString).forall(r => r == "once" || r.isBlank), (), "Repeating todo deadlines are not yet supported")
-          _ <- Either.cond(raw.asString.exists(s => scala.util.Try(LocalDateTime.parse(s)).isSuccess), (), "Please clarify an explicit local date and time")
-          at <- parseTriggerAt(Some(raw), now, ZoneId.of(region))
+          _ <- Either.cond(zoned.isDefined || raw.asString.exists(s => scala.util.Try(LocalDateTime.parse(s)).isSuccess), (), "Please clarify an explicit local date and time")
+          at <- zoned.map(z => Right(z.toInstant.toEpochMilli)).getOrElse(parseTriggerAt(Some(raw), now, ZoneId.of(region)))
           _ <- Either.cond(at > now, (), "Please clarify a future reminder time")
         yield
           val wall = Instant.ofEpochMilli(at).atZone(ZoneId.of(region)).toLocalDateTime.toString
-          val offset = raw.asString.flatMap(s => scala.util.Try(OffsetDateTime.parse(s).getOffset.toString).toOption)
+          val offset = zoned.map(_.getOffset.toString)
           Some(TodoDue.Once(at, region, wall, offset))
     if content.isBlank then
       IO.pure(Left(ToolError("content is required and must not be blank")))
