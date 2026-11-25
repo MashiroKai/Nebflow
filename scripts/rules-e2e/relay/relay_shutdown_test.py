@@ -221,6 +221,38 @@ server.serve_forever()'''
   self.assertTrue(relay.event({'seq':2,'status':'reserved','record_id':'new'}))
   with patch('sys.stderr',new_callable=io.StringIO) as out: relay.shutdown_summary({})
   summary=json.loads(out.getvalue()); self.assertEqual((summary['recorded_this_run'],summary['unrecorded_this_run']),(1,0))
+ def test_recovery_sealed_preserves_files(self):
+  relay=m.Relay(args(self.path)); self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
+  self.path.write_bytes(b'{"seq":1'); side=pathlib.Path(str(self.path)+'.abort'); side.write_bytes(b'unchanged')
+  before=(self.path.read_bytes(),side.read_bytes())
+  with relay.append_lock: relay.sealed=True
+  relay.repair_ledger(); relay.recover_sidecar()
+  self.assertEqual((self.path.read_bytes(),side.read_bytes()),before)
+ def test_repair_sealed_before_intent_preserves_tail(self):
+  relay=m.Relay(args(self.path)); self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
+  raw=b'{"seq":1,"status":"reserved"}\n{"seq":2'; self.path.write_bytes(raw)
+  original=relay.sidecar
+  def seal_before(obj):
+   with relay.append_lock: relay.sealed=True
+   return original(obj)
+  relay.sidecar=seal_before
+  with self.assertRaises(m.RecoveryAborted): relay.repair_ledger()
+  self.assertEqual(self.path.read_bytes(),raw); self.assertFalse(pathlib.Path(str(self.path)+'.abort').exists())
+ def test_recovery_inflight_hard_stop_waits(self):
+  codes=[]; relay=m.Relay(args(self.path),grace=.01,abort_timeout=1,exit_fn=codes.append)
+  self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
+  entered=threading.Event(); release=threading.Event(); waiting=threading.Event(); self.addCleanup(release.set)
+  original=relay._repair_ledger_admitted; wait=relay.append_changed.wait_for
+  def gated(): entered.set(); release.wait(3); return original()
+  def signal(predicate,timeout=None): waiting.set(); return wait(predicate,timeout)
+  relay._repair_ledger_admitted=gated; relay.append_changed.wait_for=signal
+  worker=threading.Thread(target=relay.repair_ledger,daemon=True); worker.start(); self.assertTrue(entered.wait(1))
+  with patch('sys.stderr',new_callable=io.StringIO) as out:
+   stopper=threading.Thread(target=relay.force_after_grace,daemon=True); stopper.start(); self.assertTrue(waiting.wait(2))
+   with relay.append_lock: self.assertTrue(relay.sealed); self.assertIn('repair-ledger',relay.append_inflight.values())
+   release.set(); worker.join(2); stopper.join(2)
+   self.assertFalse(worker.is_alive()); self.assertFalse(stopper.is_alive()); lines=[json.loads(x) for x in out.getvalue().splitlines()]
+  self.assertEqual(codes,[2]); self.assertTrue(lines[0]['sealed']); self.assertEqual(lines[1]['still_inflight_at_exit'],0)
  def test_watchdog_only_starts_once(self):
   relay=m.Relay(args(self.path),grace=1,exit_fn=lambda code:None)
   self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)

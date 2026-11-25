@@ -7,6 +7,8 @@ class Server(socketserver.ThreadingMixIn, HTTPServer):
  daemon_threads = True
  allow_reuse_address = False
 
+class RecoveryAborted(RuntimeError): pass
+
 class Relay:
  def __init__(self, args, dialer=None, grace=60, exit_fn=os._exit, lock_timeout=5, abort_timeout=5, append_override=None):
   self.args=args; self.condition=threading.Condition(); self.lock=self.condition; self.count=0; self.seq=0
@@ -45,6 +47,11 @@ class Relay:
   if self.count>=args.limit: raise ValueError('ledger exhausted')
   self.stopping=False; self.inflight=0; self.active={}; self.drained=threading.Event(); self.drained.set(); self.stop_callback=None
  def repair_ledger(self):
+  leave=self._admit('repair-ledger')
+  if leave is None: return
+  try: return self._repair_ledger_admitted()
+  finally: leave()
+ def _repair_ledger_admitted(self):
   # Repair a torn tail while holding the ledger flock.
   with open(self.args.ledger,'a+b') as ledger:
    end=time.monotonic()+self.lock_timeout
@@ -64,7 +71,7 @@ class Relay:
       if i!=len(lines)-1 or line.endswith(b'\n'): raise ValueError('corrupt ledger')
       seq=max([x['seq'] for x in records]+[0])+1
       synthetic={'seq':seq,'status':'reserved','record_id':'torn-main-'+__import__('hashlib').sha256(line).hexdigest()}
-      self.sidecar(synthetic)  # durable intent before destructive truncation
+      if not self.sidecar(synthetic): raise RecoveryAborted('recovery intent not durable')
       ledger.seek(len(b''.join(lines[:i]))); ledger.truncate()
       ledger.write((json.dumps(synthetic,separators=(',',':'))+'\n').encode()); ledger.flush(); os.fsync(ledger.fileno())
    finally: fcntl.flock(ledger.fileno(),fcntl.LOCK_UN)
@@ -83,6 +90,11 @@ class Relay:
    os.fsync(fd); return True
   finally: os.close(fd)
  def recover_sidecar(self):
+  leave=self._admit('recover-sidecar')
+  if leave is None: return
+  try: return self._recover_sidecar_admitted()
+  finally: leave()
+ def _recover_sidecar_admitted(self):
   path=self.args.ledger+'.abort'
   if not os.path.exists(path): return
   # Keep the sidecar until the complete merge is fsynced. record_id makes a
@@ -119,18 +131,24 @@ class Relay:
    finally: fcntl.flock(ledger.fileno(),fcntl.LOCK_UN)
  def event(self,obj):
   return self.append_record(obj)
+ def _admit(self,tag,key=None,seq=None):
+  with self.append_changed:
+   if self.sealed: return None
+   key=key if key is not None else (tag,next(self._anon))
+   self.append_inflight[key]=seq if key is not None and seq is not None else tag
+   if tag=='append': self._run_keys.add(key)
+  def leave():
+   with self.append_changed:
+    self.append_inflight.pop(key,None); self.append_changed.notify_all()
+  return leave
  def append_record(self,obj,sidecar=False):
   obj=dict(obj); obj.setdefault('record_id',uuid.uuid4().hex)
-  with self.append_lock:
-   if self.sealed: return False
-   key=obj.get('record_id') or ('anon',next(self._anon))
-   self.append_inflight[key]=obj.get('seq'); self._run_keys.add(key)
+  leave=self._admit('append',obj['record_id'],obj.get('seq'))
+  if leave is None: return False
   try:
    if sidecar: return self._sidecar_unlocked(obj)
    return self._event_unlocked(obj)
-  finally:
-   with self.append_changed:
-    self.append_inflight.pop(key,None); self.append_changed.notify_all()
+  finally: leave()
  def _event_unlocked(self,obj):
   obj=dict(obj); obj.setdefault('record_id',uuid.uuid4().hex)
   # Separate open descriptions serialize both threads and processes.
