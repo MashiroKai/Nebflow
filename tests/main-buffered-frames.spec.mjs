@@ -103,6 +103,35 @@ test('主会话工作线和摘要不可点击，注入消息按序直接显示',
   await expect(injections.nth(0)).toBeVisible();
 });
 
+test('主会话 report 内 human 正文不产生可点击过程 details', async ({ page }) => {
+  await boot(page);
+  await frame(page,{type:'textDelta', isRoot:true, delta:'<report>过程叙述\n\n```human\n用户结论\n```\n\n后续叙述</report>'});
+  await frame(page,{type:'done'});
+  await expect(page.locator('#chat .bubble.ai details.nf-human-details')).toHaveCount(0);
+  await expect(page.locator('#chat .bubble.ai').last()).toContainText('用户结论');
+  const replay = await page.context().newPage();
+  await boot(replay, [{type:'ai', isRoot:true, terminal:true, text:'<report>过程叙述\n\n```human\n用户结论\n```\n\n后续叙述</report>'}]);
+  await expect(replay.locator('#chat .bubble.ai')).toContainText('用户结论');
+  await expect(replay.locator('#chat .bubble.ai details.nf-human-details')).toHaveCount(0);
+});
+
+test('历史回放直接显示注入且摘要不提供展开', async ({ page }) => {
+  await boot(page, [
+    {type:'user', text:'请求'},
+    {type:'user', injected:true, source:'mail', eventType:'mail', text:'补充一'},
+    {type:'tool', label:'Read', content:'工具结果', input:{file_path:'/x'}},
+    {type:'user', injected:true, source:'mail', eventType:'mail', text:'补充二'},
+    {type:'ai', isRoot:true, text:'<report>最终结果</report>', terminal:true}
+  ]);
+  const items = page.locator('#chat .bubble.injected');
+  await expect(items).toHaveCount(2);
+  await expect(items.nth(0)).toBeVisible();
+  await expect(items.nth(1)).toBeVisible();
+  await expect(items.nth(0)).toContainText('补充一');
+  await expect(items.nth(1)).toContainText('补充二');
+  await expect(page.locator('#chat [data-nf-injection-stack], #chat .turn-header[role="button"], #chat .turn-header .nf-chevron')).toHaveCount(0);
+});
+
 test('仅思考不产生正文空气泡', async ({ page }) => {
   await boot(page);
   await frame(page,{type:'thinkingDelta', delta:'思考内容'});

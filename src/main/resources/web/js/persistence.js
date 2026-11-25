@@ -769,7 +769,7 @@ export function restoreFromStorage(opts = {}) {
           // 与改前逐字一致）。无平衡块 ⇒ 全文，但 root 面照过 `report:true` 管线
           // （散标签转义字面，防 marked 当 HTML 块吞文）。
           const rootFace = m.isRoot === true;
-          if (!rootFace || !applyOutputFace(bubble, m.text || '')) {
+          if (!rootFace || !applyOutputFace(bubble, m.text || '', chat.id === 'chat')) {
             bubble.innerHTML = renderMarkdownWithMath(m.text || '', true, rootFace ? { report: true } : undefined);
             if (rootFace && m.text) markZeroBlockFace(bubble, m.text || '');
           }
