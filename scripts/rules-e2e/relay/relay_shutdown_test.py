@@ -669,7 +669,11 @@ m.Relay.deadline=deadline_observed''')
  def test_lf_fsync_unsealed_probe(self): self.lf_fsync_probe(True)
  def test_lf_fsync_deadline_free(self): self.lf_fsync_probe(False,True)
  def test_lf_fsync_deadline_locked(self): self.lf_fsync_probe(True,True)
- def lf_fsync_probe(self,locked,deadline=False):
+ def test_l_http_limit_free(self): self.lf_fsync_probe(False,False,True)
+ def test_l_http_limit_locked(self): self.lf_fsync_probe(True,False,True)
+ def test_l_http_deadline_free(self): self.lf_fsync_probe(False,True,True)
+ def test_l_http_deadline_locked(self): self.lf_fsync_probe(True,True,True)
+ def lf_fsync_probe(self,locked,deadline=False,ledger_lock=False):
   # Isolated process, normal A completes before the one-shot B fsync hook.
   import select
   up=socket.socket(); up.bind(('127.0.0.1',0)); up.listen(); up.settimeout(4); self.addCleanup(up.close)
@@ -720,7 +724,25 @@ def init(self,args,**kw):
     signal({"event":"append-lock-held","time":time.monotonic()}); threading.Event().wait(10)
  threading.Thread(target=arm,daemon=True).start()
 m.Relay.__init__=init; m.Relay.append_record=append; m.main()'''
-  ev=pathlib.Path(os.environ['RELAY_EVIDENCE_DIR']); prefix=ev/'step1-step2-fsync-probe'
+  if ledger_lock:
+   code=code.replace('import sys,os,threading,importlib.util,http.client,json,time,uuid','import sys,os,threading,importlib.util,http.client,json,time,uuid,fcntl')
+   code=code.replace('lock_timeout=10)', 'lock_timeout='+('10' if deadline else '.3')+')')
+   old='''  first=[True]
+  def fsync(fd):
+   if first[0]:
+    first[0]=False; signal({"event":"fsync-enter","time":time.monotonic()}); threading.Event().wait(10)
+   return original_fsync(fd)
+  m.os.fsync=fsync; signal({"event":"fsync-armed","time":time.monotonic()})'''
+   new='''  fd=os.open(self.args.ledger,os.O_WRONLY)
+  fcntl.flock(fd,fcntl.LOCK_EX)
+  signal({"event":"lock-held","time":time.monotonic()})
+  def heartbeat():
+   while True:
+    signal({"event":"lock-heartbeat","time":time.monotonic()})
+    threading.Event().wait(.5)
+  threading.Thread(target=heartbeat,daemon=True).start()'''
+   assert old in code; code=code.replace(old,new,1)
+  ev=pathlib.Path(os.environ['RELAY_EVIDENCE_DIR']); prefix=ev/('step-l-http-'+('deadline' if deadline else 'limit')+'-'+('locked' if locked else 'free') if ledger_lock else 'step1-step2-fsync-probe')
   with open(str(prefix)+'-stderr.log','w') as err:
    p=subprocess.Popen([sys.executable,'-B','-c',code,str(pathlib.Path(m.__file__)),str(up.getsockname()[1]),'--route','one,example.com,/v1,FAKE_KEY','--allow-host','example.com','--port','0','--ledger',str(self.path),'--limit','3' if deadline else '2','--seconds','1' if deadline else '30','--timeout','10'],stdout=subprocess.PIPE,stderr=err,text=True,pass_fds=(signal_w,command_r),env={'PATH':'/usr/bin:/bin','FAKE_KEY':'fake-only','SIGNAL_FD':str(signal_w),'COMMAND_FD':str(command_r)})
    clients=[]
@@ -731,7 +753,12 @@ m.Relay.__init__=init; m.Relay.append_record=append; m.main()'''
      c.sendall(('POST /one/chat HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Length: 2\r\nX-Stand-Trace-Id: %s\r\n\r\n{}'%(port,trace)).encode()); return c
     stream=os.fdopen(os.dup(signal_r),'rb',buffering=0); self.addCleanup(stream.close)
     def event():
-     self.assertTrue(select.select([stream],[],[],7)[0], 'signal timeout'); return json.loads(stream.readline())
+     while True:
+      self.assertTrue(select.select([stream],[],[],7)[0], 'signal timeout'); item=json.loads(stream.readline())
+      if item['event']!='lock-heartbeat': return item
+      if ledger_lock:
+       event.last_heartbeat=item
+       if not hasattr(event,'first_heartbeat'): event.first_heartbeat=item; return item
     a=request('A'); booked=event(); self.assertEqual((booked['event'],booked['trace'],booked['status']),('booked','A','reserved'))
     self.assertFalse(booked['inflight'])
     response=a.recv(4096); self.assertIn(b' 200 ',response)
@@ -739,40 +766,90 @@ m.Relay.__init__=init; m.Relay.append_record=append; m.main()'''
     completed=event(); self.assertEqual(completed['trace'],'A')
     records=[json.loads(x) for x in self.path.read_text().splitlines()]; record=next(x for x in records if x.get('trace_id')=='A' and x.get('status')=='reserved')
     self.assertEqual(booked['record_id'],record['record_id'])
-    (ev/'step1-normal-a.json').write_text(json.dumps({'booked':booked,'record_id':record['record_id'],'response':response.decode('latin1'),'ledger_line':json.dumps(record)},indent=2)+'\n')
-    os.write(command_w,b'A'); armed=event(); self.assertEqual(armed['event'],'fsync-armed')
-    b=request('B'); entered=event(); self.assertEqual(entered['event'],'fsync-enter')
-    (ev/('step2-b-enter-'+('locked' if locked else 'free')+'.json')).write_text(json.dumps({'armed':armed,'entered':entered,'B_response_ready':bool(select.select([b],[],[],0)[0])},indent=2)+'\n')
+    (ev/('step1-l-normal-a.json' if ledger_lock else 'step1-normal-a.json')).write_text(json.dumps({'booked':booked,'record_id':record['record_id'],'response':response.decode('latin1'),'ledger_line':json.dumps(record)},indent=2)+'\n')
+    if ledger_lock:
+     (ev/('step1-l-http-'+('deadline' if deadline else 'limit')+'-'+('locked' if locked else 'free')+'.json')).write_text(json.dumps({'booked':booked,'response':response.decode('latin1'),'record':record},indent=2)+'\n')
+    os.write(command_w,b'A'); armed=event(); self.assertEqual(armed['event'],'lock-held' if ledger_lock else 'fsync-armed')
+    if ledger_lock:
+     heartbeat=event(); self.assertEqual(heartbeat['event'],'lock-heartbeat')
+     b=request('B'); start=time.monotonic(); self.assertFalse(select.select([stream,b],[],[],.04)[0]); elapsed=time.monotonic()-start
+     (ev/('step2-l-http-'+('deadline' if deadline else 'limit')+'-'+('locked' if locked else 'free')+'.json')).write_text(json.dumps({'held':armed,'heartbeat':heartbeat,'quiet_seconds':elapsed},indent=2)+'\n')
+     if not deadline:
+      entered=event(); self.assertEqual((entered['event'],entered.get('trace'),entered.get('status')),('booked','B','reserved'))
+     else: entered={'event':'flock-retry-observed'}
+    else:
+     b=request('B'); entered=event(); self.assertEqual(entered['event'],'fsync-enter')
+    (ev/(('step2-l-b-enter-' if ledger_lock else 'step2-b-enter-')+('locked' if locked else 'free')+'.json')).write_text(json.dumps({'armed':armed,'entered':entered,'B_response_ready':bool(select.select([b],[],[],0)[0])},indent=2)+'\n')
     if locked:
      os.write(command_w,b'L'); self.assertEqual(event()['event'],'append-lock-held')
     sealed_event=event(); self.assertEqual(sealed_event['event'],'unsealed' if locked else 'sealed')
+    if ledger_lock:
+     self.assertLessEqual(sealed_event['time']-event.last_heartbeat['time'],.65)
+     (ev/('step2-l-heartbeat-'+('deadline' if deadline else 'limit')+'-'+('locked' if locked else 'free')+'.json')).write_text(json.dumps({'initial':heartbeat,'last':event.last_heartbeat,'trigger':sealed_event,'interval_limit':.65},indent=2)+'\n')
     try:
      c=request('C'); c_result=c.recv(4096).decode('latin1')
     except (OSError,ConnectionError): c_result='disconnected'
     self.assertTrue(not c_result or c_result=='disconnected' or ' 429 ' in c_result)
-    (ev/('step3-f-c-in-window-'+('deadline' if deadline else 'limit')+'-'+('locked' if locked else 'free')+'.json')).write_text(json.dumps({'C':c_result,'timing':'after sealed signal' if not locked else 'after B entered; unsealed exit not delayed'},indent=2)+'\n')
+    (ev/(('step3-l-c-in-window-' if ledger_lock else 'step3-f-c-in-window-')+('deadline' if deadline else 'limit')+'-'+('locked' if locked else 'free')+'.json')).write_text(json.dumps({'C':c_result,'timing':'after sealed signal' if not locked else 'after B entered; unsealed exit not delayed'},indent=2)+'\n')
     exit_event=event(); self.assertEqual((exit_event['event'],exit_event['code']),('exit-call',2))
     exit_code=p.wait(timeout=6)
-    self.assertFalse(select.select([stream],[],[],0)[0], 'extra exit or booking signal')
+    if not ledger_lock: self.assertFalse(select.select([stream],[],[],0)[0], 'extra exit or booking signal')
     try:
      c=request('C'); c_result=c.recv(4096).decode('latin1')
     except (OSError,ConnectionError): c_result='disconnected'
     raw=self.path.read_bytes(); self.assertTrue(raw.endswith(b'\n'))
     records=[json.loads(line) for line in raw.splitlines()]
-    self.assertEqual({r['trace_id'] for r in records if r.get('status')=='reserved'},{'A','B'})
+    if ledger_lock:
+     self.assertEqual({r['trace_id'] for r in records if r.get('status')=='reserved'},{'A'})
+     side=pathlib.Path(str(self.path)+'.abort'); side_raw=side.read_bytes() if side.exists() else b''
+     self.assertTrue(not side_raw or side_raw.endswith(b'\n')); side_records=[json.loads(line) for line in side_raw.splitlines()]
+     b_records=[r for r in side_records if r.get('trace_id')=='B' and r.get('status')=='reserved']
+     if not deadline: self.assertEqual([r['record_id'] for r in b_records],[entered['record_id']])
+     else: self.assertEqual(b_records,[])
+     (ev/('step3-l-ledger-'+('deadline' if deadline else 'limit')+'-'+('locked' if locked else 'free')+'.json')).write_text(json.dumps({'main':records,'sidecar':side_records},indent=2)+'\n')
+    else: self.assertEqual({r['trace_id'] for r in records if r.get('status')=='reserved'},{'A','B'})
     self.assertFalse(any(r.get('trace_id')=='C' for r in records))
-    (ev/('step3-f-c-ledger-exit-'+('deadline' if deadline else 'limit')+'-'+('locked' if locked else 'free')+'.json')).write_text(json.dumps({'C':c_result,'exit_event':exit_event,'ledger':records},indent=2)+'\n')
+    (ev/(('step3-l-c-ledger-exit-' if ledger_lock else 'step3-f-c-ledger-exit-')+('deadline' if deadline else 'limit')+'-'+('locked' if locked else 'free')+'.json')).write_text(json.dumps({'C':c_result,'exit_event':exit_event,'ledger':records},indent=2)+'\n')
     lines=[json.loads(line) for line in pathlib.Path(str(prefix)+'-stderr.log').read_text().splitlines() if line.startswith('{')]
     summary=next(x for x in reversed(lines) if 'recorded_lower_bound' in x or 'still_inflight_at_exit' in x)
-    (ev/('step3-fsync-'+('deadline' if deadline else 'limit')+'-'+('locked' if locked else 'free')+'.json')).write_text(json.dumps({'exit':exit_code,'summary':summary,'lock_method':'append_lock held by wrapper thread after fsync-enter' if locked else 'no injected append_lock holder','basis':'https_relay.py:274-286'},indent=2)+'\n')
+    (ev/(('step3-l-summary-' if ledger_lock else 'step3-fsync-')+('deadline' if deadline else 'limit')+'-'+('locked' if locked else 'free')+'.json')).write_text(json.dumps({'exit':exit_code,'summary':summary,'lock_method':'append_lock held by wrapper thread after fsync-enter' if locked else 'no injected append_lock holder','basis':'https_relay.py:274-286'},indent=2)+'\n')
     self.assertEqual(exit_code,2)
-    if locked: self.assertEqual((summary['recorded_lower_bound'],summary['reserved_snapshot'],summary['unrecorded_upper_bound']),(1,2,1))
+    if ledger_lock:
+     (ev/('step3-l-http-'+('deadline' if deadline else 'limit')+'-'+('locked' if locked else 'free')+'.json')).write_text(json.dumps({'summary':summary,'exit':exit_code,'lock_method':'injected append_lock holder' if locked else 'no append_lock holder','basis':'https_relay.py:135-144, 160-167, 274-286'},indent=2)+'\n')
+     if locked: self.assertEqual((summary['recorded_lower_bound'],summary['reserved_snapshot'],summary['unrecorded_upper_bound']),(1,2,1) if deadline else (2,2,0))
+     else:
+      self.assertEqual(summary['still_inflight_at_exit'],1 if deadline else 0); self.assertGreaterEqual(summary['abort_write_confirmed'],1)
+    elif locked: self.assertEqual((summary['recorded_lower_bound'],summary['reserved_snapshot'],summary['unrecorded_upper_bound']),(1,2,1))
     else:
      self.assertTrue(summary['sealed']); self.assertEqual(summary['still_inflight_at_exit'],1); self.assertEqual((summary['abort_write_confirmed'],summary['abort_write_unconfirmed']),(0,0))
    finally:
     for c in clients: c.close()
     if p.poll() is None: p.terminate(); p.wait(timeout=3)
     p.stdout.close()
+ def test_l_lock_step1_step2(self):
+  # Lock-holder probe: A is completed before B contends on the main ledger.
+  import select
+  code='''import sys,os,fcntl,json,threading,time,importlib.util,uuid,types
+s=importlib.util.spec_from_file_location("relay",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m)
+a=types.SimpleNamespace(route=["one,example.com,/v1,FAKE_KEY"],allow_host=["example.com"],ledger=sys.argv[2],limit=3,seconds=30,timeout=10)
+r=m.Relay(a,lock_timeout=10); original=r.append_record
+def booked(obj):
+ obj=dict(obj); obj.setdefault("record_id",uuid.uuid4().hex); ok=original(obj)
+ print(json.dumps({"event":"booked","trace":obj["trace_id"],"record_id":obj["record_id"],"inflight":obj["record_id"] in r.append_inflight,"ok":ok}),flush=True)
+booked({"seq":1,"status":"reserved","trace_id":"A"})
+fd=os.open(a.ledger,os.O_WRONLY); fcntl.flock(fd,fcntl.LOCK_EX); print(json.dumps({"event":"lock-held","time":time.monotonic()}),flush=True)
+threading.Thread(target=booked,args=({"seq":2,"status":"reserved","trace_id":"B"},),daemon=True).start()
+os.read(0,1); fcntl.flock(fd,fcntl.LOCK_UN); os.close(fd)
+'''
+  ev=pathlib.Path(os.environ['RELAY_EVIDENCE_DIR']); p=subprocess.Popen([sys.executable,'-B','-c',code,str(pathlib.Path(m.__file__)),str(self.path)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0,env={'PATH':'/usr/bin:/bin','FAKE_KEY':'fake-only'})
+  try:
+   self.assertTrue(select.select([p.stdout],[],[],3)[0]); a=json.loads(p.stdout.readline()); self.assertTrue(a['ok']); self.assertFalse(a['inflight'])
+   self.assertTrue(select.select([p.stdout],[],[],3)[0]); held=json.loads(p.stdout.readline()); self.assertEqual(held['event'],'lock-held')
+   start=time.monotonic(); self.assertFalse(select.select([p.stdout],[],[],.04)[0]); elapsed=time.monotonic()-start
+   (ev/'step2-l-lock-probe.json').write_text(json.dumps({'A':a,'held':held,'no_booked_seconds':elapsed,'process_alive':p.poll() is None,'limitation':'direct append probe, no HTTP response or holder liveness handshake'},indent=2)+'\n')
+  finally:
+   if p.poll() is None: p.terminate(); p.wait(timeout=3)
+   p.stdin.close(); p.stdout.close(); p.stderr.close()
  def test_watchdog_only_starts_once(self):
   relay=m.Relay(args(self.path),grace=1,exit_fn=lambda code:None)
   self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
