@@ -304,6 +304,40 @@ class AskHostToolsSpec extends CatsEffectSuite:
   private def replyInput(id: String, decision: String): JsonObject =
     JsonObject("correlationId" -> id.asJson, "decision" -> decision.asJson)
 
+  test("takeover recovery replays marker metadata and delivers correlated reply") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    import nebflow.core.mail.SessionMailbox
+    val question = "[BU-TAKEOVER]\nsession: work\nscreenshot: /private/shot.png"
+    (for
+      (request, _) <- AskHostLedger.beginForCall("worker-takeover", "sid-root", "agent", question, "call-takeover")
+      _ <- IO(AskHostLedger.clearForTests())
+      count <- AskHostLedger.recoverPending(resourcesWith(Map.empty))
+      entries <- SessionMailbox.scanPending("sid-root")
+      _ = assertEquals(count, 1)
+      _ = assertEquals(entries.size, 1)
+      event = entries.head.event
+      _ = assertEquals(event.metadata("browserTakeover").flatMap(_.asBoolean), Some(true))
+      _ = assertEquals(event.metadata("correlationId").flatMap(_.asString), Some(request.correlationId))
+      _ = assert(event.payload.contains(question))
+      waiter <- AskHostLedger.restoreWaiter(request.correlationId)
+      response <- AskHostReplyTool.call(replyInput(request.correlationId, "点确认"), rootCtx(resourcesWith(Map.empty)))
+      result <- AskHostTool.awaitReply(request.correlationId, waiter, scala.concurrent.duration.DurationInt(3).seconds)
+      _ = assert(response.isRight)
+      _ = assertEquals(result.toOption, Some("点确认"))
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("takeover instructions require a fresh snapshot and screenshot after every reply") {
+    val instructions = os.read(os.pwd / "src" / "main" / "resources" / "seed" / "plugins" / "browser-use" / "skills" / "browser-session" / "SKILL.md")
+    val handoff = instructions.split("## BU 动词阻塞接管", 2)(1).split("## 三、", 2)(0)
+    assert(handoff.contains("每次收到答复（含迟答）先重新 browser_snapshot"))
+    assert(handoff.contains("再截图交主会话展示供作者确认"))
+    assert(handoff.contains("每步再截图并请求确认"))
+    assert(handoff.contains("等待期间不执行浏览器动词"))
+  }
+
   test("timeout release is a distinct neutral state, never conflated with an unknown id") {
     val tmp = os.temp.dir()
     val previous = PathUtil.dataRoot
