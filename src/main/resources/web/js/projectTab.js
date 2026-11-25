@@ -35,7 +35,7 @@ import { onMinuteTick, statusIcon } from './utils.js';
 import { t } from './i18n.js';
 import { rootNameParams } from './rootName.js';
 import { contentText } from './contentI18n.js';
-import { fetchProjectsRaw, fetchFlowMap, summarize, unmountProject, fetchProjectInflight } from './nodeData.js';
+import { fetchProjectsRaw, unmountProject, fetchProjectInflight } from './nodeData.js';
 // 🔴 flowmaptab-retire（#1228 两裁② 停用清单面 1）：per-project Flow Map 就地视图停用，
 // 对 flowMapTab 渲染入口的静态 import 随之摘除——flowMapTab.js 自此脱离模块图
 // （build-web ORPHAN_EXEMPTIONS 在案），文件留盘候 #1229 per-project REST/WS 退役批
@@ -1178,15 +1178,7 @@ function applyCardEmptyState(card, empty) {
 function loadCardSummary(scroll, name) {
   if (!name) return;
   const seq = renderSeq;
-  fetchFlowMap(name)
-    .then((fm) => {
-      if (seq !== renderSeq) return;
-      applyCardSummary(cardByName(scroll, name), 'ok', summarize(fm));
-    })
-    .catch(() => {
-      if (seq !== renderSeq) return;
-      applyCardSummary(cardByName(scroll, name), 'unknown', null);
-    });
+  if (seq === renderSeq) applyCardSummary(cardByName(scroll, name), 'unknown', null);
 }
 
 /** 入场（220ms 淡入 + 2px 上浮）+ 一次性强调环（900ms 后摘除）+ 屏幕阅读器「新」标记。

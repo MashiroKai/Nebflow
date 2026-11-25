@@ -171,6 +171,11 @@ export const FLOW_MAP_TIMEOUT_MS = Number(globalThis.__nfFlowMapTimeoutMs) > 0
   : 12000;
 
 export async function fetchFlowMap(projectName, timeoutMs = FLOW_MAP_TIMEOUT_MS) {
+  const { projects, unmounted } = await fetchProjectsRaw();
+  const blocked = new Set(unmounted.map(p => p.name));
+  if (blocked.has(projectName) || !projects.some(p => p.name === projectName && !p.unmounted && !p.archived && p.mounted !== false)) {
+    return { nodes: [], worktrees: [], meta: { project: projectName, updatedAt: Date.now() }, notMounted: true };
+  }
   const ctrl = typeof AbortController === 'function' && timeoutMs > 0 ? new AbortController() : null;
   const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : 0;
   try {
