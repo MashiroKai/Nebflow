@@ -376,6 +376,31 @@ function ensureDom() {
 
 /* ── 图形模式：DOM / 缩放 / 平移 / 指针手势 ──────────────────────────── */
 
+/** Canvas Mermaid 使用图片画廊；聊天及其他图形保留原来的查看器。 */
+function openCanvasMermaidOrDiagram(svg) {
+  if (!svg.closest('.canvas-md-viewer .nf-mermaid')) {
+    openDiagramLightbox(svg);
+    return;
+  }
+  const clone = svg.cloneNode(true);
+  const sourceNodes = [svg, ...svg.querySelectorAll('*')];
+  const copyNodes = [clone, ...clone.querySelectorAll('*')];
+  const properties = ['color', 'fill', 'fill-opacity', 'stroke', 'stroke-width', 'stroke-opacity',
+    'stroke-dasharray', 'stroke-linecap', 'stroke-linejoin', 'opacity', 'font-family', 'font-size',
+    'font-weight', 'font-style', 'letter-spacing', 'text-anchor', 'dominant-baseline', 'visibility'];
+  sourceNodes.forEach((node, i) => {
+    const style = getComputedStyle(node);
+    for (const property of properties) copyNodes[i].style.setProperty(property, style.getPropertyValue(property));
+  });
+  const rect = svg.getBoundingClientRect();
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  clone.setAttribute('width', String(Math.max(1, rect.width)));
+  clone.setAttribute('height', String(Math.max(1, rect.height)));
+  clone.style.maxWidth = 'none';
+  const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml' });
+  openImageGallery([{ kind: 'image', name: 'diagram.svg', blob }], 0);
+}
+
 /** 图形模式的舞台与控件（惰性建一次，随后复用；不随图片模式出现）。 */
 function ensureFigureDom() {
   ensureDom();
@@ -1538,7 +1563,7 @@ export function initLightbox() {
     if (btn) {
       const block = btn.closest('.nf-mermaid, .nf-svg');
       const svg = block ? block.querySelector('.nf-mermaid-body svg, .nf-svg-body svg') : null;
-      if (svg) { e.preventDefault(); openDiagramLightbox(svg); }
+      if (svg) { e.preventDefault(); openCanvasMermaidOrDiagram(svg); }
       return;
     }
     const svg = target.closest('.nf-mermaid-body svg, .nf-svg-body svg');
@@ -1551,7 +1576,7 @@ export function initLightbox() {
     // ③ 起手时正在选字 ⇒ 用户在选，不是点击。
     if (pendingFigClick && pendingFigClick.hadSelection) return;
     e.preventDefault();
-    openDiagramLightbox(svg);
+    openCanvasMermaidOrDiagram(svg);
   });
 
   // 2. Image clicks forwarded from the frames this app renders: the Canvas HTML
