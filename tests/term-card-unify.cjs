@@ -1,8 +1,11 @@
 const fs = require('node:fs');
 const assert = require('node:assert/strict');
-const term = fs.readFileSync('src/main/resources/web/js/termTip.js', 'utf8');
-const card = fs.readFileSync('src/main/resources/web/js/documentTermCard.js', 'utf8');
-const css = fs.readFileSync('src/main/resources/web/css/split.css', 'utf8');
+const path = require('node:path');
+const root = process.env.TERM_TEST_ROOT || '.';
+const read = file => fs.readFileSync(path.join(root, file), 'utf8');
+const term = read('src/main/resources/web/js/termTip.js');
+const card = read('src/main/resources/web/js/documentTermCard.js');
+const css = read('src/main/resources/web/css/split.css');
 const mode = process.argv[2];
 if (!mode || mode === 'structure') {
   assert.match(term, /showDocumentTermCard\(/, '词条必须使用文档卡');

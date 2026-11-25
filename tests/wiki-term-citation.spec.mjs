@@ -24,7 +24,7 @@ import { join, dirname, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const WEB = resolve(HERE, '..', 'src', 'main', 'resources', 'web');
+const WEB = process.env.TERM_TEST_WEB || resolve(HERE, '..', 'src', 'main', 'resources', 'web');
 const PORT = 8199; // fixed, 8100+ — never the host 8080; disjoint from wiki-graph-paragraph (8194)
 const SHOTS_DIR = process.env.SHOTS_DIR ||
   resolve(HERE, '..', 'evidence', '20261029_term-citation-batch2', 'shots');
@@ -380,7 +380,61 @@ test.describe('§T5 非词条普通文档级 wikilink 不挂气泡（克制口�
   });
 });
 
+test('请求计数对照同夹具', async ({ browser }) => {
+  const { context, page } = await boot(browser);
+  await openSourceDoc(page);
+  const counts = {};
+  page.on('request', req => {
+    const u = new URL(req.url());
+    if (u.pathname.startsWith('/api/wiki/term')) counts[u.pathname] = (counts[u.pathname] || 0) + 1;
+  });
+  await page.locator('a.nf-wikilink-term', { hasText: 'GCR' }).click();
+  const summary = page.locator('.document-term-summary, .nf-term-tip .ts');
+  await expect(summary).toContainText('银河宇宙线');
+  if (process.env.TERM_ORIGINAL_ASSERTION) {
+    expect(Object.values(counts).reduce((a, b) => a + b, 0), '载荷命中 = 兜底 API 零请求（原夹具 /term** 通配计数）').toBe(0);
+  }
+  console.log('REQUEST_COUNTS ' + JSON.stringify(counts));
+  expect(counts['/api/wiki/terms/stats']).toBe(1);
+  expect(counts['/api/wiki/terms/lookup']).toBe(1);
+  expect(counts['/api/wiki/term'] || 0).toBe(0);
+  await context.close();
+});
+
 test.describe('统一卡片截图与锚点', () => {
+  for (const missing of ['缺锚', '目标不存在']) {
+    test(`${missing}提示且卡片仍可用`, async ({ browser }) => {
+      const { context, page } = await boot(browser);
+      await openSourceDoc(page);
+      const link = page.locator('a.nf-wikilink-term', { hasText: 'GCR' });
+      await page.evaluate(() => { window.__termTestToasts = []; window.__showToast = msg => window.__termTestToasts.push(msg); });
+      await link.evaluate((a, scenario) => {
+        const resolved = JSON.parse(a.dataset.wikiResolved);
+        resolved.anchor = scenario === '缺锚' ? null : { kind: 'block', id: 'missing-term-anchor' };
+        a.dataset.wikiAnchor = '';
+        a.dataset.wikiResolved = JSON.stringify(resolved);
+      }, missing);
+      await link.click();
+      const card = page.locator('.document-term-card');
+      await expect(card.locator('.document-term-summary')).toContainText('银河宇宙线');
+      await card.getByRole('button', { name: '打开原词条' }).click();
+      if (missing === '目标不存在') {
+        await expect.poll(() => page.evaluate(() => window.__openEvents.some(e => e.anchor?.id === 'missing-term-anchor'))).toBe(true);
+        await expect.poll(() => page.evaluate(() => window.__termTestToasts.includes('已打开来源文档，但未找到指定锚点。'))).toBe(true);
+      }
+      await expect.poll(() => page.evaluate(() => window.__termTestToasts)).toContain(missing === '缺锚' ? '来源词条没有有效锚点，将打开来源文档。' : '已打开来源文档，但未找到指定锚点。');
+      await expect.poll(() => page.evaluate(() => window.__openEvents.some(e => e.absPath === '/w/alpha/glossary.md'))).toBe(true);
+      await expect(page.locator('.canvas-md-viewer').getByText('收尾段落。')).toBeVisible();
+      await page.evaluate(async () => {
+        const { showDocumentTermCard } = await import('/js/documentTermCard.js');
+        await showDocumentTermCard(document.body, { term: { title: 'GCR', summary: '银河宇宙线', open: () => {} } });
+      });
+      await expect(card.locator('.document-term-summary')).toContainText('银河宇宙线');
+      await expect(card.getByRole('button', { name: '打开原词条' })).toBeVisible();
+      await context.close();
+    });
+  }
+
   test('选区解释共用卡片且不显示词条来源按钮', async ({ browser }) => {
     const { context, page } = await boot(browser);
     await openSourceDoc(page);
