@@ -665,6 +665,71 @@ m.Relay.deadline=deadline_observed''')
   else: self.assertEqual(lines[-2]['still_inflight_at_exit'],0)
   if double_trigger:
    stamps={x['observation']:x['monotonic'] for x in obs}; delta=stamps['watch-deadline']-stamps['watch-handle']; self.assertGreater(delta,0); self.assertLess(delta,1)
+ def test_lf_step1_step2_fsync_probe(self):
+  # Isolated process, normal A completes before the one-shot B fsync hook.
+  import select
+  up=socket.socket(); up.bind(('127.0.0.1',0)); up.listen(); up.settimeout(4); self.addCleanup(up.close)
+  def provider():
+   conn,_=up.accept(); conn.settimeout(3); data=b''
+   while b'\r\n\r\n' not in data: data+=conn.recv(4096)
+   headers,body=data.split(b'\r\n\r\n',1)
+   length=int(next(x.split(b':',1)[1] for x in headers.split(b'\r\n') if x.lower().startswith(b'content-length:')))
+   while len(body)<length: body+=conn.recv(4096)
+   conn.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n'); conn.close()
+  threading.Thread(target=provider,daemon=True).start()
+  signal_r,signal_w=os.pipe(); command_r,command_w=os.pipe()
+  for fd in (signal_r,signal_w,command_r,command_w): self.addCleanup(os.close,fd)
+  code='''import sys,os,threading,importlib.util,http.client,json,time,uuid
+s=importlib.util.spec_from_file_location("relay",sys.argv.pop(1)); m=importlib.util.module_from_spec(s); s.loader.exec_module(m)
+port=int(sys.argv.pop(1)); old_init=m.Relay.__init__; original_append=m.Relay.append_record; original_fsync=m.os.fsync
+signal_fd=int(os.environ["SIGNAL_FD"]); command_fd=int(os.environ["COMMAND_FD"])
+def signal(obj): os.write(signal_fd,(json.dumps(obj)+"\\n").encode())
+def append(self,obj,sidecar=False):
+ obj=dict(obj); obj.setdefault("record_id",uuid.uuid4().hex)
+ result=original_append(self,obj,sidecar)
+ if result is True:
+  with self.append_lock: inflight=obj["record_id"] in self.append_inflight
+  signal({"event":"booked","record_id":obj["record_id"],"inflight":inflight,"trace":obj.get("trace_id"),"status":obj.get("status"),"time":time.monotonic()})
+ return result
+def init(self,args,**kw):
+ old_init(self,args,dialer=lambda h,p,t:http.client.HTTPConnection("127.0.0.1",port,timeout=t),grace=3,abort_timeout=.1,lock_timeout=10)
+ def arm():
+  os.read(command_fd,1)
+  first=[True]
+  def fsync(fd):
+   if first[0]:
+    first[0]=False; signal({"event":"fsync-enter","time":time.monotonic()}); threading.Event().wait(10)
+   return original_fsync(fd)
+  m.os.fsync=fsync; signal({"event":"fsync-armed","time":time.monotonic()})
+ threading.Thread(target=arm,daemon=True).start()
+m.Relay.__init__=init; m.Relay.append_record=append; m.main()'''
+  ev=pathlib.Path(os.environ['RELAY_EVIDENCE_DIR']); prefix=ev/'step1-step2-fsync-probe'
+  with open(str(prefix)+'-stderr.log','w') as err:
+   p=subprocess.Popen([sys.executable,'-B','-c',code,str(pathlib.Path(m.__file__)),str(up.getsockname()[1]),'--route','one,example.com,/v1,FAKE_KEY','--allow-host','example.com','--port','0','--ledger',str(self.path),'--limit','2','--seconds','30','--timeout','10'],stdout=subprocess.PIPE,stderr=err,text=True,pass_fds=(signal_w,command_r),env={'PATH':'/usr/bin:/bin','FAKE_KEY':'fake-only','SIGNAL_FD':str(signal_w),'COMMAND_FD':str(command_r)})
+   clients=[]
+   try:
+    port=json.loads(p.stdout.readline())['port']; self.assertNotEqual(port,6138)
+    def request(trace):
+     c=socket.create_connection(('127.0.0.1',port),timeout=3); c.settimeout(3); clients.append(c)
+     c.sendall(('POST /one/chat HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Length: 2\r\nX-Stand-Trace-Id: %s\r\n\r\n{}'%(port,trace)).encode()); return c
+    stream=os.fdopen(os.dup(signal_r),'rb',buffering=0); self.addCleanup(stream.close)
+    def event():
+     self.assertTrue(select.select([stream],[],[],4)[0], 'signal timeout'); return json.loads(stream.readline())
+    a=request('A'); booked=event(); self.assertEqual((booked['event'],booked['trace'],booked['status']),('booked','A','reserved'))
+    self.assertFalse(booked['inflight'])
+    response=a.recv(4096); self.assertIn(b' 200 ',response)
+    # Completion record proves A left the provider path; the parent waits for it.
+    completed=event(); self.assertEqual(completed['trace'],'A')
+    records=[json.loads(x) for x in self.path.read_text().splitlines()]; record=next(x for x in records if x.get('trace_id')=='A' and x.get('status')=='reserved')
+    self.assertEqual(booked['record_id'],record['record_id'])
+    (ev/'step1-normal-a.json').write_text(json.dumps({'booked':booked,'record_id':record['record_id'],'response':response.decode('latin1'),'ledger_line':json.dumps(record)},indent=2)+'\n')
+    os.write(command_w,b'A'); armed=event(); self.assertEqual(armed['event'],'fsync-armed')
+    b=request('B'); entered=event(); self.assertEqual(entered['event'],'fsync-enter')
+    (ev/'step2-b-enter.json').write_text(json.dumps({'armed':armed,'entered':entered,'B_response_ready':bool(select.select([b],[],[],0)[0])},indent=2)+'\n')
+   finally:
+    for c in clients: c.close()
+    if p.poll() is None: p.terminate(); p.wait(timeout=3)
+    p.stdout.close()
  def test_watchdog_only_starts_once(self):
   relay=m.Relay(args(self.path),grace=1,exit_fn=lambda code:None)
   self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
