@@ -48,7 +48,7 @@ object AskSessions:
     // `isAskSession` 身份闸兜底（ask_edit/ask_write/PdfPage 同款双保险）。
     // gitviz 分支管理问答批（2026-11-19 第二轮）：gitviz_graph = 分支图只读取数件
     // （实现在 core/tools/GitVizGraphTool.scala；数据面 = 既有 GitGraph.build）。
-    // 进本集即同时得到两件事：① 授权面由 GitVizAllowedTools 带上；② 由
+    // 进本集即同时得到两件事：① GitViz 会话按身份追加；② 由
     // buildAllowedToolSet 尾段的 `-- AskExclusiveTools` 从其余一切身份剥净；
     // 工具内侧另有 isGitVizSession 身份闸（双保险，PdfPage 同款）。
     Set(
@@ -62,7 +62,7 @@ object AskSessions:
       "gitviz_handoff"
     )
 
-  /** Closed Ask face, independent of Subagent and returned before any other role grants. */
+  /** Historical extra/read tool catalogue; not the runtime authorization face. */
   val AllowedTools: Set[String] =
     AskExclusiveTools ++ Set("Read", "Glob", "Grep", "WebSearch", "WebFetch", "Bash")
 

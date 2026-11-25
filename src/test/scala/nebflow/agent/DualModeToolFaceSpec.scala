@@ -27,30 +27,43 @@ class DualModeToolFaceSpec extends FunSuite:
       buildAllowedToolSet(defn, 0, delegateSession = delegateSession, delegateMode = delegateMode)
 
     def askFace(defn: AgentDef): Set[String] =
-      buildAllowedToolSet(defn, 1, askSession = true, delegateSession = true, delegateMode = Some("dispatcher"))
+      buildAllowedToolSet(defn, 0, askSession = true)
 
     def gitvizAndAskFace(defn: AgentDef): Set[String] =
-      buildAllowedToolSet(defn, 1, askGitViz = true, askSession = true, delegateSession = true)
+      buildAllowedToolSet(defn, 0, askGitViz = true, askSession = true)
 
-  test("GitViz retains the ordinary declared tool face plus its scoped tools") {
-    val definition = AgentDef(name = "ask-parity-probe", description = "", tools = List("*"))
-    val ordinary = CoreProbe.allowedWithDelegateMode(definition, delegateSession = true, delegateMode = None)
-    val gitviz = CoreProbe.gitvizAndAskFace(definition)
-    assertEquals(gitviz, ordinary ++ Set("gitviz_graph", "gitviz_handoff"))
-    assert(gitviz.contains("Bash"))
-    assert(gitviz.contains("Write"))
-    assert(gitviz.contains("Edit"))
-  }
+    def standaloneFace(defn: AgentDef): Set[String] = buildAllowedToolSet(defn, 0)
 
-  test("File Ask retains the ordinary declared tool face plus its scoped tools") {
-    val definition = AgentDef(name = "ask-parity-probe", description = "", tools = List("*"))
-    val ordinary = CoreProbe.allowedWithDelegateMode(definition, delegateSession = true, delegateMode = Some("dispatcher"))
-    val face = CoreProbe.askFace(definition)
-    assert(ordinary.subsetOf(face), s"missing ordinary tools: ${ordinary -- face}")
-    assert(face.contains("Write"))
-    assert(face.contains("Edit"))
-    assert(face.contains("Bash"))
-    assert(face.contains("PdfPage"))
+  test("real Ask and GitViz definitions share ordinary standalone authorization") {
+    val file = tmp / "notes.md"
+    os.write(file, "notes")
+    val registry = new nebflow.core.ask.AskSessionRegistry(tmp / "registry")
+    val sources = new nebflow.core.ask.AskContextSources:
+      def fileStat(p: String) = cats.effect.IO.pure(None)
+      def fileText(p: String) = cats.effect.IO.pure(None)
+      def graphNeighbors(p: String) = cats.effect.IO.pure(Nil)
+      def recallHits(q: String) = cats.effect.IO.pure(Nil)
+      def recallDbMtime = cats.effect.IO.pure(0L)
+      def graphVersion = cats.effect.IO.pure("")
+    val services = nebflow.core.ask.AskServices(registry, sources, new nebflow.core.ask.AskPromptCache)
+    val fileBinding = registry.bind(file.toString, file.last).unsafeRunSync()
+    val gvBinding = registry.bind(tmp.toString, "project", explicitId = "ask-gv-12345678", kind = nebflow.core.ask.AskBinding.KindGitViz).unsafeRunSync()
+    val ask = services.agentDefFor(fileBinding.id).unsafeRunSync()
+    val gitviz = services.agentDefFor(gvBinding.id).unsafeRunSync()
+    val standalone = AgentDef(name = "ordinary-standalone", description = "", tools = Nil)
+    val ordinary = CoreProbe.standaloneFace(standalone)
+    val askFace = CoreProbe.askFace(ask)
+    val gitvizFace = CoreProbe.gitvizAndAskFace(gitviz)
+    assertEquals(askFace -- nebflow.core.ask.AskSessions.AskExclusiveTools, ordinary)
+    assertEquals(gitvizFace -- nebflow.core.ask.AskSessions.AskExclusiveTools, ordinary)
+    assert(AgentCore.BaseTools.subsetOf(ordinary))
+    val privileged = Set("Project", "AskHost", "AskHostReply", "AskHostClarify")
+    assertEquals(askFace.intersect(privileged), Set.empty[String])
+    assertEquals(gitvizFace.intersect(privileged), Set.empty[String])
+    assertEquals(ask.pluginMcpServers, standalone.pluginMcpServers)
+    assertEquals(ask.pluginTools, standalone.pluginTools)
+    assertEquals(gitviz.pluginMcpServers, standalone.pluginMcpServers)
+    assertEquals(gitviz.pluginTools, standalone.pluginTools)
   }
 
   test("non-Ask roles retain Bash without gaining Ask-exclusive tools") {

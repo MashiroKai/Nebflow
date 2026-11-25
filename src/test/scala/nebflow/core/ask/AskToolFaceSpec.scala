@@ -45,13 +45,8 @@ final class AskToolFaceSpec extends munit.FunSuite:
       "gitviz_handoff"
     )
 
-  test("F1 Ask has exactly fourteen tools (the registry-derived face)") {
-    assertEquals(
-      AskSessions.AllowedTools,
-      exclusiveAskTools ++ sharedAskTools
-    )
-    // 结构式（单源）：ask 面**恰好**是「专属 ∪ 共享」两项，多一个少一个都红。
-    assertEquals(AskSessions.AllowedTools, AskSessions.AskExclusiveTools ++ sharedAskTools)
+  test("F1 Ask-specific extras remain available") {
+    assertEquals(AskSessions.AskExclusiveTools, exclusiveAskTools)
   }
 
   test("F2 retired file and git tools are absent from the allowlist and registry") {
@@ -70,9 +65,7 @@ final class AskToolFaceSpec extends munit.FunSuite:
     )
     assert(AskSessions.AskExclusiveTools.subsetOf(AskSessions.AllowedTools))
     assert(AskSessions.AskExclusiveTools.intersect(sharedAskTools).isEmpty)
-    // 直接 Edit/Write 不在 ask 面：受限编辑只走提案制两件套。
-    assert(!AskSessions.AllowedTools.contains("Edit"))
-    assert(!AskSessions.AllowedTools.contains("Write"))
+    // 直接 Edit/Write 由普通授权链授予；真实装配对照在 DualModeToolFaceSpec。
   }
 
   test("F4 all fourteen Ask tools are registered") {

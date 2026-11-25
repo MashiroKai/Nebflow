@@ -33,8 +33,7 @@ final case class AskServices(
 ):
 
   /**
-   * spawn 面：ask 会话的运行时 AgentDef（name/category 仅为身份占位——工具面
-   * 由 buildAllowedToolSet 的 askSession 早退集机制固定，不读声明）。
+   * spawn 面：Ask 的 standalone AgentDef；普通工具走普通授权链，专属能力追加。
    *
    * md/html 硬约束闸·深防（调研稿 §7-A3）：spawn 前复问 `isAskable`——
    * `<dataRoot>/ask/index.json` 旧绑定与直发 WS 帧绕不开本层（askOpen 是前

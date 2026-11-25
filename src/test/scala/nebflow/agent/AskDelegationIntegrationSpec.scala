@@ -28,10 +28,24 @@ class AskDelegationIntegrationSpec extends FunSuite:
         else Stream(StreamChunk.TextDelta("done"), StreamChunk.Done(None, None))
       }
 
-  private def runCase(remote: Boolean, bound: Boolean, edit: Boolean = false, approval: Boolean = false, isolateReview: Boolean = false): Unit =
+  private def runCase(remote: Boolean, bound: Boolean, edit: Boolean = false, approval: Boolean = false, isolateReview: Boolean = false, mockPeer: Boolean = false): Unit =
     val system = ActorSystem("ask-delegation-integration")
     val root = os.temp.dir()
     val prevRoot = PathUtil.dataRoot
+    val peerBodies = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+    val server = if mockPeer then Some(com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0)) else None
+    server.foreach { s =>
+      s.createContext("/api/neblink/remote-exec", (ex: com.sun.net.httpserver.HttpExchange) => {
+        val body = new String(ex.getRequestBody.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+        peerBodies.add(body)
+        val out = """{"output":"REMOTE-PROBE","error":""}""".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        ex.getResponseHeaders.add("Content-Type", "application/json")
+        ex.sendResponseHeaders(200, out.length.toLong)
+        ex.getResponseBody.write(out)
+        ex.close()
+      })
+      s.start()
+    }
     val prevLog = nebflow.core.LlmLogWriter.isEnabled
     PathUtil.setDataRoot(root / "data")
     nebflow.core.LlmLogWriter.setEnabled(false)
@@ -58,7 +72,7 @@ class AskDelegationIntegrationSpec extends FunSuite:
       os.write(hookConfig, """{"hooks":{"PostToolUse":[{"matcher":"Write|Edit","hooks":[{"type":"command","command":"echo '{\"additional_context\":\"WRITE-HOOK-PROBE\"}'","timeout":10}]}]}}""")
       if approval then os.write.over(PathUtil.configJsonWritePath(PathUtil.dataRoot), """{"safety":{"defaultMode":"confirm-edits"}}""", createFolders = true)
       val target = if bound || remote then file else other
-      val device = if remote then "peer-unavailable" else "local"
+      val device = if mockPeer then "peer-one" else if remote then "peer-unavailable" else "local"
       val input = if edit then JsonObject("path" -> target.toString.asJson, "old_str" -> "alpha".asJson, "new_str" -> "changed".asJson, "device" -> device.asJson)
         else JsonObject("path" -> target.toString.asJson, "content" -> "changed".asJson, "device" -> device.asJson)
       val call = ToolCall("ask-call-1", if edit then "ask_edit" else "ask_write", input)
@@ -66,6 +80,14 @@ class AskDelegationIntegrationSpec extends FunSuite:
         requests <- IO.ref(List.empty[LlmRequest])
         events <- IO.ref(List.empty[Json])
         dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
+        _ <- server.traverse_ { s =>
+          for
+            service <- nebflow.neblink.core.NeblinkService.create(0, dispatcher)
+            _ = service.setRelayClient(None)
+            _ <- IO(nebflow.core.tools.RemoteExecutor.initialize(service, dispatcher, None))
+            _ <- service.upsertPeer(nebflow.shared.PeerInfo("peer-1", "peer-one", "macos", s"http://127.0.0.1:${s.getAddress.getPort}"))
+          yield ()
+        }
         limiter <- RateLimiter.create()
         tracker <- nebflow.core.FileChangeTracker.create(root.toString)
         locks <- FileLockManager.create
@@ -126,17 +148,24 @@ class AskDelegationIntegrationSpec extends FunSuite:
           assertEquals(os.read(file), "changed")
         val result = blocks.collectFirst { case r: ContentBlock.ToolResult if r.toolUseId == call.id => r }
         assert(result.nonEmpty)
-        if remote then assert(result.get.content.contains("remote executor is unavailable"))
+        if remote && !mockPeer then assert(result.get.content.contains("remote executor is unavailable"))
+        if mockPeer then
+          assert(result.get.content.contains("REMOTE-PROBE"), result.get.content)
+          val bodies = peerBodies.toArray.toList.map(_.toString)
+          assert(bodies.exists(_.contains("\"action\":\"Write\"")), bodies.mkString("\n"))
         if !bound && !remote then assert(result.get.content.contains("WRITE-HOOK-PROBE"), result.get.content)
       program.unsafeRunSync()
     finally
       AskGatewayServices.uninstall()
+      if mockPeer then nebflow.core.tools.RemoteExecutor.resetForTests()
+      server.foreach(_.stop(0))
       system.stopAll.attempt.void.unsafeRunSync()
       nebflow.core.LlmLogWriter.setEnabled(prevLog)
       PathUtil.setDataRoot(prevRoot)
       try os.remove.all(root)
       catch case _: java.nio.file.DirectoryNotEmptyException => ()
 
+  test("模拟远端设备收到委托 Write") { runCase(remote = true, bound = false, mockPeer = true) }
   test("拒绝绑定审阅不回滚非绑定文件") { runCase(remote = false, bound = false, isolateReview = true) }
   test("非绑定 ask_edit 经普通 Edit 审批和 hook") { runCase(remote = false, bound = false, edit = true, approval = true) }
   test("本机非绑定写入走普通路径") { runCase(remote = false, bound = false) }

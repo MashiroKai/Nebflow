@@ -9,7 +9,7 @@ import nebflow.core.tools.ToolRegistry
  */
 final class AskEditFaceSpec extends FunSuite:
 
-  test("EF1: ask_edit/ask_write are Ask-exclusive and inside the closed Ask face") {
+  test("EF1: ask_edit/ask_write are Ask-exclusive extras") {
     assert(AskSessions.AskExclusiveTools.contains("ask_edit"), "ask_edit must be Ask-exclusive")
     assert(AskSessions.AskExclusiveTools.contains("ask_write"), "ask_write must be Ask-exclusive")
     assert(AskSessions.AllowedTools.contains("ask_edit"))
