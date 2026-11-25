@@ -794,7 +794,7 @@ private[agent] object AgentProcessing:
         val assistantBlocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
         tc.thinking.foreach(t => assistantBlocks += ContentBlock.Thinking(t, tc.thinkingSignature))
         if !tc.originalText.isBlank then assistantBlocks += ContentBlock.Text(tc.originalText)
-        toolCalls.foreach(c => assistantBlocks += ContentBlock.ToolUse(c.id, c.name, c.input))
+        toolCalls.foreach(c => assistantBlocks += ContentBlock.ToolUse(c.id, c.name, c.input, tc.delegatedTo.get(c.id)))
         val assistantMsg = Message(MessageRole.Assistant, Right(assistantBlocks.toList))
         val resultBlocks = tc.results.map { (call, r) =>
           ContentBlock.ToolResult(call.id, r.content, Some(r.isError))
@@ -2098,7 +2098,7 @@ private[agent] object AgentProcessing:
       .flatMap(_.content match
         case Right(blocks) =>
           blocks.collect {
-            case ContentBlock.ToolUse(id, name, _) if name == "Mail" => id
+            case ContentBlock.ToolUse(id, name, _, _) if name == "Mail" => id
           }
         case _ => Nil)
       .toSet
@@ -2234,7 +2234,7 @@ private[agent] object AgentProcessing:
       // Extract the tool name for the error message
       val toolName = messages(lastToolUseIdx).content match
         case Right(blocks) =>
-          blocks.collectFirst { case ContentBlock.ToolUse(_, name, _) => name }.getOrElse("unknown")
+          blocks.collectFirst { case ContentBlock.ToolUse(_, name, _, _) => name }.getOrElse("unknown")
         case _ => "unknown"
       // Truncate from the tool call onwards
       val truncated = messages.take(lastToolUseIdx)
@@ -2352,7 +2352,7 @@ private[agent] object AgentProcessing:
     val assistantBlocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
     tc.thinking.foreach(t => assistantBlocks += ContentBlock.Thinking(t, tc.thinkingSignature))
     if !tc.originalText.isBlank then assistantBlocks += ContentBlock.Text(tc.originalText)
-    toolCalls.foreach(c => assistantBlocks += ContentBlock.ToolUse(c.id, c.name, c.input))
+    toolCalls.foreach(c => assistantBlocks += ContentBlock.ToolUse(c.id, c.name, c.input, tc.delegatedTo.get(c.id)))
     val resultBlocks = tc.results.map { (call, r) =>
       ContentBlock.ToolResult(call.id, r.content, Some(r.isError))
     }

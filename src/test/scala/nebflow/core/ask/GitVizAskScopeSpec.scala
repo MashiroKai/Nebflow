@@ -16,7 +16,7 @@ import java.nio.file.Files
  * 命令白名单」+「两个入口收敛到同一个出口（不许两条各写一套）」。
  *
  * 本 spec 把四条**能机器判的**硬约束钉死（其余靠编译与闸）：
- *   G1 工具面：`GitVizAllowedTools` 里没有 Bash、没有写工具；唯一数据面 = gitviz_graph。
+ *   G1 GitViz 专属图查询与交办能力；普通工具授权由会话装配链测试。
  *   G2 会话身份：`ask-gv-` 落在 `ask-` 族内（既有拦截面/回执帧照旧命中），且 id 形状闸
  *      只放行 8..16 hex。
  *   G3 绑定域：kind=gitviz 的绑定跨重启复现（persist → 新 registry 载入后仍是 gitviz），
@@ -28,19 +28,9 @@ import java.nio.file.Files
 final class GitVizAskScopeSpec extends CatsEffectSuite:
 
   // ── G1 工具面 ────────────────────────────────────────────────────────────
-  test("G1 gitviz 工具面没有 Bash / 没有写工具，数据面只有 gitviz_graph") {
-    val face = AskSessions.GitVizAllowedTools
-    assert(face.contains("gitviz_graph"), "数据面必须挂着 gitviz_graph")
-    assert(!face.contains("Bash"), "不得有 Bash —— 它是 git 写操作的唯一入口")
-    assert(!face.contains("Write"), "不得有 Write")
-    assert(!face.contains("Edit"), "不得有 Edit")
-    assert(!face.contains("ask_edit"), "不得有 ask_edit（零落盘）")
-    assert(!face.contains("ask_write"), "不得有 ask_write（零落盘）")
-    assert(!face.contains("send_message_to_main_chat"), "交办只走结构化帧，不走自由文本腿")
-    // 与文件 ask 面相比：严格更窄（真子集），不是「另开一面同样大」
-    assert(face.subsetOf(AskSessions.AllowedTools), s"gitviz 面必须是文件 ask 面的子集，实际差集=${face -- AskSessions.AllowedTools}")
-    // 名字本身是权限边界：进 AskExclusiveTools ⇒ 其余身份一律拿不到
+  test("G1 gitviz 保留图查询与交办专属能力") {
     assert(AskSessions.AskExclusiveTools.contains("gitviz_graph"))
+    assert(AskSessions.AskExclusiveTools.contains("gitviz_handoff"))
   }
 
   test("G1b gitviz_graph 对非 gitviz 会话 fail-closed（工具内侧身份闸）") {
@@ -94,8 +84,28 @@ final class GitVizAskScopeSpec extends CatsEffectSuite:
       }
       old <- new AskSessionRegistry(dataRoot).byId("ask-deadbeef")
       _ = assert(old.exists(!_.isGitViz), "无 kind 字段的存量记录必须读回 file 域")
+      _ = assertEquals(old.flatMap(_.device), None)
     yield ()
     end for
+  }
+
+  test("绑定身份区分本机和远端并拒绝显式 ID 冲突") {
+    val root = os.Path(Files.createTempDirectory("ask-device-bind").toFile)
+    val registry = new AskSessionRegistry(root)
+    for
+      local <- registry.bind("/tmp/a.md", "a.md")
+      remote <- registry.bind("/tmp/a.md", "a.md", device = Some("peer"))
+      _ = assertEquals(local.id, "ask-15f9566a")
+      _ = assertNotEquals(local.id, remote.id)
+      loaded <- new AskSessionRegistry(root).byId(remote.id)
+      _ = assertEquals(loaded.flatMap(_.device), Some("peer"))
+      conflict <- registry.bind("/tmp/other.md", "other.md", explicitId = local.id).attempt
+      _ = assert(conflict.isLeft)
+      conflictDevice <- registry.bind("/tmp/a.md", "a.md", explicitId = local.id, device = Some("peer")).attempt
+      _ = assert(conflictDevice.isLeft)
+      unchanged <- registry.byId(local.id)
+      _ = assertEquals(unchanged, Some(local))
+    yield ()
   }
 
   // ── G4 交办出口 ──────────────────────────────────────────────────────────

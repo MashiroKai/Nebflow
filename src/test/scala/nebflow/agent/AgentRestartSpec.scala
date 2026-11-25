@@ -19,7 +19,7 @@ class AgentRestartSpec extends FunSuite:
   private def toolNameOf(msg: Message): String =
     msg.content match
       case Right(blocks) =>
-        blocks.collectFirst { case ContentBlock.ToolUse(_, name, _) => name }.getOrElse("unknown")
+        blocks.collectFirst { case ContentBlock.ToolUse(_, name, _, _) => name }.getOrElse("unknown")
       case _ => "unknown"
 
   test("finds last tool call in message list") {

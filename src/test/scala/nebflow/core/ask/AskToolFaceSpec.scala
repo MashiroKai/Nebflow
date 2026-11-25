@@ -45,13 +45,8 @@ final class AskToolFaceSpec extends munit.FunSuite:
       "gitviz_handoff"
     )
 
-  test("F1 Ask has exactly fourteen tools (the registry-derived face)") {
-    assertEquals(
-      AskSessions.AllowedTools,
-      exclusiveAskTools ++ sharedAskTools
-    )
-    // 结构式（单源）：ask 面**恰好**是「专属 ∪ 共享」两项，多一个少一个都红。
-    assertEquals(AskSessions.AllowedTools, AskSessions.AskExclusiveTools ++ sharedAskTools)
+  test("F1 Ask-specific extras remain available") {
+    assertEquals(AskSessions.AskExclusiveTools, exclusiveAskTools)
   }
 
   test("F2 retired file and git tools are absent from the allowlist and registry") {
@@ -70,9 +65,7 @@ final class AskToolFaceSpec extends munit.FunSuite:
     )
     assert(AskSessions.AskExclusiveTools.subsetOf(AskSessions.AllowedTools))
     assert(AskSessions.AskExclusiveTools.intersect(sharedAskTools).isEmpty)
-    // 直接 Edit/Write 不在 ask 面：受限编辑只走提案制两件套。
-    assert(!AskSessions.AllowedTools.contains("Edit"))
-    assert(!AskSessions.AllowedTools.contains("Write"))
+    // 直接 Edit/Write 由普通授权链授予；真实装配对照在 DualModeToolFaceSpec。
   }
 
   test("F4 all fourteen Ask tools are registered") {
@@ -82,6 +75,15 @@ final class AskToolFaceSpec extends munit.FunSuite:
     }
   }
 
+  test("F5 historical single-file restriction and mandatory handoff are absent") {
+    val prompt = AskContextAssembler.promptFor("notes.md", "/vault/notes.md", "context")
+    assert(prompt.contains("/vault/notes.md"))
+    assert(!prompt.contains("本会话只能编辑它对应的那份文档"))
+    assert(!prompt.contains("QUERY-ONLY, fail-closed"))
+    assert(prompt.contains("转交是可选的"))
+  }
+
+  /* Superseded historical prompt assertions retained for provenance:
   test("F5 Ask prompt derives the tool list from the registry and states both hard constraints") {
     val prompt = AskContextAssembler.promptFor("notes.md", "/vault/notes.md", "context")
     // ask-scope 批（2026-11-18）：清单**派生**（注册表 = 唯一来源），逐条落 `- <name>:` 行。
@@ -131,4 +133,5 @@ final class AskToolFaceSpec extends munit.FunSuite:
     assert(prompt.contains("当场明确要求"), "the author's on-the-spot explicit request is the allowed exception")
     assert(prompt.contains("建议转交主会话"), "the exception still carries the complex⇒handoff hint")
   }
+  */
 end AskToolFaceSpec

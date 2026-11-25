@@ -5,6 +5,8 @@
 Author instruction (verbatim, 2026-11-18 21:49): "约束一下 canvas 的 ask 它只有它所对应
 的文档的编辑能力 其他复杂任务要转交给主会话 同时也要在引擎上限制它编辑其他文件".
 
+Historical decisions: on 2026-11-25 22:47 the author confirmed the file Ask write scope ("写文件仍只限绑定文档"); that confirmation and the restriction above were superseded on 2026-11-25 22:53 by the author: "写边界也放开". The historical design below describes the former implementation, not current intent.
+
 Acceptance: (1) the ask write face is narrowed to exactly one document, proven by an
 over-permission matrix; (2) work beyond that one document is handed to the main session as a
 structured request that visibly reaches it; (3) the restriction is enforced at the engine's

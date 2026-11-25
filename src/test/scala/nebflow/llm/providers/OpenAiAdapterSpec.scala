@@ -8,6 +8,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.llm.SendMessageParams
 import nebflow.shared.*
+import nebflow.shared.given
 import munit.CatsEffectSuite
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.{GenericRequest, Response, StreamBackend}
@@ -55,6 +56,20 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
     assertEquals(m.hcursor.downField("role").as[String].toOption, Some("assistant"))
     assert(m.hcursor.downField("content").as[Option[String]].toOption.flatten.isEmpty)
     assertEquals(m.hcursor.downField("tool_calls").as[List[Json]].toOption.map(_.size), Some(1))
+  }
+
+  test("delegated ToolUse retains original model name without leaking internal metadata") {
+    val meta = Json.obj("tool" -> "Edit".asJson, "path" -> "/tmp/a".asJson, "device" -> Json.Null)
+    val use = ContentBlock.ToolUse("call-1", "ask_edit", JsonObject("path" -> "/tmp/a".asJson), Some(meta))
+    val encoded = (use: ContentBlock).asJson
+    assertEquals(encoded.as[ContentBlock].toOption, Some(use: ContentBlock))
+    val legacy = ContentBlock.ToolUse("old", "Read", JsonObject.empty)
+    assertEquals((legacy: ContentBlock).asJson.as[ContentBlock].toOption, Some(legacy: ContentBlock))
+    val messages = adapter.toOpenAiMessages(List(Message(MessageRole.Assistant, Right(List(use)))))
+    val wire = messages.head.noSpaces
+    assert(wire.contains("ask_edit"))
+    assert(!wire.contains("delegatedTo"))
+    assert(!wire.contains("\"Edit\""))
   }
 
   test("toOpenAiMessages: text + tool_use") {

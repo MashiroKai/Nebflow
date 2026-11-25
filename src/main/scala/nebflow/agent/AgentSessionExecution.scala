@@ -664,6 +664,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             flowNodeSession = stateForLlm.flowNodeId.isDefined,
             isDispatcher = stateForLlm.isDispatcher,
             delegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(stateForLlm.sessionId),
+            askSession = nebflow.core.ask.AskSessions.isAskSession(stateForLlm.sessionId),
             askGitViz = nebflow.core.ask.AskSessions.isGitVizSession(stateForLlm.sessionId),
             delegateMode = nebflow.core.delegate.DelegateRegistry.modeFaceOf(stateForLlm.sessionId)
           )
@@ -1473,12 +1474,56 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             )
           }
         else IO.unit
+      _ <- if sessionIdOpt.exists(resources.protectedExecutions.contains) &&
+          result.toolCalls.exists(c => c.name == "ask_edit" || c.name == "ask_write") then
+        IO.raiseError(new IllegalStateException("受保护执行模式下的 Ask 委托暂未支持"))
+      else IO.unit
+      normalizedCalls <- result.toolCalls.traverse { call =>
+        val sid = state.sessionId.getOrElse("")
+        val isAskEdit = nebflow.core.ask.AskSessions.isAskSession(sid) &&
+          (call.name == "ask_edit" || call.name == "ask_write") && allowedTools.contains(call.name)
+        if !isAskEdit || sessionIdOpt.exists(resources.protectedExecutions.contains) then IO.pure(call)
+        else
+          nebflow.core.ask.AskGatewayServices.instance match
+            case None => IO.pure(call)
+            case Some(services) => services.registry.byId(sid).map {
+              case Some(binding) if {
+                val explicit = call.input("device").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+                val effective = explicit match
+                  case Some(d) if d.equalsIgnoreCase("local") => None
+                  case Some(d) => Some(d)
+                  case None => state.session.sessionDevice.map(_.trim).filter(_.nonEmpty)
+                // Remote inline review is not implemented; even a matching remote binding delegates.
+                effective.nonEmpty || binding.device != effective || !nebflow.core.ask.AskPathBoundary.isBoundDocument(
+                  binding.file, call.input("path").flatMap(_.asString).getOrElse("")
+                )
+              } =>
+                val rename = if call.name == "ask_edit" then
+                  List("path" -> "file_path", "old_str" -> "old_string", "new_str" -> "new_string")
+                else List("path" -> "file_path")
+                val mapped = rename.foldLeft(call.input) { case (input, (from, to)) =>
+                  input(from).fold(input)(value => input.remove(from).add(to, value))
+                }
+                call.copy(name = if call.name == "ask_edit" then "Edit" else "Write", input = mapped, rawArguments = None)
+              case _ => call
+            }
+      }
+      _ <- normalizedCalls.zip(result.toolCalls).traverse_ { (actual, original) =>
+        if actual.name == original.name then IO.unit
+        else IO(logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "tool-delegation", Json.obj(
+          "toolUseId" -> original.id.asJson,
+          "originalTool" -> original.name.asJson,
+          "delegatedTo" -> actual.name.asJson,
+          "path" -> actual.input("file_path").getOrElse(Json.Null),
+          "device" -> actual.input("device").getOrElse(Json.Null)
+        ).noSpaces))
+      }
       (filteredCalls, droppedCalls) =
         // WebSearch P0: kimi's native $web_search tool call bypasses the
         // agent-tool whitelist — it is provider-injected (not an agent tool)
         // and MUST pass through; filtering it here would re-create the
         // "Tool not available" retry storm (2026-08-20 qwen incident shape).
-        val (kept, dropped) = result.toolCalls.partition(tc =>
+        val (kept, dropped) = normalizedCalls.partition(tc =>
           allowedTools.contains(tc.name) || tc.name == nebflow.llm.SearchProviderResolver.KimiWebSearchToolName
         )
         // warnSync: this is a synchronous code path — the plain IO-returning
@@ -1647,11 +1692,12 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         val skipStreaming = call.name == "AskUserQuestion"
         val callCtx = toolCtx.copy(toolCallId = call.id)
         // pi-logic 接线点 9：单调用起点审计行（与 ToolStart 帧位同步——纯增日志）。
-        IO(piBridge.toolStart(call.id, call.name)) *>
+        val modelCall = result.toolCalls.find(_.id == call.id).getOrElse(call)
+        IO(piBridge.toolStart(modelCall.id, modelCall.name)) *>
           ((if !skipStreaming then
               emitStreamIO(
                 state.wsSend,
-                AgentStreamEvent.ToolStart(nebflow.core.summarizeToolCall(call)),
+                AgentStreamEvent.ToolStart(nebflow.core.summarizeToolCall(modelCall)),
                 isSubagent,
                 sessionIdOpt
               )
@@ -1759,6 +1805,17 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         val r = ToolExecResult(s"Tool not available: ${call.name}", isError = true)
         logToolStructured(call, toolCtx, r).as((call, r))
       }
+      delegationDetails = normalizedCalls.zip(result.toolCalls).collect {
+        case (actual, original) if actual.name != original.name => original.id -> Json.obj(
+          "tool" -> actual.name.asJson,
+          "path" -> actual.input("file_path").getOrElse(Json.Null),
+          "device" -> actual.input("device").getOrElse(state.session.sessionDevice.asJson)
+        )
+      }.toMap
+      originalCallsById = result.toolCalls.map(c => c.id -> c).toMap
+      transcriptResults = (guardedBatch ++ droppedResults).map { (call, output) =>
+        (originalCallsById.getOrElse(call.id, call), output)
+      }
       // ── Block 3 循环检测器（supervision trio §D2-A，2026-08-27）────────
       // guardBatch 之后、ToolsComplete 之前的单一 choke point——一切 kind 的
       // AgentActor 工具轮都过此环。Root 例外（D3）：depth==0 的 L1 降级为
@@ -1801,14 +1858,15 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           // 不用独立的 LoopFreezeDetected 消息：ToolsComplete 链式 dispatch 会
           // 递增 currentTurnId，后续消息 stale 丢弃，冻结永不落地（wiring 实证）。
           ctx.self ! ToolsComplete(
-            guardedBatch ++ droppedResults,
+            transcriptResults,
             result.text,
             replyTo,
             None,
             result.thinking,
             result.thinkingSignature,
             loopCounters = Some(loopCounters),
-            freezeAfter = Some(f.msg)
+            freezeAfter = Some(f.msg),
+            delegatedTo = delegationDetails
           )
         case t: nebflow.core.processor.LoopGuard.Verdict.Terminate =>
           // L1：turn 以 LoopDetected 失败——不投 ToolsComplete，走 LlmFailed fatal
@@ -1831,24 +1889,26 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         case w: nebflow.core.processor.LoopGuard.Verdict.Warn =>
           // L0：正常续轮 + loopReminder（下一轮 user system-reminder 注入，D3）
           ctx.self ! ToolsComplete(
-            guardedBatch ++ droppedResults,
+            transcriptResults,
             result.text,
             replyTo,
             None,
             result.thinking,
             result.thinkingSignature,
             loopReminder = Some(nebflow.core.processor.LoopGuard.reminderMessage(w)),
-            loopCounters = Some(loopCounters)
+            loopCounters = Some(loopCounters),
+            delegatedTo = delegationDetails
           )
         case nebflow.core.processor.LoopGuard.Verdict.Pass =>
           ctx.self ! ToolsComplete(
-            guardedBatch ++ droppedResults,
+            transcriptResults,
             result.text,
             replyTo,
             None,
             result.thinking,
             result.thinkingSignature,
-            loopCounters = Some(loopCounters)
+            loopCounters = Some(loopCounters),
+            delegatedTo = delegationDetails
           )
       // P0 阶段 3：工具执行完成——touch 活动戳（长工具执行期间流已结束，
       // 若无此 touch 会被误判卡死；下轮 LLM 调用开始会再次 mark Processing）。
@@ -1899,7 +1959,11 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                       current.ref,
                       admission.attemptId,
                       admission.incarnationId,
-                      nebflow.shared.ExecutionEvent.Suspended("tool-pipeline-review-required")
+                      nebflow.shared.ExecutionEvent.Suspended(
+                        if msg.contains("受保护执行模式下的 Ask 委托暂未支持") then
+                          "受保护执行模式下的 Ask 委托暂未支持"
+                        else "tool-pipeline-review-required"
+                      )
                     )
                   )
                   .flatMap(result =>
@@ -2590,18 +2654,6 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 IO.pure(ToolExecResult(blockMsg, isError = true))
               else
                 val finalInput = preResult.updatedInput.getOrElse(call.input)
-                // canvas-ask-restricted-edit（CAE-REQ-002/CAE-SCN-003）：文件绑定
-                // Ask 的 Bash = 默认拒绝的只读白名单执行器——在 post-hook（上方
-                // beforeTool 已跑，hook 仍可先拦）之后、远端/本地路由之前单点短路：
-                // 拒绝在**任何执行前**显式返回；放行的命令经 argv 直执行（无 shell），
-                // 既不进远端 device 通道也不进普通 ShellSession。非 Ask 会话零路径
-                // 变化（判据单点 AskSessions.isAskSession）。
-                val askBashFace: Option[IO[ToolExecResult]] =
-                  Option.when(call.name == "Bash" && nebflow.core.ask.AskSessions.isAskSession(ctx.sessionId)) {
-                    nebflow.core.ask.AskBashFace
-                      .runAskBash(finalInput, ctx)
-                      .map { (out, isErr) => ToolExecResult(out, isError = isErr) }
-                  }
                 // S3（2026-09-14 作者裁定，工具面 `device` 摘除批的引擎面第二层）：
                 // `device` 的远端消费**收窄到 `RemoteExecutor.remoteableTools`**（六件真
                 // 远端），使代码回到 `RemoteExecutor.scala` 的自陈意图（「Only these tools
@@ -2649,7 +2701,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                         }
                       case None => IO.pure(Some(target))
                   case None => IO.pure(None)
-                val execIO: IO[ToolExecResult] = askBashFace.getOrElse(enforceRefusal.getOrElse(resolvedDevice.flatMap {
+                val execIO: IO[ToolExecResult] = enforceRefusal.getOrElse(resolvedDevice.flatMap {
                   resolved =>
                     resolved match
                       case Some(deviceName) if RemoteExecutor.current.isDefined =>
@@ -2777,7 +2829,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                               )
                             }
                         }
-                })) // resolved device, enforcement, ask face
+                }) // resolved device and enforcement
                 execIO.handleErrorWith {
                   case _: UserAbort => IO.raiseError(new UserAbort())
                   case e => IO.pure(ToolExecResult(s"Tool execution error: ${e.getMessage}", isError = true))
@@ -2862,23 +2914,12 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     isDispatcher: Boolean = false,
     delegateSession: Boolean = false,
     askSession: Boolean = false,
-    /**
-     * gitviz 分支管理问答批（2026-11-19 第二轮）：`ask-gv-` 会话的**更窄**工具面
-     *  （GitVizAllowedTools = Read/Glob/Grep + gitviz_graph，**没有 Bash**）。判据
-     *  单点 = `AskSessions.isGitVizSession(sessionId)`（纯前缀，调用点三处同形）。
-     */
+    /** GitViz retains scoped extra tools in addition to ordinary grants. */
     askGitViz: Boolean = false,
     /** 双模式批：delegate 会话生效执行形态（None = 总闸关/未判定——本参数全部分叉即失效）。 */
     delegateMode: Option[String] = None
   ): Set[String] =
-    // Ask has an independent ten-tool face (query-only Bash + direct-apply
-    // ask_edit/ask_write with canvas inline review, canvas-inline-diff-review).
-    // Return before definition, fixed-role, plugin or delegate grants can widen
-    // that face.
-    // gitviz 分支管理问答（2026-11-19 第二轮）：同一早退点，但工具面**更窄**
-    // （没有 Bash / ask_edit / ask_write ⇒ 没有任何 git 写入口）。
-    if askGitViz then return nebflow.core.ask.AskSessions.GitVizAllowedTools
-    if askSession then return nebflow.core.ask.AskSessions.AllowedTools
+    // Ask uses the ordinary authorization chain; scoped extras are added at the end.
     // 阶段 2c（§C.1/裁定 11）：收敛三定义（Nebula/project-dispatcher/general）
     // 的 agent.json tools 声明整体失效——工具面全部机制固定，零配置。存量
     // agent.json 里的文件工具声明（Nebula 六件 / dispatcher Write+Edit）由此
@@ -3043,7 +3084,10 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // EngineToolWhitelist（现即九动词；挂载判据是插件有 engine-tools 声明，粒度为白名单整集——
     // 按插件逐名授予需 AgentDef 新增字段，留作后续）；无挂载 ⇒ 空集（默认工具面无名字）。不看身份名单。
     val pluginEngineGrant = nebflow.core.plugin.PluginRegistry.engineGrantFor(agentDef.pluginMcpServers)
-    (withDelegateMail ++ pluginEngineGrant) -- nebflow.core.ask.AskSessions.AskExclusiveTools
+    val ordinary = (withDelegateMail ++ pluginEngineGrant) -- nebflow.core.ask.AskSessions.AskExclusiveTools
+    if askGitViz then ordinary ++ Set("gitviz_graph", "gitviz_handoff")
+    else if askSession then ordinary ++ nebflow.core.ask.AskSessions.AskExclusiveTools
+    else ordinary
 
   end buildAllowedToolSet
   // scalafix:on DisableSyntax

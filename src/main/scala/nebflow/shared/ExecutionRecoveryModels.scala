@@ -119,7 +119,8 @@ final case class ExecutionChainState(
   outcomes: Map[String, Json] = Map.empty,
   checkpoint: Option[Json] = None,
   terminalPayload: Option[(String, Json)] = None,
-  terminalResultRef: Option[String] = None
+  terminalResultRef: Option[String] = None,
+  suspensionReason: Option[String] = None
 )
 
 sealed trait ExecutionChainObservation

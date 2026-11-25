@@ -27,41 +27,43 @@ class DualModeToolFaceSpec extends FunSuite:
       buildAllowedToolSet(defn, 0, delegateSession = delegateSession, delegateMode = delegateMode)
 
     def askFace(defn: AgentDef): Set[String] =
-      buildAllowedToolSet(defn, 1, askSession = true, delegateSession = true, delegateMode = Some("dispatcher"))
+      buildAllowedToolSet(defn, 0, askSession = true)
 
     def gitvizAndAskFace(defn: AgentDef): Set[String] =
-      buildAllowedToolSet(defn, 1, askGitViz = true, askSession = true, delegateSession = true)
+      buildAllowedToolSet(defn, 0, askGitViz = true, askSession = true)
 
-  test("GitViz face wins when both Ask flags are set") {
-    val definition = AgentDef(name = "subagent", description = "", tools = List("*"))
-    assertEquals(CoreProbe.gitvizAndAskFace(definition), nebflow.core.ask.AskSessions.GitVizAllowedTools)
-  }
+    def standaloneFace(defn: AgentDef): Set[String] = buildAllowedToolSet(defn, 0)
 
-  test("Ask effective face stays independent of dispatcher and declared tools") {
-    val definition = AgentDef(name = "subagent", description = "", tools = List("*"))
-    val face = CoreProbe.askFace(definition)
-    assertEquals(
-      face,
-      Set(
-        "message_record_search",
-        "send_message_to_main_chat",
-        "ask_edit",
-        "ask_write",
-        "PdfPage",
-        "Card",
-        "Read",
-        "Glob",
-        "Grep",
-        "WebSearch",
-        "WebFetch",
-        "Bash",
-        // gitviz 只读件（分支管理问答批 2026-11-19 第二轮：ask-gv-* 会话专属，
-        // 工具内自带 GITVIZ_FORBIDDEN 作用域闸，故属 Ask 面）
-        "gitviz_graph",
-        "gitviz_handoff"
-      )
-    )
-    assert(!face.contains("GitQuery"))
+  test("real Ask and GitViz definitions share ordinary standalone authorization") {
+    val file = tmp / "notes.md"
+    os.write(file, "notes")
+    val registry = new nebflow.core.ask.AskSessionRegistry(tmp / "registry")
+    val sources = new nebflow.core.ask.AskContextSources:
+      def fileStat(p: String) = cats.effect.IO.pure(None)
+      def fileText(p: String) = cats.effect.IO.pure(None)
+      def graphNeighbors(p: String) = cats.effect.IO.pure(Nil)
+      def recallHits(q: String) = cats.effect.IO.pure(Nil)
+      def recallDbMtime = cats.effect.IO.pure(0L)
+      def graphVersion = cats.effect.IO.pure("")
+    val services = nebflow.core.ask.AskServices(registry, sources, new nebflow.core.ask.AskPromptCache)
+    val fileBinding = registry.bind(file.toString, file.last).unsafeRunSync()
+    val gvBinding = registry.bind(tmp.toString, "project", explicitId = "ask-gv-12345678", kind = nebflow.core.ask.AskBinding.KindGitViz).unsafeRunSync()
+    val ask = services.agentDefFor(fileBinding.id).unsafeRunSync()
+    val gitviz = services.agentDefFor(gvBinding.id).unsafeRunSync()
+    val standalone = AgentDef(name = "ordinary-standalone", description = "", tools = Nil)
+    val ordinary = CoreProbe.standaloneFace(standalone)
+    val askFace = CoreProbe.askFace(ask)
+    val gitvizFace = CoreProbe.gitvizAndAskFace(gitviz)
+    assertEquals(askFace -- nebflow.core.ask.AskSessions.AskExclusiveTools, ordinary)
+    assertEquals(gitvizFace -- nebflow.core.ask.AskSessions.AskExclusiveTools, ordinary)
+    assert(AgentCore.BaseTools.subsetOf(ordinary))
+    val privileged = Set("Project", "AskHost", "AskHostReply", "AskHostClarify")
+    assertEquals(askFace.intersect(privileged), Set.empty[String])
+    assertEquals(gitvizFace.intersect(privileged), Set.empty[String])
+    assertEquals(ask.pluginMcpServers, standalone.pluginMcpServers)
+    assertEquals(ask.pluginTools, standalone.pluginTools)
+    assertEquals(gitviz.pluginMcpServers, standalone.pluginMcpServers)
+    assertEquals(gitviz.pluginTools, standalone.pluginTools)
   }
 
   test("non-Ask roles retain Bash without gaining Ask-exclusive tools") {

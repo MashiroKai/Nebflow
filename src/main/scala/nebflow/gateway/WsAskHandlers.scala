@@ -79,6 +79,7 @@ private[gateway] object WsAskHandlers:
         raw.hcursor.downField("name").as[String].getOrElse("file")
       )
     val mainSessionId = raw.hcursor.downField("mainSessionId").as[String].getOrElse("")
+    val device = raw.hcursor.downField("device").as[String].toOption.map(_.trim).filter(d => d.nonEmpty && !d.equalsIgnoreCase("local"))
     // ── 分支管理问答批（gitviz，2026-11-19 第二轮）──────────────────────────
     // 同一个 askOpen 帧承载第二域：`kind="gitviz"` 时作用域 = **项目仓库根**（服务端
     // 由 ProjectStore 解析，不吃客户端报的路径 —— 与 git-graph 端点同一个解析面），
@@ -107,7 +108,8 @@ private[gateway] object WsAskHandlers:
                     root,
                     projectReq,
                     explicitId = sid0,
-                    kind = nebflow.core.ask.AskBinding.KindGitViz
+                    kind = nebflow.core.ask.AskBinding.KindGitViz,
+                    device = device
                   )
                   sid = binding.id
                   _ <- if mainSessionId.nonEmpty then svc.registry.refreshMainSession(sid, mainSessionId) else IO.unit
@@ -147,7 +149,7 @@ private[gateway] object WsAskHandlers:
             )
           else
             for
-              binding <- svc.registry.bind(canonical, fileName)
+              binding <- svc.registry.bind(canonical, fileName, device = device)
               sid = binding.id
               _ <- if mainSessionId.nonEmpty then svc.registry.refreshMainSession(sid, mainSessionId) else IO.unit
               freshBinding <- svc.registry.byId(sid).map(_.getOrElse(binding))

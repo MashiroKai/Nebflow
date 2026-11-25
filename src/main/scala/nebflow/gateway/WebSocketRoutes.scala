@@ -215,13 +215,8 @@ class WebSocketRoutes(
           IO.blocking {
             if !os.exists(projectsDir) then os.makeDir.all(projectsDir)
           }.as(Some(projectsDir.toString))
-      // ask 读面裁定（2026-11-23）：file 域 ask 的 cwd = 工作区根（与主会话同源的
-      // effectiveProjectRoot），须在其求得之后取值。非 ask 会话恒 None（判据单点不变）。
-      sessionCwd <- nebflow.core.ask.AskSessions.sessionCwd(
-        sessionId,
-        nebflow.core.ask.AskGatewayServices.instance.map(_.registry),
-        effectiveProjectRoot
-      )
+      // Ask uses the same initial-directory selection as other WebSocket sessions.
+      sessionCwd = Option.empty[String]
       // 2026-09-13（permshield S1）权限档位 = **应用级持久值**：agent 参数取唯一有效
       // 档位（`SharedResources.effectiveSafetyMode` ⇒ `nebflow.json` 的
       // `safety.defaultMode`）。这里既不消费 `SessionMeta.safetyMode`（盘上遗留值，

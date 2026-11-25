@@ -148,7 +148,7 @@ class OpenAiAdapter(
         case Right(blocks) =>
           val textParts = blocks.collect { case ContentBlock.Text(t) => t }
           val imageParts = blocks.collect { case ContentBlock.Image(data, mediaType) => (data, mediaType) }
-          val toolUseParts = blocks.collect { case ContentBlock.ToolUse(id, name, input) => (id, name, input) }
+          val toolUseParts = blocks.collect { case ContentBlock.ToolUse(id, name, input, _) => (id, name, input) }
           val toolResultParts = blocks.collect { case ContentBlock.ToolResult(toolUseId, content, _) =>
             (toolUseId, content)
           }

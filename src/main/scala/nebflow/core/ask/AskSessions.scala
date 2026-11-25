@@ -48,7 +48,7 @@ object AskSessions:
     // `isAskSession` 身份闸兜底（ask_edit/ask_write/PdfPage 同款双保险）。
     // gitviz 分支管理问答批（2026-11-19 第二轮）：gitviz_graph = 分支图只读取数件
     // （实现在 core/tools/GitVizGraphTool.scala；数据面 = 既有 GitGraph.build）。
-    // 进本集即同时得到两件事：① 授权面由 GitVizAllowedTools 带上；② 由
+    // 进本集即同时得到两件事：① GitViz 会话按身份追加；② 由
     // buildAllowedToolSet 尾段的 `-- AskExclusiveTools` 从其余一切身份剥净；
     // 工具内侧另有 isGitVizSession 身份闸（双保险，PdfPage 同款）。
     Set(
@@ -62,7 +62,7 @@ object AskSessions:
       "gitviz_handoff"
     )
 
-  /** Closed Ask face, independent of Subagent and returned before any other role grants. */
+  /** Historical extra/read tool catalogue; not the runtime authorization face. */
   val AllowedTools: Set[String] =
     AskExclusiveTools ++ Set("Read", "Glob", "Grep", "WebSearch", "WebFetch", "Bash")
 
@@ -205,17 +205,8 @@ object AskSessions:
   def gitVizSessionIdFor(project: String): String =
     GitVizPrefix + fileHash("gitviz:" + project)
 
-  /**
-   * gitviz 分支管理问答的工具面 —— **比文件 ask 更窄**（作者硬约束「这个 agent
-   * 没有任何 git 写能力」）：
-   *   · 没有 `Bash`（文件 ask 有；Bash 是 git 写的唯一入口，这里整条拿掉）；
-   *   · 没有 `ask_edit` / `ask_write`（零落盘）；
-   *   · 没有 `send_message_to_main_chat`（交办只走 `askHandoff` 的结构化帧）；
-   *   · 数据面 = 唯一一件只读工具 `gitviz_graph`（实现 = 既有 `GitGraph.build`，
-   *     子命令白名单 rev-parse/for-each-ref/log/rev-list/merge-base，越界即拒）。
-   */
-  val GitVizAllowedTools: Set[String] =
-    Set("Read", "Glob", "Grep", "gitviz_graph", "gitviz_handoff")
+  // 历史硬约束「这个 agent 没有任何 git 写能力」被 2026-11-25 22:47
+  // 作者裁定「放开」取代；工具授权改由普通会话授权链决定。
 
 end AskSessions
 
@@ -235,7 +226,8 @@ final case class AskBinding(
    * 既有能力零复制地复用（作者令「复用同一条路，不新造第二套」）。缺省 `"file"`
    * ⇒ 存量 index.json 逐字兼容（无该字段即旧语义）。
    */
-  kind: String = AskBinding.KindFile
+  kind: String = AskBinding.KindFile,
+  device: Option[String] = None
 ):
 
   def displayKey: String = AskSessions.displayKey(file)
@@ -344,7 +336,8 @@ final class AskSessionRegistry(dataRoot: os.Path):
                         .toOption
                         .filter(AskBinding.KindGitViz == _)
                         .getOrElse(AskBinding.KindFile)
-                    yield AskBinding(id, f, n, c, m, k)
+                      device = item.hcursor.downField("device").as[Option[String]].toOption.flatten
+                    yield AskBinding(id, f, n, c, m, k, device)
                   }
                   .map(b => b.id -> b)
                   .toMap
@@ -368,7 +361,8 @@ final class AskSessionRegistry(dataRoot: os.Path):
               "fileName" -> b.fileName.asJson,
               "createdAt" -> b.createdAt.asJson,
               "mainSessionId" -> b.mainSessionId.asJson,
-              "kind" -> b.kind.asJson
+              "kind" -> b.kind.asJson,
+              "device" -> b.device.asJson
             )
           )
           .asJson
@@ -387,13 +381,19 @@ final class AskSessionRegistry(dataRoot: os.Path):
     canonicalFile: String,
     fileName: String,
     explicitId: String = "",
-    kind: String = AskBinding.KindFile
+    kind: String = AskBinding.KindFile,
+    device: Option[String] = None
   ): IO[AskBinding] =
-    val id = if explicitId.trim.nonEmpty then explicitId else AskSessions.sessionIdFor(canonicalFile)
+    val id = if explicitId.trim.nonEmpty then explicitId
+      else device match
+        case Some(remote) => AskSessions.sessionIdFor(s"device:${remote.length}:$remote:$canonicalFile")
+        case None => AskSessions.sessionIdFor(canonicalFile)
     IO {
       bindingsRef.get.get(id) match
         case Some(existing) =>
-          // 文件名漂移（重命名后同路径不会发生；同名不同大小写等）时刷新显示名。
+          if existing.file != canonicalFile || existing.device != device then
+            throw new IllegalArgumentException(s"ask binding identity conflict for $id: device or path differs")
+          // 文件名漂移时刷新显示名，不改绑定身份。
           if existing.fileName != fileName then
             val updated = existing.copy(fileName = fileName)
             bindingsRef.set(bindingsRef.get + (id -> updated))
@@ -401,7 +401,7 @@ final class AskSessionRegistry(dataRoot: os.Path):
             updated
           else existing
         case None =>
-          val fresh = AskBinding(id, canonicalFile, fileName, System.currentTimeMillis(), "", kind)
+          val fresh = AskBinding(id, canonicalFile, fileName, System.currentTimeMillis(), "", kind, device)
           bindingsRef.set(bindingsRef.get + (id -> fresh))
           persist(bindingsRef.get)
           fresh
