@@ -217,7 +217,7 @@ const ICONS = {
     ]),
 };
 
-/** @type {Map<string, {sid: string, fileName: string, msgs: Array<{role: string, text: string}>, stateSent: boolean, unread: boolean, busy?: boolean, recoveryUnknown?: boolean, lastFrameAt?: number, mailAddress?: string, turn?: object|null, handoff?: {ok: boolean, task: string, paths: Array<string>, reason: string, expected: string, summary: string, error: string}|null}>} */
+/** @type {Map<string, {sid: string, fileName: string, msgs: Array<{role: string, text: string}>, stateSent: boolean, unread: boolean, busy?: boolean, recoveryUnknown?: boolean, askBufferedText?: string, lastFrameAt?: number, mailAddress?: string, turn?: object|null, handoff?: {ok: boolean, task: string, paths: Array<string>, reason: string, expected: string, summary: string, error: string}|null}>} */
 const sessions = new Map(); // key: absPath
 let el = null; // 组件内部节点引用 { fab, dock, col, colwrap, inputRow, resize, input, send, stop }（建一次，跨宿主迁移复用）
 let root = null; // 组件宿主元素 <nf-ask-dock>（迁移时搬它）
@@ -1177,7 +1177,11 @@ function wireObserversOnce() {
   }
   onDisconnect(() => {
     for (const s of sessions.values()) {
-      if (s.busy || s.turn?.inflight) s.recoveryUnknown = true;
+      if (s.busy || s.turn?.inflight) {
+        s.recoveryUnknown = true;
+        // Reconnect replays the authoritative transcript; never append stale partial text to it.
+        s.askBufferedText = '';
+      }
     }
     syncTurnStatus();
   });
@@ -2339,7 +2343,7 @@ function consumeFrame(msg) {
     if (s.sid && s.sid === sid) { entry = s; break; }
   }
   if (!entry) return; // 本页未见过的 ask 会话（其它设备/页面）——忽略。
-  if (['thinking', 'thinkingDelta', 'toolCallDetected', 'toolStart', 'toolArgDelta', 'toolEnd'].includes(msg.type)) {
+  if (['thinking', 'thinkingDelta', 'toolCallDetected', 'toolStart', 'toolArgDelta', 'toolEnd', 'roundComplete'].includes(msg.type)) {
     dlg.processWorkline(entry, msg);
     if (entry.busy) turnOf(entry).lastFrameAt = Date.now();
   }

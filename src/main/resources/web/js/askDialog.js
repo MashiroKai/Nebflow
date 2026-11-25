@@ -133,7 +133,7 @@ function setMarkdownHtml(node, text, streaming) {
  * @property {string} [askTool]
  * @property {string} [askToolDetail]
  * @property {string} [askLastKind]
- * @property {Array<{kind:string,text:string,name?:string}>} [askProcess]
+ * @property {string} [askBufferedText] Canvas text awaiting a message boundary
  */
 
 /**
@@ -486,11 +486,6 @@ export function createAskDialog(cfg) {
       // 收回（状态行的 DONE 驻留到期即隐，正是作者「看不到已回复」的根因）。
       // 态 = 会话内存里的 replyState（arm/settle 点写），刷新后不回放。
       // 必须在建池/建索引**之前**插入（插入会平移 desired 下标）。
-      if (cfg.workline && s && s.askProcess && s.askProcess.length) {
-        let at = -1;
-        desired.forEach((d, i) => { if (d.kind === 'bubble' && d.role === 'user') at = i; });
-        if (at >= 0) desired.splice(at + 1, 0, { kind: 'process', items: s.askProcess });
-      }
       if (s && s.replyState) {
         let at = -1;
         desired.forEach((d, i) => { if (d.kind === 'bubble' && d.role === 'user') at = i; });
@@ -546,11 +541,6 @@ export function createAskDialog(cfg) {
             h('span', { class: 'ask-time-divider-label' },
               [timeDividerLabel(d.ts, Date.now(), formatHm, tt)]),
           ]);
-        } else if (d.kind === 'process') {
-          const details = h('details', { class: 'ask-process-details' });
-          details.appendChild(h('summary', {}, [tt('查看完整过程', 'View full process')]));
-          for (const item of d.items) details.appendChild(h('pre', {}, [item.text]));
-          node = details;
         } else if (d.kind === 'mark') {
           const label = {
             working: tt('处理中…', 'Working…'),
@@ -681,33 +671,37 @@ export function createAskDialog(cfg) {
       if (dlg.colFollows()) col.scrollTop = col.scrollHeight;
       typingNode = tp;
     },
+    // Canvas buffers text outside the transcript until the same boundaries used by
+    // the main session. A subsequent delta always starts a fresh message.
+    flushBufferedText(s) {
+      const text = s.askBufferedText || '';
+      s.askBufferedText = '';
+      if (!text) return null;
+      const row = { role: 'ai', text, ts: Date.now() };
+      s.msgs.push(row);
+      cfg.onPersist?.(s);
+      if (s === cfg.activeSession() && dlg.isOpen()) {
+        dlg.render();
+        dlg.settleCol([row]);
+      }
+      return row;
+    },
     processWorkline(s, msg) {
       if (!cfg.workline || !s || !s.busy) return;
+      if (msg.type === 'toolCallDetected' || msg.type === 'toolStart' || msg.type === 'roundComplete') dlg.flushBufferedText(s);
       s.lastFrameAt = Date.now();
-      if (!s.askProcess) s.askProcess = [];
       if (msg.type === 'thinkingDelta') {
         if (s.askLastKind !== 'thinking') s.askThinking = '';
         s.askLastKind = 'thinking';
         s.askThinking = (s.askThinking || '') + (msg.delta || '');
-        let item = s.askProcess[s.askProcess.length - 1];
-        if (!item || item.kind !== 'thinking') { item = { kind: 'thinking', text: '' }; s.askProcess.push(item); }
-        item.text += msg.delta || '';
       }
       if (msg.type === 'toolCallDetected' || msg.type === 'toolStart') {
         s.askLastKind = 'tool';
         s.askTool = msg.label || msg.toolName || msg.name || 'Tool';
         s.askToolDetail = '';
-        const last = s.askProcess[s.askProcess.length - 1];
-        if (!last || last.kind !== 'tool' || last.name !== s.askTool) s.askProcess.push({ kind: 'tool', name: s.askTool, text: s.askTool });
       }
       if (msg.type === 'toolArgDelta') {
         s.askToolDetail = (s.askToolDetail || '') + (msg.delta || '');
-        const item = s.askProcess[s.askProcess.length - 1];
-        if (item && item.kind === 'tool') item.text = item.name + '\n' + s.askToolDetail;
-      }
-      if (msg.type === 'toolEnd') {
-        const item = s.askProcess[s.askProcess.length - 1];
-        if (item && item.kind === 'tool') item.text += '\n' + (msg.summary || msg.content || '');
       }
       if (s !== cfg.activeSession() || !dlg.isOpen()) return;
       if (!typingNode || !typingNode.isConnected) dlg.appendTyping();
@@ -758,7 +752,7 @@ export function createAskDialog(cfg) {
       input.value = '';
       input.style.height = 'auto';
       // ④ 双泡修复批 2026-10-31：发问时**不再预压空 ai 泡**——等待期只有 typing。
-      if (cfg.workline) { s.askThinking = ''; s.askTool = ''; s.askToolDetail = ''; s.askLastKind = ''; s.askProcess = []; }
+      if (cfg.workline) { s.askThinking = ''; s.askTool = ''; s.askToolDetail = ''; s.askLastKind = ''; s.askBufferedText = ''; }
       const userRow = { role: 'user', text: v, ts: Date.now() };
       if (picked.length) userRow.images = picked.map((p) => ({ name: p.name, url: p.url }));
       s.msgs.push(userRow);
@@ -785,6 +779,7 @@ export function createAskDialog(cfg) {
     /** 收：终态（busy 清 + 中断钮让位；幂等）。 */
     settleTurn(s, outcome = 'replied') {
       if (!s) return;
+      if (cfg.workline) dlg.flushBufferedText(s);
       s.busy = false;
       // 只从「处理中」落到终态；已落终态（如先点停、后到的服务端 done）不被覆盖。
       if (s.replyState === 'working') s.replyState = outcome;
@@ -889,6 +884,10 @@ export function createAskDialog(cfg) {
         case 'delta': {
           if (!(entry === cfg.activeSession() && dlg.isOpen())) entry.unread = true;
           dlg.armTurn(entry);
+          if (cfg.workline) {
+            entry.askBufferedText = (entry.askBufferedText || '') + (msg.delta || '');
+            return consumed();
+          }
           const last = entry.msgs[entry.msgs.length - 1];
           if (!last || last.role !== 'ai') entry.msgs.push({ role: 'ai', text: '', ts: Date.now() });
           const ai = entry.msgs[entry.msgs.length - 1];
