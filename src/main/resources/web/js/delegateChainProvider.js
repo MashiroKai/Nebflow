@@ -185,6 +185,8 @@ const chainFetchedAt = new Map();
 const chainDigests = new Map();
 /** 上一次摘要面的 fingerprint（`?since=` 零增量判据；空串 = 首次全量）。 */
 let digestsFingerprint = '';
+// Only the batch endpoint can establish that a key has a persisted chain.
+let digestsReady = false;
 /** 按需补拉队列（行键）与出队定时器：渲染面真用到某键时才排队，逐条、有间隔。 */
 const lazyQueue = [];
 const lazyQueued = new Set();
@@ -402,7 +404,7 @@ async function refreshChain(key) {
 
 /**
  * 批量摘要（一次请求）：返回**内容变了的键集**。摘要面不可用（旧引擎 404 / 429 /
- * 坏形）⇒ 空集 = 只按「缺/活跃到期」两条判据取详情（旧行为的安全子集）。
+ * 坏形）⇒ 保留最后一次有效摘要；尚无有效摘要时不猜测链是否存在。
  */
 async function refreshDigests() {
   const body = await fetchJson(CHAINS_API.digests(digestsFingerprint));
@@ -414,6 +416,7 @@ async function refreshDigests() {
   }
   const map = body.digests && typeof body.digests === 'object' && !Array.isArray(body.digests) ? body.digests : null;
   if (!map) return new Set();
+  digestsReady = true;
   const changed = new Set();
   for (const [k, d] of Object.entries(map)) {
     const next = String(d || '');
@@ -436,7 +439,7 @@ function drainLazy() {
   lazyQueued.delete(key);
   lazyTimer = setTimeout(() => {
     lazyTimer = null;
-    if (!key || emptyKeys.has(key) || mirror.chains.has(key)) {
+    if (!key || !digestsReady || !chainDigests.has(key) || emptyKeys.has(key) || mirror.chains.has(key)) {
       drainLazy();
       return;
     }
@@ -668,7 +671,6 @@ async function refresh() {
   for (const k of Array.from(mirror.chains.keys())) {
     if (!keys.has(k)) {
       mirror.chains.delete(k);
-      chainDigests.delete(k);
       chainFetchedAt.delete(k);
     }
   }
@@ -683,7 +685,7 @@ async function refresh() {
   for (const row of rows) {
     const k = rowKey(row);
     const active = ACTIVE_STATUSES.has(String(row.status || ''));
-    if (k) {
+    if (k && digestsReady && chainDigests.has(k)) {
       const cached = mirror.chains.has(k);
       const due = !cached || changed.has(k) ||
         (active && now - (chainFetchedAt.get(k) || 0) > DETAIL_TTL_MS);
