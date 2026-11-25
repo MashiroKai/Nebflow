@@ -43,6 +43,13 @@ class AskHostToolsSpec extends CatsEffectSuite:
     yield ())
   }
 
+  test("takeover session parser rejects missing duplicate or malformed session fields") {
+    assertEquals(AskHostTool.takeoverSession("[BU-TAKEOVER]\nsession: work"), Some("work"))
+    assertEquals(AskHostTool.takeoverSession("[BU-TAKEOVER]\nsession: work\nsession: other"), None)
+    assertEquals(AskHostTool.takeoverSession("[BU-TAKEOVER]\nsession: ../bad"), None)
+    assertEquals(AskHostTool.takeoverSession("ordinary\nsession: work"), None)
+  }
+
   test("BU takeover marker is recognized only as the exact leading line") {
     assert(AskHostTool.isBrowserTakeover("[BU-TAKEOVER]\nsession: work\nscreenshot: /tmp/a.png"))
     assert(!AskHostTool.isBrowserTakeover("ordinary [BU-TAKEOVER]"))
