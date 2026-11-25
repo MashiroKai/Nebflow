@@ -176,9 +176,17 @@ class Relay:
   host,base,key=target; path=base+'/'+('/'.join(parts[2:])); length=h.headers.get('Content-Length','')
   if not length.isdecimal() or int(length)>10485760: h.send_error(400); return
   try:
-   if hasattr(h,'connection'): h.connection.settimeout(self.args.timeout)
-   body=h.rfile.read(int(length))
-   if len(body)!=int(length): raise ValueError('short body')
+   # One monotonic budget covers the entire body, not each individual read.
+   body_deadline=time.monotonic()+self.args.timeout; remaining_bytes=int(length); chunks=[]
+   while remaining_bytes:
+    remaining_time=body_deadline-time.monotonic()
+    if remaining_time<=0: raise TimeoutError('request body deadline')
+    if hasattr(h,'connection'): h.connection.settimeout(remaining_time)
+    chunk=h.rfile.read1(min(remaining_bytes,65536))
+    if not chunk: raise ValueError('short body')
+    chunks.append(chunk); remaining_bytes-=len(chunk)
+   if time.monotonic()>body_deadline: raise TimeoutError('request body deadline')
+   body=b''.join(chunks)
   except (OSError,ValueError):
    h.send_error(400,'incomplete request body'); return
   finally:
