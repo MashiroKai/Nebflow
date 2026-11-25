@@ -57,6 +57,13 @@ class BrowserVerbsSpec extends CatsEffectSuite:
     assert(tickets.consume(c, t => t.agent == "different-owner").isEmpty)
   }
 
+  test("takeover input protocol admits only bounded mouse keyboard and wheel events") {
+    assert(BrowserTakeoverInput.valid(Json.obj("type" -> "mouseMoved".asJson, "x" -> 12.asJson, "y" -> 20.asJson)))
+    assert(!BrowserTakeoverInput.valid(Json.obj("type" -> "Runtime.evaluate".asJson)))
+    assert(!BrowserTakeoverInput.valid(Json.obj("type" -> "mouseMoved".asJson, "x" -> (-1).asJson, "y" -> 1.asJson)))
+    assert(!BrowserTakeoverInput.valid(Json.obj("type" -> "insertText".asJson, "text" -> ("x" * 4097).asJson)))
+  }
+
   test("screencast frames acknowledge every received frame and retain only the newest") {
     val acknowledgements = scala.collection.mutable.ListBuffer.empty[Int]
     val frames = new BrowserFrameBuffer(id => acknowledgements += id)
