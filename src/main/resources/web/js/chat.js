@@ -839,7 +839,7 @@ export function appendAiText(text, mark) {
     bubble._nfSeg = seg;
     bubble._nfRound = mark.round;
   }
-  if (_aiBodyStream) {
+  if (_aiBodyStream && view.id !== 'primary') {
     // rAF 合批 ⇒ 每帧至多一次渲染（多帧 delta 合并成一帧），尾块增量 ⇒ 单帧成本
     // 与「未闭合尾块长度」同阶而非与累积全文同阶。跟随钉底收进 rAF 同拍（与
     // agent/ask 两腿同构）——因此这里不再同步读一次 scrollHeight（把该几何读留给
