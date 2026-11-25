@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Test-only constrained HTTPS relay. Not approved for production use."""
-import argparse, fcntl, http.client, json, math, os, re, socket, socketserver, ssl, sys, threading, time, urllib.parse, uuid
+import argparse, fcntl, http.client, itertools, json, math, os, re, socket, socketserver, ssl, sys, threading, time, urllib.parse, uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 class Server(socketserver.ThreadingMixIn, HTTPServer):
@@ -13,7 +13,7 @@ class Relay:
   self.grace=grace; self.exit_fn=exit_fn; self.stop_fired=False; self.finished=threading.Event(); self.watchdog_lock=threading.Lock(); self.watchdog_started=False
   self.lock_timeout=lock_timeout; self.abort_timeout=abort_timeout; self.append_override=append_override
   self.rejection_lock=threading.Condition(); self.unrecorded_rejections=0; self.rejections={}
-  self.append_lock=threading.RLock()
+  self.append_lock=threading.Lock(); self.append_inflight={}; self._anon=itertools.count(); self.exiting=False
   with self.append_lock: self.sealed=False
   self.dialer=dialer or (lambda host,port,timeout: http.client.HTTPSConnection(host,port,timeout=timeout,context=ssl.create_default_context()))
   self.routes={}
@@ -118,8 +118,13 @@ class Relay:
  def append_record(self,obj,sidecar=False):
   with self.append_lock:
    if self.sealed: return False
+   key=obj.get('record_id') or ('anon',next(self._anon))
+   self.append_inflight[key]=obj.get('seq')
+  try:
    if sidecar: return self._sidecar_unlocked(obj)
    return self._event_unlocked(obj)
+  finally:
+   with self.append_lock: self.append_inflight.pop(key,None)
  def _event_unlocked(self,obj):
   obj=dict(obj); obj.setdefault('record_id',uuid.uuid4().hex)
   # Separate open descriptions serialize both threads and processes.
@@ -131,18 +136,18 @@ class Relay:
     except BlockingIOError:
      left=end-time.monotonic()
      if left<=0:
-      return self.sidecar(obj)
+      return self._sidecar_unlocked(obj)
      threading.Event().wait(min(left,0.01))
    try:
     # A waiter may have opened the old inode before an atomic replacement.
     if os.fstat(ledger.fileno()).st_ino != os.stat(self.args.ledger).st_ino:
-     return self.sidecar(obj)
+     return self._sidecar_unlocked(obj)
     try:
      data=json.dumps(obj,separators=(',',':'))+'\n'
      if ledger.write(data)!=len(data): raise OSError('short ledger write')
      ledger.flush(); os.fsync(ledger.fileno()); return True
     except OSError:
-     return self.sidecar(obj)
+     return self._sidecar_unlocked(obj)
    finally: fcntl.flock(ledger.fileno(),fcntl.LOCK_UN)
  def rejection_event(self,obj):
   obj=dict(obj); obj.setdefault('record_id',uuid.uuid4().hex); identity=obj['record_id']
@@ -161,6 +166,12 @@ class Relay:
   threading.Thread(target=finalize,daemon=True).start()
   if not done.wait(self.lock_timeout+self.abort_timeout): return False
   with self.rejection_lock: return self.rejections[identity]=='recorded'
+ def exit_abort(self,obj):
+  with self.append_lock:
+   if not self.sealed: raise RuntimeError('abort before sealing')
+   if obj.get('status')!='aborted-on-exit': raise ValueError('invalid exit record')
+   self.exiting=True
+  return self._sidecar_unlocked(obj)
  def shutdown_summary(self):
   with self.rejection_lock: count=self.unrecorded_rejections
   print(json.dumps({'unrecorded_rejections':count}),file=sys.stderr,flush=True)
@@ -184,20 +195,13 @@ class Relay:
   self.fire_stop(fire)
  def force_after_grace(self):
   if self.finished.wait(self.grace): return
-  snapshot=self.active.copy()
-  def record_abort():
-   try:
-    for seq,trace in snapshot.items():
-     self.sidecar({'seq':seq,'status':'aborted-on-exit','time':time.time(),'rule_id':None,'trace_id':trace,'record_id':uuid.uuid4().hex})
-   except OSError: pass
-  writer=threading.Thread(target=record_abort,daemon=True); writer.start()
-  writer.join(self.abort_timeout)
   if self.append_lock.acquire(timeout=self.abort_timeout):
    try:
-    self.sealed=True
-    print(json.dumps({'sealed':True}),file=sys.stderr,flush=True)
+    self.sealed=True; pending=dict(self.append_inflight)
    finally: self.append_lock.release()
-  else: print(json.dumps({'sealed':False}),file=sys.stderr,flush=True)
+   print(json.dumps({'sealed':True}),file=sys.stderr,flush=True)
+  else:
+   pending=None; print(json.dumps({'sealed':False}),file=sys.stderr,flush=True)
   self.shutdown_summary(); self.exit_fn(2)
  def handle(self,h):
   start=time.monotonic(); parsed=urllib.parse.urlsplit(h.path); parts=parsed.path.split('/'); route=parts[1] if len(parts)>1 else ''; target=self.routes.get(route)
