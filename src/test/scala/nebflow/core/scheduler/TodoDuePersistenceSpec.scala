@@ -59,6 +59,19 @@ class TodoDuePersistenceSpec extends CatsEffectSuite:
 
   private def withDue(value: Json): Json = legacy.deepMerge(Json.obj("due" -> value))
 
+  test("claiming a due occurrence twice settles it only once"):
+    val dir = os.temp.dir(prefix = "occurrence-claim-")
+    val store = new ScheduledTaskStore(dir)
+    val occurrence = TodoOccurrence.create("old", 1000L, 0L)
+    val initial = legacy.as[ScheduledTask].toOption.get.copy(occurrences = List(occurrence))
+    for
+      _ <- store.addTask(initial)
+      first <- store.claimOccurrence("old", occurrence.key, 1000L)
+      second <- store.claimOccurrence("old", occurrence.key, 1000L)
+    yield
+      assert(first, "first due claim must win")
+      assert(!second, "the same occurrence must not settle twice")
+
   test("device time zone accepts IANA regions and requests clarification without a source"):
     assertEquals(TodoDue.deviceZone(Some("Asia/Tokyo")), Some("Asia/Tokyo"))
     List(None, Some(""), Some("Not/AZone"), Some("+09:00")).foreach { value =>

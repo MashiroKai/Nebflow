@@ -454,6 +454,22 @@ class ScheduledTaskStore(
         .flatMap(_.traverse_(task => advance(task.sessionId, task)))
     }
 
+  def claimOccurrence(taskId: String, occurrenceId: String, now: Long): IO[Boolean] =
+    withStoreLock {
+      scanUnlocked(_.id == taskId, sort = false).flatMap { copies =>
+        distinctById(copies).headOption match
+          case None if copies.nonEmpty => IO.raiseError(new IllegalStateException("conflicting task revisions"))
+          case None => IO.pure(false)
+          case Some(task) =>
+            val eligible = task.occurrences.exists(o => o.key == occurrenceId && o.settledAt.isEmpty &&
+              o.missedReason.isEmpty && o.scheduledAt <= now)
+            if !eligible then IO.pure(false)
+            else updateByIdUnlocked(taskId)(t => t.copy(occurrences = t.occurrences.map { o =>
+              if o.key == occurrenceId then o.copy(settledAt = Some(now)) else o
+            })).as(true)
+      }
+    }
+
   def addTask(task: ScheduledTask): IO[Unit] =
     withStoreLock(addUnlocked(task))
 

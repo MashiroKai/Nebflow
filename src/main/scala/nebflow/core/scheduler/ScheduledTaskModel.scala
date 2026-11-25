@@ -137,9 +137,12 @@ final case class TodoOccurrence(
   todoId: String,
   scheduledAt: Long,
   ruleVersion: Long,
-  nextReminderAt: Option[Long] = None
+  nextReminderAt: Option[Long] = None,
+  settledAt: Option[Long] = None,
+  stableId: Option[String] = None,
+  missedReason: Option[String] = None
 ):
-  def key: String = s"${todoId.length}:$todoId:$scheduledAt"
+  def key: String = stableId.getOrElse(s"${todoId.length}:$todoId:$scheduledAt")
 
 object TodoOccurrence:
   given Codec[TodoOccurrence] = io.circe.generic.semiauto.deriveCodec
