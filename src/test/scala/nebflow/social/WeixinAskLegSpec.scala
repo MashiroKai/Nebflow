@@ -495,8 +495,7 @@ class WeixinAskLegSpec extends CatsEffectSuite:
       rootSessionGate = Some(_ => true),
       send = _ => out.seam
     )
-    val seen = cats.effect.Deferred.unsafe[IO, Unit]
-    val count = Ref.unsafe[IO, Int](0)
+    val seen = List.fill(3)(cats.effect.Deferred.unsafe[IO, Unit])
     val answers = List.fill(3)(cats.effect.Deferred.unsafe[IO, List[String]])
     def sink(i: Int): nebflow.actor.ActorRef[List[String]] = new nebflow.actor.ActorRef[List[String]]:
       def path: nebflow.actor.ActorPath = nebflow.actor.ActorPath("weixin-three-pending", List(s"sink-$i"))
@@ -509,12 +508,14 @@ class WeixinAskLegSpec extends CatsEffectSuite:
       _ <- p.start(ctx)
       _ <- hub ! nebflow.actor.InteractionHubCommand.RegisterRoot("s1", (frame: Json) =>
         if frame.hcursor.get[String]("type").toOption.contains("askUser") then
-          p.onAgentEvent("s1", frame) *> count.updateAndGet(_ + 1).flatMap(n => if n == 3 then seen.complete(()).void else IO.unit)
+          p.onAgentEvent("s1", frame) *> frame.hcursor.get[String]("requestId").toOption.fold(IO.unit) { rid =>
+            seen(rid.stripPrefix("three-").toInt).complete(()).void
+          }
         else IO.unit
       )
       _ <- List(0, 1, 2).traverse_ { i =>
         val rid = s"three-$i"
-        hub ! nebflow.actor.InteractionHubCommand.Request(nebflow.actor.InteractionRequest(
+        (hub ! nebflow.actor.InteractionHubCommand.Request(nebflow.actor.InteractionRequest(
           requestId = rid,
           kind = nebflow.actor.InteractionKind.AskUser,
           payload = Json.obj("items" -> Json.fromValues(simpleItems)),
@@ -522,9 +523,8 @@ class WeixinAskLegSpec extends CatsEffectSuite:
           rootSessionId = "s1",
           sourceAgent = "probe",
           sourceSession = "s1"
-        ))
+        ))) *> seen(i).get.timeout(scala.concurrent.duration.DurationInt(10).seconds)
       }
-      _ <- seen.get.timeout(scala.concurrent.duration.DurationInt(10).seconds)
       closed <- ctx.closed.get
       pending <- hub.?[List[Json]](reply => nebflow.actor.InteractionHubCommand.ListPendingAsks("s1", reply))
       _ = assertEquals(closed, List.empty)
