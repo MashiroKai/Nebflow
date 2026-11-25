@@ -171,6 +171,32 @@ const T_B = '找到关键线索了：收起分组在turnGroup.js，继续核对�
 const T_FINAL = '这是最终回复：中间过程已收起，回复与卡片照常可见。';
 const T_FINAL2 = '新回合的最终回复。';
 
+for (const width of [390, 1280]) {
+  test(`turn header geometry matches with and without injection ${width}`, async ({ browser }) => {
+    const { context, page } = await newPage(browser, { viewport: { width, height: 900 }, reducedMotion: 'reduce' });
+    const msgs = [
+      { type: 'user', text: '开轮' },
+      { type: 'tool', label: 'Read', summary: 'ok', content: 'x', isError: false },
+      { type: 'user', injected: true, source: 'deviceMail', text: '注入' },
+      { type: 'ai', text: '完成', durationMs: 3000, model: 'test-model' },
+    ];
+    const geometry = async messages => {
+      await page.evaluate(m => window.__history(m, { busyTail: false }), messages);
+      return page.locator('.turn-header').evaluate(el => {
+        const r = el.getBoundingClientRect();
+        return { x: r.x, y: r.y, width: r.width, height: r.height, top: r.top, right: r.right, bottom: r.bottom, left: r.left };
+      });
+    };
+    const withInjection = await geometry(msgs);
+    const stack = page.locator('[data-nf-injection-stack]');
+    expect(await stack.evaluate(el => ({ children: el.children.length, nodes: el.childNodes.length, gap: getComputedStyle(el).gap }))).toEqual({ children: 1, nodes: 1, gap: 'normal' });
+    await expect(stack.locator('.nf-injection-stack-face')).toHaveCount(0);
+    const withoutInjection = await geometry(msgs.filter(m => !m.injected));
+    expect(withInjection).toEqual(withoutInjection);
+    await context.close();
+  });
+}
+
 for (const scheme of ['light', 'dark']) for (const width of [390, 1280]) {
   test(`collapsed injection has no visible bubble ${scheme} ${width}`, async ({ browser }) => {
     const { context, page } = await newPage(browser, { colorScheme: scheme, viewport: { width, height: 900 }, reducedMotion: 'reduce' });
