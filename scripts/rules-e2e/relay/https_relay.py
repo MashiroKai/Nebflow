@@ -200,7 +200,8 @@ class Relay:
     if final: self.stopping=True
   if final: self.start_watchdog()
   if rejected:
-   self.event({'seq':seq,'status':'rejected-limit','method':'POST','host':host,'path':path,'dial':False,'time':time.time(),'rule_id':None,'trace_id':trace[0]}); h.send_error(429); return
+   h.send_error(429)
+   self.event({'seq':seq,'status':'rejected-limit','method':'POST','host':host,'path':path,'dial':False,'time':time.time(),'rule_id':None,'trace_id':trace[0]}); return
   try:
    self.event({'seq':seq,'status':'reserved','method':'POST','host':host,'path':path,'dial':False,'time':time.time(),'rule_id':None,'trace_id':trace[0]})
   except OSError:

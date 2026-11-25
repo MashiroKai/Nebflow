@@ -8,6 +8,7 @@ mutations={
  'short':("if not chunk: raise ValueError('short body')", "if not chunk: break", 'test_short_body_rejected'),
  'body-deadline':("body_deadline-time.monotonic()", "self.args.timeout", 'test_slow_upload_total_deadline'),
  'once':("if self.watchdog_started: return", "if False: return", 'test_watchdog_only_starts_once'),
+ 'limit-stop':("if final: self.start_watchdog()", "if final: pass", 'test_limit_hard_stop_ledger_lock'),
 }
 name=sys.argv[1]; mode=sys.argv[2]; old,new,test=mutations[name]
 if source.count(old)!=1: raise SystemExit('mutation anchor is not unique')

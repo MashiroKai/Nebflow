@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Loopback checks for bounded body reads and stopping; no external network."""
-import http.client, io, math, os, pathlib, socket, subprocess, sys, tempfile, threading, time, types, unittest
+import fcntl, http.client, io, json, math, os, pathlib, socket, subprocess, sys, tempfile, threading, time, types, unittest
 from unittest.mock import patch
 from relay_concurrency_test import m, args
 
@@ -60,7 +60,10 @@ class H(m.BaseHTTPRequestHandler):
  def log_message(self,*a): pass
  def do_POST(self): r.handle(self)
 server=m.Server(("127.0.0.1",0),H); print("PORT",server.server_port,flush=True)
-if sys.argv[3]=="deadline": threading.Timer(.3,r.deadline).start()
+if sys.argv[3]=="deadline":
+ def stop():
+  print("DEADLINE",flush=True); r.deadline()
+ threading.Timer(.3,stop).start()
 server.serve_forever()'''
   for trigger,kind in [('limit','dns'),('deadline','dns'),('limit','response'),('deadline','response'),('limit','fsync'),('deadline','fsync'),('deadline','state-lock')]:
    with self.subTest(trigger=trigger,kind=kind), tempfile.TemporaryDirectory(dir=os.environ['RELAY_EVIDENCE_DIR']) as tmp:
@@ -73,9 +76,16 @@ server.serve_forever()'''
      c.sendall(('POST /one/chat HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Length: 2\r\nX-Stand-Trace-Id: first\r\n\r\n{}'%port).encode())
      if kind in ('dns','fsync'): self.assertEqual(p.stdout.readline().strip(),'BLOCKED')
      if kind=='response': conn,_=up.accept(); conn.settimeout(2); self.assertIn(b'POST ',conn.recv(4096))
-     if trigger=='limit' and kind in ('dns','response'):
+     if kind!='state-lock':
+      if trigger=='deadline': self.assertEqual(p.stdout.readline().strip(),'DEADLINE')
+      ledger=pathlib.Path(tmp)/'ledger'
+      records=[json.loads(line) for line in ledger.read_text().splitlines()]
+      self.assertEqual(sum(x['status']=='reserved' for x in records),1)
+      self.assertIsNone(p.poll()); start=time.monotonic()
       second=http.client.HTTPConnection('127.0.0.1',port,timeout=2); second.request('POST','/one/chat',b'{}',{'X-Stand-Trace-Id':'second'}); self.assertEqual(second.getresponse().status,429); second.close()
-     self.assertEqual(p.wait(timeout=3),2,p.stderr.read()); c.close()
+      self.assertEqual(p.wait(timeout=3),2,p.stderr.read()); self.assertGreater(time.monotonic()-start,.1)
+     else: self.assertEqual(p.wait(timeout=3),2,p.stderr.read())
+     c.close()
      if kind=='response': conn.close()
     finally:
      if p.poll() is None:
@@ -85,6 +95,24 @@ server.serve_forever()'''
        p.kill(); p.wait(timeout=2)
       self.assertIsNotNone(p.returncode)
      p.stdout.close(); p.stderr.close(); up.close()
+ def test_limit_hard_stop_ledger_lock(self):
+  a=args(self.path,1); blocked=threading.Event(); release=threading.Event(); exited=threading.Event(); codes=[]
+  relay=m.Relay(a,grace=.4,abort_timeout=.1,lock_timeout=5,exit_fn=lambda code:(codes.append(code),exited.set()))
+  self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
+  from relay_concurrency_test import H
+  f=open(self.path,'a'); self.addCleanup(f.close); fcntl.flock(f,fcntl.LOCK_EX)
+  original=relay.event
+  def event(obj):
+   if obj['status']=='reserved': blocked.set()
+   return original(obj)
+  relay.event=event
+  def work():
+   try: relay.handle(H('first'))
+   finally: release.set()
+  worker=threading.Thread(target=work,daemon=True); worker.start(); self.assertTrue(blocked.wait(1))
+  self.assertEqual(relay.count,1); self.assertTrue(relay.stopping); self.assertFalse(exited.wait(.15)); self.assertTrue(exited.wait(1)); self.assertEqual(codes,[2])
+  self.assertEqual(json.loads(pathlib.Path(str(self.path)+'.abort').read_text())['status'],'aborted-on-exit')
+  fcntl.flock(f,fcntl.LOCK_UN); self.assertTrue(release.wait(2)); worker.join(1)
  def test_watchdog_only_starts_once(self):
   relay=m.Relay(args(self.path),grace=1,exit_fn=lambda code:None)
   self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
