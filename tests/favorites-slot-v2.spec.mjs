@@ -20,6 +20,9 @@ try {
   await s.page.waitForSelector('#canvas-fav-btn.is-on');
   await s.page.click('#favorites-btn');
   await s.page.waitForSelector('#panel-favorites .cfp-remove');
+  const geometry=await s.page.evaluate(()=>{const r=q=>document.querySelector(q).getBoundingClientRect();const title=r('#panel-favorites .cfp-row-title'), star=r('#panel-favorites .cfp-remove svg'), headerTitle=r('#canvas-title'),headerStar=r('#canvas-fav-btn');return {title:{right:title.right,top:title.top,bottom:title.bottom},star:{left:star.left,top:star.top,bottom:star.bottom},headerTitle:{right:headerTitle.right},headerStar:{left:headerStar.left}};});
+  assert(geometry.star.left>=geometry.title.right && geometry.star.top<geometry.title.bottom && geometry.star.bottom>geometry.title.top,'row star right of title line');
+  assert(geometry.headerStar.left>=geometry.headerTitle.right,'canvas star right of title');
   await s.page.evaluate(() => { window.__favoriteToasts=[]; window.__showToast=(...args)=>window.__favoriteToasts.push(args); });
   let count=0;
   await s.page.route('**/api/canvas-favorites', route => {

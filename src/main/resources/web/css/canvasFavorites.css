@@ -1,5 +1,5 @@
 /* canvasFavorites.css — Canvas 文档收藏三端样式（2026-11-23 前端功能批）。
-   收藏钮 = 顶部胶囊左座（.canvas-fav-btn）；侧边栏区 = #canvas-fav-section；手机 = .mf-hub-fav 内的同源列表。
+   收藏钮位于顶部标题右侧（.canvas-fav-btn）；侧边栏区 = #canvas-fav-section；手机 = .mf-hub-fav 内的同源列表。
    颜色 / 圆角 / 焦点环只经 var(--ds-*) 令牌；文本不截断（换行而非省略号）。 */
 
 .canvas-fav-btn {
@@ -167,8 +167,9 @@ body.mobile-layer .mf-strip-chip .mf-cv-star svg { width: 18px; height: 18px; }
 }
 .cfp-row:active { opacity: .75; }
 .cfp-row-container { position: relative; min-width: 0; }
-.cfp-row-container .cfp-row { box-sizing: border-box; padding-bottom: var(--ds-capsule-end-size); }
-.cfp-remove { position: absolute; right: 0; bottom: 0; opacity: 0; }
+.cfp-row-container .cfp-row { box-sizing: border-box; align-items: flex-start; }
+.cfp-row-container .cfp-thumb { align-self: flex-end; margin-top: var(--ds-capsule-end-size); }
+.cfp-remove { position: absolute; right: 0; top: 0; opacity: 0; }
 .cfp-remove svg { width: 18px; height: 18px; }
 .cfp-row-container:hover .cfp-remove, .cfp-row-container:focus-within .cfp-remove { opacity: 1; }
 @media (hover: none) { .cfp-remove { opacity: 1; } }
