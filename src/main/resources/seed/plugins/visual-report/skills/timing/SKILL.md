@@ -39,7 +39,7 @@ description: 接口/总线时序报告（WaveDrom 波形）；时序图任务使
 
 ## 时序图
 
-（≤3 图；每图 = 渲染出的 SVG 用 ![...](~/...) 嵌入 + wavejson 源码完整附后）
+（≤3 图；Markdown 正文嵌入渲染出的 PNG，vault 用相对路径；PDF 仅供下载、Mermaid 围栏允许，公式用 LaTeX；wavejson 源码完整附后）
 
 ## 逐段解读
 
@@ -63,8 +63,8 @@ description: 接口/总线时序报告（WaveDrom 波形）；时序图任务使
 
 ```bash
 # 主途径
-npx -y wavedrom-cli -i <wavejson>.json -s <出图>.svg   # SVG 交付物
-npx -y wavedrom-cli -i <wavejson>.json -p <预览>.png   # 仅 PNG 预览 / 目检
+npx -y wavedrom-cli -i <wavejson>.json -s <出图>.svg   # SVG 可选源文件
+npx -y wavedrom-cli -i <wavejson>.json -p <预览>.png   # PNG 正文图及目检
 # 暗色适配（core §3 要求；幂等，只注入 CSS 不动几何）
 C:\Users\name\.nebflow\tools\viz-venv\Scripts\python.exe C:\Users\name\.nebflow\skills\visual-report-suite\timing\wavedrom_dark.py <出图>.svg
 # 备途径（python 2.0.3.post3）
@@ -85,7 +85,7 @@ WaveJSON 速查：`1/0` 电平、`p/n` 时钟、`x` 不定态、`z` 高阻、`.`
 
 1. **图文零矛盾（场景第一红线）**：时序先后、边沿对齐、覆盖窗口、因果关系不得与正文矛盾；图上每个 edge 标注数值必须能在信号表 / 参数表中逐字找到；派生数值给出精确算式，不四舍五入。
 2. **禁止手画 SVG（core 铁律 1）**：时序图只能由 wavedrom / matplotlib 生成落盘；缺工具走 §3 降级链，不空转。
-3. **必须真实渲染出文件再嵌入**：渲染命令跑完 → 核对文件存在且含 `<svg` → 才允许 `![](~/...)` 嵌入；渲染失败的 wavejson 不得进交付文档。出图落 `~/.nebflow/plots/**`（core §2 白名单）。
+3. **必须真实渲染出文件再嵌入**：核验 PNG 存在并可读，Markdown 正文嵌入 PNG；vault 使用附件相对路径。SVG 可选下载，渲染失败的 wavejson 不得冒充图件。
 4. **wavejson 源码随文档完整交付**：每图源码以 json 代码块附在图后，保证可复现、可 diff。
 5. **img 引用的 SVG 必须过暗色注入**（`wavedrom_dark.py`，core §3）。
 6. **数值逐字（core 铁律 2）**：参数表是唯一数据源；源里没有的参数不标注——需要就先补进参数表。

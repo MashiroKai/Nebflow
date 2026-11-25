@@ -41,7 +41,7 @@ visual-report 插件场景之一：把测试 / 实验 / 性能验证结果写成
 要点：
 
 - 「条件与方法」缺一不可——没有样本量与条件的报告按 §4 红线返工。
-- 图表嵌入一律 `![标题](~/.nebflow/plots/....svg)`，路径与白名单见 core §2；默认出图落 `~/.nebflow/plots/`。
+- Markdown 正文位图类图件内嵌 PNG；vault 内用 `attachments/` 或 `assets/` 相对路径。PDF 只作下载，Mermaid 围栏允许；公式用 LaTeX。
 - 空节不得删除：没有数据的节写「无数据 + 原因」，保持五节完整。
 
 ## 3. 工具链与自检
