@@ -13,6 +13,12 @@ const fixtures = [
   ['收藏硬编码', 'css/canvasFavorites.css', '#panel-favorites .cfp-sidebar .cfp-bar {', '#panel-favorites .cfp-sidebar .cfp-bar { border-radius: 7px;'],
   ['消息硬编码', 'css/searchField.css', '#panel-messages .fm-msg-search.has-query {', '#panel-messages .fm-msg-search.has-query { padding: 9px;'],
   ['绕开共享类', 'js/canvasFavoritesPage.js', "classList.add('panel-header')", "classList.add('private-header')"],
+  ['基线选择器重命名', 'css/split.css', '.explorer-header {', '.explorer-renamed {'],
+  ['通配选择器绕过', 'css/canvasFavorites.css', '#panel-favorites .cfp-sidebar .cfp-bar {', '#panel-favorites * { padding: 7px; }\n#panel-favorites .cfp-sidebar .cfp-bar {'],
+  ['属性选择器绕过', 'css/canvasFavorites.css', '#panel-favorites .cfp-sidebar .cfp-bar {', '#panel-favorites [class] { color: red; }\n#panel-favorites .cfp-sidebar .cfp-bar {'],
+  ['收藏装配注入', 'js/canvasFavoritesPage.js', "bar.className = 'cfp-bar';", "bar.className = 'cfp-bar'; bar.style.padding = '9px';"],
+  ['消息装配注入', 'js/panelSearch.js', "wrap.className = 'fm-msg-search panel-top-search';", "wrap.className = 'fm-msg-search panel-top-search'; wrap.setAttribute('style', 'color:red');"],
+  ['文件树注入改动', 'js/explorer.js', 'border:1px solid rgba(255,255,255,0.14)', 'border:2px solid rgba(255,255,255,0.14)'],
 ];
 for (const [name, file, from, to] of fixtures) test(name, () => {
   const temp = mkdtempSync(join(tmpdir(), 'sidebar-top-'));

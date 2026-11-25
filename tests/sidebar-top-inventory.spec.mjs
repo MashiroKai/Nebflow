@@ -31,6 +31,16 @@ try {
       return {header:get(header),title:get(title),search:get(search)};
      },{panel,header,title,search});
      await s.page.locator(panel).screenshot({path:join(out,`inventory-${name}-${theme}.png`),animations:'disabled'});
+     if (name === 'files') {
+      await s.page.locator('#explorer-tree').dispatchEvent('keydown',{key:'a',bubbles:true});
+      await s.page.waitForSelector('#explorer-search-row:not([hidden])',{state:'visible'});
+      await s.page.evaluate(() => document.getAnimations().forEach(a => a.finish()));
+      results[theme].filesExpanded = await s.page.evaluate(() => {
+       const get = selector => {const e=document.querySelector(selector),c=getComputedStyle(e),r=e.getBoundingClientRect();return {classes:e.className,display:c.display,height:c.height,padding:[c.paddingTop,c.paddingRight,c.paddingBottom,c.paddingLeft],radius:[c.borderTopLeftRadius,c.borderTopRightRadius,c.borderBottomRightRadius,c.borderBottomLeftRadius],border:c.border,background:c.backgroundColor,color:c.color,fontSize:c.fontSize,fontWeight:c.fontWeight,lineHeight:c.lineHeight,rect:{x:r.x,y:r.y,width:r.width,height:r.height}};};
+       return {header:get('.explorer-header'),title:get('.explorer-title'),search:get('#explorer-search-row'),input:get('#explorer-search')};
+      });
+      await s.page.locator(panel).screenshot({path:join(out,`inventory-files-expanded-${theme}.png`),animations:'disabled'});
+     }
    }
   } finally {await s.close();}
  }

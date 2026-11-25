@@ -23,6 +23,8 @@ for (const file of readdirSync(dir).filter(x => x.endsWith('.css'))) {
   // 匹配受控面板的专有选择器，禁止硬编码几何；共享类由下方精确契约限制。
   for (const m of text.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
     const selector = m[1].trim(), body = m[2];
+    // 受控面板下的通配和属性选择器可能绕开类名检查：明确禁止为其另写顶部造型。
+    if (/#panel-(?:favorites|messages|contacts|sessions)\b[^,{]*(?:\*|\[)/.test(selector) && /(?:border(?:-[\w-]+)?-radius|padding(?:-[\w-]+)?|margin(?:-[\w-]+)?|(?:row-|column-)?gap|font-size|color|background(?:-color)?)\s*:/i.test(body)) errors.push(`泛型侧栏选择器不可另画顶部样式 css/${file}: ${selector}`);
     const legacy = /(?:\.explorer-(?:header|title|search-row|search-input)|#explorer-search(?:-row)?|#fm-contacts-body\s+\.fm-search(?:-block)?)(?![\w-])/.test(selector);
     if (legacy) for (const declaration of body.split(';')) {
       const d = /^\s*(border(?:-[\w-]+)?-radius|padding(?:-[\w-]+)?|margin(?:-[\w-]+)?|(?:row-|column-)?gap|font-size|color|background(?:-color)?)\s*:\s*(.+?)\s*$/i.exec(declaration);
@@ -49,6 +51,17 @@ for (const [line, value] of [
   [1064, "    + 'border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);'"],
   [1065, "    + 'color:inherit;font:var(--ds-fs-hint)/1.4 inherit;');"],
 ]) if (explorerLines[line - 1] !== value) errors.push(`js/explorer.js:${line}: 文件树搜索旧账发生改动或移动`);
+// 已知装配点不得注入顶部内联造型；不声称可静态证明任意跨模块 DOM 写入。
+for (const [file, start, end] of [
+  ['js/panelSearch.js', 'function buildMsgSearch()', 'const status ='],
+  ['js/canvasFavoritesPage.js', 'function buildPage(', '// 分类 tab'],
+  ['js/canvasFavoritesPage.js', 'export function mountFavoritesSidebar()', 'void syncFavoritesFromEngine()'],
+]) {
+  const source = read(file), begin = source.indexOf(start), finish = source.indexOf(end, begin);
+  if (begin < 0 || finish < 0) { errors.push(`${file}: 顶部注入点定位失败`); continue; }
+  const section = source.slice(begin, finish);
+  if (/\.style\s*(?:\.|\[|=)|\.setAttribute\s*\(\s*['"]style['"]|\.style\.setProperty\s*\(/.test(section)) errors.push(`${file}: 已知顶部装配点禁止内联样式注入`);
+}
 const shared = read('css/searchField.css');
 if (!/\.panel-top-search\s*\{[^}]*padding:\s*var\(--ds-space-2\) var\(--ds-space-2\) 0\s*;/s.test(shared)) errors.push('css/searchField.css: 共享搜索区契约变更');
 if (errors.length) { console.error(`sidebar-top: RED\n${errors.join('\n')}`); process.exit(1); }
