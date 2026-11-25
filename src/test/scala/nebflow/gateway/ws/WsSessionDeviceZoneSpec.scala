@@ -15,6 +15,23 @@ import nebflow.shared.{NebflowServiceConfig, PathUtil, ServiceLlmConfig, Thinkin
 import scala.concurrent.duration.*
 
 class WsSessionDeviceZoneSpec extends CatsEffectSuite:
+  test("authenticated device reports are durable and select the newest zone deterministically") {
+    val root = os.temp.dir(prefix = "device-zone-reports-")
+    val reports = new nebflow.core.scheduler.DeviceZoneReports(root)
+    val tokyo = Json.obj("type" -> "takeoverIdentify".asJson, "clientId" -> "a".asJson, "timeZone" -> "Asia/Tokyo".asJson)
+    val paris = Json.obj("type" -> "takeoverIdentify".asJson, "clientId" -> "b".asJson, "timeZone" -> "Europe/Paris".asJson)
+    for
+      _ <- reports.recordIdentify(tokyo, authenticated = false, 100L)
+      empty <- reports.latest
+      _ = assertEquals(empty, None)
+      _ <- reports.recordIdentify(tokyo, authenticated = true, 100L)
+      _ <- reports.recordIdentify(paris, authenticated = true, 200L)
+      loaded <- new nebflow.core.scheduler.DeviceZoneReports(root).latest
+      _ = assertEquals(loaded.map(_.zoneId), Some("Europe/Paris"))
+      _ = assertEquals(loaded.map(_.deviceId), Some("browser:b"))
+      _ <- IO(os.remove.all(root))
+    yield ()
+  }
   test("gateway forwards a device zone with the user input") {
     val root = os.temp.dir(prefix = "device-zone-gateway-")
     val previousRoot = PathUtil.dataRoot
