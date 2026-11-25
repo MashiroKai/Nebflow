@@ -27,6 +27,22 @@ class AskHostToolsSpec extends CatsEffectSuite:
     assertEquals(AskHostTool.admitBrowserTakeover(true, "root", Some(marked), "work", registry), Right(()))
   }
 
+  test("concurrent takeover admissions grant exactly one lease") {
+    val pending = AskHostLedger.Pending("req", "worker", "root", "agent", "call")
+    val state = AskHostLedger.RequestState(pending, "[BU-TAKEOVER]\nsession: work", None, Nil)
+    val registry = new nebflow.core.browser.BrowserTakeoverRegistry
+    registry.created("work", "worker")
+    (for
+      gate <- Deferred[IO, Unit]
+      first <- (gate.get *> IO(AskHostTool.admitBrowserTakeover(true, "root", Some(state), "work", registry))).start
+      second <- (gate.get *> IO(AskHostTool.admitBrowserTakeover(true, "root", Some(state), "work", registry))).start
+      _ <- gate.complete(())
+      a <- first.joinWithNever
+      b <- second.joinWithNever
+      _ = assertEquals(List(a, b).count(_.isRight), 1)
+    yield ())
+  }
+
   test("BU takeover marker is recognized only as the exact leading line") {
     assert(AskHostTool.isBrowserTakeover("[BU-TAKEOVER]\nsession: work\nscreenshot: /tmp/a.png"))
     assert(!AskHostTool.isBrowserTakeover("ordinary [BU-TAKEOVER]"))

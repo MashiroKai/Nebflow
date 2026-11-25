@@ -43,6 +43,16 @@ class BrowserVerbsSpec extends CatsEffectSuite:
     assert(!registry.isTakingOver("work"))
   }
 
+  test("screencast frames acknowledge every received frame and retain only the newest") {
+    val acknowledgements = scala.collection.mutable.ListBuffer.empty[Int]
+    val frames = new BrowserFrameBuffer(id => acknowledgements += id)
+    frames.receive(1, "first")
+    frames.receive(2, "second")
+    assertEquals(acknowledgements.toList, List(1, 2))
+    assertEquals(frames.take(), Some("second"))
+    assertEquals(frames.take(), None)
+  }
+
   test("CDP event subscribers receive only their event and can unsubscribe") {
     val events = new CdpEventSubscriptions
     var received = List.empty[Int]
