@@ -64,6 +64,14 @@
   box-sizing: border-box;
 }
 
+/* 搜索筛选使用 button 而非 select，补入盒式材质并保留下方箭头。 */
+.search-filters .cfg-select {
+  background-color: var(--nf-field-bg);
+  border: var(--nf-field-border);
+  border-radius: var(--nf-field-radius);
+  box-shadow: var(--nf-field-shadow);
+}
+
 /* ── 裸件档：外壳已给材质，内件只留字 ────────────────────────────────────
    `.nf-field--bare` 是显式类；下面这串选择器是**已登记的成员**（都是嵌在
    成形容器里的输入：主会话输入条 / ask 输入条 / 记事本 / 画布查找条 /
@@ -141,6 +149,17 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes,
 .bgagent-model-switch {
   border-radius: var(--ds-radius-input);
   box-shadow: var(--btn-shadow);
+}
+
+/* 待办决策项：复选和单选仍保留原生输入语义。 */
+.tfl-row-detail .ta-qd-opt-input {
+  appearance: none;
+  flex: none;
+  width: var(--ds-space-4);
+  height: var(--ds-space-4);
+  margin: 0;
+  opacity: 0;
+  font: inherit;
 }
 
 /* ── 指针/常态焦点：中性，零环 ─────────────────────────────────────────────
