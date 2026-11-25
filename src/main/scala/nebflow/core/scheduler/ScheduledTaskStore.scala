@@ -472,7 +472,7 @@ class ScheduledTaskStore(
           case Some(old)
               if old.source.contains("user") && old.isTodo &&
                 old.content == task.content && old.name == task.name && old.detail == task.detail &&
-                old.project == task.project && old.priority == task.priority =>
+                old.project == task.project && old.priority == task.priority && old.due == task.due =>
             scanUnlocked(_.id == task.id, sort = false).flatMap { copies =>
               if distinctById(copies).contains(old) then IO.pure(old)
               else IO.raiseError(new IllegalStateException("stale or conflicting task revision"))
