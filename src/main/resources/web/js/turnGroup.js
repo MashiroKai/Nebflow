@@ -269,9 +269,17 @@ function untuckRows(rows) {
 
 /* ---------- injected-message secondary collapse ---------- */
 
+// A turn may be opened by an injection immediately before its badge. Keep
+// that original row in place while treating it as part of this badge's stack.
+function injectionRowsForHeader(header) {
+  const rows = scopeFromHeader(header).filter(isInjectedRow);
+  const opener = header.previousElementSibling;
+  if (opener && isInjectedRow(opener)) rows.unshift(opener);
+  return rows;
+}
+
 function syncInjectionStack(header) {
-  const scope = scopeFromHeader(header);
-  const rows = scope.filter(isInjectedRow);
+  const rows = injectionRowsForHeader(header);
   let stack = header.nextElementSibling;
   if (!stack || !stack.hasAttribute('data-nf-injection-stack')) stack = null;
   if (!rows.length) {
