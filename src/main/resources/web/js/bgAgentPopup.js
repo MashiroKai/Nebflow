@@ -446,6 +446,7 @@ function ensureStepView(sessionId) {
   // + tuckRows）与主窗同一 9.19 统一面（883712c40），零变化。chat.js / main.js
   // 各在飞渲染点读此标志分流；主窗与 flow 弹窗不置位 ⇒ 呈现零触碰。
   (/** @type {{nfBareProcessRows?: boolean}} */ (view)).nfBareProcessRows = true;
+  view.dom.chat.dataset.nfBareProcessRows = '1';
   // Hidden until the popup opens — ws.js gates DOM rendering while false.
   view.visible = false;
   // Register in the global view registry so findViewBySessionId() can route

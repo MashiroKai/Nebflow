@@ -283,6 +283,12 @@ function injectionRowsForHeader(header) {
 }
 
 function syncInjectionStack(header) {
+  if (header.closest('#chat')) {
+    const stack = header.nextElementSibling;
+    if (stack?.hasAttribute('data-nf-injection-stack')) stack.remove();
+    for (const row of injectionRowsForHeader(header)) row.classList.remove('nf-injection-stack-hidden');
+    return;
+  }
   const rows = injectionRowsForHeader(header);
   let stack = header.nextElementSibling;
   if (!stack || !stack.hasAttribute('data-nf-injection-stack')) stack = null;
@@ -375,6 +381,15 @@ function scopeFromHeader(header) {
 /** Persistent two-state toggle: click the header to expand / re-collapse.
  *  State rides on the header's dataset; the header text is never rewritten. */
 function bindHeaderToggle(header) {
+  if (header.closest('#chat')) {
+    header.querySelector('.nf-chevron')?.remove();
+    header.removeAttribute('role');
+    header.removeAttribute('tabindex');
+    header.removeAttribute('aria-expanded');
+    header.onclick = null;
+    header.onkeydown = null;
+    return;
+  }
   header.setAttribute('role', 'button');
   header.setAttribute('tabindex', '0');
   const toggle = () => {
@@ -492,6 +507,13 @@ export function collapseTurn(view, meta = {}) {
   const chat = view.dom.chat;
   const scope = turnScope(chat);
   const rows = scope.filter(el => el.classList && el.classList.contains('row'));
+  if (view.nfBareProcessRows || chat.id === 'chat') {
+    if (view.nfBareProcessRows) untuckRows(rows.filter(isTuckableRow));
+    else tuckRows(rows.filter(isTuckableRow));
+    removeWorkline(view);
+    markClosed(chat);
+    return null;
+  }
   // Ask ANSWER continuation (badge 并列复发修令, author 2026-10-07 09:25): a
   // terminal that lands while the turn's scope still holds an UNANSWERED ask
   // card is NOT a wheel-close. AskUserQuestion is non-blocking today (阻塞腿
@@ -807,6 +829,11 @@ function markInferredMidTurnRows(chat) {
 }
 
 export function buildTurnSummariesForHistory(chat, opts = {}) {
+  if (chat.dataset.nfBareProcessRows === '1' || chat.id === 'chat' || opts.bareProcess || opts.mainChat) {
+    if (chat.id === 'chat' || opts.mainChat) tuckRows(Array.from(chat.children).filter(isTuckableRow));
+    markClosed(chat);
+    return;
+  }
   const { busyTail = false } = opts;
   // tool-card-leak-on-reload 批（2026-11-02）：段边界判据之前先把**旧存量转录**的
   // 回合内插话行补标（新转录由后端 midTurn 字段在行构建期直接落标）。

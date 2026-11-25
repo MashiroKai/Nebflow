@@ -839,7 +839,7 @@ export function appendAiText(text, mark) {
     bubble._nfSeg = seg;
     bubble._nfRound = mark.round;
   }
-  if (_aiBodyStream) {
+  if (_aiBodyStream && view.id !== 'primary') {
     // rAF 合批 ⇒ 每帧至多一次渲染（多帧 delta 合并成一帧），尾块增量 ⇒ 单帧成本
     // 与「未闭合尾块长度」同阶而非与累积全文同阶。跟随钉底收进 rAF 同拍（与
     // agent/ask 两腿同构）——因此这里不再同步读一次 scrollHeight（把该几何读留给
@@ -916,6 +916,7 @@ export function finishAi(durationMs, model) {
       bubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '', true, rootFace ? { report: true } : undefined);
       if (rootFace) markZeroBlockFace(bubble, activeView.stream.aiText || '');
     }
+    if (activeView.dom.chat.id === 'chat') bubble.querySelectorAll('details.nf-human-details').forEach(el => el.remove());
     bubble._nfText = activeView.stream.aiText || '';
     const termText = bubble._nfText;
     void import('./viewers/markdown.js').then(({ termLinkify }) => {
@@ -4791,9 +4792,9 @@ const THINKING_WINDOW_EM = THINKING_WINDOW_MAX_LINES * 1.5; // 13px 档行高 1.
 /** 把思考内容窗钉在上限并写行数计数读数（源文本行数，非渲染行数）。
  *  写点＝四处：live rAF（appendThinkingDelta 流式帧）／finishThinking（终态
  *  帧）／persistence 两条历史重放腿——四点同一入口，读数与窗形不分家。 */
-export function applyThinkingWindowCap(contentEl, text) {
+export function applyThinkingWindowCap(contentEl, text, bareProcess = false) {
   if (!contentEl) return;
-  contentEl.style.maxHeight = THINKING_WINDOW_EM + 'em';
+  contentEl.style.maxHeight = bareProcess || contentEl.closest('[data-nf-bare-process-rows="1"]') ? 'none' : THINKING_WINDOW_EM + 'em';
   const lines = String(text || '').split('\n').length;
   contentEl.dataset.nfThinkLines = String(lines);
 }
@@ -4837,7 +4838,7 @@ export function appendThinkingDelta(delta, mark) {
     // computes 思考 <N>s from nfStart/nfEnd on the bubble).
     bubble.dataset.nfStart = String(Date.now());
     const label = document.createElement('div');
-    label.className = 'thinking-label thinking-streaming collapsible expanded';
+    label.className = bareProcessRows(activeView) ? 'thinking-label thinking-streaming' : 'thinking-label thinking-streaming collapsible expanded';
     const labelText = document.createElement('span');
     labelText.className = 'thinking-label-text';
     labelText.textContent = t('chat.thinkingInProgress');
@@ -4863,7 +4864,7 @@ export function appendThinkingDelta(delta, mark) {
     appendChatRow(chat, row);
     // Click/Enter folds or re-reveals the live content (rAF keeps rendering
     // into it); finishThinking auto-collapses regardless at stream end.
-    bindCollapsibleToggle(label, () => content);
+    if (!bareProcessRows(activeView)) bindCollapsibleToggle(label, () => content);
     activeView.stream.currentThinkingBubble = bubble;
   }
   // stream-ux §二.1.1: 思考 = 单行流式揭示 — the work-line reveals the same
@@ -4968,14 +4969,16 @@ export function finishThinking() {
     // text「思考过程」, streaming dots removed, no chevron.
     if (label) {
       label.classList.remove('thinking-streaming');
-      label.classList.add('collapsible');
+      if (!bareProcessRows(activeView)) label.classList.add('collapsible');
       label.querySelectorAll('.thinking-dot').forEach((d) => d.remove());
       const labelText = label.querySelector('.thinking-label-text');
       if (labelText) labelText.textContent = t('chat.thinkingLabel');
-      if (content) content.style.display = 'none';
-      label.classList.remove('expanded');
-      label.setAttribute('aria-expanded', 'false');
-      bindCollapsibleToggle(label, () => content);
+      if (!bareProcessRows(activeView)) {
+        if (content) content.style.display = 'none';
+        label.classList.remove('expanded');
+        label.setAttribute('aria-expanded', 'false');
+        bindCollapsibleToggle(label, () => content);
+      }
     } else if (content) {
       content.style.display = 'none';
     }
@@ -5037,16 +5040,18 @@ export function finalizeStreamingFaces(view) {
     const content = bubble.querySelector('.thinking-content');
     if (label) {
       label.classList.remove('thinking-streaming');
-      label.classList.add('collapsible');
-      label.classList.remove('expanded');
-      label.setAttribute('aria-expanded', 'false');
+      if (!bareProcessRows(v)) {
+        label.classList.add('collapsible');
+        label.classList.remove('expanded');
+        label.setAttribute('aria-expanded', 'false');
+        if (content) bindCollapsibleToggle(label, () => content);
+      }
       label.querySelectorAll('.thinking-dot').forEach((d) => d.remove());
       const labelText = label.querySelector('.thinking-label-text');
       if (labelText) labelText.textContent = t('chat.thinkingLabel');
-      if (content) bindCollapsibleToggle(label, () => content);
     }
     if (content) {
-      content.style.display = 'none';
+      content.style.display = bareProcessRows(v) ? '' : 'none';
       content.querySelectorAll('.cursor').forEach((el) => el.remove());
     }
   });

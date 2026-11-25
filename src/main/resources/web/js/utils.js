@@ -1958,7 +1958,18 @@ export function mountToolCardBody(card, { detailHtml = '', promptText = null, co
 }
 
 // === Tool card click handler（整卡点击；折叠卡走状态机，遗留卡原样开合） ===
-export function attachToolClick(card) {
+export function attachToolClick(card, bareProcess = false) {
+  if (bareProcess || card.closest('[data-nf-bare-process-rows="1"]')) {
+    const body = card.querySelector('.body');
+    const buildFull = FOLD_BODIES.get(card);
+    if (body) {
+      if (buildFull) buildFull(body);
+      body.classList.add('open');
+    }
+    card.removeAttribute('aria-expanded');
+    card.removeAttribute('title');
+    return;
+  }
   card.addEventListener('click', () => {
     const body = card.querySelector('.body');
     if (!body) return;
