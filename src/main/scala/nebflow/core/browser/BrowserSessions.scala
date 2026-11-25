@@ -229,6 +229,11 @@ object BrowserSessions:
       attach(rec)
     }
 
+  /** Caller must already hold a takeover lease; callbacks must not block the CDP listener. */
+  private[nebflow] def takeoverPage(name: String): CdpConnection =
+    if !takeoverRegistry.isTakingOver(name) then throw new IllegalStateException("接管未授权")
+    existing(name).page
+
   // ── 页面读数 ────────────────────────────────────────────────────────
 
   private def evalValue(page: CdpConnection, expr: String): Json =
