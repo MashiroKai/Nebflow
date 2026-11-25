@@ -2447,8 +2447,8 @@ def check(root, docs, resolve, glossary_rel, exclude_glossary_check, terms_by_re
 
             for issue in collect_png_latex_issues('\n'.join(doc.raw_lines)):
                 hard = style_scoped_v2(rel, doc, '20261126_000500', False)
-                if issue['rule'] == 'latex-math' and not style_opts.get('math_strict'):
-                    hard = False
+                if issue['rule'] == 'latex-math' and style_opts.get('math_strict'):
+                    hard = True
                 if hard:
                     add(issue['rule'], rel, issue['line'], issue['detail'])
                 elif advisories is not None:
@@ -2839,7 +2839,7 @@ def dump_terms(docs, terms_by_rel, resolve_term=None, root=None):
 
 
 def collect_png_latex_issues(text):
-    """检查同一段中的矢量图链接及数学符号；代码和引用不参与。"""
+    """检查正文 PDF 嵌入和疑似非 LaTeX 公式；代码和引用不参与。"""
     lines = text.splitlines()
     cleaned = []
     fence = None
@@ -2858,16 +2858,16 @@ def collect_png_latex_issues(text):
         cleaned.append(re.sub(r'(`+).*?\1', '', line))
     visible = '\n'.join(cleaned)
     issues = []
-    for para in re.finditer(r'(?m)(?:[^\n]+\n?)+', visible):
-        block = para.group()
-        png = re.search(r'!\[[^\]]*\]\([^)]*\.png(?:[?#][^)]*)?\)|!\[\[[^\]]*\.png(?:\|[^]]*)?\]\]|<img\b[^>]*src=["\'][^"\']*\.png(?:[?#][^"\']*)?["\']', block, re.I)
-        if not png:
-            for match in re.finditer(r'(?:!?\[[^\]]*\]\([^)]*\.(?:pdf|svg)(?:[?#][^)]*)?\)|!?\[\[[^\]]*\.(?:pdf|svg)(?:\|[^]]*)?\]\])', block, re.I):
-                issues.append({'rule': 'png-primary', 'line': visible.count('\n', 0, para.start() + match.start()) + 1, 'detail': '同段 PDF/SVG 图件链接缺少内嵌 PNG'})
+    pdf_pattern = r'''!\[[^\]]*\]\(\s*<?[^)\s>]*\.pdf(?:[?#][^\s)>]*)?>?(?:\s+["'][^"']*["'])?\s*\)|<(?:img|embed|object|iframe)\b[^>]*\b(?:src|data)\s*=\s*["'][^"']*\.pdf(?:[?#][^"']*)?["'][^>]*>'''
+    for match in re.finditer(pdf_pattern, visible, re.I):
+        issues.append({'rule': 'png-primary', 'line': visible.count('\n', 0, match.start()) + 1, 'detail': '正文不得内嵌 PDF 图件；改用 PNG，PDF 可提供下载'})
     without_math = re.sub(r'(?s)(?<!\\)\$\$.*?(?<!\\)\$\$|(?<!\\)\$(?!\$)[^\n]*?(?<!\\)\$', lambda m: re.sub(r'[^\n]', ' ', m.group()), visible)
     for number, line in enumerate(without_math.splitlines(), 1):
-        if re.search(r'[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿᵢ₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜₓ∫∑√≤≥≈×±∞∂∇]', line):
-            issues.append({'rule': 'latex-math', 'line': number, 'detail': '数学符号须写在 LaTeX 公式内'})
+        expr_equal = re.search(r'(?<![\w/])(?:[A-Za-zα-ωΑ-Ω][\w₀-₉⁰-⁹]*|\d+)\s*=\s*(?:[A-Za-zα-ωΑ-Ω][\w₀-₉⁰-⁹]*|\d+)\s*[+*/^×÷−-]\s*(?:[A-Za-zα-ωΑ-Ω]|\d)', line)
+        line = re.sub(r'\b\d+(?:\.\d+)?\s*×\s*\d+(?:\.\d+)?\b', '', line)
+        expr_chain = re.search(r'(?<![\w/.-])[A-Za-zα-ωΑ-Ω0-9⁰-⁹₀-₉]+\s*[+×÷±*/^−]\s*[A-Za-zα-ωΑ-Ω0-9⁰-⁹₀-₉]+\s*[+×÷±*/^−]\s*[A-Za-zα-ωΑ-Ω0-9⁰-⁹₀-₉]+(?![\w/.-])', line)
+        if expr_equal or expr_chain or re.search(r'[∫∑√]', line):
+            issues.append({'rule': 'latex-math', 'line': number, 'detail': '疑似公式须写在 LaTeX 定界符内'})
     return sorted(issues, key=lambda i: i['line'])
 
 
@@ -2956,7 +2956,7 @@ def main():
                     help="命令行追加禁用词（可多次；逗号/空白分隔）")
     ap.add_argument("--fold-threshold", type=int, default=DETAIL_FOLD_THRESHOLD,
                     help=f"R16 细节折叠的敞开正文阈值（可视字符；缺省 {DETAIL_FOLD_THRESHOLD}）")
-    ap.add_argument('--math-strict', action='store_true', help='数学符号检查按新旧文档范围阻断；缺省仅告警')
+    ap.add_argument('--math-strict', action='store_true', help='公式检查全库硬查；缺省新文档硬查、存量告警')
     args = ap.parse_args()
 
     if args.fold_run and args.fold_run > 0:

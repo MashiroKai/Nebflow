@@ -47,34 +47,26 @@ MOD = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(MOD)
 
 class PngLatexDisciplineTests(unittest.TestCase):
-    def test_pdf_without_png_and_unformatted_math(self):
-        issues = MOD.collect_png_latex_issues('[放大](attachments/chart.pdf)\n数值 ≥ 3，面积 cm⁻²')
-        self.assertEqual([i['rule'] for i in issues], ['png-primary', 'latex-math'])
-
-    def test_nearby_encoded_and_relative(self):
+    def test_pdf_embedding_and_formula(self):
         scan = MOD.collect_png_latex_issues
-        self.assertEqual(scan('![图](attachments/%E6%B5%8B%E8%AF%95.png)\n[下载](attachments/%E6%B5%8B%E8%AF%95.svg)'), [])
-        self.assertEqual([x['rule'] for x in scan('![图](attachments/a.png)\n\n[下载](attachments/b.pdf)')], ['png-primary'])
-        self.assertEqual(scan('![图](<attachments/测试.png>) [下载](<attachments/测试.svg>)'), [])
+        self.assertEqual([x['rule'] for x in scan('![图](<attachments/%E4%B8%AD.pdf>)\nx = a + b')], ['png-primary', 'latex-math'])
+        for tag, attr in [('img', 'src'), ('embed', 'src'), ('object', 'data'), ('iframe', 'src')]:
+            self.assertEqual(scan(f'<{tag} {attr}="图.pdf">')[0]['rule'], 'png-primary')
 
-    def test_fences_inline_and_quotes(self):
-        scan = MOD.collect_png_latex_issues
-        self.assertEqual(scan('~~~python\n∫ [a](a.pdf)\n~~~\n`√`\n> ≥\n$$\n∑\n$$'), [])
-        self.assertEqual([x['line'] for x in scan('正文\n≥ 2')], [2])
+    def test_exemptions(self):
+        text = '[下载](attachments/a.pdf)\n![图](attachments/a.svg)\n![图](attachments/a.png)\n375×812，cm²，m/s²，≤12\n~~~\n∑x\n~~~\n`x = a + b`\n> x = a + b\n$x = a + b$'
+        self.assertEqual(MOD.collect_png_latex_issues(text), [])
 
     def test_new_and_legacy_scope_and_switch(self):
         with tempfile.TemporaryDirectory() as root:
-            write(root, 'old__20261125_000000.md', doc('[下载](attachments/a.pdf)\n\n公式 ≥ 3'))
-            write(root, 'new__20261126_000500.md', doc('[下载](attachments/a.pdf)\n\n公式 ≥ 3'))
+            write(root, 'old__20261125_000000.md', doc('![图](attachments/a.pdf)\n\nx = a + b'))
+            write(root, 'new__20261126_000500.md', doc('![图](attachments/a.pdf)\n\nx = a + b'))
             notices = []
             violations = validate(Path(root), strict=True, advisories=notices)
             self.assertTrue(any(x['rule'] == 'png-primary' and x['file'].startswith('new') for x in violations))
+            self.assertTrue(any(x['rule'] == 'latex-math' and x['file'].startswith('new') for x in violations))
             self.assertFalse(any(x['rule'] in ('png-primary', 'latex-math') and x['file'].startswith('old') for x in violations))
-            self.assertTrue(any(x['rule'] == 'latex-math' and x['file'].startswith('new') for x in notices))
-
-    def test_exclusions_and_png(self):
-        text = '![图](attachments/chart.png) [下载](attachments/chart.svg)\n$ x ≥ 3 $\n`²`\n> 原文 ∑\n```\n√\n```'
-        self.assertEqual(MOD.collect_png_latex_issues(text), [])
+            self.assertTrue(any(x['rule'] == 'latex-math' and x['file'].startswith('old') for x in notices))
 
 
 PNG_1PX = base64.b64decode(
