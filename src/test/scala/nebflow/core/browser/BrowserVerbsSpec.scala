@@ -91,6 +91,24 @@ class BrowserVerbsSpec extends CatsEffectSuite:
     assert(!BrowserTakeoverInput.valid(Json.obj("type" -> "insertText".asJson, "text" -> ("x" * 4097).asJson)))
   }
 
+  test("failure before registration is observed at registration and cleanup runs once") {
+    val lifecycle = new BrowserFailureLatch
+    var cleanups = 0
+    lifecycle.fail()
+    lifecycle.register(() => cleanups += 1)
+    lifecycle.finish()
+    assertEquals(cleanups, 1)
+  }
+
+  test("failure after registration and during cleanup still cleans exactly once") {
+    val lifecycle = new BrowserFailureLatch
+    var cleanups = 0
+    lifecycle.register(() => { cleanups += 1; lifecycle.fail() })
+    lifecycle.fail()
+    lifecycle.finish()
+    assertEquals(cleanups, 1)
+  }
+
   test("frame pump bounded under sustained overload and retains newest frame") {
     val queue = new BrowserFramePump
     (1 to 8).foreach(i => queue.offer(i, i.toString))
