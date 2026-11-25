@@ -79,6 +79,7 @@ for (const width of [390, 1280]) for (const theme of ['light', 'dark']) {
     await frame(page,{type:'thinkingDelta', delta:'正在整理相关文件'});
     await frame(page,{type:'textDelta', isRoot:true, delta:'<report>这是一条完整的回复，结束后一次显示。</report>'});
     await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+    await page.locator('#chat .nf-workline').evaluate(el => Promise.all(el.getAnimations({subtree:true}).filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => {}))));
     const dir = process.env.BUFFER_SHOTS;
     if (width === 390 && theme === 'dark') console.log('DARK-DIAGNOSTIC', JSON.stringify(await page.evaluate(() => {
       const el = document.querySelector('#chat .row.user');
