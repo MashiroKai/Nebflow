@@ -416,6 +416,16 @@ private[gateway] object WsTasksWorkspaceHandlers:
           "message" -> "Please clarify the creation time zone".asJson
         )
       )
+    else if crKindTodo && crTriggerAt != 0L && crRepeat.contains("weekly") && crTriggerAt % 60000L != 0L then
+      wsSend(
+        io.circe.Json.obj(
+          "type" -> "error".asJson,
+          "msgType" -> "createScheduledTask".asJson,
+          "requestId" -> createRequestId.asJson,
+          "code" -> "weekly-requires-whole-minute".asJson,
+          "message" -> s"Please clarify triggerAt=$crTriggerAt: weekly deadlines require a whole minute".asJson
+        )
+      )
     else if crKindTodo && crSessionId.nonEmpty && crContent.nonEmpty then
       val surfaceAt = nebflow.core.scheduler.ScheduledTask.nextTodoSurfaceAt(
         System.currentTimeMillis(),
@@ -438,13 +448,16 @@ private[gateway] object WsTasksWorkspaceHandlers:
       val due = Option.when(crTriggerAt != 0L) {
         val zone = nebflow.core.scheduler.TodoDue.deviceZoneFromFrame(json).get
         val wall = java.time.Instant.ofEpochMilli(crTriggerAt).atZone(java.time.ZoneId.of(zone)).toLocalDateTime.toString
-        nebflow.core.scheduler.TodoDue.Once(crTriggerAt, zone, wall, None)
+        if crRepeat.contains("weekly") then
+          val local = java.time.LocalDateTime.parse(wall)
+          nebflow.core.scheduler.TodoDue.Weekly(local.getDayOfWeek.getValue, local.toLocalTime.toString, zone, wall)
+        else nebflow.core.scheduler.TodoDue.Once(crTriggerAt, zone, wall, None)
       }
       val userTodo = todo.copy(
         id = createRequestId.getOrElse(todo.id),
         source = Some(nebflow.core.scheduler.TodoTaxonomy.SourceUser),
         due = due,
-        nextDueAt = due.map(_.dueAt)
+        nextDueAt = due.map(_ => crTriggerAt)
       )
       (for
         saved <- createRequestId match

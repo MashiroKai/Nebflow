@@ -152,6 +152,37 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
   // ① createScheduledTask 收 priority（钳位落库）
   // ==================================================================
 
+  test("weekly user deadline rejects non-minute instant with a named error") {
+    withRig { (c, res) =>
+      val at = (now / 60000L + 60L) * 60000L + 1L
+      val frame = s"""{"type":"createScheduledTask","sessionId":"s1","kind":"todo","content":"remind me","triggerAt":$at,"repeat":"weekly","device":{"timeZone":"Asia/Tokyo"}}"""
+      for
+        frames <- send(c, "createScheduledTask", frame)
+        saved <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assertEquals(types(frames), List("error"))
+        assertEquals(frames.head.hcursor.get[String]("code").toOption, Some("weekly-requires-whole-minute"))
+        assert(frames.head.hcursor.get[String]("message").toOption.exists(_.contains(at.toString)))
+        assertEquals(saved, Nil)
+    }
+  }
+
+  test("sourced user weekly deadline persists a weekly rule") {
+    withRig { (c, res) =>
+      val at = (now / 60000L + 60L) * 60000L
+      val frame = s"""{"type":"createScheduledTask","sessionId":"s1","kind":"todo","content":"remind me","triggerAt":$at,"repeat":"weekly","device":{"timeZone":"Asia/Tokyo"}}"""
+      for
+        frames <- send(c, "createScheduledTask", frame)
+        saved <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assertEquals(types(frames), List("scheduledTaskCreated"))
+        val due = saved.head.due.get.asJson.hcursor
+        assertEquals(due.get[String]("type").toOption, Some("weekly"))
+        assertEquals(due.get[String]("zoneId").toOption, Some("Asia/Tokyo"))
+        assertEquals(saved.head.nextDueAt, Some(at))
+    }
+  }
+
   test("user create retry rejects a changed reminder deadline") {
     withRig { (c, res) =>
       val id = "a2b4c6d8-1234-4abc-8def-123456789abc"
