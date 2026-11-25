@@ -730,7 +730,7 @@ export function restoreFromStorage(opts = {}) {
         tContent.innerHTML = renderMarkdownWithMath(m.thinking);
         // §③ 思考窗硬上限（stream-919-unify 批）：历史重放腿同窗钉限＋计数
         // 读数（与 live 腿同一入口——四写点不分家，读数与窗形一致）。
-        applyThinkingWindowCap(tContent, m.thinking);
+        applyThinkingWindowCap(tContent, m.thinking, !!(activeView && activeView.nfBareProcessRows));
         // 重连折叠持久批（2026-10-20，续作 chain 69e5e2e1）：thinking 恒折叠。
         // 旧的「无 text 保持展开」例外与重放契约冲突 —— 每次重连重放都把
         // thinking-only 行的全文抖开（症状①「thinking 突然完整显示」）。
@@ -1219,7 +1219,7 @@ function buildHistoryRow(m, i, ctx) {
         deferMd(tContent, m.thinking);
         // §③ 思考窗硬上限（stream-919-unify 批）：历史重放腿（deferMd 版）
         // 同窗钉限＋计数读数——窗是元素常驻样式，与 deferMd 异步渲染正交。
-        applyThinkingWindowCap(tContent, m.thinking);
+        applyThinkingWindowCap(tContent, m.thinking, !!(activeView && activeView.nfBareProcessRows));
         // 重连折叠持久批（2026-10-20，续作 chain 69e5e2e1）：thinking 恒折叠。
         // 旧的「无 text 保持展开」例外与重放契约冲突 —— 每次重连重放都把
         // thinking-only 行的全文抖开（症状①「thinking 突然完整显示」）。

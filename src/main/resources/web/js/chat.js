@@ -4791,9 +4791,9 @@ const THINKING_WINDOW_EM = THINKING_WINDOW_MAX_LINES * 1.5; // 13px 档行高 1.
 /** 把思考内容窗钉在上限并写行数计数读数（源文本行数，非渲染行数）。
  *  写点＝四处：live rAF（appendThinkingDelta 流式帧）／finishThinking（终态
  *  帧）／persistence 两条历史重放腿——四点同一入口，读数与窗形不分家。 */
-export function applyThinkingWindowCap(contentEl, text) {
+export function applyThinkingWindowCap(contentEl, text, bareProcess = false) {
   if (!contentEl) return;
-  contentEl.style.maxHeight = THINKING_WINDOW_EM + 'em';
+  contentEl.style.maxHeight = bareProcess || contentEl.closest('[data-nf-bare-process-rows="1"]') ? 'none' : THINKING_WINDOW_EM + 'em';
   const lines = String(text || '').split('\n').length;
   contentEl.dataset.nfThinkLines = String(lines);
 }
