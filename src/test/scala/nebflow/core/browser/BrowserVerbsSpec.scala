@@ -66,7 +66,11 @@ class BrowserVerbsSpec extends CatsEffectSuite:
     stream.close()
     assertEquals(calls.toList.map(_._1), List("Page.startScreencast", "Page.screencastFrameAck", "Page.stopScreencast"))
     assertEquals(calls(1)._2.hcursor.get[Int]("sessionId").toOption, Some(7))
-    assertEquals(stream.take(), Some("frame"))
+    assertEquals(stream.take().flatMap(io.circe.parser.parse(_).toOption).flatMap(_.hcursor.get[String]("data").toOption), Some("frame"))
+  }
+
+  test("takeover viewport conversion uses remote viewport rather than screenshot pixels") {
+    assertEquals(BrowserTakeoverInput.viewportPoint(640.0, 320.0, 1280.0, 640.0, 1400.0, 700.0), (700.0, 350.0))
   }
 
   test("takeover input translates only validated actions to CDP methods") {
