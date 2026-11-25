@@ -213,13 +213,20 @@ class ProcessManagerSpec extends FunSuite:
   test("dev-host target on 8080 (GatewayMain cmdline) ⇒ Refused, --force does not bypass, zero destroy") {
     withTempRoot {
       ProcessManager.writePid(selfPid())
-      val (deps, rec) = stubDeps(readCmd = _ => Some(SbtDevCmd), portsOf = _ => List(8080))
+      var sweeps = 0
+      val (deps, rec) = stubDeps(
+        readCmd = _ => Some(SbtDevCmd),
+        portsOf = _ => List(8080),
+        homeSweep = () => { sweeps += 1; Nil }
+      )
       runStop(ProcessManager.StopOptions(force = true), deps) match
         case ProcessManager.StopOutcome.Refused(reason) =>
           assert(reason.contains("8080"), reason)
           assert(reason.contains("not bypassable"), reason)
         case other => fail(s"expected Refused, got $other")
       assert(rec.destroyed.isEmpty)
+      assertEquals(sweeps, 0, "hard gate must skip the post-stop sweep")
+      assert(os.exists(PathUtil.dataRoot / ".pid"), "hard gate must retain the pid file")
     }
   }
 

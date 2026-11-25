@@ -143,6 +143,65 @@ class ChainLedgerJournalSpec extends CatsEffectSuite:
     run.guarantee(IO.blocking(os.remove.all(d)))
   }
 
+  test("unreadable gzip cold file warns and skips without hiding valid rounds") {
+    val d = dir("unreadable-gzip")
+    val path = d / ChainLedger.FileName
+    val arch = d / ChainLedger.ArchiveDirName
+    val project = "unreadable-gzip"
+    val good = ChainLedger.RoundFile(
+      round = 7,
+      at = t0,
+      kind = ChainLedger.RoundRetire,
+      thresholds = ChainLedger.ThresholdsNow,
+      hotBefore = ChainLedger.Totals(entries = 1, members = 1),
+      hotAfter = ChainLedger.Totals(),
+      entries = List(ChainLedger.Entry("good-chain", "node", t0, List("node"), 1))
+    )
+    val run = for
+      store <- ChainLedgerStore.open(project, path, arch, coldReadBudgetBytes = Long.MaxValue)
+      _ <- IO.blocking {
+        os.makeDir.all(arch)
+        os.write(arch / "broken.json.gz", "this is not a gzip stream")
+        os.write(arch / "good.json", good.asJson.noSpaces)
+      }
+      result <- withWarnAppender(store.readRounds)
+      (rounds, warnings) = result
+    yield
+      assertEquals(rounds.map(_.round), List(7))
+      assert(warnings.exists(_.contains(s"chain-ledger[$project] cold file unreadable: broken.json.gz:")), warnings.toString)
+      assert(!warnings.exists(_.contains("cold file corrupt: broken.json.gz")), warnings.toString)
+    run.guarantee(IO.blocking(os.remove.all(d)))
+  }
+
+  test("a directory named as a cold JSON file warns unreadable and does not hide valid rounds") {
+    val d = dir("directory-json")
+    val path = d / ChainLedger.FileName
+    val arch = d / ChainLedger.ArchiveDirName
+    val project = "directory-json"
+    val good = ChainLedger.RoundFile(
+      round = 8,
+      at = t0,
+      kind = ChainLedger.RoundRetire,
+      thresholds = ChainLedger.ThresholdsNow,
+      hotBefore = ChainLedger.Totals(entries = 1, members = 1),
+      hotAfter = ChainLedger.Totals(),
+      entries = List(ChainLedger.Entry("good-directory-test", "node", t0, List("node"), 1))
+    )
+    val run = for
+      store <- ChainLedgerStore.open(project, path, arch, coldReadBudgetBytes = Long.MaxValue)
+      _ <- IO.blocking {
+        os.makeDir.all(arch / "directory.json")
+        os.write(arch / "good.json", good.asJson.noSpaces)
+      }
+      result <- withWarnAppender(store.readRounds)
+      (rounds, warnings) = result
+    yield
+      assertEquals(rounds.map(_.round), List(8))
+      assert(warnings.exists(_.contains(s"chain-ledger[$project] cold file unreadable: directory.json:")), warnings.toString)
+      assert(!warnings.exists(_.contains("cold file corrupt: directory.json")), warnings.toString)
+    run.guarantee(IO.blocking(os.remove.all(d)))
+  }
+
   // ── ① 残尾：无终结换行的半条 append 必须被丢弃 ──────────────────────
 
   test("把 `\\n` 定帧改成「按行即记录」⇒ 本测试必红") {
