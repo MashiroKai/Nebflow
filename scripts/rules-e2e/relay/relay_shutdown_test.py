@@ -361,6 +361,8 @@ server.serve_forever()'''
     start=time.monotonic(); relay.force_after_grace(); self.assertLess(time.monotonic()-start,.5); summary=json.loads(out.getvalue())
    self.assertEqual(codes,[2]); self.assertEqual(summary['recorded_lower_bound']+summary['unrecorded_upper_bound'],summary['reserved_snapshot'])
    self.assertGreaterEqual(summary['recorded_lower_bound'],before); self.assertTrue(summary['possible_extra_record_after_exit'])
+   # The exit stub has fired and the writer is still held at fsync: for this
+   # isolated interleaving the ledger is quiescent as it would be after exit.
    immediate=[json.loads(line) for line in self.path.read_text().splitlines()]
    side=pathlib.Path(str(self.path)+'.abort'); extra=[json.loads(line) for line in side.read_text().splitlines()] if side.exists() else []
    persisted=sum(x['status']=='reserved' for x in immediate+extra)
@@ -435,6 +437,24 @@ server.serve_forever()'''
   conn=http.client.HTTPConnection('127.0.0.1',server.server_port,timeout=2); conn.request('POST','/one/chat',b'{}',{'X-Stand-Trace-Id':'normal'}); self.assertEqual(conn.getresponse().status,429); conn.close()
   with patch('sys.stderr',new_callable=io.StringIO) as out: relay.force_after_grace(); summary=json.loads(out.getvalue().splitlines()[-1])
   self.assertEqual((summary['rejection_recorded_response_written'],summary['rejection_recorded_response_write_failed']),(1,1))
+ def test_monotonic_snapshot_random_stress(self):
+  import random
+  rng=random.Random(72143); relay=m.Relay(args(self.path,25),grace=0,exit_fn=lambda code:None); self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
+  previous=0
+  for _ in range(100):
+   with relay.account_lock:
+    relay.count+=rng.randrange(3)
+    relay.confirmed_reservations+=rng.randrange(relay.count-relay.confirmed_reservations+1)
+   held=threading.Event(); release=threading.Event()
+   def holder():
+    with relay.append_lock: held.set(); release.wait(1)
+   t=threading.Thread(target=holder); t.start(); self.assertTrue(held.wait(1))
+   try:
+    with patch('sys.stderr',new_callable=io.StringIO) as out: relay.force_after_grace(); summary=json.loads(out.getvalue())
+    self.assertGreaterEqual(summary['recorded_lower_bound'],previous)
+    self.assertEqual(summary['recorded_lower_bound']+summary['unrecorded_upper_bound'],summary['reserved_snapshot'])
+    previous=summary['recorded_lower_bound']
+   finally: release.set(); t.join(1)
  def test_watchdog_only_starts_once(self):
   relay=m.Relay(args(self.path),grace=1,exit_fn=lambda code:None)
   self.addCleanup(relay.owner.close); self.addCleanup(relay.ledger.close)
