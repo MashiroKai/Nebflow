@@ -1087,7 +1087,7 @@ class WebSocketRoutes(
                 failureWake <- Deferred[IO, Unit]
                 send = (j: Json) => outbound.offer(WebSocketFrame.Text(j.noSpaces))
                 cleanup = state.getAndSet(None).flatMap(_.traverse_ { case (id, _, stream, unsubscribe) =>
-                  IO(unsubscribe()) *> IO.blocking(stream.close()).attempt.void *> IO(nebflow.core.browser.BrowserSessions.takeoverRegistry.finish(id)) *>
+                  IO(unsubscribe()).attempt.void *> IO.blocking(stream.close()).attempt.void *> IO(nebflow.core.browser.BrowserSessions.takeoverRegistry.finish(id)).attempt.void *>
                     (if failed.get() then AskHostLedger.recordTakeoverStreamFailure(id) *> outbound.tryOffer(WebSocketFrame.Text(Json.obj("type" -> "status".asJson, "error" -> "画面流故障，接管已停止".asJson).noSpaces)).void else IO.unit)
                 })
                 receive: Pipe[IO, WebSocketFrame, Unit] = incoming => Stream.resource(Dispatcher.parallel[IO]).flatMap { failureDispatcher => incoming.evalMap {
