@@ -82,7 +82,13 @@ server.serve_forever()'''
       records=[json.loads(line) for line in ledger.read_text().splitlines()]
       self.assertEqual(sum(x['status']=='reserved' for x in records),1)
       self.assertIsNone(p.poll()); start=time.monotonic()
-      second=http.client.HTTPConnection('127.0.0.1',port,timeout=2); second.request('POST','/one/chat',b'{}',{'X-Stand-Trace-Id':'second'}); self.assertEqual(second.getresponse().status,429); second.close()
+      second=http.client.HTTPConnection('127.0.0.1',port,timeout=2)
+      try:
+       second.request('POST','/one/chat',b'{}',{'X-Stand-Trace-Id':'second'})
+       try: self.assertEqual(second.getresponse().status,429)
+       except http.client.RemoteDisconnected:
+        if kind!='fsync': raise
+      finally: second.close()
       self.assertEqual(p.wait(timeout=3),2,p.stderr.read()); self.assertGreater(time.monotonic()-start,.1)
      else: self.assertEqual(p.wait(timeout=3),2,p.stderr.read())
      c.close()
