@@ -50,6 +50,7 @@ function harness(server) {
   const calls = [];
   let reconnectFn = null;
   let mirrorUpdates = 0;
+  let liveSource;
 
   const schedule = (fn, ms, repeat = 0) => {
     const id = ++nextId;
@@ -88,7 +89,7 @@ function harness(server) {
     },
     './flowHelpers.js': { authHeaders: () => ({}) },
     './delegateChainStub.js': {
-      setSource() {},
+      setSource(source) { liveSource = source; },
       setChildrenSource() {},
       rowFromRegistry: (r) => r,
       chainFromStoreRecord: () => ({}),
@@ -126,7 +127,7 @@ function harness(server) {
     const childCalls = () => calls.filter((c) => c.url.endsWith('/children'));
     const keysOf = (list) => list.map((c) => c.url.slice('/api/chains/'.length));
     return { flush, advance, fire, reconnect, calls, detailCalls, digestCalls, rowCalls, childCalls, keysOf,
-      mirrorUpdates: () => mirrorUpdates };
+      mirrorUpdates: () => mirrorUpdates, liveSource };
   });
 }
 
@@ -234,7 +235,8 @@ async function bulkScenario() {
   return { stormAttempts: stormAttempts.length, bursts: bursts.length };
 }
 
-// ── 场景⑤：摘要面不可用（旧引擎 404）时也只按「缺/到期」取详情 ──────────────
+// ── 场景⑤：摘要面不可用（旧引擎 404）时不猜链 ───────────────────────────
+// 2026-11-25 作者令后的口径：无批量摘要不猜链；旧引擎兼容回退自 10d4b4273 起取消（派发席 2026-11-26 00:20 裁定）。
 async function noDigestFaceScenario() {
   const rows = fixtureRows().slice(0, 30);
   const server = (url) => {
@@ -247,8 +249,12 @@ async function noDigestFaceScenario() {
   const h = await harness(server);
   await h.flush();
   assert.equal(h.rowCalls().length, 1, 'no-digest engine: row face still loads');
-  assert.ok(h.detailCalls().length <= DETAIL_BUDGET, 'no-digest engine: detail legs stay capped (no storm)');
-  assert.ok(h.detailCalls().length > 0, 'no-digest engine: visible rows still get their chain views');
+  assert.equal(h.liveSource.listDelegateRows().length, rows.length, 'no-digest engine: rows reach the read port');
+  assert.equal(h.liveSource.getChainByTask(rows[0].taskNo), null, 'no-digest engine: missing chain degrades immediately');
+  await h.advance(1000);
+  assert.equal(h.detailCalls().length, 0, 'no-digest engine: no guessed chain details');
+  assert.equal(h.childCalls().length, 0, 'no-digest engine: no per-row children requests');
+  assert.ok(h.mirrorUpdates() > 0, 'no-digest engine: row update is broadcast');
 }
 
 const main = async () => {

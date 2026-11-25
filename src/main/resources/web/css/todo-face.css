@@ -841,6 +841,7 @@ button.tfl-row-title {
   appearance: none;
   padding: 0;
   border: 0;
+  border-radius: var(--ds-radius-input);
   background: transparent;
   text-align: left;
   cursor: pointer;
