@@ -27,6 +27,33 @@ class AskHostToolsSpec extends CatsEffectSuite:
     assertEquals(AskHostTool.admitBrowserTakeover(true, "root", Some(marked), "work", registry), Right(()))
   }
 
+  test("stale takeover snapshot cannot open after answer or cancellation") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    val registry = new nebflow.core.browser.BrowserTakeoverRegistry
+    registry.created("work", "worker")
+    (for
+      (answered, _) <- AskHostLedger.beginForCall("worker", "root", "agent", "[BU-TAKEOVER]\nsession: work", "answer-call")
+      staleAnswer <- AskHostLedger.requestState(answered.correlationId)
+      accepted <- AskHostLedger.answer(answered.correlationId, "done")
+      duplicate <- AskHostLedger.answer(answered.correlationId, "done")
+      _ = assert(accepted && !duplicate)
+      refusedAnswer <- AskHostLedger.admitTakeoverCurrent(answered.correlationId, "root", "work", registry)
+      _ = assert(staleAnswer.exists(_.terminal.isEmpty))
+      _ = assert(refusedAnswer.isLeft)
+      (cancelled, _) <- AskHostLedger.beginForCall("worker", "root", "agent", "[BU-TAKEOVER]\nsession: work", "cancel-call")
+      staleCancel <- AskHostLedger.requestState(cancelled.correlationId)
+      cancelledOnce <- AskHostLedger.cancel(cancelled.correlationId, "cancelled")
+      cancelledTwice <- AskHostLedger.cancel(cancelled.correlationId, "cancelled")
+      _ = assert(cancelledOnce && !cancelledTwice)
+      refusedCancel <- AskHostLedger.admitTakeoverCurrent(cancelled.correlationId, "root", "work", registry)
+      _ = assert(staleCancel.exists(_.terminal.isEmpty))
+      _ = assert(refusedCancel.isLeft)
+      _ = assert(!registry.isTakingOver("work"))
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
   test("concurrent takeover admissions grant exactly one lease") {
     val pending = AskHostLedger.Pending("req", "worker", "root", "agent", "call")
     val state = AskHostLedger.RequestState(pending, "[BU-TAKEOVER]\nsession: work", None, Nil)
