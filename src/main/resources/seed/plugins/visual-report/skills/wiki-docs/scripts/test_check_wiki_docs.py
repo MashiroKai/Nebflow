@@ -51,6 +51,7 @@ class PngLatexDisciplineTests(unittest.TestCase):
     def test_pdf_embedding_and_formula(self):
         scan = MOD.collect_png_latex_issues
         self.assertEqual([x['rule'] for x in scan('![图](<attachments/%E4%B8%AD.pdf>)\nx = a + b')], ['png-primary', 'latex-math'])
+        self.assertEqual(scan('![[attachments/%E4%B8%AD.pdf|论文]]')[0]['rule'], 'png-primary')
         for tag, attr in [('img', 'src'), ('embed', 'src'), ('object', 'data'), ('iframe', 'src')]:
             self.assertEqual(scan(f'<{tag} {attr}="图.pdf">')[0]['rule'], 'png-primary')
 

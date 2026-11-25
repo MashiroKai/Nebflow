@@ -2861,7 +2861,7 @@ def collect_png_latex_issues(text):
         cleaned.append(re.sub(r'(`+).*?\1', '', line))
     visible = '\n'.join(cleaned)
     issues = []
-    pdf_pattern = r'''!\[[^\]]*\]\(\s*<?[^)\s>]*\.pdf(?:[?#][^\s)>]*)?>?(?:\s+["'][^"']*["'])?\s*\)|<(?:img|embed|object|iframe)\b[^>]*\b(?:src|data)\s*=\s*["'][^"']*\.pdf(?:[?#][^"']*)?["'][^>]*>'''
+    pdf_pattern = r'''!\[\[[^\]\n|]*\.pdf(?:\|[^\]\n]*)?\]\]|!\[[^\]]*\]\(\s*<?[^)\s>]*\.pdf(?:[?#][^\s)>]*)?>?(?:\s+["'][^"']*["'])?\s*\)|<(?:img|embed|object|iframe)\b[^>]*\b(?:src|data)\s*=\s*["'][^"']*\.pdf(?:[?#][^"']*)?["'][^>]*>'''
     for match in re.finditer(pdf_pattern, visible, re.I):
         issues.append({'rule': 'png-primary', 'line': visible.count('\n', 0, match.start()) + 1, 'detail': '正文不得内嵌 PDF 图件；改用 PNG，PDF 可提供下载'})
     without_math = re.sub(r'(?s)(?<!\\)\$\$.*?(?<!\\)\$\$|(?<!\\)\$(?!\$)[^\n]*?(?<!\\)\$', lambda m: re.sub(r'[^\n]', ' ', m.group()), visible)

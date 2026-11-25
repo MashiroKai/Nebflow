@@ -107,7 +107,7 @@ machine-checked:
    cards as it has parts (clause ⑩).
    → no validator rule for fence existence — deferred with the design
    (§7.4 另议); enforced by this skill + dispatch briefs until then.
-6. **PNG and LaTeX discipline** — embed figures as PNG in the body; axes, legends and captions must remain readable at phone width. Do not embed PDF; PDF/SVG are optional download or enlarged-view links only. Use LaTeX for all formulae, units, subscripts, superscripts and Greek letters: inline `$...$`, display `$$...$$`. No Unicode subscripts/superscripts, formula images or plain-text approximations such as `cm^-2`; code, command output and quoted originals are exempt. The wiki checker reports `png-primary` and `latex-math`; old files are advisory, and PDF embedding is enforced for new files and advisory for legacy files; formula candidates are advisory by default, and `--math-strict` enforces them across the vault.
+6. **PNG and LaTeX discipline** — embed raster figures as PNG in the body; axes, legends and captions must remain readable at phone width. Mermaid fences remain allowed. Do not embed PDF; PDF/SVG are optional download or enlarged-view links only. Use LaTeX for all formulae, units, subscripts, superscripts and Greek letters: inline `$...$`, display `$$...$$`. No Unicode subscripts/superscripts, formula images or plain-text approximations such as `cm^-2`; code, command output and quoted originals are exempt. The wiki checker reports `png-primary` and `latex-math`; old files are advisory, and PDF embedding is enforced for new files and advisory for legacy files; formula candidates are advisory by default, and `--math-strict` enforces them across the vault.
 
 6. **Images live with the document (图随文档走, images-live-with-the-doc
    batch, author order 2026-11-05 09:24)** — an image a document shows is a
@@ -1338,8 +1338,8 @@ roles carry the line:
 - `literature-note`: one per paper (title = paper short title). **Download the
   original PDF into `attachments/`** (use the `paper-download` skill of
   browser-use; filename convention `firstauthor-year-shorttitle.pdf`) and link
-  it from the note — `![[firstauthor-year-shorttitle.pdf]]` — so the reader
-  opens the original in canvas from the note. Remote-only links (URLs without
+  it from the note as a download — `[原文 PDF](attachments/firstauthor-year-shorttitle.pdf)`.
+  Embed a readable PNG figure where needed: `![[attachments/firstauthor-year-figure.png]]`. Remote-only links (URLs without
   a local copy) are a defect: literature research must produce the original
   file. Cite claims as `[[literature-note#^claim-id]]` block references.
 - `conclusion` documents: one settled finding each, citing the problem
