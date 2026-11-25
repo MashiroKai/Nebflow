@@ -11,12 +11,22 @@ import java.util.concurrent.{CompletableFuture, CompletionStage, ConcurrentHashM
 import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
+/** Event callbacks must be non-blocking; never call synchronous CDP send in a listener. */
+private[browser] final class CdpEventSubscriptions:
+  private val listeners = new ConcurrentHashMap[String, java.util.concurrent.CopyOnWriteArrayList[Json => Unit]]()
+  def subscribe(method: String, callback: Json => Unit): () => Unit =
+    val list = listeners.computeIfAbsent(method, _ => new java.util.concurrent.CopyOnWriteArrayList[Json => Unit]())
+    list.add(callback)
+    () => { list.remove(callback); () }
+  def dispatch(method: String, params: Json): Unit =
+    Option(listeners.get(method)).foreach(_.asScala.foreach(cb => scala.util.Try(cb(params))))
+
 /** CDP 调用失败（协议错误 / 超时 / 连接已断）。消息只含方法名与协议错误，不含页面内容。 */
 final class CdpException(message: String) extends RuntimeException(message)
 
 /**
  * 单条 CDP WebSocket 连接（页面目标或浏览器目标）。JSON-RPC：请求带自增 id，应答按 id
- * 回填 CompletableFuture；无 id 的协议事件本实现忽略。
+ * 回填 CompletableFuture；无 id 的协议事件分派给已注册的非阻塞回调。
  *
  * send 线程安全：WebSocket 不允许并发挂起 sendText，写端串行化；读端由 Listener 单线程回调。
  * 断开纪律：close 只关本 socket，不替浏览器做任何收尾（登录态与页面原样保留）。
@@ -25,12 +35,16 @@ final class CdpConnection private (
   val url: String,
   ws: WebSocket,
   pending: ConcurrentHashMap[Long, CompletableFuture[Json]],
-  closedFlag: AtomicBoolean
+  closedFlag: AtomicBoolean,
+  events: CdpEventSubscriptions
 ):
   private val seq = new AtomicLong(0L)
   private val writeLock = new Object
 
   def isOpen: Boolean = !closedFlag.get()
+
+  private[browser] def subscribe(method: String)(callback: Json => Unit): () => Unit =
+    events.subscribe(method, callback)
 
   def send(method: String, params: Json = Json.obj(), timeout: FiniteDuration = 15.seconds): Json =
     if !isOpen then throw new CdpException(s"CDP 连接已断开（$method）")
@@ -76,7 +90,8 @@ object CdpConnection:
 
   private final class Listener(
     pending: ConcurrentHashMap[Long, CompletableFuture[Json]],
-    closedFlag: AtomicBoolean
+    closedFlag: AtomicBoolean,
+    events: CdpEventSubscriptions
   ) extends WebSocket.Listener:
     private val buf = new StringBuilder
 
@@ -89,9 +104,11 @@ object CdpConnection:
         val text = buf.toString
         buf.clear()
         parser.parse(text).toOption.foreach { j =>
-          j.hcursor.get[Long]("id").toOption.foreach { id =>
-            Option(pending.remove(id)).foreach(_.complete(j))
-          }
+          j.hcursor.get[Long]("id").toOption match
+            case Some(id) => Option(pending.remove(id)).foreach(_.complete(j))
+            case None => j.hcursor.get[String]("method").toOption.foreach { method =>
+              events.dispatch(method, j.hcursor.downField("params").focus.getOrElse(Json.obj()))
+            }
         }
       webSocket.request(1)
       null
@@ -113,11 +130,12 @@ object CdpConnection:
   def connect(wsUrl: String, timeout: FiniteDuration = 10.seconds): CdpConnection =
     val pending = new ConcurrentHashMap[Long, CompletableFuture[Json]]()
     val closedFlag = new AtomicBoolean(false)
-    val listener = new Listener(pending, closedFlag)
+    val events = new CdpEventSubscriptions
+    val listener = new Listener(pending, closedFlag, events)
     val ws =
       try http.newWebSocketBuilder().buildAsync(URI.create(wsUrl), listener).get(timeout.toMillis, TimeUnit.MILLISECONDS)
       catch case _: Exception => throw new CdpException("CDP WebSocket 连接失败")
-    new CdpConnection(wsUrl, ws, pending, closedFlag)
+    new CdpConnection(wsUrl, ws, pending, closedFlag, events)
 
   /** 本机 HTTP 发现接口（/json 路径族）。任何失败返回 None（调用方据此判定会话不在线）。 */
   def httpJson(url: String, method: String = "GET", timeout: FiniteDuration = 3.seconds): Option[Json] =
