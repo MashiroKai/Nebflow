@@ -12,7 +12,8 @@ async function boot(page, history = []) {
     const u = new URL(route.request().url()); let p = decodeURIComponent(u.pathname); if (p === '/') p = '/index.html';
     if (p.startsWith('/api/')) return route.fulfill({ status:200, contentType:'application/json', body:'{}' });
     const f = normalize(join(web,p)); if (!f.startsWith(web)) return route.fulfill({ status:403, body:'' });
-    try { const body = process.env.BUFFER_BASE === '1' && p === '/js/chat.js' ? execFileSync('git', ['show', '4976bf692:src/main/resources/web/js/chat.js'], { cwd:web }) : readFileSync(f); return route.fulfill({ status:200, contentType:mime[extname(f)] || 'application/octet-stream', body }); } catch { return route.fulfill({ status:404, body:'' }); }
+    try { const baseFile = process.env.HUMAN_BASE === '1' && ['/js/chat.js','/js/persistence.js','/js/outputTag.js'].includes(p);
+      const body = baseFile || (process.env.BUFFER_BASE === '1' && p === '/js/chat.js') ? execFileSync('git', ['show', `4976bf692:src/main/resources/web${p}`], { cwd:web }) : readFileSync(f); return route.fulfill({ status:200, contentType:mime[extname(f)] || 'application/octet-stream', body }); } catch { return route.fulfill({ status:404, body:'' }); }
   });
   await page.routeWebSocket(/\/ws/, ws => {
     const config = () => ws.send(JSON.stringify({ type:'configData', config:'{}', configured:true, onboarding:'done' }));

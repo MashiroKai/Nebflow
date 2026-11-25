@@ -507,8 +507,9 @@ export function collapseTurn(view, meta = {}) {
   const chat = view.dom.chat;
   const scope = turnScope(chat);
   const rows = scope.filter(el => el.classList && el.classList.contains('row'));
-  if (view.nfBareProcessRows) {
-    untuckRows(rows.filter(isTuckableRow));
+  if (view.nfBareProcessRows || chat.id === 'chat') {
+    if (view.nfBareProcessRows) untuckRows(rows.filter(isTuckableRow));
+    else tuckRows(rows.filter(isTuckableRow));
     removeWorkline(view);
     markClosed(chat);
     return null;
@@ -828,7 +829,8 @@ function markInferredMidTurnRows(chat) {
 }
 
 export function buildTurnSummariesForHistory(chat, opts = {}) {
-  if (chat.dataset.nfBareProcessRows === '1') {
+  if (chat.dataset.nfBareProcessRows === '1' || chat.id === 'chat') {
+    if (chat.id === 'chat') tuckRows(Array.from(chat.children).filter(isTuckableRow));
     markClosed(chat);
     return;
   }
